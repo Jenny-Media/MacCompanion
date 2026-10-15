@@ -155,6 +155,10 @@ struct DirectConnectionPasswordField: UIViewRepresentable {
 }
 
 @objc(DirectConnectionBridge) @MainActor final class DirectConnectionBridge: NSObject {
+    @objc(defaultQuickActionsForInputOnly:) static func defaultQuickActions(inputOnly: Bool) -> [[String: Any]] {
+        (inputOnly ? DirectControlMode.trackpad : .desktop).defaults.map(\.native)
+    }
+
     @objc static var panelColor: UIColor { DirectConnectionStyle.panel }
     @objc static var fieldColor: UIColor { DirectConnectionStyle.field }
     @objc static func styleCard(_ view: UIView) {

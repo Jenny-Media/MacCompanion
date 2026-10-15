@@ -2574,10 +2574,16 @@
     "readChunkBytes": 16384,
     "writeLowBytes": 16384,
     "writeHighBytes": 65536,
-    "queueLimitBytes": 262144,
+    "queueLimitBytes": 2097152,
     "plaintextFallback": false,
     "sharesHostPinWithTerminal": true,
-    "sharesLoginWithTerminal": false
+    "sharesLoginWithTerminal": false,
+    "maximumSSHPacketBytes": 1048576,
+    "receiveWindowBytes": 1048576,
+    "backpressureScope": "perDirection",
+    "sourceReadRequiresOwnQueueBelowHighWatermark": true,
+    "sourceReadRequiresDestinationWritable": true,
+    "reversePendingWritesBlockSourceRead": false
   },
   "sshTransportCases": [
     {
@@ -3368,5 +3374,83 @@
       "relativeZoom": 2,
       "restoredRelativeZoom": 2
     }
-  ]
+  ],
+  "twoFingerTap": {
+    "touches": 2,
+    "taps": 1,
+    "buttonMask": 4,
+    "releaseMask": 0,
+    "desktopDoubleTap": "existing smart zoom wins over the single secondary tap",
+    "inputOnlyDoubleTapZoom": false,
+    "cancelOn": [
+      "scroll",
+      "pinch",
+      "layout",
+      "mode",
+      "inactivity",
+      "controls"
+    ],
+    "cases": [
+      {
+        "mode": "pointer",
+        "touch": [
+          120,
+          80
+        ],
+        "cursor": [
+          300,
+          200
+        ],
+        "expected": [
+          120,
+          80
+        ]
+      },
+      {
+        "mode": "trackpad",
+        "touch": [
+          120,
+          80
+        ],
+        "cursor": [
+          300,
+          200
+        ],
+        "expected": [
+          300,
+          200
+        ]
+      },
+      {
+        "mode": "inputOnly",
+        "touch": [
+          120,
+          80
+        ],
+        "cursor": [
+          300,
+          200
+        ],
+        "expected": [
+          300,
+          200
+        ]
+      },
+      {
+        "mode": "tabletop",
+        "touch": [
+          120,
+          80
+        ],
+        "cursor": [
+          300,
+          200
+        ],
+        "expected": [
+          300,
+          200
+        ]
+      }
+    ]
+  }
 }

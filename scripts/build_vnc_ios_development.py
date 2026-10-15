@@ -50,7 +50,7 @@ def build(args, parser, session):
     def source_inputs():
         files = [p for root in [HERE, ROOT / 'Native/SessionActivity', ROOT / 'Native/Terminal', ROOT / 'Native/Dependencies', ROOT / 'Apps/MacCompanionIOS', ROOT / 'Apps/MacCompanionSessionActivity', ROOT / 'Packages/MacCompanionKit/Sources']
                  for p in sorted(root.rglob('*')) if p.is_file()]
-        files += [Path(__file__), ROOT / 'scripts/build_cache.py']
+        files += [Path(__file__), *[ROOT / 'scripts' / name for name in ['build_cache.py', 'prepare_macos_vnc_cursor.py', 'prepare_vnc_read_service.py']]]
         return {str(p.relative_to(ROOT)): sha(p) for p in files}
     terminal_lock = json.loads((ROOT / 'Native/Terminal/source-lock.json').read_text())
     vendor = ROOT / terminal_lock['Citadel']['localPath']

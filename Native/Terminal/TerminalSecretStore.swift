@@ -30,9 +30,19 @@ enum TerminalSecretStore {
     }
     @MainActor static func login(_ id: UUID) throws -> Login? {
         guard DirectAppLockV1.shared.canAccess else { throw Failure.locked }
+        #if os(iOS)
+        return try DirectMacAccessStore.load(id).passwordLogin.map { .init(username: $0.username, password: $0.password) }
+        #else
         return try read(id, kind: "login").map { try JSONDecoder().decode(Login.self, from: $0) }
+        #endif
     }
-    static func save(_ login: Login, id: UUID) throws { try write(JSONEncoder().encode(login), id: id, kind: "login") }
+    @MainActor static func save(_ login: Login, id: UUID) throws {
+        #if os(iOS)
+        try DirectMacAccessStore.setSSHPassword(.init(username: login.username, password: login.password), id: id)
+        #else
+        try write(JSONEncoder().encode(login), id: id, kind: "login")
+        #endif
+    }
     static func hostKey(_ id: UUID) throws -> String? {
         guard let data = try read(id, kind: "host-key") else { return nil }
         guard let key = String(data: data, encoding: .utf8), fingerprint(key) != nil else { throw Failure.storage }
@@ -61,8 +71,20 @@ enum TerminalSecretStore {
         let result = SecItemDelete(query(id, kind) as CFDictionary)
         guard result == errSecSuccess || result == errSecItemNotFound else { throw Failure.storage }
     }
-    static func forgetLogin(_ id: UUID) throws { try remove(id, kind: "login") }
-    static func forgetHostKey(_ id: UUID) throws { try remove(id, kind: "host-key") }
+    @MainActor static func forgetLogin(_ id: UUID) throws {
+        #if os(iOS)
+        try DirectMacAccessStore.setSSHPassword(nil, id: id)
+        #else
+        try remove(id, kind: "login")
+        #endif
+    }
+    static func removeLegacyLogin(_ id: UUID) throws { try remove(id, kind: "login") }
+    @MainActor static func forgetHostKey(_ id: UUID) throws {
+        #if os(iOS)
+        guard !DirectMacConnections.shared.isActive(id) else { throw DirectMacAccessStore.Failure.busy }
+        #endif
+        try remove(id, kind: "host-key")
+    }
     @MainActor static func sshKey(_ id: UUID) throws -> TerminalSSHKey? {
         try TerminalKeyLibraryStore.selected(id)?.key
     }
@@ -77,7 +99,16 @@ enum TerminalSecretStore {
         try MacSSHKeyFileStore.forgetSelection(id)
         #endif
     }
-    @MainActor static func remove(_ id: UUID) throws { try forgetLogin(id); try forgetHostKey(id); try forgetKey(id) }
+    @MainActor static func remove(_ id: UUID) throws {
+        #if os(iOS)
+        // Mac removal has its own persisted-library invalidation; it is not an
+        // editable login change. Preserve shared private keys.
+        try DirectMacAccessStore.write(.init(), id: id)
+        try remove(id, kind: "host-key"); try removeLegacyLogin(id); try removeLegacyKey(id)
+        #else
+        try forgetLogin(id); try forgetHostKey(id); try forgetKey(id)
+        #endif
+    }
     enum Failure: Error { case storage, locked, changedKey, rejectedKey, network }
 }
 #endif

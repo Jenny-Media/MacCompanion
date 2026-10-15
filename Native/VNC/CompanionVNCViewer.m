@@ -23,7 +23,7 @@
 }
 @end
 
-@interface CompanionVNCViewer () <UIScrollViewDelegate, UITextViewDelegate>
+@interface CompanionVNCViewer () <UIScrollViewDelegate, UITextViewDelegate, UIGestureRecognizerDelegate>
 
 @property UITextField *host, *username, *password;
 @property UIViewController *recoveryController;
@@ -69,7 +69,11 @@
 @property CAShapeLayer *fallbackCursor;
 @property UIImage *remoteCursorImage;
 @property CGPoint cursorPosition, cursorHotspot;
-@property BOOL cursorPositionKnown;
+@property BOOL cursorPositionKnown, hostCursorPositionKnown, localAimPinned;
+@property CGPoint hostCursorPosition;
+@property NSMutableOrderedSet<NSValue *> *localPointerTargets;
+@property NSUInteger hostPositionsAdopted, hostPositionsFiltered;
+@property NSTimeInterval lastLocalPointerInputAt;
 @property BOOL cursorFollowingSuspended;
 @property CompanionRemoteTextInput *input;
 @property NSLayoutConstraint *toolbarBottom, *canvasToolbarBottom, *canvasFullscreenBottom;
@@ -78,6 +82,7 @@
 @property UILabel *trackpadHelp;
 @property CompanionVNCTrackpadFeedback *trackpadFeedback, *tabletopFeedback;
 @property UIGestureRecognizer *click;
+@property UITapGestureRecognizer *secondaryTap, *smartTap, *tabletopSecondaryTap;
 @property UIPanGestureRecognizer *drag, *remoteScroll;
 @property UIPinchGestureRecognizer *remotePinch;
 @property BOOL magnificationActive;
@@ -216,11 +221,7 @@
     self.pan = [self button:@"Pointer" action:@selector(chooseInputMode)];
     self.controls = [CompanionVNCControls new]; self.controls.translatesAutoresizingMaskIntoConstraints = NO;
     self.controls.macName = self.macName ?: @"Mac";
-    self.controls.quickActions = self.quickActions ?: @[
-        @{@"kind": @"mode", @"title": @"Mouse Mode", @"enabled": @YES},
-        @{@"kind": @"copyText", @"title": @"Copy Text", @"symbol": @"text.viewfinder", @"enabled": @YES},
-        @{@"kind": @"fit", @"title": @"Fit to Window", @"enabled": @YES},
-        @{@"kind": @"rightClick", @"title": @"Right Click", @"enabled": @YES}];
+    self.controls.quickActions = self.quickActions ?: [DirectConnectionBridge defaultQuickActionsForInputOnly:self.inputOnly];
     self.controls.actionHandler = ^(NSDictionary *action) { [weak performControlAction:action]; };
     self.controls.customizeHandler = ^{ if (weak.settingsHandler) weak.settingsHandler(); };
     self.controls.openingHandler = ^{
@@ -268,9 +269,16 @@
     self.remotePinch = [[UIPinchGestureRecognizer alloc] initWithTarget:self action:@selector(pinchRemote:)];
     self.remotePinch.enabled = self.inputOnly;
     [self.canvas addGestureRecognizer:self.remotePinch];
-    UITapGestureRecognizer *smart = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(smartZoom:)];
-    smart.numberOfTapsRequired = 2; smart.numberOfTouchesRequired = 2;
-    [self.canvas addGestureRecognizer:smart];
+    self.smartTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(smartZoom:)];
+    self.smartTap.numberOfTapsRequired = 2; self.smartTap.numberOfTouchesRequired = 2;
+    self.smartTap.enabled = !self.inputOnly;
+    [self.canvas addGestureRecognizer:self.smartTap];
+    self.secondaryTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(secondaryClickAt:)];
+    self.secondaryTap.numberOfTouchesRequired = 2;
+    // Preserve Desktop's existing double-tap zoom. Input-only has no image
+    // zoom, so its secondary tap need not wait for another tap.
+    self.secondaryTap.delegate = self;
+    [self.canvas addGestureRecognizer:self.secondaryTap];
     self.canvas.panGestureRecognizer.minimumNumberOfTouches = 2;
     self.host = [self field:@"Paired Mac"]; self.host.hidden = YES;
     self.host.keyboardType = UIKeyboardTypeASCIICapable;
@@ -356,6 +364,11 @@
     self.loginDetailsText.adjustsFontForContentSizeCategory = YES;
     self.loginDetailsText.textColor = UIColor.secondaryLabelColor; self.loginDetailsText.hidden = YES;
     self.login = [[UIStackView alloc] initWithArrangedSubviews:@[self.loginIntro, self.progressRow, self.loginFields, actions, self.loginDetails, self.loginDetailsText]];
+    if (self.accessHandler) {
+        UIButton *access = [self button:@"Login & Access" action:@selector(showAccessSettings)];
+        access.accessibilityIdentifier = @"mac-login-access";
+        [self.login insertArrangedSubview:access atIndex:4];
+    }
     self.login.axis = UILayoutConstraintAxisVertical; self.login.spacing = 18;
     self.login.layoutMargins = UIEdgeInsetsMake(22, 22, 22, 22); self.login.layoutMarginsRelativeArrangement = YES;
     [DirectConnectionBridge styleCard:self.login];
@@ -464,7 +477,8 @@
     self.password.text = self.savedPassword ?: @"";
     self.remember.on = self.password.text.length > 0;
     self.savedPassword = nil;
-    self.trackpadHelp = [UILabel new]; self.trackpadHelp.text = @"Trackpad & Keyboard\nSlide to move · Tap to click\nHold to drag · Two fingers to scroll";
+    [self refreshAccessEditing];
+    self.trackpadHelp = [UILabel new]; self.trackpadHelp.text = @"Trackpad & Keyboard\nSlide to move · Tap to click\nHold to drag · Two fingers to scroll\nTwo-finger tap to right-click";
     self.trackpadHelp.numberOfLines = 0; self.trackpadHelp.textAlignment = NSTextAlignmentCenter;
     self.trackpadHelp.textColor = UIColor.secondaryLabelColor; self.trackpadHelp.userInteractionEnabled = NO;
     self.trackpadHelp.translatesAutoresizingMaskIntoConstraints = NO; [self.view insertSubview:self.trackpadHelp aboveSubview:self.canvas];
@@ -591,7 +605,19 @@
     return [lines componentsJoinedByString:@"\n"];
 }
 - (void)loginEdited { [self clearRecovery]; self.progressLabel.text = @""; [self updateConnectionChrome]; }
-- (void)showMacs { [self stopViewer]; if (self.macsHandler) self.macsHandler(); }
+- (void)showMacs {
+    if (self.requestExitHandler && self.requestExitHandler()) return;
+    [self stopViewer]; if (self.macsHandler) self.macsHandler();
+}
+- (void)showAccessSettings { if (self.accessHandler) self.accessHandler(); }
+- (void)refreshAccessEditing {
+    BOOL allowed = !self.accessEditingAllowed || self.accessEditingAllowed();
+    self.username.enabled = allowed; self.password.enabled = allowed; self.remember.enabled = allowed;
+}
+- (void)reloadAccessUsername:(NSString *)username password:(NSString *)password {
+    self.username.text = username; self.password.text = password; self.remember.on = password.length > 0;
+    [self loginEdited]; [self refreshAccessEditing];
+}
 - (void)stopViewer {
     self.status.hidden = YES; [self updateStatusPresentation];
     [self invalidateTextReview:NO]; self.textReviewViewportPending=NO;
@@ -766,7 +792,7 @@
         self.awaitingReplacementLayout = YES; self.pendingRestorationFrame = frame; return;
     }
     BOOL resized = !CGSizeEqualToSize(self.framebufferSize, pixels);
-    if (resized) { [self releasePointer]; self.zoomGeneration++; self.smartZoomed = NO; self.smartZoomPending = NO; [self invalidateCursorPosition]; }
+    if (resized) { [self.localPointerTargets removeAllObjects]; [self releasePointer]; self.zoomGeneration++; self.smartZoomed = NO; self.smartZoomPending = NO; [self invalidateCursorPosition]; }
     self.framebufferSize = pixels; self.lastFramebuffer = frame;
     if (resized || restoring) [self updateDisplayPicker];
     if (restoring) [self restoreViewport];
@@ -811,6 +837,10 @@
         self.status.text = @"Display layout changed. Showing all displays.";
     }
     BOOL changed = !CGRectEqualToRect(crop, self.activeCrop); self.activeCrop = crop;
+    if (changed) [self.localPointerTargets removeAllObjects];
+    if (!self.cursorPositionKnown || ((self.trackpadMode || self.tabletop) && !CGRectContainsPoint(crop,self.cursorPosition))) {
+        self.cursorPosition = CGPointMake(CGRectGetMidX(crop),CGRectGetMidY(crop)); self.cursorPositionKnown = YES;
+    }
     if (changed) { self.keyboardViewportSaved = NO; self.keyboardLayoutPending = NO; }
     CGImageRef image = CGImageCreateWithImageInRect(self.lastFramebuffer.CGImage, crop);
     self.image.image = image ? [UIImage imageWithCGImage:image] : nil;
@@ -1002,7 +1032,7 @@
     self.tabletopPad.accessibilityIdentifier = @"tabletop-trackpad";
     [self.view insertSubview:self.tabletopPad belowSubview:self.controls];
     self.tabletopLabel = [UILabel new]; self.tabletopLabel.numberOfLines = 0; self.tabletopLabel.textAlignment = NSTextAlignmentCenter;
-    self.tabletopLabel.text = @"Trackpad\nTap to click · Hold to drag\nTwo fingers to scroll";
+    self.tabletopLabel.text = @"Trackpad\nTap to click · Hold to drag\nTwo fingers to scroll · Tap with two to right-click";
     self.tabletopLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody]; self.tabletopLabel.adjustsFontForContentSizeCategory = YES;
     self.tabletopLabel.textColor = UIColor.secondaryLabelColor; [self.tabletopPad addSubview:self.tabletopLabel];
     CompanionVNCTapGesture *tap = [[CompanionVNCTapGesture alloc] initWithTarget:self action:@selector(clickAt:)];
@@ -1011,7 +1041,9 @@
     [pan requireGestureRecognizerToFail:hold]; [pan requireGestureRecognizerToFail:tap];
     UIPanGestureRecognizer *scroll = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(scrollRemote:)];
     scroll.minimumNumberOfTouches = 2; scroll.maximumNumberOfTouches = 2;
-    self.tabletopGestures = @[tap, pan, hold, scroll];
+    self.tabletopSecondaryTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(secondaryClickAt:)];
+    self.tabletopSecondaryTap.numberOfTouchesRequired = 2;
+    self.tabletopGestures = @[tap, pan, hold, scroll, self.tabletopSecondaryTap];
     for (UIGestureRecognizer *gesture in self.tabletopGestures) [self.tabletopPad addGestureRecognizer:gesture];
 }
 - (void)prepareTrackpadFeedback {
@@ -1034,9 +1066,17 @@
                 && viewer.login.hidden && !viewer.recoveryController && !viewer.presentedViewController;
         };
     }
+    self.trackpadFeedback.touchActivityChanged = self.tabletopFeedback.touchActivityChanged = ^{
+        CompanionVNCViewer *viewer = weak;
+        if ((viewer.trackpadFeedback.hasTouches || viewer.tabletopFeedback.hasTouches)
+            && (viewer.trackpadMode || !viewer.tabletopPad.hidden) && !CGRectIsEmpty(viewer.activeCrop) && !CGRectIsNull(viewer.activeCrop)) {
+            [viewer recordLocalPointer:[viewer trackpadPointer]];
+        }
+        [viewer updateCursor];
+    };
     [self updateTrackpadFeedback];
 }
-- (void)setShowsTouchPoints:(BOOL)value { _showsTouchPoints = value; [self updateTrackpadFeedback]; }
+- (void)setShowsTouchPoints:(BOOL)value { _showsTouchPoints = value; [self updateTrackpadFeedback]; if (self.isViewLoaded) [self updateCursor]; }
 - (void)setTrackpadHapticsEnabled:(BOOL)value { _trackpadHapticsEnabled = value; [self updateTrackpadFeedback]; }
 - (void)updateTrackpadFeedback {
     BOOL ready = self.foreground && !self.exited && !self.inputInactive && !self.restoreViewportPending && !self.checkingResume && self.session.connected
@@ -1045,15 +1085,17 @@
     self.tabletopFeedback.showsTouchPoints = self.showsTouchPoints;
     self.trackpadFeedback.hapticsEnabled = self.trackpadHapticsEnabled;
     self.tabletopFeedback.hapticsEnabled = self.trackpadHapticsEnabled;
-    self.trackpadFeedback.active = ready && self.trackpadMode && !self.canvas.hidden;
+    // Pointer uses the same passive finger feedback at the touched location.
+    // Video-free input remains a trackpad even if a direct caller changes mode.
+    self.trackpadFeedback.active = ready && (self.trackpadMode || !self.inputOnly) && !self.canvas.hidden;
     self.tabletopFeedback.active = ready && !self.tabletopPad.hidden;
 }
 - (void)cancelTrackpadTouches { [self.trackpadFeedback cancelTouches]; [self.tabletopFeedback cancelTouches]; }
 - (CompanionVNCTrackpadFeedback *)feedbackForGesture:(UIGestureRecognizer *)gesture {
-    return gesture.view == self.tabletopPad ? self.tabletopFeedback : (self.trackpadMode ? self.trackpadFeedback : nil);
+    return gesture.view == self.tabletopPad ? self.tabletopFeedback : self.trackpadFeedback;
 }
 - (void)presentViewController:(UIViewController *)controller animated:(BOOL)animated completion:(void (^)(void))completion {
-    [self cancelTrackpadTouches]; [super presentViewController:controller animated:animated completion:completion];
+    [self cancelPendingTaps]; [self cancelTrackpadTouches]; [super presentViewController:controller animated:animated completion:completion];
 }
 - (void)chooseView {
     if (self.restoreViewportPending) return;
@@ -1100,6 +1142,7 @@
     self.remoteScroll.enabled = enabled;
     self.canvas.panGestureRecognizer.minimumNumberOfTouches = enabled ? 3 : 2;
     [self.pan setTitle:enabled ? @"Trackpad ▾" : @"Pointer ▾" forState:UIControlStateNormal];
+    [self updateCursor];
 }
 - (CGPoint)trackpadPointer {
     CGPoint p = self.cursorPositionKnown ? self.cursorPosition : CGPointMake(CGRectGetMidX(self.activeCrop), CGRectGetMidY(self.activeCrop));
@@ -1108,7 +1151,8 @@
     return p;
 }
 - (BOOL)pointerForGesture:(UIGestureRecognizer *)gesture point:(CGPoint *)p {
-    if (CGRectIsNull(self.activeCrop) || CGRectIsEmpty(self.activeCrop)) return NO;
+    if (CGRectIsNull(self.activeCrop) || CGRectIsEmpty(self.activeCrop)) { self.session.localPointerInteractionActive = NO; return NO; }
+    self.session.localPointerInteractionActive = gesture.state == UIGestureRecognizerStateBegan || gesture.state == UIGestureRecognizerStateChanged;
     if (!self.trackpadMode && gesture.view != self.tabletopPad) return CompanionVNCPointerPoint(self.activeCrop, [gesture locationInView:self.image], self.pointerHeld, p);
     if (gesture.state == UIGestureRecognizerStateBegan) {
         self.trackpadOrigin = [self trackpadPointer]; self.trackpadTranslation = CGPointZero;
@@ -1136,11 +1180,20 @@
     if (valid) self.trackpadOrigin = *p;
     return valid;
 }
-- (void)clickAt:(UIGestureRecognizer *)gesture {
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldRequireFailureOfGestureRecognizer:(UIGestureRecognizer *)other {
+    return gesture == self.secondaryTap && other == self.smartTap && !self.inputOnly;
+}
+- (void)clickAt:(UIGestureRecognizer *)gesture { [self clickAt:gesture mask:1]; }
+- (void)secondaryClickAt:(UITapGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateRecognized || self.textReview || self.presentedViewController
+        || self.recoveryController || !self.login.hidden) return;
+    [self clickAt:gesture mask:4];
+}
+- (void)clickAt:(UIGestureRecognizer *)gesture mask:(NSInteger)mask {
     CGPoint p;
     if (self.trackpadMode || gesture.view == self.tabletopPad) { if (CGRectIsNull(self.activeCrop) || CGRectIsEmpty(self.activeCrop)) return; p = [self trackpadPointer]; }
     else if (!CompanionVNCPointerPoint(self.activeCrop, [gesture locationInView:self.image], false, &p)) return;
-    if ([self clickPointer:p mask:1]) {
+    if ([self clickPointer:p mask:mask]) {
         CompanionVNCTrackpadFeedback *feedback = [self feedbackForGesture:gesture];
         [feedback clickAtPoint:[gesture locationInView:feedback]];
     }
@@ -1149,7 +1202,7 @@
     if (!self.foreground || self.exited || self.inputInactive || self.restoreViewportPending || self.checkingResume || ![self.session tryClickX:p.x y:p.y mask:mask]) {
         self.status.hidden = NO; self.status.text = @"Click not sent. Wait for your Mac to resume."; [self updateStatusPresentation]; return NO;
     }
-    self.cursorPosition = p; self.cursorPositionKnown = YES; [self updateCursor];
+    [self recordLocalPointer:p]; [self updateCursor]; [self pulseCursor];
     return YES;
 }
 - (void)dragAt:(UIPanGestureRecognizer *)gesture {
@@ -1239,7 +1292,7 @@
 - (void)sendPointer:(CGPoint)point mask:(NSInteger)mask {
     if (!self.foreground || self.exited || self.inputInactive || self.restoreViewportPending || self.checkingResume) return;
     if (!self.session.connected) return;
-    self.cursorPosition = point; self.cursorPositionKnown = YES; [self updateCursor];
+    [self recordLocalPointer:point]; [self updateCursor];
     [self.session pointerX:point.x y:point.y mask:mask];
 }
 - (void)followTrackpadPointer:(CGPoint)point {
@@ -1261,8 +1314,11 @@
 }
 - (NSDictionary *)cursorDiagnosticFlags {
     return @{@"hostShapeAvailable": @(self.remoteCursorImage != nil), @"positionKnown": @(self.cursorPositionKnown),
-        @"indicatorShown": @(!self.cursorIndicator.hidden),
-        @"usesFallback": @(!self.cursorIndicator.hidden && self.remoteCursorImage == nil),
+        @"hostPositionKnown": @(self.hostCursorPositionKnown), @"localAimPinned": @(self.localAimPinned),
+        @"singlePersistentCursor": @YES, @"localControlActive": @([self localPointerContactActive]),
+        @"hostPositionsAdopted": @(self.hostPositionsAdopted), @"hostPositionsFiltered": @(self.hostPositionsFiltered),
+        @"indicatorShown": @(!self.cursorIndicator.hidden && !self.cursorOverlay.hidden),
+        @"usesFallback": @(!self.cursorIndicator.hidden && !self.cursorOverlay.hidden && self.remoteCursorImage == nil),
         @"foreground": @(self.foreground), @"inputInactive": @(self.inputInactive),
         @"checkingResume": @(self.checkingResume), @"restoringViewport": @(self.restoreViewportPending)};
 }
@@ -1284,35 +1340,95 @@
     });
 }
 - (void)invalidateCursorPosition {
-    self.cursorPositionKnown = NO; [self updateCursor];
+    self.hostCursorPositionKnown = NO; [self updateCursor];
 }
 - (void)clearCursor {
-    self.cursorPositionKnown = NO; self.remoteCursorImage = nil; self.cursorHotspot = CGPointZero;
+    self.cursorPositionKnown = NO; self.hostCursorPositionKnown = NO; self.localAimPinned = NO;
+    [self.localPointerTargets removeAllObjects]; self.hostPositionsAdopted = 0; self.hostPositionsFiltered = 0; self.lastLocalPointerInputAt = 0;
+    self.remoteCursorImage = nil; self.cursorHotspot = CGPointZero;
     [self updateCursor];
+}
+// Wire coordinates are integral. Retain only bounded, ephemeral replay targets;
+// neither these coordinates nor their history enter diagnostics or persistence.
+- (NSValue *)pointerTargetKey:(CGPoint)point {
+    return [NSValue valueWithCGPoint:CGPointMake((NSInteger)point.x,(NSInteger)point.y)];
+}
+- (void)rememberPointerTarget:(CGPoint)point {
+    if (!isfinite(point.x) || !isfinite(point.y)) return;
+    if (!self.localPointerTargets) self.localPointerTargets = [NSMutableOrderedSet new];
+    NSValue *key = [self pointerTargetKey:point];
+    [self.localPointerTargets removeObject:key]; [self.localPointerTargets addObject:key];
+    if (self.localPointerTargets.count > 512) [self.localPointerTargets removeObjectAtIndex:0];
+}
+- (void)recordLocalPointer:(CGPoint)point {
+    self.lastLocalPointerInputAt = NSProcessInfo.processInfo.systemUptime;
+    if (self.cursorPositionKnown) [self rememberPointerTarget:self.cursorPosition];
+    [self rememberPointerTarget:point];
+    self.cursorPosition = point; self.cursorPositionKnown = YES; self.localAimPinned = YES;
+}
+- (BOOL)localPointerContactActive {
+    return self.trackpadFeedback.hasTouches || self.tabletopFeedback.hasTouches
+        || self.session.localPointerInteractionActive || self.pointerHeld;
 }
 - (void)receivedCursor:(UIImage *)image hotspot:(CGPoint)hotspot position:(CGPoint)position known:(BOOL)known {
     self.remoteCursorImage = image; self.cursorHotspot = hotspot;
-    if (known) { self.cursorPosition = position; self.cursorPositionKnown = YES; }
+    if (known) {
+        self.hostCursorPosition = position; self.hostCursorPositionKnown = YES;
+        BOOL echo = self.cursorPositionKnown && ![[self pointerTargetKey:position] isEqual:[self pointerTargetKey:self.cursorPosition]]
+            && [self.localPointerTargets containsObject:[self pointerTargetKey:position]];
+        BOOL ready = self.foreground && !self.exited && !self.inputInactive && !self.checkingResume
+            && !self.restoreViewportPending && self.login.hidden && !self.recoveryController
+            && !self.presentedViewController && !self.textReview;
+        BOOL settled = self.lastLocalPointerInputAt <= 0 || NSProcessInfo.processInfo.systemUptime - self.lastLocalPointerInputAt >= .2;
+        BOOL inView = !(self.trackpadMode || self.tabletop) || CGRectContainsPoint(self.activeCrop,position);
+        BOOL seed = !self.localAimPinned && (!self.login.hidden || !self.lastFramebuffer)
+            && self.foreground && !self.exited && !self.inputInactive;
+        if (![self localPointerContactActive] && (seed || (ready && settled && inView && !echo))) {
+            // One source of truth: rendering and the next click change together.
+            // This is an observation heuristic, never an input acknowledgement.
+            self.cursorPosition = position; self.cursorPositionKnown = YES; self.hostPositionsAdopted++;
+        } else self.hostPositionsFiltered++;
+    }
     [self updateCursor]; [self scheduleCursorDiagnostics];
 }
 - (void)updateCursor {
+    BOOL ready = self.foreground && !self.exited && !self.inputInactive && !self.checkingResume
+        && !self.restoreViewportPending && !self.inputOnly && self.login.hidden && !self.recoveryController && self.image.image;
     CGPoint local = CGPointZero;
-    if (!self.foreground || self.inputInactive || self.checkingResume || self.restoreViewportPending || !self.cursorPositionKnown || !self.image.image || !CompanionVNCCursorLocalPoint(self.activeCrop, self.cursorPosition, &local)) {
-        self.cursorIndicator.hidden = YES; [self updateCursorDiagnostics]; return;
+    CGPoint position = self.cursorPosition;
+    BOOL known = self.cursorPositionKnown;
+    if (!ready || !known || !CompanionVNCCursorLocalPoint(self.activeCrop,position,&local)) {
+        self.cursorIndicator.hidden = YES; [self.cursorIndicator.layer removeAllAnimations]; [self updateCursorDiagnostics]; return;
     }
     CGPoint anchor = [self.image convertPoint:local toView:self.cursorOverlay];
     UIImage *shape = self.remoteCursorImage;
-    CGRect bounds = CompanionVNCCursorScreenRect(anchor, shape ? shape.size : CGSizeMake(20, 28),
-        shape ? self.cursorHotspot : CGPointMake(1, 1), shape ? self.canvas.zoomScale : 1);
-    self.cursorIndicator.hidden = CGRectIsNull(bounds) || !CGRectContainsPoint(self.cursorOverlay.bounds, anchor);
+    CGRect bounds = CompanionVNCCursorScreenRect(anchor, shape ? shape.size : CGSizeMake(20,28),
+        shape ? self.cursorHotspot : CGPointMake(1,1), shape ? self.canvas.zoomScale : 1);
+    self.cursorIndicator.hidden = CGRectIsNull(bounds) || !CGRectContainsPoint(self.cursorOverlay.bounds,anchor);
     if (self.cursorIndicator.hidden) { [self updateCursorDiagnostics]; return; }
+    self.cursorIndicator.alpha = 1;
     self.cursorIndicator.frame = bounds; self.cursorImage.frame = self.cursorIndicator.bounds;
     self.cursorImage.image = shape; self.cursorImage.hidden = shape == nil; self.fallbackCursor.hidden = shape != nil;
     [CATransaction begin]; [CATransaction setDisableActions:YES];
     self.fallbackCursor.frame = self.cursorIndicator.bounds; [CATransaction commit];
     [self updateCursorDiagnostics];
 }
+- (void)pulseCursor {
+    if (self.cursorIndicator.hidden || !self.showsTouchPoints || UIAccessibilityIsReduceMotionEnabled()) return;
+    CABasicAnimation *pulse = [CABasicAnimation animationWithKeyPath:@"opacity"];
+    pulse.fromValue = @.5; pulse.toValue = @1; pulse.duration = .18;
+    [self.cursorIndicator.layer addAnimation:pulse forKey:@"local-click"];
+}
+- (void)cancelTapRecognizer:(UIGestureRecognizer *)recognizer {
+    BOOL enabled = recognizer.enabled; recognizer.enabled = NO; recognizer.enabled = enabled;
+}
+- (void)cancelPendingTaps {
+    [self cancelTapRecognizer:self.secondaryTap]; [self cancelTapRecognizer:self.smartTap];
+    [self cancelTapRecognizer:self.tabletopSecondaryTap];
+}
 - (void)releasePointer {
+    self.session.localPointerInteractionActive = NO;
+    [self cancelPendingTaps];
     [self.trackpadFeedback setDragging:NO]; [self.tabletopFeedback setDragging:NO];
     [self.session cancelNativeGestures]; self.magnificationActive = NO;
     self.scrollingActive = NO; self.scrollUsesNative = NO; self.scrollGestureActive = NO; self.scrollRemainder = 0; self.scrollFraction = CGPointZero;
@@ -1432,15 +1548,16 @@
 }
 - (void)showGestureHelp {
     NSString *gestures = self.inputOnly
-        ? [@"Slide anywhere to move the cursor. Tap to click. Hold, then move to drag. Scroll with two fingers.\n\n" stringByAppendingString:self.session.nativeMagnificationSupported ? @"Pinch to zoom the app on your Mac at the cursor." : @"Native pinch is unavailable for this connection."]
-        : @"Pointer: tap where you want to click.\nTrackpad: slide anywhere to move the cursor; scroll with two fingers.\n\nTap to click. Hold, then move to drag.\nPan the zoomed view with two fingers in Pointer or three in Trackpad.\nPinch to zoom the desktop image. Double tap with two fingers to zoom in or fit.";
+        ? [@"Slide anywhere to move the cursor. Tap to click. Hold, then move to drag. Scroll with two fingers; tap with two to right-click.\n\n" stringByAppendingString:self.session.nativeMagnificationSupported ? @"Pinch to zoom the app on your Mac at the cursor." : @"Native pinch is unavailable for this connection."]
+        : @"Pointer: tap where you want to click.\nTrackpad: slide anywhere to move the cursor; scroll with two fingers.\n\nTap to click. Hold, then move to drag. Tap with two fingers to right-click.\nPan the zoomed view with two fingers in Pointer or three in Trackpad.\nPinch to zoom the desktop image. Double tap with two fingers to zoom in or fit.";
     NSString *message = [gestures stringByAppendingString:@"\n\nHold Session Controls, slide onto a quick action or category, then release. Slide away to cancel."];
     UIAlertController *help = [UIAlertController alertControllerWithTitle:@"Gestures" message:message preferredStyle:UIAlertControllerStyleAlert];
     [help addAction:[UIAlertAction actionWithTitle:@"Done" style:UIAlertActionStyleCancel handler:nil]];
     [self presentViewController:help animated:YES completion:nil];
 }
 - (void)setQuickActions:(NSArray<NSDictionary *> *)quickActions {
-    _quickActions = [quickActions copy]; self.controls.quickActions = quickActions;
+    _quickActions = [quickActions copy];
+    self.controls.quickActions = quickActions ?: [DirectConnectionBridge defaultQuickActionsForInputOnly:self.inputOnly];
 }
 - (void)updateConnectionChrome {
     self.loginSubtitle.text = self.inputOnly ? @"Trackpad & Keyboard" : @"Desktop";
@@ -1505,6 +1622,7 @@
     if (_inputOnly != value) { [self retireTextDraft]; self.textComposer = nil; }
     _inputOnly = value;
     if (self.quickActionsProvider) self.quickActions = self.quickActionsProvider(value);
+    else if (!self.quickActions) self.controls.quickActions = [DirectConnectionBridge defaultQuickActionsForInputOnly:value];
     if (self.isViewLoaded) {
         [self releasePointer]; [self cancelTrackpadTouches]; [self resetModifiers];
         if (self.session.established) self.session.inputOnly = value;
@@ -1519,7 +1637,7 @@
     self.canvasToolbarBottom.active = !self.tabletop && !self.fullscreen; self.canvasFullscreenBottom.active = !self.tabletop && self.fullscreen;
     self.image.hidden = self.inputOnly; self.cursorOverlay.hidden = self.inputOnly;
     self.canvas.pinchGestureRecognizer.enabled = !self.inputOnly;
-    self.remotePinch.enabled = self.inputOnly;
+    self.remotePinch.enabled = self.inputOnly; self.smartTap.enabled = !self.inputOnly;
     self.canvas.backgroundColor = self.inputOnly ? UIColor.systemBackgroundColor : UIColor.blackColor;
     self.trackpadHelp.hidden = !self.inputOnly || !self.login.hidden;
     self.controls.fullscreen = self.fullscreen; self.controls.inputOnly = self.inputOnly;
@@ -1668,10 +1786,11 @@
             @{@"kind": @"inputOnly", @"title": self.inputOnly ? @"Show Desktop" : @"Trackpad & Keyboard Only", @"symbol": self.inputOnly ? @"desktopcomputer" : @"rectangle.and.hand.point.up.left", @"subtitle": self.inputOnly ? @"Resume desktop video" : @"Control your Mac without video", @"disabled": @(self.restoreViewportPending)}]}]];
 }
 - (void)showInputMenu {
+    NSArray *mouseItems = @[
+        @{@"kind": @"setPointer", @"title": @"Pointer", @"symbol": @"cursorarrow", @"selected": @(!self.trackpadMode), @"disabled": @(self.inputOnly)},
+        @{@"kind": @"setTrackpad", @"title": @"Trackpad", @"symbol": @"cursorarrow.motionlines", @"selected": @(self.trackpadMode)}];
     [self presentMenu:@"Keyboard & Input" sections:@[
-        @{@"title": @"Mouse Mode", @"items": @[
-            @{@"kind": @"setPointer", @"title": @"Pointer", @"symbol": @"cursorarrow", @"selected": @(!self.trackpadMode), @"disabled": @(self.inputOnly)},
-            @{@"kind": @"setTrackpad", @"title": @"Trackpad", @"symbol": @"cursorarrow.motionlines", @"selected": @(self.trackpadMode)}]},
+        @{@"title": @"Mouse Mode", @"items": mouseItems},
         @{@"title": @"Keyboard", @"items": @[
             @{@"kind": @"composeText", @"title": @"Compose Text", @"symbol": @"square.and.pencil", @"disabled": @(![self composedTextAvailable])},
             @{@"kind": @"keyboard", @"title": self.input.isFirstResponder ? @"Hide Keyboard" : @"Show Keyboard", @"symbol": self.input.isFirstResponder ? @"keyboard.chevron.compact.down" : @"keyboard"},

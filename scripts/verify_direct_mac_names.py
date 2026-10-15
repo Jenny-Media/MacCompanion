@@ -236,7 +236,7 @@ protocol NetServiceDelegate: AnyObject {}
     func stopMonitoring() {}
     static func dictionary(fromTXTRecord data: Data) -> [String: Data] { Foundation.NetService.dictionary(fromTXTRecord: data) }
 }
-enum DesktopCredentialStoreV1 { static func remove(_ id: UUID) throws {} }
+enum DesktopCredentialStoreV1 { static func remove(_ id: UUID) throws {}; static func removeForMacRemoval(_ id: UUID) throws {} }
 enum TerminalSecretStore { static func remove(_ id: UUID) throws {} }
 enum VNCSessionPreferences { static func clear(_ id: UUID) {} }
 enum DirectCloudError: Error { case invalid }

@@ -3,6 +3,17 @@ import LocalAuthentication
 import SwiftUI
 
 #if os(iOS)
+/// Keep discovery's refresh environment inside the list. Presentations attached
+/// by callers must not inherit a network scan as their own refresh action.
+struct DirectMacDiscoveryList<Rows: View>: View {
+    let refresh: @Sendable () async -> Void
+    let rows: Rows
+    init(refresh: @escaping @Sendable () async -> Void, @ViewBuilder content: () -> Rows) {
+        self.refresh = refresh; rows = content()
+    }
+    var body: some View { List { rows }.refreshable(action: refresh) }
+}
+
 struct DirectConnectionModePicker: View {
     @Binding var selection: DirectMacConnection
     var body: some View {

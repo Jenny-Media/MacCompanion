@@ -10,6 +10,7 @@
 - (void)clickAt:(UITapGestureRecognizer *)gesture;
 - (void)receivedCursor:(UIImage *)image hotspot:(CGPoint)hotspot position:(CGPoint)position known:(BOOL)known;
 - (void)fitDesktop;
+- (void)updateConnectionChrome;
 - (void)rememberViewport;
 - (void)restoreViewport;
 - (CGPoint)viewportCenter;
@@ -111,6 +112,7 @@
     viewer.view.frame = CGRectMake(0, 0, 440, 956); [viewer.view layoutIfNeeded];
     ViewportSession *session = [ViewportSession new]; session.sent = [NSMutableArray new]; viewer.session = session;
     [viewer frame:[self syntheticFrame:CGSizeMake(800, 600)]];
+    [(UIView *)[viewer valueForKey:@"login"] setHidden:YES];[viewer updateConnectionChrome];
     [viewer receivedCursor:nil hotspot:CGPointZero position:CGPointMake(200, 100) known:YES];
     [viewer setTrackpadModeEnabled:YES];
     ViewportPan *pan = [ViewportPan new]; pan.sampleState = UIGestureRecognizerStateBegan;
@@ -256,6 +258,8 @@
     viewer.displayLayout = @{@"aspectRatio": main[@"aspect"], @"views": @[]};
     [viewer frame:[self syntheticFrame:CGSizeMake([f[0] doubleValue], [f[1] doubleValue])]];
     [viewer selectDisplay:@{@"title": @"Synthetic Display", @"x": n[0], @"y": n[1], @"width": n[2], @"height": n[3]}];
+    // A connected visible desktop, with login completed by the synthetic owner.
+    [(UIView *)[viewer valueForKey:@"login"] setHidden:YES]; [viewer updateConnectionChrome];
     UIImageView *image = [viewer valueForKey:@"image"]; UIView *overlay = [viewer valueForKey:@"cursorOverlay"], *cursor = [viewer valueForKey:@"cursorIndicator"];
     UIScrollView *canvas = [viewer valueForKey:@"canvas"];
     CGPoint point = CGPointMake(1280, 533); CGPoint framebuffer = CGPointMake(2792, 533);
@@ -275,7 +279,17 @@
     XCTAssertTrue(cursor.hidden); // Position lies on the other display.
     [viewer fitDesktop];
     ViewportTap *tap = [ViewportTap new]; tap.sample = point; [viewer clickAt:tap];
-    XCTAssertFalse(cursor.hidden); XCTAssertEqualObjects(session.sent.lastObject, (@[@2792, @533, @0]));
+    XCTAssertEqualObjects(session.sent.lastObject, (@[@2792, @533, @0]));
+    // A local click immediately moves the one visible pointer to its target,
+    // even if the last Mac observation was on another display.
+    XCTAssertFalse(cursor.hidden);
+    XCTAssertTrue(CGPointEqualToPoint([[viewer valueForKey:@"cursorPosition"] CGPointValue],framebuffer));
+    XCTAssertTrue(CGPointEqualToPoint([[viewer valueForKey:@"hostCursorPosition"] CGPointValue],CGPointMake(100,100)));
+    [viewer receivedCursor:shape hotspot:CGPointMake(1,2) position:framebuffer known:YES];
+    XCTAssertFalse(cursor.hidden);
+    anchor = [image convertPoint:point toView:overlay];
+    XCTAssertEqualWithAccuracy(CGRectGetMinX(cursor.frame),anchor.x-1,.001);
+    XCTAssertEqualWithAccuracy(CGRectGetMinY(cursor.frame),anchor.y-2,.001);
     [viewer stopViewer]; XCTAssertTrue(cursor.hidden);
 }
 - (void)testNativeCursorReceiverProducesRGBAAndDropsPresentationAfterStop {

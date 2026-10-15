@@ -45,8 +45,17 @@ RFC 4254 `direct-tcpip` channel to **127.0.0.1** on the saved Screen Sharing por
 or create a local TCP listener. SSH authentication has a cancellable 60-second
 deadline including fingerprint approval; forwarding has a 10-second deadline.
 A socket pair transfers this channel to the existing native RFB owner. Read in
-16-KiB chunks, pause at a 64-KiB write watermark, and close both bridge ends if
-queued bytes exceed 256 KiB. EOF, cancellation and errors close owned descriptors
+16-KiB chunks. Apply backpressure independently in each direction: pause a
+source reader when its own pending writes reach 64 KiB or its destination
+channel is unwritable. Pending writes in the reverse direction must not block
+that reader. Resume the source reader when its own writes complete or its
+destination becomes writable. Close both bridge ends if queued bytes in either
+direction exceed 2 MiB. Configure the Desktop SSH maximum packet size to
+1 MiB; the pinned NIOSSH implementation also uses that value as its incoming
+channel window. The 2-MiB hard relay limit leaves bounded room for a permitted
+packet already in flight when the write watermark is reached. This avoids the
+128-KiB default window limiting bulk desktop delivery on higher-latency links.
+Terminal and Files settings are unchanged. EOF, cancellation and errors close owned descriptors
 and channels without replay. Retire the preceding native owner and tunnel before
 starting another. Native input releases finish before an established tunnel is
 closed; pending handshakes and fingerprint prompts are cancelled immediately.
@@ -840,8 +849,8 @@ identifiers have no semantic meaning. Cache at most 64 images and 4 MiB of pixel
 data per socket owner, evicting the least recently used. Clear the cache on new
 connection and teardown. Cursor metadata must not satisfy framebuffer coverage
 or fabricate a video update. Existing pause, retirement and presentation epochs
-also fence these reports. Keep request-driven framebuffer updates; do not enable
-automatic streaming or change encrypted input to obtain cursor feedback.
+also fence these reports. The live-delivery section below defines automatic
+update arming and incremental requests; encrypted input remains unchanged.
 
 Both generated direct-client builds deliver empty standard cursor reports through
 the exact hash-admitted upstream callback adapter. Standard and Apple reports
@@ -858,3 +867,189 @@ not a valid same-owner shape. Replacement, teardown and explicit empty/unknown
 shape reports clear it. Cursor publication cannot cross a pending resume boundary.
 Content-free report, visible-image, publication and cache-miss counters describe
 wire delivery without claiming context semantics or live host compatibility.
+
+
+## Live Apple cursor delivery
+
+The direct clients request standard XCursor/RichCursor and Apple cached-cursor
+encoding 1104. Decoding a STORE or SELECT is insufficient to keep the server
+sending subsequent changes: the classic Apple framebuffer sender must also be
+armed. On iOS and macOS, the same socket owner may use Apple's automatic-update control only after
+an Apple 3.889 server banner, successful existing ARD authentication and a valid
+version-5 display layout matching the bounded framebuffer. Other servers keep
+ordinary incremental requests. No authentication, banner reply, encryption or
+remote display configuration changes are introduced.
+
+The admitted **classic** control is 16 bytes: opcode 9; three zero reserved bytes;
+a big-endian uint32 update period in microseconds; then big-endian uint16 x, y,
+width and height. Enable uses period 0 and the full current framebuffer;
+disable uses period 0xffffffff and the last subscribed framebuffer. Coordinates
+are zero. Positive dimensions must pass the existing 16384-axis / 96-MiB bounds.
+This period-based classic layout is verified against the macOS server's opcode-9
+reader; do not substitute the separately described high-performance session
+fields. The exact enable/disable byte vectors are in the sole indexed VNC fixture.
+A zero period adds no delay after the last pixel update. The host also gates
+CursorPos delivery on this period; a positive delay can starve host-position
+reports while pixel requests continue completing. Transport backpressure still
+applies. Busy-screen input responsiveness and host-position delivery require
+physical acceptance independently of the byte-vector tests.
+
+Enable after valid layout delivery, renew on every subsequent 1105 layout report
+(including an identical layout at an agent transition), framebuffer allocation
+or foreground resume, and disable before background-pause completion, input-only
+mode or socket retirement. Invalid/unsupported layouts disable this extension.
+These controls are owner-serialized. No timer or additional connection is used.
+Keep LibVNCClient's response-driven incremental requests active alongside Apple's
+automatic delivery. Automatic delivery arms cursor updates but does not replace
+incremental requests on a quiet physical desktop. After a complete update,
+including a cursor-only update, request changes in the full bounded framebuffer;
+never add a polling timer, unbounded request loop, or repeated full refresh.
+Explicit baseline refreshes still write non-incremental requests. Suppress requests
+only while paused or input-only; the empty update rectangle also prevents a late
+capability refresh from requesting pixels in input-only mode. Input-only mode
+never enables automatic desktop delivery.
+The existing baseline/input/presentation epochs remain authoritative, and the
+paused owner sleeps after its bounded release/disable work.
+
+This is a compatibility extension based on the host implementation, not an
+Apple-published API. The current server reader interprets bytes 4–7 as the period
+and enables automatic delivery unless they are 0xffffffff; bytes 2–3 have no
+admitted semantics and remain zero. Independent reverse-engineering also
+documents automatic arming and renewal as necessary for live cursor delivery:
+[iShareScreen cursor and update notes](https://github.com/renegadelink/iShareScreen/blob/main/docs/apple_vnc_rfc.md#83-cursorimage-0x450)
+and [remotex display arming](https://github.com/andrewtheguy/remotex/blob/main/docs/apple-vnc-889.md#the-display-layout).
+Physical shape changes remain an acceptance check separate from synthetic wire,
+pause/resume and presentation tests. Only numeric delivery counters and aggregate local handling/queue durations are
+retained. These durations start when the client handles a server message or
+decodes a cursor; they do not measure the host-to-client latency.
+
+## Input service during desktop reads
+
+After the iOS or macOS direct-client RFB handshake succeeds, the sole socket owner installs a
+per-client read-service callback and places its RFB descriptor in nonblocking
+mode. While a desktop message is incomplete, LibVNCClient services the admitted
+input queue before reading more bytes and between waits, at most 10 milliseconds
+apart while no new bytes arrive. This is cooperative service on the existing
+owner, never a concurrent writer or recursive server-message parser.
+
+Service preserves the existing FIFO, input epoch, held-key/button bookkeeping,
+composed-text cancellation and foreground/review/pause/stop admission checks.
+Pending release, resume or mode changes must return to the outer owner loop
+before new input is serviced. The callback is absent during authentication and
+removed before client cleanup. Failed writes still end the connection. The
+pinned upstream checkout remains pristine; the generated source adapter admits
+only exact recorded header/socket transforms and their patch hashes.
+
+This does not alter authentication, encryption, RFB input bytes, cursor ownership,
+automatic-update pacing or SSH transport settings. Incoming cursor metadata must
+still wait behind earlier bytes in the same ordered stream. Cooperative service
+removes one client-side input wait; it does not prove end-to-end host latency.
+
+## Cursor presentation latency and host movement
+
+The sole receiver MUST drain any bytes already buffered by LibVNCClient before
+waiting for socket readability. The library's socket wait does not consult its
+read buffer; a cursor report read ahead with image bytes must not wait for a
+later network packet. Test a coalesced message batch followed by silence.
+
+On iOS and macOS, publish a decoded cursor shape or position as soon as its
+rectangle has been consumed. Do not wait for the remaining desktop rectangles,
+framebuffer coverage, or frame publication. Coalesce queued main-thread delivery
+to the most recent cursor snapshot of the same socket owner and presentation
+epoch. Pause, resume boundaries, replacement and Stop still retire stale snapshots.
+This removes client-side waiting after a cursor arrives; it cannot bypass earlier
+bytes on the same TCP stream or guarantee host/network latency.
+
+Advertise Apple cursor-position encoding 1100 in addition to standard PointerPos.
+An Apple position rectangle contains framebuffer-pixel x/y in its rectangle
+header and no payload; do not consume a length or pixel bytes. Its width/height
+are zero. Treat it as cursor metadata, never framebuffer coverage or damage.
+Apply in-bounds positions to the existing cursor overlay and preserve its decoded
+shape/hotspot. An out-of-bounds position becomes unknown. Crop and foreground
+presentation rules still apply, and no position is inferred when the host sends
+no report. Indexed vectors are in `vnc-desktop-tunnel-v0.1.json`.
+
+A cursor publication includes a position only when that publication carries a
+new valid position report. A shape-only change must never replay a cached host
+coordinate over a locally predicted pointer. Coalescing a new position with a
+shape preserves that position until delivery, but does not make it fresh twice.
+On iOS, host position following is automatic and has no setting or menu action.
+Render one persistent cursor using the latest actual host shape/hotspot (with an
+arrow fallback until a shape arrives). Its displayed hotspot is also the target
+for the next Trackpad click. Local input moves this cursor immediately and sends
+the same framebuffer coordinates to the Mac. Lifting a finger does not hide the
+cursor or adopt a cached host position. There is no separate local aiming ring.
+
+While any local finger, pointer gesture or held drag is active, host observations
+may update shape but cannot reposition the visible cursor. Position publications
+from a server-message read that began before newer local input are also excluded
+from reconciliation. After 200 ms without local contact/input, adopt newly delivered host positions into both
+the visible cursor and next-click target together, without generating input.
+Discard reports received during that settling interval; never replay them later
+from a timer. This interval is a conservative admission gate, not a freshness
+acknowledgement. Filter differing positions found among the last 512 distinct local input targets
+(including the position at the start of touch). Keep this replay history only in
+memory, and retire it at new-connection or framebuffer-geometry boundaries.
+A shape-only publication must never move the cursor. In indirect mode, host
+positions outside the selected display crop do not replace its visible input
+target. Changing that crop retires replay history and initializes an out-of-crop
+indirect target at the new crop center. Display selection is not changed by host
+movement.
+
+This is conservative automatic reconciliation, not proof of freshness. An old
+report outside the bounded history can look like new host motion; genuine host
+motion to a retained old local target may be suppressed until it moves elsewhere.
+Do not claim that a coordinate match or any timer acknowledges input execution.
+RFB positions carry no host timestamp, origin identifier or input acknowledgement.
+No unverified Fence command, heartbeat input, polling motion, helper or protocol
+change is introduced. macOS position admission remains unchanged.
+
+The single cursor remains visible after finger lift and with touch indicators
+disabled. Direct Pointer retains contact/click feedback; video-free Trackpad &
+Keyboard shows finger feedback without a desktop cursor overlay. Lifecycle and
+presentation epochs still retire obsolete callbacks; review, foreground and
+session readiness continue to gate input. Before any local control, retain an initial valid host observation even while
+sign-in or the first desktop frame is being presented; this does not enable
+input or expose a hidden desktop. A connection with no position report
+may initialize its predicted pointer at the center of the selected crop.
+
+Latency diagnostics may retain bounded numeric aggregates for message wall time,
+worker-thread CPU time, local unread byte counts, frame copying/presentation,
+and SSH relay byte counts/write completion time. Separate post-baseline samples
+from initial desktop loading. CPU time is not network latency; unread bytes do
+not establish report age, and a relay write completion is not a remote input
+acknowledgement. Diagnostics must never retain packet bodies, credentials,
+endpoints, screen pixels, keys, or pointer coordinates. Instrumentation must not
+change update pacing or transport selection. Cursor presentation diagnostics may
+record only booleans distinguishing host-position availability, local aiming,
+foreground/readiness and the selected interaction presentation. They must not
+retain positions, action arguments, text or endpoints, and no successful local
+write is represented as host consumption.
+
+The source implementation documenting this header-only encoding is
+[remotex's Apple protocol receiver](https://github.com/andrewtheguy/remotex/blob/main/src/vnc_apple.rs).
+The 1100 layout is an interoperability extension rather than an Apple-published
+API. Authentication, encryption and remote input packets are unchanged.
+
+## iOS credential management revision, 2026-10-15
+
+The shared local Login & Access profile and active-owner mutation guards in
+[Direct Files](direct-files.md#ios-shared-access-revision-2026-10-15) supersede
+separate saved Desktop/Terminal password management on iOS. Screen Sharing still
+requires its Mac account/password; SSH-key overrides apply to Terminal and its
+Files channel. Desktop-originated Files uses Desktop's authenticated SSH account.
+SSH host-key verification and all ARD/SSH wire authentication remain unchanged.
+
+## iOS cursor interaction feedback, 2026-10-15
+
+Desktop Pointer, Desktop Trackpad, video-free Trackpad & Keyboard and tabletop
+input show local finger indicators using the existing Touch & Haptics settings.
+Pointer uses the touched desktop location; Trackpad keeps its indirect aiming
+position. Touch feedback never prevents or delays the actual recognizers.
+An admitted click pulses once and a held drag strengthens the finger ring.
+These effects acknowledge local gesture/input admission, never remote execution.
+Only a visible remote result confirms that the Mac acted on the input.
+
+Video-free Trackpad & Keyboard shows finger feedback without a desktop cursor
+overlay. Pause, interruption, review, recovery, presentation and mode transitions
+retire current finger feedback. Rejected clicks produce no success pulse/haptic.

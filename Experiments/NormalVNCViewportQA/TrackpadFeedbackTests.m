@@ -36,6 +36,10 @@
 - (void)setTrackpadModeEnabled:(BOOL)enabled;
 - (void)clickAt:(UIGestureRecognizer *)gesture;
 - (void)holdAt:(UILongPressGestureRecognizer *)gesture;
+- (void)frame:(UIImage *)frame;
+- (void)becameInactive;
+- (void)sendPointer:(CGPoint)point mask:(NSInteger)mask;
+- (void)receivedCursor:(UIImage *)image hotspot:(CGPoint)hotspot position:(CGPoint)position known:(BOOL)known;
 @end
 @interface FeedbackConnection : CompanionVNCSession
 @property BOOL acceptsClick;
@@ -54,9 +58,72 @@
 - (CGPoint)locationInView:(UIView *)view { return CGPointMake(100,100); }
 @end
 
+@interface FeedbackDirectTap : UITapGestureRecognizer @end
+@implementation FeedbackDirectTap
+- (CGPoint)locationInView:(UIView *)view { return CGPointMake(20,30); }
+@end
 @interface TrackpadFeedbackTests : XCTestCase
 @end
 @implementation TrackpadFeedbackTests
+- (void)testDirectTouchFeedbackUsesAdmissionAndRetiresAtInteractionBoundaries {
+    CompanionVNCViewer *viewer=[CompanionVNCViewer new];[viewer loadViewIfNeeded];
+    FeedbackConnection *session=[FeedbackConnection new];viewer.session=session;
+    viewer.view.frame=CGRectMake(0,0,440,956);
+    UIImage *image=[[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(200,200)] imageWithActions:^(UIGraphicsImageRendererContext *ctx){
+        [UIColor.systemBlueColor setFill];UIRectFill(CGRectMake(0,0,200,200));
+    }];[viewer frame:image];
+    ((UIView *)[viewer valueForKey:@"login"]).hidden=YES;[viewer updateConnectionChrome];
+    CompanionVNCTrackpadFeedback *feedback=[viewer valueForKey:@"trackpadFeedback"];
+    XCTAssertTrue(feedback.active);XCTAssertFalse(feedback.userInteractionEnabled);
+    FeedbackImpact *click=[FeedbackImpact new];[feedback setValue:click forKey:@"clickFeedback"];
+    FeedbackDirectTap *tap=[FeedbackDirectTap new];[[viewer valueForKey:@"canvas"] addGestureRecognizer:tap];
+    session.acceptsClick=NO;[viewer clickAt:tap];XCTAssertEqual(click.count,0);XCTAssertNil([feedback valueForKey:@"pulse"]);
+    session.acceptsClick=YES;[viewer clickAt:tap];XCTAssertEqual(click.count,1);XCTAssertEqual(session.clicks,1);
+    CAShapeLayer *pulse=[feedback valueForKey:@"pulse"];XCTAssertNotNil(pulse);
+    XCTAssertTrue(CGPointEqualToPoint(pulse.position,CGPointMake(20,30)));
+    viewer.showsTouchPoints=NO;XCTAssertEqual(feedback.layer.sublayers.count,0);
+    [viewer clickAt:tap];XCTAssertEqual(click.count,2);XCTAssertEqual(feedback.layer.sublayers.count,0);
+    viewer.showsTouchPoints=YES;viewer.trackpadHapticsEnabled=NO;
+    [feedback updateTouchPoints:@{@1:[NSValue valueWithCGPoint:CGPointMake(30,40)]}];
+    XCTAssertEqual(((NSDictionary *)[feedback valueForKey:@"rings"]).count,1);
+    [viewer setTrackpadModeEnabled:YES];XCTAssertEqual(feedback.layer.sublayers.count,0);XCTAssertTrue(feedback.active);
+    [viewer setTrackpadModeEnabled:NO];XCTAssertTrue(feedback.active);
+    [feedback updateTouchPoints:@{@1:[NSValue valueWithCGPoint:CGPointMake(30,40)]}];
+    [viewer becameInactive];XCTAssertFalse(feedback.active);XCTAssertEqual(feedback.layer.sublayers.count,0);
+    [viewer stopViewer];
+}
+- (void)testInputOnlyUsesFingerFeedbackWithoutDesktopCursorOverlay {
+    CompanionVNCViewer *viewer=[CompanionVNCViewer new];viewer.inputOnly=YES;[viewer loadViewIfNeeded];
+    viewer.session=[FeedbackConnection new];((UIView *)[viewer valueForKey:@"login"]).hidden=YES;[viewer updateConnectionChrome];
+    XCTAssertTrue(((CompanionVNCTrackpadFeedback *)[viewer valueForKey:@"trackpadFeedback"]).active);
+    XCTAssertTrue(((UIView *)[viewer valueForKey:@"cursorOverlay"]).hidden);
+    [viewer stopViewer];
+}
+- (void)testSingleNativeCursorPersistsAfterLiftAndHostHandoffUpdatesNextClickTarget {
+    CompanionVNCViewer *viewer=[CompanionVNCViewer new];[viewer loadViewIfNeeded];
+    FeedbackConnection *session=[FeedbackConnection new];viewer.session=session;
+    [viewer setTrackpadModeEnabled:YES];viewer.view.frame=CGRectMake(0,0,440,956);
+    UIGraphicsImageRendererFormat *format=[UIGraphicsImageRendererFormat defaultFormat];format.scale=1;
+    UIImage *screen=[[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(600,600) format:format] imageWithActions:^(UIGraphicsImageRendererContext *ctx){}];
+    [viewer frame:screen];((UIView *)[viewer valueForKey:@"login"]).hidden=YES;[viewer updateConnectionChrome];[viewer.view layoutIfNeeded];
+    UIImage *shape=[[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(16,24) format:format] imageWithActions:^(UIGraphicsImageRendererContext *ctx){[UIColor.whiteColor setFill];UIRectFill(CGRectMake(0,0,16,24));}];
+    [viewer receivedCursor:shape hotspot:CGPointZero position:CGPointMake(75,60) known:YES];
+    CompanionVNCTrackpadFeedback *feedback=[viewer valueForKey:@"trackpadFeedback"];
+    UIGestureRecognizer *observer=[feedback valueForKey:@"touchObserver"];FeedbackFinger *finger=[FeedbackFinger new];finger.point=CGPointMake(90,100);
+    UIView *cursor=[viewer valueForKey:@"cursorIndicator"];CGRect intended=cursor.frame;
+    [observer touchesBegan:[NSSet setWithObject:finger] withEvent:nil];
+    [viewer receivedCursor:shape hotspot:CGPointZero position:CGPointMake(20,20) known:YES];
+    XCTAssertTrue(CGRectEqualToRect(cursor.frame,intended));XCTAssertFalse(cursor.hidden);
+    [observer touchesEnded:[NSSet setWithObject:finger] withEvent:nil];
+    XCTAssertTrue(CGRectEqualToRect(cursor.frame,intended));XCTAssertFalse(cursor.hidden);
+    [viewer setValue:@0 forKey:@"lastLocalPointerInputAt"];
+    [viewer receivedCursor:shape hotspot:CGPointZero position:CGPointMake(15,20) known:YES];
+    XCTAssertFalse(CGRectEqualToRect(cursor.frame,intended));XCTAssertFalse(cursor.hidden);
+    viewer.showsTouchPoints=NO;XCTAssertFalse(cursor.hidden);XCTAssertEqual(feedback.layer.sublayers.count,0);
+    [viewer becameInactive];XCTAssertTrue(cursor.hidden);XCTAssertEqual(cursor.layer.animationKeys.count,0);
+    [viewer stopViewer];
+}
+
 - (void)testObserverDoesNotBlockRecognizersAndTracksTwoFingersThroughPartialLiftAndCancellation {
     UIView *surface = [[UIView alloc] initWithFrame:CGRectMake(0,0,400,600)];
     UIPanGestureRecognizer *pan = [UIPanGestureRecognizer new]; [surface addGestureRecognizer:pan];

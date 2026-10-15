@@ -337,8 +337,9 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
             let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Install", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
             let session = DirectTerminalSession(mac: mac)
             defer { session.stop(); try? TerminalSecretStore.remove(mac.id); try? TerminalKeyLibraryStore.delete(id); try? TerminalKeyLibraryStore.delete(oldID) }
-            try TerminalKeyLibraryStore.associate(oldID, macID: mac.id, username: "original")
+            // Save the fallback Mac password before selecting the SSH-key override.
             try TerminalSecretStore.save(.init(username: "preserved", password: "saved-synthetic"), id: mac.id)
+            try TerminalKeyLibraryStore.associate(oldID, macID: mac.id, username: "original")
             session.connect(username: "synthetic", password: "synthetic-only", remember: false, installation: entry)
             try await wait("setup trust") { session.trust != nil || !session.connecting }
             XCTAssertEqual(record.passwordRequests, 0); XCTAssertEqual(record.commands, 0)
@@ -371,8 +372,9 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
             let mac = DirectMacRecordV1(id: UUID(), name: "Verification Mac", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
             let session = DirectTerminalSession(mac: mac)
             defer { session.stop(); try? TerminalSecretStore.remove(mac.id); try? TerminalKeyLibraryStore.delete(targetID); try? TerminalKeyLibraryStore.delete(oldID) }
-            try TerminalKeyLibraryStore.associate(oldID, macID: mac.id, username: "prior")
+            // Save the fallback Mac password before selecting the SSH-key override.
             try TerminalSecretStore.save(.init(username: "prior", password: "preserved-synthetic"), id: mac.id)
+            try TerminalKeyLibraryStore.associate(oldID, macID: mac.id, username: "prior")
             session.testKeyLogin(username: "synthetic", target: entry)
             try await wait("verification trust") { session.trust != nil || !session.connecting }
             XCTAssertNotNil(session.trust); XCTAssertEqual(record.passwordRequests, 0); XCTAssertEqual(record.keyRequests, 0); XCTAssertEqual(record.commands, 0)
@@ -520,8 +522,11 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         let publicKey = NIOSSHPrivateKey(ed25519Key: try Curve25519.Signing.PrivateKey(rawRepresentation: key.seed)).publicKey
         let server = try await server(record: record, key: NIOSSHPrivateKey(ed25519Key: .init()), publicKey: publicKey)
         let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Key SSH", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+        // Match the actual UI: authenticate with a key already selected in Login & Access.
+        let keyID = try TerminalKeyLibraryStore.add(key, name: "Synthetic Authentication")
+        try TerminalKeyLibraryStore.associate(keyID, macID: mac.id, username: "prior-account")
         let session = DirectTerminalSession(mac: mac)
-        defer { session.stop(); try? TerminalSecretStore.remove(mac.id) }
+        defer { session.stop(); try? TerminalSecretStore.remove(mac.id); try? TerminalKeyLibraryStore.delete(keyID) }
         session.connect(username: "synthetic", password: "MUST-NOT-SEND", remember: false, key: key)
         try await wait("key host trust") { session.trust != nil || !session.connecting }
         XCTAssertNotNil(session.trust); XCTAssertEqual(record.keyRequests, 0); XCTAssertEqual(record.passwordRequests, 0)

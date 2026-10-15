@@ -9,6 +9,7 @@ typedef UIImage CompanionVNCImage;
 
 @interface CompanionVNCSession : NSObject
 @property(nonatomic, copy) void (^frameHandler)(CompanionVNCImage *image);
+/// A newly received host observation, never an acknowledgement of local input.
 @property(nonatomic, copy) void (^cursorHandler)(CompanionVNCImage *image, CGPoint hotspot, CGPoint position, BOOL positionKnown);
 @property(nonatomic, copy) void (^stateHandler)(NSString *state, NSDictionary *counters);
 @property(nonatomic, copy) void (^displayLayoutHandler)(NSDictionary *layout);
@@ -21,6 +22,9 @@ typedef UIImage CompanionVNCImage;
 // A complete Desktop baseline presented by this owner, independent of retained UI pixels.
 @property(nonatomic, readonly) BOOL desktopFrameReady;
 @property(nonatomic) BOOL inputOnly;
+/// Tracks admitted local gestures independently from iOS host cursor observations.
+@property(nonatomic) BOOL localPointerInteractionActive;
+
 @property(nonatomic, readonly) BOOL nativeMagnificationSupported;
 - (BOOL)beginMagnificationX:(NSInteger)x y:(NSInteger)y;
 - (BOOL)changeMagnification:(double)delta;

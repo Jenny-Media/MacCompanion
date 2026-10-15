@@ -6,6 +6,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic) BOOL active;
 @property(nonatomic) BOOL showsTouchPoints;
 @property(nonatomic) BOOL hapticsEnabled;
+@property(nonatomic, readonly) BOOL hasTouches;
+@property(nonatomic, copy, nullable) void (^touchActivityChanged)(void);
 @property(nonatomic, copy, nullable) BOOL (^touchesAllowed)(void);
 - (void)clickAtPoint:(CGPoint)point;
 - (void)setDragging:(BOOL)dragging;

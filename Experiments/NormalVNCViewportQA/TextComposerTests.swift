@@ -297,6 +297,58 @@ import UIKit
         XCTAssertEqual(draft.floatingAnchor, CGPoint(x: 0.5, y: 1)); XCTAssertFalse(draft.docked); XCTAssertTrue(draft.active)
         panel.toggleDock(); panel.toggleExpansion(); XCTAssertFalse(draft.docked); XCTAssertFalse(draft.expanded)
     }
+    func testTrackpadNativeControlsExposeComposeBeforeAndAfterModeChanges() throws {
+        let viewer = CompanionVNCViewer(); viewer.loadViewIfNeeded()
+        let controls = try XCTUnwrap(viewer.value(forKey: "controls") as? CompanionVNCControls)
+        for onlyInput in [false, true, false, true] {
+            controls.close(); viewer.inputOnly = onlyInput
+            controls.perform(NSSelectorFromString("open"))
+            let choices = try XCTUnwrap(controls.value(forKey: "choices") as? [UIButton])
+            let compose = try XCTUnwrap(choices.first { $0.accessibilityIdentifier == "session-action-composeText" })
+            XCTAssertTrue(compose.isEnabled)
+            XCTAssertEqual(choices.first?.accessibilityIdentifier, "session-action-composeText")
+            let expected = (onlyInput ? DirectControlMode.trackpad : .desktop).defaults.map { $0.kind.rawValue }
+            XCTAssertEqual(controls.quickActions.compactMap { $0["kind"] as? String }, expected)
+            XCTAssertEqual(expected.contains("mode"), !onlyInput)
+        }
+        controls.close()
+    }
+    func testTrackpadComposerQuickActionPresentsWithoutDesktopPixelsAndSendsOnlyOnRequest() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        let viewer = CompanionVNCViewer(); viewer.inputOnly = true; viewer.macName = "Synthetic Mac"
+        window.rootViewController = viewer; window.makeKeyAndVisible(); viewer.loadViewIfNeeded()
+        let owner = viewer.session
+        owner.inputOnly = true
+        for key in ["running", "inputReady", "established"] { owner.setValue(true, forKey: key) }
+        defer {
+            (viewer.value(forKey: "textComposer") as? DirectTextComposer)?.invalidate()
+            owner.setValue(false, forKey: "running")
+            window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible()
+        }
+        XCTAssertNil(viewer.value(forKey: "lastFramebuffer")); XCTAssertTrue(owner.composedTextReady)
+        let controls = try XCTUnwrap(viewer.value(forKey: "controls") as? CompanionVNCControls)
+        controls.perform(NSSelectorFromString("open"))
+        let choices = try XCTUnwrap(controls.value(forKey: "choices") as? [UIButton])
+        let compose = try XCTUnwrap(choices.first { $0.accessibilityIdentifier == "session-action-composeText" })
+        compose.sendActions(for: .touchUpInside)
+        try await Task.sleep(for: .milliseconds(350))
+        let composer = try XCTUnwrap(viewer.value(forKey: "textComposer") as? DirectTextComposer)
+        XCTAssertTrue(composer.draft.active); XCTAssertEqual(composer.draft.mode, .trackpad)
+        XCTAssertNotNil(viewer.presentedViewController)
+        XCTAssertEqual((owner.value(forKey: "events") as? [NSDictionary])?.count, 0)
+        composer.draft.edit("a"); composer.draft.requestSend()
+        XCTAssertEqual((owner.value(forKey: "events") as? [NSDictionary])?.count, 2)
+    }
+    func testCustomizedTrackpadProfileCanAddFreeComposeWithoutReplacingOtherChoices() throws {
+        let right = VNCQuickAction(title: "My Right Click", kind: .rightClick)
+        var profile = [right]
+        XCTAssertEqual(DirectControlMode.trackpad.upgradingUntouchedDefaults(profile), [right])
+        let compose = try XCTUnwrap(DirectQuickActionEditing.standards(.trackpad).first { $0.kind == .composeText })
+        XCTAssertNotNil(DirectQuickActionEditing.add(compose, to: &profile, mode: .trackpad))
+        XCTAssertEqual(profile.first, right); XCTAssertEqual(profile.last?.kind, .composeText)
+        XCTAssertTrue(DirectQuickActionEditing.canSave(profile, mode: .trackpad, hasPro: false))
+    }
     func testComposeQuickActionUpgradesOnlyUntouchedDefaultsInEveryIOSMode() {
         for mode in DirectControlMode.allCases {
             XCTAssertEqual(mode.defaults.first?.kind, .composeText)

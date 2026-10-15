@@ -4,6 +4,7 @@
 #import "CompanionVNCKeyboard.h"
 #import "CompanionVNCCursor.h"
 #import "CompanionVNCAppleCursor.h"
+#import "CompanionVNCAppleUpdates.h"
 #import "CompanionVNCDirectConnection.h"
 #import "CompanionVNCDirectEndpoint.h"
 #import "CompanionVNCDisplayLayout.h"
@@ -15,7 +16,19 @@
 #import <arpa/inet.h>
 #import <sys/socket.h>
 #import <unistd.h>
+#import <sys/ioctl.h>
+#import <time.h>
 
+// Public per-thread CPU clock: elapsed read/decode time also includes blocking.
+static double WorkerCPUTimeMS(void) {
+    struct timespec value;
+    return clock_gettime(CLOCK_THREAD_CPUTIME_ID, &value) == 0 ? value.tv_sec * 1000.0 + value.tv_nsec / 1000000.0 : -1;
+}
+static NSUInteger UnreadRFBBytes(rfbClient *client) {
+    int bytes = 0;
+    if (ioctl(client->sock, FIONREAD, &bytes) != 0 || bytes < 0) bytes = 0;
+    return (NSUInteger)bytes + client->buffered;
+}
 static char ownerTag;
 static CompanionVNCImage *PlatformImage(CGImageRef image) {
 #if TARGET_OS_OSX
@@ -96,14 +109,30 @@ static void QuietLog(const char *format, ...) {
     int _magnificationWidth, _magnificationHeight;
     CompanionVNCImage *_cursorImage;
     CGPoint _cursorHotspot, _cursorPosition;
-    BOOL _cursorPositionKnown, _cursorPending, _cursorDirty, _cursorImageAvailable;
+    BOOL _cursorPositionKnown, _cursorPositionDirty, _cursorPending, _cursorDirty, _cursorImageAvailable;
+    BOOL _localPointerInteractionActive, _readingServerMessage;
+    NSUInteger _pointerRevision, _cursorPositionRevision, _serverMessagePointerRevision;
+    CompanionVNCImage *_pendingCursorImage;
+    CGPoint _pendingCursorHotspot, _pendingCursorPosition;
+    BOOL _pendingCursorPositionKnown;
+    NSUInteger _pendingCursorEpoch, _pendingCursorPositionRevision;
+    double _pendingCursorReceivedAt;
+    NSUInteger _serverMessages, _bufferedReadDispatches, _readServiceEvents;
+    double _serverMessageTotalMS, _serverMessageMaxMS, _cursorQueueMaxMS;
+    NSUInteger _workerCPUSamples, _interactiveMessages, _pixelMessages, _cursorOnlyMessages;
+    NSUInteger _unreadBytesLatest, _unreadBytesMax, _interactiveUnreadBytesMax;
+    double _workerCPUTotalMS, _workerCPUMaxMS, _interactiveWallMS, _interactiveCPUMS, _interactiveMessageMaxMS;
+    double _pixelMessageMaxMS, _cursorOnlyMessageMaxMS, _frameCopyTotalMS, _frameCopyMaxMS, _frameMainQueueMaxMS, _frameCallbackMaxMS;
     NSDictionary *_reportedCounters;
     NSUInteger _handshakeStage;
     NSUInteger _cursorShapes, _cursorPositions, _pauses, _resumes, _resumeFrames;
     NSMutableDictionary<NSNumber *, NSDictionary *> *_appleCursorCache;
     NSMutableArray<NSNumber *> *_appleCursorOrder;
     NSUInteger _appleCursorBytes, _appleCursorStores, _appleCursorSelections, _appleCursorMisses;
-    NSUInteger _standardCursorReports, _visibleCursorImages, _cursorPublications;
+    NSUInteger _standardCursorReports, _visibleCursorImages, _cursorPublications, _cursorPositionPublications, _cursorPositionsSuppressed;
+    BOOL _automaticUpdatesActive, _automaticUpdatePending, _desktopRefreshPending;
+    int _automaticUpdateWidth, _automaticUpdateHeight;
+    NSUInteger _automaticUpdateStarts, _automaticUpdateStops;
 }
 - (rfbCredential *)credential:(int)type;
 - (rfbBool)allocate:(rfbClient *)client;
@@ -113,11 +142,21 @@ static void QuietLog(const char *format, ...) {
 - (void)publishFrame:(rfbClient *)client;
 - (void)cursorShape:(rfbClient *)client x:(int)x y:(int)y width:(int)width height:(int)height bytesPerPixel:(int)bytes;
 - (rfbBool)cursorPosition:(rfbClient *)client x:(int)x y:(int)y;
+- (rfbBool)appleCursorPosition:(rfbClient *)client x:(int)x y:(int)y;
 - (void)publishCursor;
+- (BOOL)handleServerMessage:(rfbClient *)client;
+- (NSDictionary *)pipelineCountersLocked;
+- (void)retirePointerInteractionLocked;
+- (BOOL)configureDesktopUpdates:(rfbClient *)client;
+- (BOOL)stopAutomaticUpdates:(rfbClient *)client;
+- (void)configureFramebufferRequests:(rfbClient *)client;
+- (BOOL)requestFullDesktop:(rfbClient *)client;
 - (void)report:(NSString *)state;
 - (void)beginSocket:(int)socket addresses:(NSArray<NSString *> *)addresses port:(NSInteger)port user:(NSString *)user password:(NSString *)password;
 - (BOOL)registerSocket:(int)socket;
 - (void)processConnectedClient:(rfbClient *)client;
+- (BOOL)sendInputEvents:(NSArray<NSDictionary *> *)events client:(rfbClient *)client inputEpoch:(NSUInteger)inputEpoch;
+- (BOOL)servicePendingInput:(rfbClient *)client;
 #if TARGET_OS_IOS
 - (BOOL)writeKeyEvent:(uint32_t)key down:(BOOL)down client:(rfbClient *)client;
 - (void)cancelComposedTextLocked;
@@ -135,16 +174,36 @@ static void QuietLog(const char *format, ...) {
 static CompanionVNCSession *Owner(rfbClient *client) {
     return (__bridge CompanionVNCSession *)rfbClientGetClientData(client, &ownerTag);
 }
+#if TARGET_OS_OSX || TARGET_OS_IOS
+static rfbBool ServicePendingInput(rfbClient *client) { return [Owner(client) servicePendingInput:client]; }
+#endif
 static rfbBool Allocate(rfbClient *client) { return [Owner(client) allocate:client]; }
 static void Updated(rfbClient *client, int x, int y, int w, int h) { [Owner(client) updatedX:x y:y width:w height:h]; }
 static rfbCredential *Credential(rfbClient *client, int type) { return [Owner(client) credential:type]; }
 static void CursorShape(rfbClient *client, int x, int y, int width, int height, int bytes) {
-    [Owner(client) cursorShape:client x:x y:y width:width height:height bytesPerPixel:bytes];
+    CompanionVNCSession *owner = Owner(client);
+    [owner cursorShape:client x:x y:y width:width height:height bytesPerPixel:bytes];
+    [owner publishCursor];
 }
-static rfbBool CursorPosition(rfbClient *client, int x, int y) { return [Owner(client) cursorPosition:client x:x y:y]; }
+static rfbBool CursorPosition(rfbClient *client, int x, int y) {
+    CompanionVNCSession *owner = Owner(client);
+    rfbBool handled = [owner cursorPosition:client x:x y:y];
+    if (handled) [owner publishCursor];
+    return handled;
+}
 static rfbBool AppleLayout(rfbClient *client, rfbFramebufferUpdateRectHeader *rect) {
 #if TARGET_OS_OSX || TARGET_OS_IOS
-    if (rect->encoding == 1104) return [Owner(client) appleCursor:client rect:rect];
+    if (rect->encoding == 1100) {
+        // Header-only Apple CursorPos, distinct from standard PointerPos (-232).
+        CompanionVNCSession *owner = Owner(client);
+        return [owner appleCursorPosition:client x:rect->r.x y:rect->r.y];
+    }
+    if (rect->encoding == 1104) {
+        CompanionVNCSession *owner = Owner(client);
+        rfbBool handled = [owner appleCursor:client rect:rect];
+        if (handled) [owner publishCursor];
+        return handled;
+    }
 #endif
     if (rect->encoding != 1101 && rect->encoding != 1105) return FALSE;
     return [Owner(client) displayLayout:client encoding:rect->encoding];
@@ -153,7 +212,7 @@ static rfbBool AppleLayout(rfbClient *client, rfbFramebufferUpdateRectHeader *re
 // layout format. Requesting 1105 alone leaves its send-display-info gate off.
 static int layoutEncodings[] = {1101,
 #if TARGET_OS_OSX || TARGET_OS_IOS
-    1104,
+    1100, 1104,
 #endif
     1105, 0};
 static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncodings, .handleEncoding = AppleLayout};
@@ -187,7 +246,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 - (void)setInputOnly:(BOOL)value {
     [_lock lock];
     if (_inputOnly != value) {
-        [self cancelNativeGesturesLocked]; _inputOnly = value; _modeChanged = YES; _presentationEpoch++; _inputEpoch++;
+        [self retirePointerInteractionLocked]; [self cancelNativeGesturesLocked]; _inputOnly = value; _modeChanged = YES; _presentationEpoch++; _inputEpoch++;
         if (_established) {
             // The owner releases the old mode before admitting input in the new one.
             _inputReady = NO; _awaitingResumeFrame = !value; _releaseInputRequested = YES;
@@ -199,6 +258,18 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     }
     [_lock unlock]; dispatch_semaphore_signal(_wake);
 }
+// Track gesture activity independently from incoming host observations.
+- (BOOL)localPointerInteractionActive {
+    [_lock lock]; BOOL active = _localPointerInteractionActive; [_lock unlock]; return active;
+}
+- (void)setLocalPointerInteractionActive:(BOOL)active {
+    [_lock lock];
+    active = active && _running && _inputReady && !_reviewInputSuspended && !_interruptionInputSuspended && !_paused && !_stopping && !_overflow;
+    if (_localPointerInteractionActive != active) { _localPointerInteractionActive = active; _pointerRevision++; }
+    [_lock unlock];
+}
+- (void)retirePointerInteractionLocked { _localPointerInteractionActive = NO; _pointerRevision++; }
+
 - (BOOL)nativeMagnificationSupported {
     [_lock lock]; BOOL supported = _appleGestureServer && _nativeGestureLayout; [_lock unlock]; return supported;
 }
@@ -295,7 +366,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     [_lock lock]; BOOL accept = _running && _inputReady && !_reviewInputSuspended && !_interruptionInputSuspended && !_paused && !_stopping && !_overflow && _events.count <= 510;
     if (accept) {
         [_events addObject:@{@"x": @(x), @"y": @(y), @"mask": @(mask), @"motion": @NO}];
-        [_events addObject:@{@"x": @(x), @"y": @(y), @"mask": @0, @"motion": @NO}]; _queuedPointerMask = 0;
+        [_events addObject:@{@"x": @(x), @"y": @(y), @"mask": @0, @"motion": @NO}]; _queuedPointerMask = 0; _pointerRevision++;
     }
     [_lock unlock]; return accept;
 }
@@ -305,7 +376,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
         _paused, _stopping, _overflow, _awaitingResumeFrame, _baselinePresented)) {
         [_lock unlock]; return NO;
     }
-    _reviewInputSuspended = YES; _releaseInputRequested = YES; _inputEpoch++;
+    [self retirePointerInteractionLocked]; _reviewInputSuspended = YES; _releaseInputRequested = YES; _inputEpoch++;
 #if TARGET_OS_IOS
     [self cancelComposedTextLocked];
 #endif
@@ -329,7 +400,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     [_lock lock];
     if (!_running || !_established || _stopping || _paused) { [_lock unlock]; if (completion) completion(); return; }
     [self cancelNativeGesturesLocked];
-    _paused = YES; _inputEpoch++; _pauses++; _inputReady = NO; _releaseInputRequested = YES; _presentationEpoch++;
+    [self retirePointerInteractionLocked]; _paused = YES; _inputEpoch++; _pauses++; _inputReady = NO; _releaseInputRequested = YES; _presentationEpoch++;
     [_events removeAllObjects]; _queuedPointerMask = 0; _pauseCompletion = [completion copy];
 #if TARGET_OS_IOS
     [self cancelComposedTextLocked];
@@ -339,7 +410,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 - (void)suspendInputForInterruption {
     [_lock lock];
     if (_running && !_paused && !_stopping && !_interruptionInputSuspended) {
-        _interruptionInputSuspended = YES; _releaseInputRequested = YES; _inputEpoch++;
+        [self retirePointerInteractionLocked]; _interruptionInputSuspended = YES; _releaseInputRequested = YES; _inputEpoch++;
 #if TARGET_OS_IOS
         [self cancelComposedTextLocked];
 #endif
@@ -381,9 +452,9 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 - (void)beginSocket:(int)socket addresses:(NSArray<NSString *> *)addresses port:(NSInteger)port user:(NSString *)user password:(NSString *)password {
     [_lock lock];
     if (_running) { [_lock unlock]; if (socket >= 0) close(socket); return; }
-    [self cancelNativeGesturesLocked]; _appleGestureServer = NO; _nativeGestureLayout = NO;
+    [self retirePointerInteractionLocked]; [self cancelNativeGesturesLocked]; _appleGestureServer = NO; _nativeGestureLayout = NO;
     _sentMagnification = (CompanionVNCMagnification){0}; _sentScroll = (CompanionVNCScroll){0};
-    _running = YES; _established = NO; _stopping = NO; _overflow = NO; _framePending = NO; _cursorPending = NO; _layoutPending = NO; _latestLayout = nil; _inputReady = NO; _failureStage = 0;
+    _running = YES; _established = NO; _stopping = NO; _overflow = NO; _framePending = NO; _cursorPending = NO; _pendingCursorImage = nil; _layoutPending = NO; _latestLayout = nil; _inputReady = NO; _failureStage = 0;
     _handshakeStage = 0; _layoutDiagnostics = @{}; _layoutMessages = 0; _baselinePresented = NO; _coverageLayoutValid = NO; _metadataCallback = NO;
     _paused = NO; _reviewInputSuspended = NO; _interruptionInputSuspended = NO; _reviewReleaseCompletion = nil;
     _releaseInputRequested = NO; _resumeRequested = NO; _awaitingResumeFrame = NO; _presentationEpoch++;
@@ -413,7 +484,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
             }
             [self report:@"Signing in"];
             self->_cursorImage = nil; self->_cursorHotspot = CGPointZero; self->_cursorPosition = CGPointZero;
-            self->_cursorPositionKnown = NO; self->_cursorDirty = YES;
+            self->_cursorPositionKnown = NO; self->_cursorPositionDirty = NO; self->_cursorDirty = YES;
             self->_extensionFailed = NO;
             self->_username = user; self->_password = password;
             rfbClient *client = rfbGetClient(8, 3, 4);
@@ -445,6 +516,13 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (void)processConnectedClient:(rfbClient *)client {
     BOOL healthy = YES;
+#if TARGET_OS_OSX || TARGET_OS_IOS
+    // Preconnected SSH socket pairs otherwise retain blocking read semantics.
+    // The optional hook is absent throughout the RFB authentication handshake.
+    healthy = SetNonBlocking(client->sock);
+    CompanionVNCReadService service = {.service = ServicePendingInput};
+    if (healthy) CompanionVNCSetReadService(client, &service);
+#endif
     while (healthy) {
         @autoreleasepool {
             [self->_lock lock]; BOOL stopping = self->_stopping || self->_overflow;
@@ -459,6 +537,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
             NSArray *events = [self->_events copy]; [self->_events removeAllObjects];
             [self->_lock unlock];
             if (stopping) break;
+            if (resume || modeChanged) self->_automaticUpdatePending = YES;
             if (self->_sentMagnification.active && (release || paused || !inputOnly || gestureEpoch != self->_sentMagnificationEpoch)) {
                 healthy = [self releaseMagnification:client]; if (!healthy) break;
             }
@@ -469,10 +548,14 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
                 for (NSNumber *key in self->_heldKeys) if (!SendKeyEvent(client, key.unsignedIntValue, FALSE)) healthy = NO;
                 [self->_heldKeys removeAllObjects];
                 if (!SendPointerEvent(client, (int)self->_lastX, (int)self->_lastY, 0)) healthy = NO;
-                if (completion) dispatch_async(dispatch_get_main_queue(), completion);
-                if (reviewCompletion && healthy) dispatch_async(dispatch_get_main_queue(), reviewCompletion);
             }
             if (!healthy) break;
+            // Release actually-sent input first, then disable server delivery
+            // before acknowledging pause. A blocked subscription write cannot
+            // take Stop's release budget away from held keys or buttons.
+            healthy = [self configureDesktopUpdates:client]; if (!healthy) break;
+            if (completion) dispatch_async(dispatch_get_main_queue(), completion);
+            if (reviewCompletion) dispatch_async(dispatch_get_main_queue(), reviewCompletion);
             if (paused) {
                 // No polling, decoding, or update requests while hidden. Stop/resume wake the owner.
                 dispatch_semaphore_wait(self->_wake, DISPATCH_TIME_FOREVER); continue;
@@ -480,10 +563,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
             // LibVNCClient normally requests another frame automatically after every update.
             // On the sole socket owner, mask only update requests and use an empty rectangle
             // so even a server capability refresh cannot ask for desktop pixels in input-only.
-            unsigned char *requests = &client->supportedMessages.client2server[rfbFramebufferUpdateRequest / 8];
-            unsigned char bit = 1 << (rfbFramebufferUpdateRequest % 8);
             if (inputOnly) {
-                *requests &= ~bit; rfbRectangle empty = {0, 0, 0, 0}; rfbClientSetUpdateRect(client, &empty);
                 if (resume || modeChanged) {
                     [self->_lock lock];
                     BOOL current = presentationEpoch == self->_presentationEpoch && self->_running && self->_established
@@ -492,67 +572,36 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
                     [self->_lock unlock];
                     if (current) [self report:@"Connected"];
                 }
-            } else {
-                *requests |= bit; rfbClientSetUpdateRect(client, NULL);
             }
-            if (resume || modeChanged) { self->_cursorPositionKnown = NO; self->_cursorDirty = YES; }
+            if (resume || modeChanged) { self->_cursorPositionKnown = NO; self->_cursorPositionDirty = NO; self->_cursorDirty = YES; }
             if (!inputOnly && (resume || modeChanged)) {
-                if (![self resetBaseline:client] || !SendFramebufferUpdateRequest(client, 0, 0, client->width, client->height, FALSE)) { healthy = NO; break; }
+                if (![self resetBaseline:client]) { healthy = NO; break; }
+                self->_desktopRefreshPending = YES;
+            }
+            if (!inputOnly && self->_desktopRefreshPending) {
+                if (![self requestFullDesktop:client]) { healthy = NO; break; }
+                self->_desktopRefreshPending = NO;
             }
             if (!inputOnly && !CompanionVNCCoverageReady(&self->_coverage)) {
                 double now = NSProcessInfo.processInfo.systemUptime;
                 if (now - self->_baselineStarted >= 8) { [self->_lock lock]; self->_failureStage = 102; [self->_lock unlock]; healthy = NO; break; }
                 if (self->_fullRefreshRetries < 2 && now - self->_lastFullRefresh >= 1) {
-                    if (!SendFramebufferUpdateRequest(client, 0, 0, client->width, client->height, FALSE)) { healthy = NO; break; }
+                    if (![self requestFullDesktop:client]) { healthy = NO; break; }
                     [self->_lock lock]; self->_fullRefreshRetries++; [self->_lock unlock]; self->_lastFullRefresh = now;
                 }
             }
-            for (NSDictionary *event in events) {
-                [self->_lock lock]; BOOL currentBatch = inputEpoch == self->_inputEpoch; BOOL acceptsInput = self->_inputReady && !self->_reviewInputSuspended && !self->_interruptionInputSuspended && !self->_paused && !self->_stopping;
-#if TARGET_OS_IOS
-                NSString *textID = event[@"composedTextID"];
-                if (textID) acceptsInput = acceptsInput && [self composedTextReadyLocked];
-                BOOL retiredText = textID && !self->_composedTextReplies[textID];
-#endif
-                [self->_lock unlock];
-                if (!currentBatch) break; // Never revive the copied batch after a quick return.
-#if TARGET_OS_IOS
-                // Pause can retire a group while this copied batch is blocked
-                // in a write. Resume never makes that group eligible again.
-                if (retiredText) continue;
-#endif
-                if (!acceptsInput) {
-#if TARGET_OS_IOS
-                    [self cancelComposedText];
-#endif
-                    break;
-                }
-                if (event[@"magnifyPhase"]) {
-                    healthy = [self sendMagnificationEvent:event client:client];
-                } else if (event[@"scrollPhase"]) {
-                    healthy = [self sendScrollEvent:event client:client];
-                } else if (event[@"key"]) {
-                    uint32_t key = [event[@"key"] unsignedIntValue]; BOOL down = [event[@"down"] boolValue];
-#if TARGET_OS_IOS
-                    healthy = [self writeKeyEvent:key down:down client:client];
-#else
-                    healthy = SendKeyEvent(client, key, down);
-#endif
-                    if (down) [self->_heldKeys addObject:@(key)]; else [self->_heldKeys removeObject:@(key)];
-                } else {
-                    self->_lastX = MAX(0, MIN(client->width - 1, [event[@"x"] integerValue]));
-                    self->_lastY = MAX(0, MIN(client->height - 1, [event[@"y"] integerValue]));
-                    healthy = SendPointerEvent(client, (int)self->_lastX, (int)self->_lastY, [event[@"mask"] intValue]);
-                }
-                [self->_lock lock]; self->_inputs++; [self->_lock unlock];
-#if TARGET_OS_IOS
-                if (healthy && [event[@"composedTextEnd"] boolValue]) [self completeComposedText:textID written:YES];
-#endif
-                if (!healthy) break;
-            }
+            healthy = [self sendInputEvents:events client:client inputEpoch:inputEpoch];
             if (!healthy) break;
-            int ready = WaitForMessage(client, 10000);
-            if (ready < 0 || (ready > 0 && !HandleRFBServerMessage(client)) || self->_extensionFailed) { healthy = NO; break; }
+            // ReadFromRFBServer can read ahead into LibVNCClient's own buffer.
+            // WaitForMessage only selects the socket; it cannot see those bytes.
+            BOOL buffered = client->buffered > 0;
+            int ready = buffered ? 1 : WaitForMessage(client, 10000);
+            if (buffered) { [self->_lock lock]; self->_bufferedReadDispatches++; [self->_lock unlock]; }
+            if (ready < 0) { healthy = NO; break; }
+            if (ready > 0) {
+                if (![self handleServerMessage:client]) { healthy = NO; break; }
+            }
+            if (self->_extensionFailed) { healthy = NO; break; }
             [self publishFrame:client];
             [self publishCursor];
         }
@@ -562,14 +611,82 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     for (NSNumber *key in self->_heldKeys) SendKeyEvent(client, key.unsignedIntValue, FALSE);
     [self->_heldKeys removeAllObjects];
     SendPointerEvent(client, (int)self->_lastX, (int)self->_lastY, 0);
+    [self stopAutomaticUpdates:client];
+#if TARGET_OS_OSX || TARGET_OS_IOS
+    CompanionVNCSetReadService(client, NULL);
+#endif
     [self registerSocket:-1]; rfbClientCleanup(client);
     if (self->_overflow) { [self->_lock lock]; self->_failureStage = 101; [self->_lock unlock]; }
     [self finish:self->_overflow ? @"Input queue full; disconnected safely" : self->_failureStage == 103 ? @"Desktop image could not be decoded — reconnect" : self->_failureStage == 102 ? @"Desktop did not finish loading — reconnect" : healthy ? @"Disconnected" : @"Connection ended — reconnect"];
 
 }
+- (BOOL)sendInputEvents:(NSArray<NSDictionary *> *)events client:(rfbClient *)client inputEpoch:(NSUInteger)inputEpoch {
+    BOOL healthy = YES;
+    for (NSDictionary *event in events) {
+        [self->_lock lock]; BOOL currentBatch = inputEpoch == self->_inputEpoch; BOOL acceptsInput = self->_inputReady && !self->_reviewInputSuspended && !self->_interruptionInputSuspended && !self->_paused && !self->_stopping;
+#if TARGET_OS_IOS
+        NSString *textID = event[@"composedTextID"];
+        if (textID) acceptsInput = acceptsInput && [self composedTextReadyLocked];
+        BOOL retiredText = textID && !self->_composedTextReplies[textID];
+#endif
+        [self->_lock unlock];
+        if (!currentBatch) break; // Never revive the copied batch after a quick return.
+#if TARGET_OS_IOS
+        // Pause can retire a group while this copied batch is blocked
+        // in a write. Resume never makes that group eligible again.
+        if (retiredText) continue;
+#endif
+        if (!acceptsInput) {
+#if TARGET_OS_IOS
+            [self cancelComposedText];
+#endif
+            break;
+        }
+        if (event[@"magnifyPhase"]) {
+            healthy = [self sendMagnificationEvent:event client:client];
+        } else if (event[@"scrollPhase"]) {
+            healthy = [self sendScrollEvent:event client:client];
+        } else if (event[@"key"]) {
+            uint32_t key = [event[@"key"] unsignedIntValue]; BOOL down = [event[@"down"] boolValue];
+#if TARGET_OS_IOS
+            healthy = [self writeKeyEvent:key down:down client:client];
+#else
+            healthy = SendKeyEvent(client, key, down);
+#endif
+            if (down) [self->_heldKeys addObject:@(key)]; else [self->_heldKeys removeObject:@(key)];
+        } else {
+            self->_lastX = MAX(0, MIN(client->width - 1, [event[@"x"] integerValue]));
+            self->_lastY = MAX(0, MIN(client->height - 1, [event[@"y"] integerValue]));
+            healthy = SendPointerEvent(client, (int)self->_lastX, (int)self->_lastY, [event[@"mask"] intValue]);
+        }
+        [self->_lock lock]; self->_inputs++; [self->_lock unlock];
+#if TARGET_OS_IOS
+        if (healthy && [event[@"composedTextEnd"] boolValue]) [self completeComposedText:textID written:YES];
+#endif
+        if (!healthy) break;
+    }
+    return healthy;
+}
+- (BOOL)servicePendingInput:(rfbClient *)client {
+    // Invoked synchronously by the existing parser on its sole socket owner.
+    // Boundaries requiring release/reconfiguration remain on the outer loop.
+    [_lock lock];
+    BOOL allowed = _running && _established && _inputReady && !_reviewInputSuspended && !_interruptionInputSuspended
+        && !_paused && !_stopping && !_overflow && !_releaseInputRequested && !_resumeRequested && !_modeChanged;
+    NSArray *events = allowed && _events.count ? [_events copy] : nil;
+    NSUInteger epoch = _inputEpoch, before = _inputs;
+    if (events) [_events removeAllObjects];
+    [_lock unlock];
+    if (!events) return YES;
+    BOOL healthy = [self sendInputEvents:events client:client inputEpoch:epoch];
+    [_lock lock]; _readServiceEvents += _inputs - before; [_lock unlock];
+    return healthy;
+}
 - (void)configureClient:(rfbClient *)client {
+    _automaticUpdatesActive = NO; _automaticUpdatePending = YES; _desktopRefreshPending = NO;
+    _automaticUpdateWidth = _automaticUpdateHeight = 0;
     _appleCursorCache = [NSMutableDictionary new]; _appleCursorOrder = [NSMutableArray new]; _appleCursorBytes = 0;
-    _cursorImage = nil; _cursorHotspot = CGPointZero; _cursorPositionKnown = NO; _cursorDirty = YES;
+    _cursorImage = nil; _cursorHotspot = CGPointZero; _cursorPositionKnown = NO; _cursorPositionDirty = NO; _cursorDirty = YES;
     [_lock lock]; _cursorImageAvailable = NO; [_lock unlock];
     decoderFailed = NO; appleGestureBanner = NO;
     rfbClientSetClientData(client, &ownerTag, (__bridge void *)self);
@@ -585,12 +702,65 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     client->format.bigEndian = FALSE; client->format.depth = 24;
     client->appData.encodingsString = "zlib hextile raw";
 }
+// Never let a server capability refresh turn an input-only update into pixels.
+// Automatic delivery supplements response-driven incremental requests. Only
+// paused or input-only owners suppress requests and retain an empty rectangle.
+- (void)configureFramebufferRequests:(rfbClient *)client {
+    [_lock lock]; BOOL suppress = _inputOnly || _paused; [_lock unlock];
+    unsigned char *requests = &client->supportedMessages.client2server[rfbFramebufferUpdateRequest / 8];
+    unsigned char bit = 1 << (rfbFramebufferUpdateRequest % 8);
+    if (suppress) {
+        *requests &= ~bit;
+        rfbRectangle empty = {0, 0, 0, 0}; rfbClientSetUpdateRect(client, &empty);
+    } else { *requests |= bit; rfbClientSetUpdateRect(client, NULL); }
+}
+- (BOOL)requestFullDesktop:(rfbClient *)client {
+    [_lock lock]; BOOL permitted = _running && !_paused && !_inputOnly && !_stopping; [_lock unlock];
+    if (!permitted) return YES;
+    // The bit mask suppresses only the library's routine requests. An explicit
+    // baseline refresh must reach the wire even in automatic-update mode.
+    client->supportedMessages.client2server[rfbFramebufferUpdateRequest / 8] |= 1 << (rfbFramebufferUpdateRequest % 8);
+    BOOL sent = SendFramebufferUpdateRequest(client, 0, 0, client->width, client->height, FALSE);
+    [self configureFramebufferRequests:client]; return sent;
+}
+- (BOOL)stopAutomaticUpdates:(rfbClient *)client {
+    if (!_automaticUpdatesActive) return YES;
+    uint8_t packet[16];
+    BOOL sent = CompanionVNCAppleUpdatePacket(_automaticUpdateWidth, _automaticUpdateHeight, false, packet)
+        && WriteToRFBServer(client, (char *)packet, sizeof(packet));
+    [_lock lock]; _automaticUpdatesActive = NO; if (sent) _automaticUpdateStops++; [_lock unlock];
+    _automaticUpdatePending = YES;
+    return sent;
+}
+- (BOOL)configureDesktopUpdates:(rfbClient *)client {
+    [_lock lock];
+    BOOL permitted = _running && _established && !_paused && !_inputOnly && !_stopping && _appleGestureServer;
+    [_lock unlock];
+#if !(TARGET_OS_OSX || TARGET_OS_IOS)
+    // Only clients advertising and rendering Apple cached cursors opt in.
+    permitted = NO;
+#endif
+    BOOL eligible = permitted && _coverageLayoutValid && _coverageLayout.width == client->width
+        && _coverageLayout.height == client->height;
+    if (!eligible) {
+        if (![self stopAutomaticUpdates:client]) return NO;
+    } else if (!_automaticUpdatesActive || _automaticUpdatePending
+               || _automaticUpdateWidth != client->width || _automaticUpdateHeight != client->height) {
+        uint8_t packet[16];
+        if (!CompanionVNCAppleUpdatePacket(client->width, client->height, true, packet)
+            || !WriteToRFBServer(client, (char *)packet, sizeof(packet))) return NO;
+        _automaticUpdateWidth = client->width; _automaticUpdateHeight = client->height;
+        _automaticUpdatePending = NO; _desktopRefreshPending = YES;
+        [_lock lock]; _automaticUpdatesActive = YES; _automaticUpdateStarts++; [_lock unlock];
+    }
+    [self configureFramebufferRequests:client]; return YES;
+}
 - (void)finish:(NSString *)state {
     [self registerSocket:-1];
     free(_pixels); _pixels = NULL; CompanionVNCCoverageFree(&_coverage); _username = nil; _password = nil;
-    _cursorImage = nil; _cursorPositionKnown = NO; _cursorDirty = NO;
+    _cursorImage = nil; _cursorPositionKnown = NO; _cursorPositionDirty = NO; _cursorDirty = NO;
     [_appleCursorCache removeAllObjects]; [_appleCursorOrder removeAllObjects]; _appleCursorBytes = 0;
-    [_lock lock]; _cursorImageAvailable = NO; [self cancelNativeGesturesLocked]; _appleGestureServer = NO; _nativeGestureLayout = NO; _running = NO; _established = NO; _inputReady = NO; _reviewInputSuspended = NO; _interruptionInputSuspended = NO; _reviewReleaseCompletion = nil; [_events removeAllObjects];
+    [_lock lock]; _cursorImageAvailable = NO; [self retirePointerInteractionLocked]; [self cancelNativeGesturesLocked]; _appleGestureServer = NO; _nativeGestureLayout = NO; _running = NO; _established = NO; _inputReady = NO; _reviewInputSuspended = NO; _interruptionInputSuspended = NO; _reviewReleaseCompletion = nil; [_events removeAllObjects];
 #if TARGET_OS_IOS
     [self cancelComposedTextLocked];
 #endif
@@ -613,6 +783,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 - (rfbBool)allocate:(rfbClient *)client {
     [_lock lock]; [self cancelNativeGesturesLocked];
     _framebufferWidth = client->width; _framebufferHeight = client->height;
+    _automaticUpdatePending = YES; if (_established && !_inputOnly) _desktopRefreshPending = YES;
     _nativeGestureLayout = CompanionVNCNativeGesturesSupported(YES, _coverageLayoutValid, client->width, client->height, _coverageLayout.width, _coverageLayout.height);
     [_lock unlock];
     size_t bytes;
@@ -623,12 +794,12 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     free(_pixels); _pixels = pixels; client->frameBuffer = pixels;
     protocolStage = 5;
     [_lock lock]; _handshakeStage = 5; _resizes++; [_lock unlock]; _dirty = NO;
-    _cursorPositionKnown = NO; _cursorDirty = YES;
+    _cursorPositionKnown = NO; _cursorPositionDirty = NO; _cursorDirty = YES;
     return TRUE;
 }
 - (BOOL)resetBaseline:(rfbClient *)client {
     // Retire input and presentation before changing coverage on the socket owner.
-    [_lock lock]; _fullRefreshRetries = 0; _baselinePresented = NO; _presentationEpoch++;
+    [_lock lock]; [self retirePointerInteractionLocked]; _fullRefreshRetries = 0; _baselinePresented = NO; _presentationEpoch++;
     if (_established && !_inputOnly) {
         _releaseInputRequested = _releaseInputRequested || _inputReady;
         _inputReady = NO; _awaitingResumeFrame = YES;
@@ -640,7 +811,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     [_lock unlock];
     if (!CompanionVNCCoverageReset(&_coverage, client->width, client->height)) return NO;
     _baselineStarted = _lastFullRefresh = NSProcessInfo.processInfo.systemUptime;
-    _dirty = NO; _cursorPositionKnown = NO; _cursorDirty = YES;
+    _dirty = NO; _cursorPositionKnown = NO; _cursorPositionDirty = NO; _cursorDirty = YES;
     [self applyCoverageLayout:client]; return YES;
 }
 - (void)applyCoverageLayout:(rfbClient *)client {
@@ -699,6 +870,8 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     }
     [_lock lock]; _layoutMessages++; _layoutDiagnostics = geometry; [_lock unlock];
     if (encoding == 1101) { [self report:@"Connected"]; return TRUE; }
+    // A same-geometry layout can signal an agent handoff that dropped arming.
+    _automaticUpdatePending = YES;
     BOOL changed = _coverageLayoutValid && (!parsed || _coverageLayout.width != decoded.width || _coverageLayout.height != decoded.height || _coverageLayout.count != decoded.count || memcmp(_coverageLayout.displays, decoded.displays, sizeof(CompanionVNCDisplay) * decoded.count) != 0);
     _coverageLayoutValid = parsed; if (parsed) _coverageLayout = decoded;
     [_lock lock];
@@ -707,7 +880,8 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     _nativeGestureLayout = gestureLayout; [_lock unlock];
     if (changed && _coverage.seen) {
         // Hot-plug/rearrangement also retires the old baseline without blanking its image.
-        if (![self resetBaseline:client] || !SendFramebufferUpdateRequest(client,0,0,client->width,client->height,FALSE)) _extensionFailed = YES;
+        if (![self resetBaseline:client]) _extensionFailed = YES;
+        else _desktopRefreshPending = YES;
     } else { [self applyCoverageLayout:client]; }
     if (parsed) {
         aspect = (CGFloat)decoded.width / decoded.height;
@@ -794,27 +968,90 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     [_lock lock]; _cursorImageAvailable = selected != nil; _cursorShapes++; [_lock unlock];
     return TRUE;
 }
+- (rfbBool)appleCursorPosition:(rfbClient *)client x:(int)x y:(int)y {
+    _metadataCallback = YES;
+    rfbBool handled = [self cursorPosition:client x:x y:y];
+    if (handled) [self publishCursor];
+    return handled;
+}
+- (BOOL)handleServerMessage:(rfbClient *)client {
+    // A partial desktop message may finish after newer local movement. All of
+    // its position rectangles retain the revision from before that read began.
+    [_lock lock]; _serverMessagePointerRevision = _pointerRevision; _readingServerMessage = YES;
+    BOOL interactive = _baselinePresented; NSUInteger updates = _updates, cursors = _cursorPositions + _cursorShapes; [_lock unlock];
+    NSUInteger before = UnreadRFBBytes(client);
+    double cpuStarted = WorkerCPUTimeMS(), started = NSProcessInfo.processInfo.systemUptime;
+    BOOL handled = HandleRFBServerMessage(client);
+    double elapsedMS = (NSProcessInfo.processInfo.systemUptime - started) * 1000, cpuEnded = WorkerCPUTimeMS();
+    double cpuMS = cpuStarted >= 0 && cpuEnded >= cpuStarted ? cpuEnded - cpuStarted : 0;
+    NSUInteger after = UnreadRFBBytes(client);
+    [_lock lock]; _readingServerMessage = NO; _serverMessages++; _serverMessageTotalMS += elapsedMS;
+    _serverMessageMaxMS = MAX(_serverMessageMaxMS, elapsedMS);
+    if (cpuStarted >= 0 && cpuEnded >= cpuStarted) { _workerCPUSamples++; _workerCPUTotalMS += cpuMS; _workerCPUMaxMS = MAX(_workerCPUMaxMS, cpuMS); }
+    _unreadBytesLatest = after; _unreadBytesMax = MAX(_unreadBytesMax, MAX(before, after));
+    if (interactive) {
+        _interactiveMessages++; _interactiveWallMS += elapsedMS; _interactiveCPUMS += cpuMS;
+        _interactiveMessageMaxMS = MAX(_interactiveMessageMaxMS, elapsedMS);
+        _interactiveUnreadBytesMax = MAX(_interactiveUnreadBytesMax, MAX(before, after));
+    }
+    if (_updates != updates) { _pixelMessages++; _pixelMessageMaxMS = MAX(_pixelMessageMaxMS, elapsedMS); }
+    else if (_cursorPositions + _cursorShapes != cursors) { _cursorOnlyMessages++; _cursorOnlyMessageMaxMS = MAX(_cursorOnlyMessageMaxMS, elapsedMS); }
+    [_lock unlock]; return handled;
+}
+// Caller owns _lock. Fixed aggregates only; no packet, endpoint or input content.
+- (NSDictionary *)pipelineCountersLocked {
+    return @{@"bufferedReadDispatches": @(_bufferedReadDispatches), @"inputEventsDuringRead": @(_readServiceEvents), @"messageReadActive": @(_readingServerMessage), @"workerCPUSamples": @(_workerCPUSamples), @"workerCPUTotalMS": @(_workerCPUTotalMS), @"workerCPUMaxMS": @(_workerCPUMaxMS),
+        @"interactiveMessages": @(_interactiveMessages), @"interactiveWallMS": @(_interactiveWallMS), @"interactiveCPUMS": @(_interactiveCPUMS),
+        @"interactiveMessageMaxMS": @(_interactiveMessageMaxMS), @"unreadBytesLatest": @(_unreadBytesLatest), @"unreadBytesMax": @(_unreadBytesMax),
+        @"interactiveUnreadBytesMax": @(_interactiveUnreadBytesMax), @"pixelMessages": @(_pixelMessages), @"pixelMessageMaxMS": @(_pixelMessageMaxMS),
+        @"cursorOnlyMessages": @(_cursorOnlyMessages), @"cursorOnlyMessageMaxMS": @(_cursorOnlyMessageMaxMS),
+        @"frameCopyTotalMS": @(_frameCopyTotalMS), @"frameCopyMaxMS": @(_frameCopyMaxMS), @"frameMainQueueMaxMS": @(_frameMainQueueMaxMS),
+        @"frameCallbackMaxMS": @(_frameCallbackMaxMS), @"localPointerInteractionActive": @(_localPointerInteractionActive)};
+}
 - (rfbBool)cursorPosition:(rfbClient *)client x:(int)x y:(int)y {
     _cursorPositionKnown = x >= 0 && y >= 0 && x < client->width && y < client->height;
-    _cursorPosition = CGPointMake(x, y); _cursorDirty = YES;
-    [_lock lock]; _cursorPositions++; [_lock unlock];
-    return TRUE;
+    _cursorPosition = CGPointMake(x, y); _cursorPositionDirty = YES; _cursorDirty = YES;
+    [_lock lock]; _cursorPositions++;
+    _cursorPositionRevision = _readingServerMessage ? _serverMessagePointerRevision : _pointerRevision;
+    [_lock unlock]; return TRUE;
 }
 - (void)publishCursor {
     if (!_cursorDirty) return;
     [_lock lock];
-    if (_cursorPending || _stopping || _paused || _resumeRequested || _modeChanged) { [_lock unlock]; return; }
-    _cursorPending = YES; NSInteger generation = _generation; NSUInteger epoch = _presentationEpoch; [_lock unlock];
-    _cursorDirty = NO;
-    CompanionVNCImage *image = _cursorImage; CGPoint hotspot = _cursorHotspot, position = _cursorPosition;
-    BOOL known = _cursorPositionKnown;
+    if (_stopping || _paused || _resumeRequested || _modeChanged) { [_lock unlock]; return; }
+    // Images can change without a position report. Keep an undelivered fresh
+    // position while coalescing shapes, but never replay a consumed coordinate.
+    if (!_cursorPending || _pendingCursorEpoch != _presentationEpoch) _pendingCursorPositionKnown = NO;
+    _pendingCursorImage = _cursorImage; _pendingCursorHotspot = _cursorHotspot;
+    if (_cursorPositionDirty) {
+        _pendingCursorPosition = _cursorPosition; _pendingCursorPositionKnown = _cursorPositionKnown;
+        _pendingCursorPositionRevision = _cursorPositionRevision; _cursorPositionDirty = NO;
+    }
+    _pendingCursorEpoch = _presentationEpoch; _pendingCursorReceivedAt = NSProcessInfo.processInfo.systemUptime; _cursorDirty = NO;
+    if (_cursorPending) { [_lock unlock]; return; }
+    _cursorPending = YES; NSInteger generation = _generation; [_lock unlock];
     dispatch_async(dispatch_get_main_queue(), ^{
-        [self->_lock lock]; BOOL valid = generation == self->_generation && epoch == self->_presentationEpoch && self->_running && !self->_stopping && !self->_paused;
-        if (generation == self->_generation) self->_cursorPending = NO; [self->_lock unlock];
+        [self->_lock lock];
+        if (generation != self->_generation) { [self->_lock unlock]; return; }
+        BOOL valid = self->_pendingCursorEpoch == self->_presentationEpoch && self->_running
+            && !self->_stopping && !self->_paused && !self->_resumeRequested && !self->_modeChanged;
+        CompanionVNCImage *image = self->_pendingCursorImage;
+        CGPoint hotspot = self->_pendingCursorHotspot, position = self->_pendingCursorPosition;
+        BOOL fresh = self->_pendingCursorPositionKnown;
+        BOOL known = fresh && !self->_reviewInputSuspended && !self->_interruptionInputSuspended;
+        // A read begun before newer local input cannot reconcile the pointer.
+        // This rejects a local race; it does not establish host-report freshness.
+        known = known && self->_pendingCursorPositionRevision == self->_pointerRevision && !self->_localPointerInteractionActive;
+        self->_pendingCursorImage = nil; self->_pendingCursorPositionKnown = NO; self->_cursorPending = NO;
         if (valid && self.cursorHandler) {
-            [self->_lock lock]; self->_cursorPublications++; [self->_lock unlock];
-            self.cursorHandler(image, hotspot, position, known);
+            self->_cursorPublications++;
+            if (known) self->_cursorPositionPublications++;
+            else if (fresh) self->_cursorPositionsSuppressed++;
+            self->_cursorQueueMaxMS = MAX(self->_cursorQueueMaxMS,
+                (NSProcessInfo.processInfo.systemUptime - self->_pendingCursorReceivedAt) * 1000);
         }
+        [self->_lock unlock];
+        if (valid && self.cursorHandler) self.cursorHandler(image, hotspot, position, known);
     });
 }
 - (void)publishFrame:(rfbClient *)client {
@@ -826,6 +1063,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     if (_framePending || _stopping || _paused || _inputOnly || _resumeRequested) { [_lock unlock]; return; }
     _framePending = YES; NSInteger generation = _generation; NSUInteger epoch = _presentationEpoch; [_lock unlock];
     _dirty = NO; _lastFrame = now;
+    double copyStarted = NSProcessInfo.processInfo.systemUptime;
     NSData *copy = [NSData dataWithBytes:client->frameBuffer length:(NSUInteger)client->width * client->height * 4];
     CGDataProviderRef provider = CGDataProviderCreateWithCFData((__bridge CFDataRef)copy);
     CGColorSpaceRef colors = CGColorSpaceCreateDeviceRGB();
@@ -833,15 +1071,21 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
         (CGBitmapInfo)kCGBitmapByteOrder32Little | (CGBitmapInfo)kCGImageAlphaNoneSkipFirst, provider, NULL, NO, kCGRenderingIntentDefault);
     CompanionVNCImage *frame = image ? PlatformImage(image) : nil;
     if (image) CGImageRelease(image); CGColorSpaceRelease(colors); CGDataProviderRelease(provider);
+    double queuedAt = NSProcessInfo.processInfo.systemUptime, copyMS = (queuedAt - copyStarted) * 1000;
+    [_lock lock]; _frameCopyTotalMS += copyMS; _frameCopyMaxMS = MAX(_frameCopyMaxMS, copyMS); [_lock unlock];
     dispatch_async(dispatch_get_main_queue(), ^{
+        double deliveredAt = NSProcessInfo.processInfo.systemUptime;
         [self->_lock lock]; BOOL valid = generation == self->_generation && epoch == self->_presentationEpoch && self->_running && !self->_stopping && !self->_paused;
         if (generation == self->_generation) self->_framePending = NO; [self->_lock unlock];
         if (valid && frame && self.frameHandler) self.frameHandler(frame);
+        double callbackMS = (NSProcessInfo.processInfo.systemUptime - deliveredAt) * 1000;
         if (valid && frame) {
             [self->_lock lock];
             // The socket owner can reset the baseline while frameHandler lays out UI.
             valid = generation == self->_generation && epoch == self->_presentationEpoch && self->_running && !self->_stopping && !self->_paused;
             if (!valid) { [self->_lock unlock]; return; }
+            self->_frameMainQueueMaxMS = MAX(self->_frameMainQueueMaxMS, (deliveredAt - queuedAt) * 1000);
+            self->_frameCallbackMaxMS = MAX(self->_frameCallbackMaxMS, callbackMS);
             BOOL firstBaseline = !self->_baselinePresented; self->_baselinePresented = YES; self->_presentedFrames++;
             BOOL resumed = self->_awaitingResumeFrame;
             if (resumed) { self->_resumeFrames++; self->_awaitingResumeFrame = NO; self->_inputReady = YES; }
@@ -856,13 +1100,19 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     NSMutableDictionary *stats = [_reportedCounters mutableCopy] ?: [NSMutableDictionary new];
     [stats addEntriesFromDictionary:@{
         @"cursorShapeUpdates": @(_cursorShapes), @"cursorPositionUpdates": @(_cursorPositions),
+        @"cursorPositionPublications": @(_cursorPositionPublications), @"cursorPositionsSuppressed": @(_cursorPositionsSuppressed),
         @"standardCursorReports": @(_standardCursorReports), @"decodedCursorImages": @(_visibleCursorImages),
+        @"serverMessages": @(_serverMessages), @"serverMessageTotalMS": @(_serverMessageTotalMS),
+        @"serverMessageMaxMS": @(_serverMessageMaxMS), @"cursorQueueMaxMS": @(_cursorQueueMaxMS),
+        @"automaticDesktopUpdates": @(_automaticUpdatesActive),
+        @"automaticUpdateStarts": @(_automaticUpdateStarts), @"automaticUpdateStops": @(_automaticUpdateStops),
         @"appleCursorStores": @(_appleCursorStores), @"appleCursorSelections": @(_appleCursorSelections),
         @"appleCursorCacheMisses": @(_appleCursorMisses), @"cursorPublications": @(_cursorPublications),
         @"cursorCachedImage": @(_cursorImageAvailable), @"inputEvents": @(_inputs),
         @"presentedFrames": @(_presentedFrames), @"backgroundPauses": @(_pauses), @"retainedResumes": @(_resumes),
         @"sessionInputReady": @(_inputReady), @"sessionReviewBlocked": @(_reviewInputSuspended),
         @"sessionInterruptionBlocked": @(_interruptionInputSuspended), @"sessionPaused": @(_paused)}];
+    stats[@"pipeline"] = [self pipelineCountersLocked];
     [_lock unlock]; return stats;
 }
 - (void)report:(NSString *)state {
@@ -872,7 +1122,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
         _running, _inputReady, _inputOnly, _paused, _stopping, _overflow,
         _awaitingResumeFrame, _baselinePresented)) { [_lock unlock]; return; }
     NSInteger generation = _generation; NSUInteger epoch = _presentationEpoch; BOOL intermediate = _running;
-    NSDictionary *stats = @{@"connectionStarts": @(_connections), @"updateRects": @(_updates),
+    NSDictionary *stats = @{@"pipeline": [self pipelineCountersLocked], @"connectionStarts": @(_connections), @"updateRects": @(_updates),
         @"framebufferAllocations": @(_resizes), @"inputEvents": @(_inputs), @"viewChanges": @(_viewChanges), @"presentedFrames": @(_presentedFrames),
         @"baselineReady": @(_baselinePresented), @"baselineReceivedPixels": @(_receivedPixels), @"baselineExpectedPixels": @(_expectedPixels), @"fullRefreshRetries": @(_fullRefreshRetries),
         @"decoderFailures": @(_decoderFailures),
@@ -881,7 +1131,12 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
         @"displayLayoutMessages": @(_layoutMessages), @"displayLayout": _layoutDiagnostics ?: @{},
         @"backgroundPauses": @(_pauses), @"retainedResumes": @(_resumes), @"resumeFrames": @(_resumeFrames),
         @"cursorShapeUpdates": @(_cursorShapes), @"cursorPositionUpdates": @(_cursorPositions),
+        @"cursorPositionPublications": @(_cursorPositionPublications), @"cursorPositionsSuppressed": @(_cursorPositionsSuppressed),
         @"standardCursorReports": @(_standardCursorReports), @"decodedCursorImages": @(_visibleCursorImages),
+        @"serverMessages": @(_serverMessages), @"serverMessageTotalMS": @(_serverMessageTotalMS),
+        @"serverMessageMaxMS": @(_serverMessageMaxMS), @"cursorQueueMaxMS": @(_cursorQueueMaxMS),
+        @"automaticDesktopUpdates": @(_automaticUpdatesActive),
+        @"automaticUpdateStarts": @(_automaticUpdateStarts), @"automaticUpdateStops": @(_automaticUpdateStops),
         @"appleCursorStores": @(_appleCursorStores), @"appleCursorSelections": @(_appleCursorSelections),
         @"appleCursorCacheMisses": @(_appleCursorMisses), @"cursorPublications": @(_cursorPublications)};
     _reportedCounters = stats;
@@ -892,7 +1147,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     });
 }
 - (void)stop {
-    [_lock lock]; [self cancelNativeGesturesLocked]; _stopping = YES; _presentationEpoch++; [_events removeAllObjects]; NSInteger generation = _generation;
+    [_lock lock]; [self retirePointerInteractionLocked]; [self cancelNativeGesturesLocked]; _stopping = YES; _presentationEpoch++; [_events removeAllObjects]; NSInteger generation = _generation;
     void (^completion)(void) = _pauseCompletion; _pauseCompletion = nil;
     // A temporary input gate must not close an authenticated transport before
     // its owner releases sent input. Handshakes have no held input to release.
@@ -923,7 +1178,13 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
             NSMutableDictionary *annotated = [event mutableCopy]; annotated[@"motion"] = @(motion); event = annotated;
             if (motion && [last[@"motion"] boolValue] && [event[@"mask"] isEqual:last[@"mask"]]) [_events removeLastObject];
         }
-        if (_events.count >= 512) _overflow = YES; else [_events addObject:event];
+        if (_events.count >= 512) _overflow = YES;
+        else {
+            [_events addObject:event];
+            if (event[@"mask"]) {
+                _pointerRevision++;
+            }
+        }
     }
     [_lock unlock];
 }
