@@ -207,7 +207,7 @@ private enum TerminalPTY {
     }
     func updateMac(_ record: DirectMacRecordV1) { if record.id == mac.id { mac = record } }
     func connect(username: String, password: String, remember: Bool, key: TerminalSSHKey? = nil, installation: TerminalNamedKey? = nil, verificationOnly: Bool = false, keyFileID: UUID? = nil) {
-        guard !macRemoved, DirectAppLockV1.shared.canAccess, !connecting, !connected else { return }
+        guard !macRemoved, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable, !connecting, !connected else { return }
         let loginKey = verificationOnly ? installation?.key : key
         guard !username.isEmpty, (loginKey != nil || !password.isEmpty), username.utf8.count <= 255, password.utf8.count <= 4096,
               !username.contains("\0"), !password.contains("\0") else { present(.loginRejected, message: "Enter a Mac account and password or choose an SSH key. Account names must be at most 255 UTF-8 bytes and passwords at most 4 KiB, with no NUL characters."); return }

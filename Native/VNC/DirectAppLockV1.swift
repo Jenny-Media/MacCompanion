@@ -18,11 +18,14 @@ import UIKit
     private(set) var message = "Unlock to access your Macs"
     var enabled: Bool { defaults.bool(forKey: Self.preferenceKey) }
     var canAccess: Bool { !enabled || (allowed && protectedDataAvailable()) }
-    var canInteract: Bool { canAccess && foregroundActive }
+    // A current authentication result can release local UI during system dismissal.
+    // Remote-session resume still requires actual foreground activation.
+    var canInteract: Bool { canAccess && (foregroundActive || authenticationSucceeded) }
+    var canResumeRemoteSession: Bool { canAccess && foregroundActive }
     var contentVisible: Bool { canAccess || foregroundGracePending }
     var privacyCoverVisible: Bool { cover?.isHidden == false }
-    var unlockTransitionVisible: Bool { authenticating || authenticationSucceeded }
-    var unlockButtonTitle: String { authenticating ? "Unlocking…" : authenticationSucceeded ? "Opening…" : "Unlock" }
+    var unlockTransitionVisible: Bool { authenticating }
+    var unlockButtonTitle: String { authenticating ? "Unlocking…" : "Unlock" }
     var unlockButtonEnabled: Bool { enabled && !allowed && !unlockTransitionVisible && foregroundActive && protectedDataReady && protectedDataAvailable() }
     @ObservationIgnored let unlockTimings: DirectUnlockTimingsV1
     private(set) var unlockTimingToken: UUID?
@@ -121,7 +124,11 @@ import UIKit
         if canAccess || foregroundGracePending { hideCover() }
         else { showCover() }
     }
-    func becameInactive() { foregroundActive = false }
+    func becameInactive() {
+        foregroundActive = false
+        // This exception belongs only to the just-accepted authentication.
+        authenticationSucceeded = false
+    }
     func background() {
         foregroundActive = false
         foregroundGracePending = false
@@ -151,7 +158,7 @@ import UIKit
         unlockTimings.finish(outcome, token: unlockTimingToken); unlockTimingToken = nil
     }
     func recordUnlockDisplayTick(token: UUID, phase: DirectUnlockTimingsV1.Phase) {
-        guard unlockTimingToken == token, canInteract, contentVisible, !privacyCoverVisible else { return }
+        guard unlockTimingToken == token, canResumeRemoteSession, contentVisible, !privacyCoverVisible else { return }
         guard [.libraryDisplayTick, .desktopDisplayTick, .terminalDisplayTick].contains(phase) else { return }
         unlockTimings.mark(phase, token: token); unlockTimings.finish(.success, token: token)
         unlockTimingToken = nil
@@ -183,6 +190,8 @@ import UIKit
         unlockTimings.mark(.unlockNotification, token: unlockTimingToken)
         NotificationCenter.default.post(name: Self.unlocked, object: nil)
         unlockTimings.mark(.unlockObserversReturned, token: unlockTimingToken)
+        unlockTimings.stopActivationProbe()
+        unlockTimings.checkpoint()
     }
     func authenticate() {
         guard enabled, !allowed, !authenticating, !authenticationSucceeded, isActive(), protectedDataAvailable() else { return }
@@ -192,30 +201,49 @@ import UIKit
         unlockTimingToken = unlockTimings.begin(active: isActive())
         let timingToken = unlockTimingToken, callbackClock = unlockTimings.callbackClock
         let context = contextFactory(); self.context = context
-        var error: NSError?
-        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
-            retireUnlockTiming(.unavailable)
-            message = "Set up a device passcode in iPhone Settings, then try again."; return
-        }
+        // evaluatePolicy reports unavailable policy asynchronously. Repeating
+        // canEvaluatePolicy here adds a blocking IPC before every real attempt.
         authenticating = true; message = "Authenticating…"
         unlockTimings.mark(.evaluationIssued, token: timingToken)
-        context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Unlock Mac Companion to access your saved Macs") { [weak self] success, _ in
+        context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Unlock Mac Companion to access your saved Macs") { [weak self] success, error in
             let callbackInstant = callbackClock()
+            let passcodeMissing = !success && (error as? LAError)?.code == .passcodeNotSet
             Task { @MainActor in
                 guard let self, self.attempt == id else { return }
                 self.unlockTimings.mark(.authenticationCallback, token: timingToken, at: callbackInstant)
                 self.unlockTimings.mark(.authenticationHandled, token: timingToken)
                 // Consume this result once; a duplicate or retired callback
                 // cannot replace a newer attempt or reopen a revoked transition.
-                self.attempt = UUID(); self.context = nil; self.authenticating = false
+                self.attempt = UUID()
+                let completedContext = self.context
+                self.context = nil; self.authenticating = false
                 guard success, self.protectedDataAvailable(), !self.isBackground() else {
-                    self.retireUnlockTiming(.failed)
-                    self.message = "App locked. Tap Unlock to try again."; return
+                    self.retireUnlockTiming(passcodeMissing ? .unavailable : .failed)
+                    self.message = passcodeMissing ? "Set up a device passcode in iPhone Settings, then try again."
+                        : "App locked. Tap Unlock to try again."
+                    return
                 }
+                // Dropping our reference does not explicitly end the framework's
+                // presentation. Dispose only after accepting and retiring this
+                // reply. Cleanup itself cannot grant local or remote access.
+                completedContext?.invalidate()
+                self.unlockTimings.mark(.authenticationContextInvalidated, token: timingToken)
+                // Reveal prepared content and enable local controls in the same turn,
+                // without waiting for UIKit's authentication-dismissal activation.
                 self.authenticationSucceeded = true
-                // Result and activation may arrive in either order. Reuse the
-                // same admission path; already-active success needs no new event.
+                self.allowed = true; self.unlockNeedsPublication = true
+                self.foregroundActive = self.isActive()
+                self.unlockTimings.mark(.localAdmission, token: timingToken)
+                self.hideCover()
+                self.unlockTimings.mark(.coverRemoved, token: timingToken)
+                self.unlockTimings.startActivationProbe(token: timingToken) { [weak self] in
+                    guard let self else { return (false, true) }
+                    return (self.isActive(), self.isBackground())
+                }
+                // Only remote-session publication waits for activation. An already-
+                // active success needs no additional lifecycle notification.
                 self.becameActive()
+                self.unlockTimings.checkpoint()
             }
         }
     }

@@ -226,7 +226,7 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
             self.login = nil
         }
         func connect(user: String, password: String, remember: Bool) {
-            guard !removed, DirectAppLockV1.shared.canAccess else { return }
+            guard !removed, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { return }
             guard work == nil else { return }
             let u = Array(user.utf8), p = Array(password.utf8)
             guard (1...63).contains(u.count), (1...63).contains(p.count), !u.contains(0), !p.contains(0) else {
@@ -251,7 +251,8 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
                         try await Task.sleep(for: .milliseconds(50))
                     }
                     try Task.checkCancellation()
-                    guard generation == token, previous?.running != true else { throw CancellationError() }
+                    guard generation == token, previous?.running != true, DirectAppLockV1.shared.canAccess,
+                          DirectClientPlatformV1.sessionAvailable else { throw CancellationError() }
                     let opened = try await DirectDesktopSSHTunnel.open(addresses: mac.addresses,
                         sshPort: mac.sshPort, screenSharingPort: mac.port, username: user, password: password,
                         validateHost: { [weak self] key in

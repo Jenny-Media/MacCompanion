@@ -120,8 +120,12 @@ struct ColdStartControls: View {
             Spacer()
             VStack(spacing: 8) {
                 Text(model.stage).accessibilityIdentifier("qa-startup-stage")
-                Text(model.lock.unlockTimingToken == nil && model.lock.unlockTimings.records.last?.outcome == .success ? "Timing ready" : "Timing pending")
-                    .font(.caption).accessibilityIdentifier("qa-timing-status")
+                HStack {
+                    Text(model.lock.unlockTimingToken == nil && model.lock.unlockTimings.records.last?.outcome == .success ? "Timing ready" : "Timing pending")
+                        .accessibilityIdentifier("qa-timing-status")
+                    Text(model.lock.canResumeRemoteSession ? "Remote ready" : "Remote paused")
+                        .accessibilityIdentifier("qa-remote-ready")
+                }.font(.caption)
                 Text(model.lock.unlockTimings.records.last?.events.map { $0.phase.rawValue }.joined(separator: ",") ?? "")
                     .font(.caption2).lineLimit(1).accessibilityIdentifier("qa-timing-phases")
 

@@ -7,7 +7,7 @@ import UIKit
 @MainActor final class DirectUnlockTimingsV1 {
     enum Phase: String, Codable, Sendable {
         case requested, evaluationIssued, authenticationCallback, authenticationHandled
-        case activationNotification, activeAdmission, coverRemoved
+        case authenticationContextInvalidated, localAdmission, activationNotification, activeAdmission, coverRemoved
         case unlockNotification, unlockObserversReturned
         case libraryWaitStarted, libraryReadable, libraryUnreadable
         case libraryDisplayTick, desktopDisplayTick, terminalDisplayTick
@@ -15,12 +15,19 @@ import UIKit
     enum Outcome: String, Codable, Sendable { case pending, success, failed, unavailable, revoked, replaced, preferenceChanged }
     enum LibraryState: String, Codable, Sendable { case notStarted, waiting, readable, unreadable }
     struct Event: Codable, Sendable { let phase: Phase; let milliseconds: Double }
+    struct ActivitySample: Codable, Sendable {
+        let milliseconds: Double
+        let active: Bool
+        let background: Bool
+        let mainActorDelayMilliseconds: Double
+    }
     struct Record: Codable, Sendable {
         let sequence: Int
         let activeAtRequest: Bool
         let libraryAtRequest: LibraryState
         var outcome: Outcome
         var events: [Event]
+        var activitySamples: [ActivitySample] = []
     }
     struct Snapshot: Encodable, Sendable {
         let schema = 1
@@ -40,6 +47,7 @@ import UIKit
     private let clock: @Sendable () -> ContinuousClock.Instant
     private let origin: ContinuousClock.Instant
     private let writer = DispatchQueue(label: "MacCompanion.unlock-timing-snapshot", qos: .utility)
+    private var activationProbe: Task<Void, Never>?
     private var token: UUID?
     private var sequence = 0
     private var libraryState = LibraryState.notStarted
@@ -74,8 +82,37 @@ import UIKit
     }
     func finish(_ outcome: Outcome, token id: UUID? = nil) {
         guard enabled, token != nil, id == nil || token == id, !records.isEmpty else { return }
-        records[records.count - 1].outcome = outcome; token = nil; save()
+        records[records.count - 1].outcome = outcome; token = nil
+        stopActivationProbe(); save()
     }
+    func checkpoint() { save() }
+    func recordActivitySample(token id: UUID?, active: Bool, background: Bool, delayMilliseconds: Double) {
+        guard enabled, let id, token == id, !records.isEmpty,
+              records[records.count - 1].activitySamples.count < 64 else { return }
+        records[records.count - 1].activitySamples.append(ActivitySample(
+            milliseconds: event(.activeAdmission, at: clock()).milliseconds,
+            active: active, background: background,
+            mainActorDelayMilliseconds: max(0, delayMilliseconds.isFinite ? delayMilliseconds : 0)))
+    }
+    func startActivationProbe(token id: UUID?, state: @escaping @MainActor () -> (active: Bool, background: Bool)) {
+        guard enabled, let id, token == id else { return }
+        stopActivationProbe()
+        activationProbe = Task { [weak self] in
+            for _ in 0..<64 {
+                let deadline = ContinuousClock.now.advanced(by: .milliseconds(50))
+                do { try await Task.sleep(until: deadline, clock: .continuous) } catch { return }
+                guard let self, self.token == id, !Task.isCancelled else { return }
+                let now = ContinuousClock.now, components = deadline.duration(to: now).components
+                let delay = Double(components.seconds) * 1000 + Double(components.attoseconds) / 1e15
+                let activity = state()
+                self.recordActivitySample(token: id, active: activity.active,
+                                          background: activity.background, delayMilliseconds: delay)
+                if activity.active || activity.background { self.save(); return }
+            }
+            self?.checkpoint()
+        }
+    }
+    func stopActivationProbe() { activationProbe?.cancel(); activationProbe = nil }
     func libraryWaitStarted() {
         guard enabled, libraryState == .notStarted else { return }
         libraryState = .waiting; libraryEvents.append(event(.libraryWaitStarted, at: clock()))
@@ -139,7 +176,7 @@ struct DirectUnlockFrameProbe: UIViewRepresentable {
     }
     private var eligible: Bool {
         guard enabled, let lock, let token, lock.unlockTimingToken == token,
-              lock.canInteract, lock.contentVisible, !lock.privacyCoverVisible,
+              lock.canResumeRemoteSession, lock.contentVisible, !lock.privacyCoverVisible,
               let window, !window.isHidden, window.windowScene?.activationState == .foregroundActive,
               bounds.width > 0, bounds.height > 0 else { return false }
         var ancestor: UIView? = self

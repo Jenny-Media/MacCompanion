@@ -467,11 +467,13 @@ struct DirectMacLibraryRootV1: View {
                 while library.discovery.scanning && !Task.isCancelled { try? await Task.sleep(for: .milliseconds(100)) }
             }
             .onChange(of: appLock.canAccess) { _, unlocked in
-                if !unlocked { library.discovery.stop(); cancelAccess() }
+                if !unlocked { library.discovery.stop(); cancelAccess(); deferredRoute = nil; loadingRoute = nil }
             }
             .onChange(of: appLock.canInteract) { _, admitted in
-                if admitted, let route = deferredRoute { deferredRoute = nil; request(route) }
-                else if !admitted { cancelAccess() }
+                if !admitted { cancelAccess() }
+            }
+            .onChange(of: appLock.canResumeRemoteSession) { _, ready in
+                if ready, let route = deferredRoute { deferredRoute = nil; request(route) }
             }
             .onChange(of: pro.ready) { _, ready in if ready { completePendingAccess() } }
             .onChange(of: library.macs.map(\.id)) { _, ids in
@@ -538,25 +540,34 @@ struct DirectMacLibraryRootV1: View {
     private func cancelAccess() {
         accessDeadline?.cancel(); accessDeadline = nil; pendingAccess = nil; accessTimedOut = false
     }
+    private func admits(_ action: LibraryAction) -> Bool {
+        switch action {
+        case .edit: appLock.canInteract
+        case .open: appLock.canResumeRemoteSession
+        }
+    }
     private func request(_ action: LibraryAction, deferUntilActive: Bool = false) {
-        cancelAccess()
+        cancelAccess(); deferredRoute = nil
         guard appLock.canInteract else { if deferUntilActive { deferredRoute = action }; return }
+        // Accept a local tap during the successful-authentication handoff, but
+        // start its remote session only after the real activation event.
+        guard admits(action) else { deferredRoute = action; return }
         if performIfResolved(action) { return }
         let pending = PendingAccess(action: action); pendingAccess = pending; pro.start()
         accessDeadline = Task { @MainActor in
             do { try await Task.sleep(for: accessTimeout) } catch { return }
-            guard !Task.isCancelled, pendingAccess?.id == pending.id, appLock.canInteract else { return }
+            guard !Task.isCancelled, pendingAccess?.id == pending.id, admits(pending.action) else { return }
             if pro.ready { completePendingAccess() } else { accessTimedOut = true }
         }
     }
     private func completePendingAccess() {
-        guard let pending = pendingAccess, !accessTimedOut, appLock.canInteract else { return }
+        guard let pending = pendingAccess, !accessTimedOut, admits(pending.action) else { return }
         if performIfResolved(pending.action) { cancelAccess() }
     }
     // Free actions are safe before purchase readiness. A paid denial is safe only
     // after the current verified lookup has published its result.
     private func performIfResolved(_ action: LibraryAction) -> Bool {
-        guard appLock.canInteract else { return false }
+        guard admits(action) else { return false }
         switch action {
         case .edit(let mac):
             guard library.readable else { return true }

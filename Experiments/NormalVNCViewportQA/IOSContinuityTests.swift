@@ -9,7 +9,17 @@ import Observation
 private final class ContinuityAuthentication: LAContext, @unchecked Sendable {
     var reply: (@Sendable (Bool, (any Error)?) -> Void)?
     var evaluations = 0
-    override func canEvaluatePolicy(_ policy: LAPolicy, error: NSErrorPointer) -> Bool { true }
+    var preflights = 0
+    var policyAvailable = true
+    var invalidations = 0
+    var cancelReplyOnInvalidate = false
+    override func invalidate() {
+        invalidations += 1
+        if cancelReplyOnInvalidate { reply?(false, LAError(.appCancel)) }
+    }
+    override func canEvaluatePolicy(_ policy: LAPolicy, error: NSErrorPointer) -> Bool {
+        preflights += 1; return policyAvailable
+    }
     override func evaluatePolicy(_ policy: LAPolicy, localizedReason: String, reply: @escaping @Sendable (Bool, (any Error)?) -> Void) {
         evaluations += 1; self.reply = reply
     }
@@ -57,6 +67,74 @@ private final class ContinuitySession: CompanionVNCSession {
 
 @MainActor final class IOSContinuityTests: XCTestCase {
 
+    func testColdUnlockEvaluatesAsynchronouslyWithoutDuplicatedPreflightAndHandlesMissingPasscode() async throws {
+        let context = ContinuityAuthentication(), defaults = isolatedDefaults(), timings = DirectUnlockTimingsV1()
+        defaults.set(true, forKey: DirectAppLockV1.preferenceKey)
+        context.policyAvailable = false
+        let lock = DirectAppLockV1(contextFactory: { context }, defaults: defaults, unlockTimings: timings,
+                                   isActive: { true }, isBackground: { false }, protectedDataAvailable: { true })
+        defer { lock.setEnabled(false) }
+        lock.install()
+        XCTAssertEqual(context.preflights, 0); XCTAssertEqual(context.evaluations, 1)
+        XCTAssertTrue(lock.authenticating); XCTAssertTrue(lock.privacyCoverVisible); XCTAssertFalse(lock.canInteract)
+        context.reply?(false, LAError(.passcodeNotSet))
+        try await eventually { !lock.authenticating }
+        XCTAssertEqual(timings.records.last?.outcome, .unavailable)
+        XCTAssertTrue(lock.message.contains("Set up a device passcode")); XCTAssertTrue(lock.unlockButtonEnabled)
+        XCTAssertFalse(lock.canAccess); XCTAssertTrue(lock.privacyCoverVisible)
+        lock.becameActive(); XCTAssertEqual(context.evaluations, 1)
+        lock.authenticate(); XCTAssertEqual(context.preflights, 0); XCTAssertEqual(context.evaluations, 2)
+    }
+    func testSuccessfulLocalHandoffSurvivesCleanupCancellationWithoutRemoteAdmission() async throws {
+        var active = true
+        let context = ContinuityAuthentication(), timings = DirectUnlockTimingsV1()
+        context.cancelReplyOnInvalidate = true
+        let lock = DirectAppLockV1(contextFactory: { context }, defaults: isolatedDefaults(), unlockTimings: timings,
+                                   isActive: { active }, isBackground: { false }, protectedDataAvailable: { true })
+        defer { lock.setEnabled(false) }
+        lock.setEnabled(true); active = false; lock.becameInactive(); context.reply?(true, nil)
+        try await eventually { !lock.authenticating }
+        XCTAssertEqual(context.invalidations, 1)
+        try await Task.sleep(for: .milliseconds(125))
+        XCTAssertEqual(lock.unlockButtonTitle, "Unlock")
+        XCTAssertFalse(lock.privacyCoverVisible); XCTAssertTrue(lock.contentVisible); XCTAssertTrue(lock.canInteract)
+        XCTAssertFalse(lock.canResumeRemoteSession)
+        XCTAssertGreaterThanOrEqual(timings.records.last?.activitySamples.count ?? 0, 1)
+        active = true; lock.receivedActivationNotification()
+        XCTAssertTrue(lock.canInteract); XCTAssertTrue(lock.contentVisible); XCTAssertFalse(lock.privacyCoverVisible)
+        XCTAssertEqual(context.evaluations, 1); XCTAssertEqual(context.invalidations, 1)
+    }
+    func testActivationSamplesDistinguishResponsiveInactivityFromMainActorStall() async throws {
+        let timings = DirectUnlockTimingsV1(), token = try XCTUnwrap(timings.begin(active: true))
+        timings.startActivationProbe(token: token) { (false, false) }
+        try await Task.sleep(for: .milliseconds(125))
+        let before = try XCTUnwrap(timings.records.last).activitySamples
+        XCTAssertGreaterThanOrEqual(before.count, 1); XCTAssertTrue(before.allSatisfy { !$0.active && !$0.background })
+        // Schedule a pending tick, then deliberately block this test's actor.
+        try await Task.sleep(for: .milliseconds(5))
+        usleep(120_000)
+        try await Task.sleep(for: .milliseconds(5))
+        XCTAssertTrue(try XCTUnwrap(timings.records.last).activitySamples.contains { $0.mainActorDelayMilliseconds >= 60 })
+        timings.finish(.revoked)
+        let count = timings.records.last?.activitySamples.count
+        try await Task.sleep(for: .milliseconds(75))
+        XCTAssertEqual(timings.records.last?.activitySamples.count, count)
+    }
+    func testAdmissionCheckpointPersistsWithoutNativeDisplayTick() async throws {
+        let url = URL.temporaryDirectory.appending(path: "synthetic-unlock-checkpoint-" + UUID().uuidString + ".json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let timings = DirectUnlockTimingsV1(persist: true, storageURL: url)
+        let token = try XCTUnwrap(timings.begin(active: true))
+        timings.mark(.activeAdmission, token: token)
+        for _ in 0..<80 { timings.recordActivitySample(token: token, active: false, background: false, delayMilliseconds: 0) }
+        timings.checkpoint(); await timings.waitForWrites()
+        let snapshot = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        let saved = try XCTUnwrap((snapshot["records"] as? [[String: Any]])?.last)
+        XCTAssertEqual(saved["outcome"] as? String, "pending")
+        XCTAssertEqual((saved["activitySamples"] as? [Any])?.count, 64)
+        XCTAssertEqual(timings.pendingToken, token)
+        timings.finish(.revoked)
+    }
     func testUnlockPhaseTimingsSeparateRawCallbackFromActorHandling() async throws {
         let context = ContinuityAuthentication(), timings = DirectUnlockTimingsV1()
         let lock = DirectAppLockV1(contextFactory: { context }, defaults: isolatedDefaults(), unlockTimings: timings,
@@ -86,8 +164,8 @@ private final class ContinuitySession: CompanionVNCSession {
             lock.setEnabled(true); active = false; lock.becameInactive()
             if resultFirst {
                 context.reply?(true, nil); try await eventually { !lock.authenticating }
-                XCTAssertEqual(lock.unlockButtonTitle, "Opening…"); XCTAssertTrue(lock.privacyCoverVisible)
-                XCTAssertFalse(lock.canInteract)
+                XCTAssertFalse(lock.privacyCoverVisible); XCTAssertTrue(lock.canInteract)
+                XCTAssertFalse(lock.canResumeRemoteSession)
                 active = true; lock.receivedActivationNotification()
             } else {
                 active = true; lock.receivedActivationNotification()
@@ -99,6 +177,10 @@ private final class ContinuitySession: CompanionVNCSession {
             let activation = try XCTUnwrap(events.firstIndex { $0.phase == .activationNotification })
             XCTAssertEqual(result < activation, resultFirst)
             XCTAssertEqual(events.filter { $0.phase == .activeAdmission }.count, 1)
+            XCTAssertEqual(events.filter { $0.phase == .localAdmission }.count, 1)
+            let reveal = try XCTUnwrap(events.firstIndex { $0.phase == .coverRemoved })
+            XCTAssertEqual(reveal < activation, resultFirst)
+            XCTAssertTrue(lock.canResumeRemoteSession)
             XCTAssertFalse(lock.privacyCoverVisible); XCTAssertTrue(lock.canInteract)
             lock.setEnabled(false)
         }
@@ -148,7 +230,8 @@ private final class ContinuitySession: CompanionVNCSession {
         active = false; lock.becameInactive(); context.reply?(true, nil)
         try await eventually { !lock.authenticating }
         probe.configure(lock: lock, token: token, phase: .libraryDisplayTick, enabled: true)
-        XCTAssertFalse(probe.sampling); XCTAssertTrue(lock.privacyCoverVisible)
+        XCTAssertFalse(probe.sampling); XCTAssertFalse(lock.privacyCoverVisible)
+        XCTAssertTrue(lock.canInteract); XCTAssertFalse(lock.canResumeRemoteSession)
         active = true; lock.receivedActivationNotification()
         probe.configure(lock: lock, token: token, phase: .libraryDisplayTick, enabled: true)
         root.view.layoutIfNeeded()
@@ -195,7 +278,10 @@ private final class ContinuitySession: CompanionVNCSession {
         XCTAssertEqual(Set(object.keys), ["schema", "clock", "frameMeaning", "library", "records"])
         let records = try XCTUnwrap(object["records"] as? [[String: Any]])
         for record in records {
-            XCTAssertEqual(Set(record.keys), ["sequence", "activeAtRequest", "libraryAtRequest", "outcome", "events"])
+            XCTAssertEqual(Set(record.keys), ["sequence", "activeAtRequest", "libraryAtRequest", "outcome", "events", "activitySamples"])
+            let samples = try XCTUnwrap(record["activitySamples"] as? [[String: Any]])
+            XCTAssertLessThanOrEqual(samples.count, 64)
+            for sample in samples { XCTAssertEqual(Set(sample.keys), ["milliseconds", "active", "background", "mainActorDelayMilliseconds"]) }
             let events = try XCTUnwrap(record["events"] as? [[String: Any]])
             XCTAssertLessThanOrEqual(events.count, 16)
             XCTAssertEqual(Set(events.compactMap { $0["phase"] as? String }).count, events.count)
@@ -287,10 +373,11 @@ private final class ContinuitySession: CompanionVNCSession {
         lock.setEnabled(true); lock.install()
         active = false; lock.becameInactive(); authentication.reply?(true, nil)
         try await eventually { !lock.authenticating }
-        XCTAssertFalse(lock.canAccess); XCTAssertFalse(lock.contentVisible)
-        XCTAssertFalse(lock.canInteract); XCTAssertTrue(lock.privacyCoverVisible)
+        XCTAssertTrue(lock.canAccess); XCTAssertTrue(lock.contentVisible)
+        XCTAssertTrue(lock.canInteract); XCTAssertFalse(lock.privacyCoverVisible)
+        XCTAssertFalse(lock.canResumeRemoteSession)
         var observed = false
-        withObservationTracking { _ = lock.canInteract } onChange: {
+        withObservationTracking { _ = lock.canResumeRemoteSession } onChange: {
             MainActor.assumeIsolated { observed = true }
         }
         active = true; lock.becameActive()
@@ -356,7 +443,8 @@ private final class ContinuitySession: CompanionVNCSession {
         lock.setEnabled(true); let reply = try XCTUnwrap(context.reply)
         active = false; lock.becameInactive(); reply(true, nil)
         try await eventually { !lock.authenticating }
-        XCTAssertFalse(lock.canAccess)
+        XCTAssertTrue(lock.canAccess); XCTAssertTrue(lock.canInteract)
+        XCTAssertFalse(lock.canResumeRemoteSession)
         protected = false; lock.protectedDataLost(); reply(true, nil)
         active = true; lock.becameActive()
         try await Task.sleep(for: .milliseconds(20))
@@ -378,9 +466,11 @@ private final class ContinuitySession: CompanionVNCSession {
         XCTAssertFalse(lock.unlockButtonEnabled); XCTAssertFalse(lock.canInteract)
         active = false; lock.becameInactive(); context.reply?(true, nil)
         try await eventually { !lock.authenticating }
-        XCTAssertEqual(lock.unlockButtonTitle, appLock["pendingActiveButtonTitle"] as? String)
-        XCTAssertFalse(lock.unlockButtonEnabled); XCTAssertTrue(lock.privacyCoverVisible)
-        XCTAssertFalse(lock.contentVisible)
+        XCTAssertNil(appLock["pendingActiveButtonTitle"])
+        XCTAssertEqual(lock.unlockButtonTitle, "Unlock")
+        XCTAssertFalse(lock.unlockButtonEnabled); XCTAssertFalse(lock.privacyCoverVisible)
+        XCTAssertTrue(lock.contentVisible); XCTAssertTrue(lock.canInteract)
+        XCTAssertFalse(lock.canResumeRemoteSession)
         active = true; lock.becameActive()
         XCTAssertTrue(lock.canInteract); XCTAssertFalse(lock.privacyCoverVisible)
         XCTAssertFalse(lock.unlockButtonEnabled); XCTAssertEqual(context.evaluations, 1)
@@ -472,7 +562,7 @@ private final class ContinuitySession: CompanionVNCSession {
         active = true; lock.becameActive()
         XCTAssertFalse(lock.privacyCoverVisible); XCTAssertEqual(context.evaluations, 1)
     }
-    func testSuccessfulInactiveAuthenticationKeepsQuietCoverUntilSingleActivePublication() async throws {
+    func testSuccessfulInactiveAuthenticationRevealsLocalControlsBeforeSingleRemotePublication() async throws {
         var active = true, background = false
         let context = ContinuityAuthentication()
         let lock = DirectAppLockV1(contextFactory: { context }, defaults: isolatedDefaults(), isActive: { active }, isBackground: { background }, protectedDataAvailable: { true })
@@ -485,15 +575,42 @@ private final class ContinuitySession: CompanionVNCSession {
         let oldReply = try XCTUnwrap(context.reply)
         let policy = try XCTUnwrap(try fixture()["clientAdditions"] as? [String: Any])
         let appLock = try XCTUnwrap(policy["appLock"] as? [String: Any])
-        XCTAssertEqual(appLock["successfulInactiveAuthenticationShowsCover"] as? Bool, true)
+        XCTAssertEqual(appLock["successfulInactiveAuthenticationShowsCover"] as? Bool, false)
         active = false; oldReply(true, nil); try await eventually { !lock.authenticating }
-        XCTAssertFalse(lock.canAccess); XCTAssertFalse(lock.canInteract); XCTAssertFalse(lock.contentVisible)
-        XCTAssertTrue(lock.privacyCoverVisible); XCTAssertEqual(publications, 0)
+        XCTAssertTrue(lock.canAccess); XCTAssertTrue(lock.canInteract); XCTAssertTrue(lock.contentVisible)
+        XCTAssertFalse(lock.privacyCoverVisible); XCTAssertEqual(publications, 0)
+        XCTAssertFalse(lock.canResumeRemoteSession)
+        XCTAssertEqual(appLock["remoteSessionResumeNeedsActiveAdmission"] as? Bool, true)
         active = true; lock.becameActive(); lock.becameActive()
         XCTAssertEqual(publications, 1)
         lock.background(); background = true; oldReply(true, nil)
         try await Task.sleep(for: .milliseconds(30))
         XCTAssertFalse(lock.canAccess); XCTAssertTrue(lock.privacyCoverVisible); XCTAssertEqual(publications, 1)
+    }
+    func testBackgroundBetweenLocalSuccessAndActivationRevokesHandoffWithoutRemoteResume() async throws {
+        var active = true, background = false
+        let context = ContinuityAuthentication(), timings = DirectUnlockTimingsV1()
+        let lock = DirectAppLockV1(contextFactory: { context }, defaults: isolatedDefaults(), unlockTimings: timings,
+                                   isActive: { active }, isBackground: { background }, protectedDataAvailable: { true })
+        var publications = 0
+        let observer = NotificationCenter.default.addObserver(forName: DirectAppLockV1.unlocked, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { publications += 1 }
+        }
+        defer { NotificationCenter.default.removeObserver(observer); lock.setEnabled(false) }
+        lock.setEnabled(true); let reply = try XCTUnwrap(context.reply)
+        active = false; lock.becameInactive(); reply(true, nil)
+        try await eventually { lock.canInteract }
+        XCTAssertFalse(lock.canResumeRemoteSession); XCTAssertEqual(publications, 0)
+        background = true; lock.background()
+        XCTAssertFalse(lock.canAccess); XCTAssertFalse(lock.canInteract); XCTAssertTrue(lock.privacyCoverVisible)
+        XCTAssertEqual(timings.records.last?.outcome, .revoked)
+        reply(true, nil); try await Task.sleep(for: .milliseconds(25))
+        XCTAssertEqual(publications, 0); XCTAssertFalse(lock.canResumeRemoteSession)
+        background = false; active = true; lock.receivedActivationNotification()
+        XCTAssertTrue(lock.authenticating); XCTAssertEqual(context.evaluations, 2)
+        XCTAssertFalse(lock.canAccess); XCTAssertEqual(publications, 0)
+        context.reply?(true, nil); try await eventually { lock.canResumeRemoteSession }
+        XCTAssertEqual(publications, 1)
     }
     func testGraceForegroundPresentationDoesNotGrantInactiveAccessAndExpiryRemasks() async throws {
         var time: TimeInterval = 100, active = true, protected = true

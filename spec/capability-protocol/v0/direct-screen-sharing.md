@@ -537,31 +537,52 @@ access. Transient inactivity alone MUST NOT reveal a lock cover or revoke prior
 authentication; session input still stops until active. Cover actual background
 entry for the app snapshot. On foreground entry remove that snapshot cover before
 visible presentation when a valid grace reuse is pending, without granting input
-or credential access until active. A successful current authentication MUST wait
-for current active admission before revealing the main interface, granting access,
-hiding the cover and publishing unlock together on the main actor. While success
-awaits activation, retain the same opaque Unlock card. Its button says Unlocking
-during authentication and Opening while successful admission awaits activation;
-disable it throughout either state. Do not show a separate branded transition
-screen or start a second request. Enable Unlock only for an explicit retry with
-current foreground and protected-data availability. Recheck admission from both authentication result
-and activation: an already-active success MUST NOT wait for a new notification.
+or credential access until active. A successful current authentication MUST reveal
+the prepared local interface, enable its local controls and hide the cover together
+on the main actor, provided protected data is available and the app has not entered
+the background. This current-success handoff may precede UIKit activation; it MUST
+NOT resume remote sessions or admit remote input while inactive. Keep the unlocked
+session notification and remote-session readiness subject to actual foreground
+activation. Reconcile both result/activation orders without repeating authentication
+or requiring a new activation event for an already-active success. Retire the local
+handoff exception on subsequent inactivity; actual background/protected-data loss
+revokes it immediately. A requested Desktop/Terminal route during this handoff waits
+for activation, and is retired by background entry or a replacement route.
+The opaque Unlock card remains through evaluation, with a disabled Unlocking button.
+Successful authentication removes it without a separate Opening or branded screen.
+Failure exposes an explicit Unlock retry only with foreground/protected-data readiness.
+Keep passcode-availability validation when enabling the preference, but do not
+repeat a synchronous policy preflight on every unlock. Evaluate the same policy
+asynchronously; a passcode-not-set reply retains the opaque card, records unavailable
+authentication and offers the same setup guidance and explicit retry.
+After consuming a current successful authentication result, explicitly invalidate
+its completed LocalAuthentication context to release the system authentication
+presentation. Retire the reply token before cleanup so a cancellation callback
+cannot replace success. Context cleanup alone MUST NOT grant access or bypass protected-data, background
+or current-attempt checks. Only an accepted successful reply grants local access;
+remote-session resume remains gated on actual activation.
 A completed failed or canceled attempt stays locked for explicit retry; transient
 activation cannot automatically repeat it. Background/protected-data loss retires
-pending success and rejects late replies. UIKit activation is the public event
+pending success and rejects late replies. UIKit activation remains the public remote-session
 readiness boundary, not a guarantee of Face ID animation completion; no fixed
 animation-duration delay or private system-UI inspection is permitted. Development
 phase diagnostics may record bounded fixed phase/outcome names and monotonic numeric
 offsets for the raw authentication callback, actor handling, actual activation
-notification, admission/cover removal, synchronous observer return, initial library
+notification, separate local/active admission and cover removal, synchronous observer return, initial library
 wait and the first eligible native display tick. The display tick is explicitly a
 frame-opportunity proxy, never proof of pixel delivery. Retire diagnostic attempts
 independently of access; no diagnostic may grant admission or change its timing.
+Development diagnostics may additionally retain at most 64 activity samples per
+attempt: monotonic offsets, public active/background booleans and numeric main-actor
+scheduling delay. Checkpoint successful admission independently of the optional
+display probe; missing a display tick must not discard handoff evidence.
 Do not record credentials, user/host identifiers, errors, screen or input content;
 do not upload these records. Release builds do not persist or probe them.
-The library interaction/accessibility gate MUST observe application activation
-directly, including when authentication succeeds before activation without a new
-scene-phase change. Losing interaction retires pending local presentations.
+The library interaction/accessibility gate MUST observe the accepted successful
+authentication and application activation directly, without requiring a scene-phase
+change. Local reveal and local hit testing MUST share one state transition. Remote
+routes MUST observe a separate active-session gate. Losing interaction retires
+pending local presentations.
 
 Fullscreen hides the key strip and reclaims its viewport space without a reconnect.
 A reachable session-controls button restores it, including keyboard access. Remember

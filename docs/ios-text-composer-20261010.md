@@ -96,8 +96,9 @@ dismisses even when it arrives during the presentation transition.
 Temporary inactive gestures do not present a lock cover. Real backgrounding
 retains the privacy mask. A valid grace return prepares visible presentation
 before becoming active without admitting inactive input; current successful
-authentication keeps a quiet opaque transition until current active admission;
-then the main interface, controls and unlocked publication become available together.
+authentication reveals the prepared local interface and enables local controls
+together. The remote-session unlocked notification still waits for actual activation;
+remote keyboard, mouse and transport checks remain independent of local UI readiness.
 Retained Desktop recovery keeps cached pixels at normal opacity, checks for a
 fresh frame silently, and shows delayed Updating desktop feedback after one
 second. Actual connection replacement alone uses Reconnecting. iOS can suspend
@@ -202,12 +203,12 @@ Close and Send have 44-point hit regions. Dynamic Type grows the editor within
 keyboard-safe bounds. Compatibility transitions remain internal and have no UI
 entry or grabber-tap action.
 
-Unlock uses one persistent card through authentication and active admission.
-Unlocking indicates evaluation; Opening indicates success awaiting activation.
-Both states disable the button. Failure/cancellation exposes an explicit Unlock
+Unlock uses one persistent card through authentication. Unlocking indicates
+evaluation and disables the button. Failure/cancellation exposes an explicit Unlock
 retry only while foreground and protected data permit it. Current successful
-authentication plus active admission still reveal the main UI and enable controls
-together. The separate Mac Companion-only transition is removed.
+authentication reveals the prepared main UI and enables local controls together,
+without waiting for the later UIKit activation event. There is no separate Opening
+or Mac Companion-only transition. Remote session resume still waits for activation.
 
 ## Restrained Liquid Glass (2026-10-14)
 
@@ -240,3 +241,33 @@ written on an ordered utility queue to Caches/UnlockPhaseTimings-v1.json. Nothin
 is uploaded. Release builds disable the recorder and do not mount a display probe.
 The diagnostics do not add delays or change authentication, grace, cover or input
 admission. They establish evidence for a later measured latency change.
+
+
+## Authentication handoff measurement (2026-10-14)
+
+Accepted successful LocalAuthentication replies retire their callback token before
+explicitly invalidating the completed context. This requests framework cleanup;
+it does not assume the authentication animation has finished. As in Expense Map,
+an accepted current success reveals prepared local content and enables local controls
+in one main-actor transition, including during authentication dismissal. Protected
+data must remain available and actual background entry revokes the handoff. The
+separate active admission continues to fence remote-session resume and input.
+Settings and local editing do not wait for that event; Desktop/Terminal opening
+requested during the handoff is deferred until it arrives. A new route or actual
+background entry retires that deferred request. No synthetic delay is introduced.
+
+Development traces checkpoint admission without waiting for the optional native
+display tick. At most 64 public active/background samples at 50 ms intervals include
+numeric main-actor scheduling delay, distinguishing responsive inactivity from a
+blocked UI queue. The probe cannot change admission and stops on admission or
+retirement. It remains disabled outside DEBUG. A physical speed improvement must
+be measured; Simulator checks establish lifecycle safety rather than Face ID timing.
+
+The synchronous per-attempt canEvaluatePolicy preflight is removed: the same
+deviceOwnerAuthentication evaluation reports unavailable policy asynchronously.
+Enabling Require Unlock still validates device setup. A passcode-not-set reply
+keeps the card and explicit retry with setup guidance; cancellation and stale
+callbacks retain their existing fences. A device trace measured 104–110 ms before
+evaluation in the prior path; compare complete cold-launch timings before claiming
+an improvement. Responsive inactive samples attribute the later handoff to the
+system-owned foreground transition rather than an app main-thread stall.

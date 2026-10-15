@@ -865,13 +865,12 @@
       "graceClock": "continuous-including-device-sleep",
       "inactiveShowsCover": false,
       "graceForegroundEntryShowsCover": false,
-      "successfulInactiveAuthenticationShowsCover": true,
-      "successfulInactiveAuthenticationGrantsAccess": false,
-      "authenticationSuccessNeedsActiveAdmission": true,
+      "successfulInactiveAuthenticationShowsCover": false,
+      "successfulInactiveAuthenticationGrantsAccess": true,
+      "authenticationSuccessNeedsActiveAdmission": false,
       "completedFailedAttemptRequiresExplicitRetry": true,
       "authenticationPresentation": "persistentUnlockCard",
       "evaluatingButtonTitle": "Unlocking…",
-      "pendingActiveButtonTitle": "Opening…",
       "lockedButtonTitle": "Unlock",
       "busyButtonEnabled": false,
       "separateBrandedTransition": false,
@@ -887,8 +886,18 @@
         "changesAdmission": false,
         "releasePersistence": false,
         "releaseDisplayProbe": false,
-        "automaticUpload": false
-      }
+        "automaticUpload": false,
+        "maximumActivitySamplesPerAttempt": 64,
+        "mainActorSchedulingDelaySeparateFromInactiveState": true,
+        "admissionCheckpointDoesNotRequireDisplayProbe": true,
+        "localAdmissionSeparateFromRemoteAdmission": true
+      },
+      "completedContextExplicitlyInvalidated": true,
+      "perAttemptSynchronousPreflight": false,
+      "unavailablePolicyHandledByEvaluationReply": true,
+      "remoteSessionResumeNeedsActiveAdmission": true,
+      "localRevealAndControlsTogether": true,
+      "subsequentInactivityRetiresSuccessfulHandoff": true
     },
     "fullscreen": {
       "reconnect": false,
@@ -3276,12 +3285,14 @@
       "name": "success-before-activation",
       "successBeforeActive": true,
       "result": true,
-      "accessBeforeActive": false,
-      "coverBeforeActive": true,
+      "accessBeforeActive": true,
+      "coverBeforeActive": false,
       "evaluationsAfterActive": 1,
       "publishAfterActive": 1,
-      "unlockCardRetained": true,
-      "buttonEnabledBeforeAdmission": false
+      "unlockCardRetained": false,
+      "buttonEnabledBeforeAdmission": false,
+      "localControlsBeforeActive": true,
+      "remoteSessionBeforeActive": false
     },
     {
       "name": "activation-before-success",
@@ -3291,7 +3302,7 @@
       "coverBeforeResult": true,
       "evaluationsAfterResult": 1,
       "publishAfterResult": 1,
-      "unlockCardRetained": true,
+      "unlockCardRetained": false,
       "buttonEnabledBeforeAdmission": false
     },
     {
@@ -3300,7 +3311,7 @@
       "requiresNewActivationEvent": false,
       "accessAfterResult": true,
       "publishAfterResult": 1,
-      "unlockCardRetained": true,
+      "unlockCardRetained": false,
       "buttonEnabledBeforeAdmission": false
     },
     {
