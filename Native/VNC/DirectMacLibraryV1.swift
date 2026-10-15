@@ -379,7 +379,7 @@ struct DirectMacLibraryRootV1: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            DirectMacDiscoveryList(refresh: refreshNearbyMacs) {
                 let downloads = DirectFilesWorkspace.recoverableDownloads(libraryURL: library.storageURL)
                 if !downloads.isEmpty {
                     Section("Downloads from Removed Macs") {
@@ -506,11 +506,6 @@ struct DirectMacLibraryRootV1: View {
                     if let route = loadingRoute { loadingRoute = nil; openRoute(route) }
                 }
             }
-            .refreshable {
-                guard library.readable else { return }
-                library.discovery.start()
-                while library.discovery.scanning && !Task.isCancelled { try? await Task.sleep(for: .milliseconds(100)) }
-            }
             .onChange(of: appLock.canAccess) { _, unlocked in
                 if !unlocked { library.discovery.stop(); cancelAccess(); deferredRoute = nil; loadingRoute = nil }
             }
@@ -565,6 +560,11 @@ struct DirectMacLibraryRootV1: View {
         .allowsHitTesting(appLock.canInteract)
         .accessibilityHidden(!appLock.canInteract)
         .onAppear { appLock.install() }
+    }
+    private func refreshNearbyMacs() async {
+        guard library.readable else { return }
+        library.discovery.start()
+        while library.discovery.scanning && !Task.isCancelled { try? await Task.sleep(for: .milliseconds(100)) }
     }
     private func attachLoadedServices() {
         guard library.readable, !library.loading, !servicesAttached else { return }
@@ -792,7 +792,7 @@ struct DirectMacEditorV1: View {
                         }.disabled(!valid).accessibilityIdentifier("mac-install-ssh-key")
                         Button("Manual Key Setup", systemImage: "doc.text") { sshSheet = .manual(draftMac ?? mac) }
                     } header: { Text("Login & Access") } footer: {
-                        Text("Manage the shared Mac login and optional SSH key or account. Manual key setup is free.")
+                        Text("Choose how to sign in to this Mac, or set up an SSH key for Terminal.")
                     }
                     Section {
                         Button("Forget SSH Server Key", systemImage: "checkmark.shield", role: .destructive) { credentialAction = .serverKey }.disabled(DirectMacConnections.shared.isActive(mac.id))

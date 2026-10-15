@@ -298,7 +298,7 @@ struct DirectFilesView: View {
                 if let message = session.message { Text(message).foregroundStyle(.secondary) }
                 else { Text(contextProvider == nil ? "Uses this Mac’s Login & Access settings and Remote Login." : "Uses your current session’s account. No additional sign-in is needed.").foregroundStyle(.secondary) }
                 if contextProvider == nil, hasMacLogin, hasSSHOverride {
-                    Toggle("Use SSH override", isOn: $standaloneSSH).disabled(session.busy)
+                    Toggle("Use Terminal Sign-In", isOn: $standaloneSSH).disabled(session.busy)
                         .accessibilityIdentifier("files-ssh-override")
                 }
                 if session.busy { ProgressView(); Button("Cancel") { session.disconnect() } }

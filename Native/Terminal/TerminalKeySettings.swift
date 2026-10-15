@@ -41,7 +41,13 @@ struct TerminalKeySettings: View {
                             library.perform { try TerminalSecretStore.forgetKey(mac.id) }; changed()
                         }
                         #endif
-                    } footer: { Text("Select a key below for \(mac.name). Keys can be used with any of your Macs.") }
+                    } footer: {
+                        #if os(iOS)
+                        Text("Choose a key for \(mac.name) in Login & Access. Keys can be used with any of your Macs.")
+                        #else
+                        Text("Select a key below for \(mac.name). Keys can be used with any of your Macs.")
+                        #endif
+                    }
                 }
                 Section("Keychain Keys") {
                     ForEach(library.keys) { entry in
@@ -92,6 +98,8 @@ struct TerminalKeySettings: View {
                 Section {} footer: {
                     #if os(macOS)
                     Text("Install the public key from the Mac’s Connection Settings → SSH Keys. Imported keys stay in Keychain; referenced keys stay in their original files. Neither is synced.")
+                    #elseif os(iOS)
+                    Text("To install a public key, open Mac Settings → Set Up Key on This Mac. Private keys stay securely on this device and don’t sync.")
                     #else
                     Text("Install the public key from the Mac’s Terminal Access settings. Private keys stay in this device’s Keychain and are never synced.")
                     #endif

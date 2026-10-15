@@ -49,7 +49,7 @@ struct DirectMacAccessView: View {
         NavigationStack {
             Form {
                 Section { Label(mac.name, systemImage: "desktopcomputer").font(.headline)
-                    Text("One login for Desktop, Trackpad & Keyboard and Files. Terminal uses it unless you choose an SSH override.").foregroundStyle(.secondary)
+                    Text("Enter the username and password you use to sign in to this Mac.").foregroundStyle(.secondary)
                 }
                 if busy {
                     Section {
@@ -61,37 +61,52 @@ struct DirectMacAccessView: View {
                 }
                 if let message = draft.message { Section { Text(message).foregroundStyle(.secondary); if draft.original == nil { Button("Retry") { load() } } } }
                 Section {
-                    TextField("Mac account username", text: username).textContentType(.username).textInputAutocapitalization(.never).autocorrectionDisabled().accessibilityIdentifier("access-account")
-                    SecureField("Mac account password", text: password).textContentType(.password).accessibilityIdentifier("access-password")
-                } header: { Text("Mac Login") } footer: { Text("Stored once in this device’s Keychain. Saving here does not change the password on your Mac.") }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Username").font(.caption).foregroundStyle(.secondary)
+                        TextField("Username", text: username).textContentType(.username).textInputAutocapitalization(.never).autocorrectionDisabled().accessibilityIdentifier("access-account")
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Password").font(.caption).foregroundStyle(.secondary)
+                        SecureField("Password", text: password).textContentType(.password).accessibilityIdentifier("access-password")
+                    }
+                } header: { Text("Mac Account") } footer: { Text("Saved securely on this device for future connections. This does not change your Mac’s password.") }
                     .disabled(!draft.editable).privacySensitive()
                 Section {
                     Picker("Sign in with", selection: $draft.value.sshMethod) {
-                        Text("Use Mac Login").tag(DirectMacAccessProfile.SSHMethod.inherit)
+                        Text("Use Mac Account").tag(DirectMacAccessProfile.SSHMethod.inherit)
                         Text("SSH Key").tag(DirectMacAccessProfile.SSHMethod.key)
-                        Text("Different Password Login").tag(DirectMacAccessProfile.SSHMethod.password)
+                        Text("Different Account").tag(DirectMacAccessProfile.SSHMethod.password)
                     }.accessibilityIdentifier("access-ssh-method")
                     if draft.value.sshMethod == .key {
                         if let selected = draft.value.keyID, !keys.contains(where: { $0.id == selected }) {
-                            Text("The selected key is unavailable. Choose another key or use the Mac login.").foregroundStyle(.secondary)
+                            Text("The selected key is unavailable. Choose another key or use the Mac account.").foregroundStyle(.secondary)
                         }
                         Picker("SSH Key", selection: $draft.value.keyID) {
                             Text("Choose a key").tag(Optional<UUID>.none)
                             ForEach(keys) { Text($0.name).tag(Optional($0.id)) }
                         }.accessibilityIdentifier("access-ssh-key")
-                        TextField("SSH account username", text: $draft.value.keyUsername).textInputAutocapitalization(.never).autocorrectionDisabled().textContentType(.username)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Username").font(.caption).foregroundStyle(.secondary)
+                            TextField("Username", text: $draft.value.keyUsername).textInputAutocapitalization(.never).autocorrectionDisabled().textContentType(.username).accessibilityIdentifier("access-terminal-account")
+                        }
                     } else if draft.value.sshMethod == .password {
-                        TextField("SSH account username", text: sshUsername).textInputAutocapitalization(.never).autocorrectionDisabled().textContentType(.username)
-                        SecureField("SSH account password", text: sshPassword).textContentType(.password)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Username").font(.caption).foregroundStyle(.secondary)
+                            TextField("Username", text: sshUsername).textInputAutocapitalization(.never).autocorrectionDisabled().textContentType(.username).accessibilityIdentifier("access-terminal-account")
+                        }
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Password").font(.caption).foregroundStyle(.secondary)
+                            SecureField("Password", text: sshPassword).textContentType(.password).accessibilityIdentifier("access-terminal-password")
+                        }
                     }
-                } header: { Text("SSH Override") } footer: {
-                    Text("Applies to Terminal and Files opened from Terminal. Files opened from Desktop or Trackpad uses that session’s account. Screen Sharing still needs the Mac password.")
+                } header: { Text("Terminal Sign-In") } footer: {
+                    Text(terminalDescription)
                 }.disabled(!draft.editable).privacySensitive()
                 Section {
                     Button("SSH Key Library", systemImage: "key") { keyLibrary = true }
                     Button("Forget Saved Login", systemImage: "key.slash", role: .destructive) { forgetConfirmation = true }.disabled(!draft.editable)
                 }
-                Section { Text("Credentials stay on this device and are excluded from iCloud Sync.").font(.footnote).foregroundStyle(.secondary) }
+                Section { Text("Saved logins and SSH keys stay on this device and don’t sync with iCloud.").font(.footnote).foregroundStyle(.secondary) }
             }
             .navigationTitle("Login & Access").navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -123,6 +138,13 @@ struct DirectMacAccessView: View {
             .onDisappear { draft.clear() }
             .onReceive(NotificationCenter.default.publisher(for: DirectClientPlatformV1.didEnterBackground)) { _ in draft.clear(); dismiss() }
         }.directAppearance()
+    }
+    private var terminalDescription: String {
+        switch draft.value.sshMethod {
+        case .inherit: "Terminal uses your Mac account."
+        case .key: "Terminal signs in using this SSH key. Desktop still requires your Mac password."
+        case .password: "Terminal uses this account. Desktop still uses the Mac account above."
+        }
     }
     private func load() { draft.load(); loadKeys() }
     private func loadKeys() { do { keys = try TerminalKeyLibraryStore.load().keys } catch { draft.message = "The SSH key library could not be read. Existing keys are kept." } }
