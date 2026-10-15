@@ -72,6 +72,7 @@ import AppKit
             }
         }
     }
+    #if os(macOS)
     func testCredentialWriteFailurePreservesOnlyAnAlreadySavedPasswordAcrossPresentation() async throws {
         for hidden in [false, true] {
             for edited in [false, true] {
@@ -112,6 +113,8 @@ import AppKit
             }
         }
     }
+    #endif
+    #if os(macOS)
     func testRemovalClosesAllMatchingOwnersAndCancelsPendingAuthentication() async throws {
         for synced in [false, true] {
             let root = try DirectFilesLocalStore.root(); defer { try? FileManager.default.removeItem(at: root) }
@@ -156,6 +159,8 @@ import AppKit
             XCTAssertNil(try TerminalSecretStore.login(mac.id))
         }
     }
+    #endif
+    #if os(macOS)
     func testRetainedFilesRemountPreservesAccountMethodAndSaveChoice() async throws {
         let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Retained Draft", addresses: ["127.0.0.1"])
         try TerminalSecretStore.save(.init(username: "synthetic", password: "synthetic-only"), id: mac.id)
@@ -202,6 +207,8 @@ import AppKit
         XCTAssertTrue(session.loginDraft.isSuspended)
         XCTAssertEqual(session.loginDraft.username, ""); XCTAssertEqual(session.loginDraft.password, "", "Late activation cannot reload a closed owner's login")
     }
+    #endif
+    #if os(macOS)
     func testHiddenPasswordAuthenticationRestoresItsSavedLoginAfterRemount() async throws {
         let probe = FilesDirectoryTestProbe()
         let server = try await filesDirectoryTestServer(probe: probe)
@@ -246,6 +253,7 @@ import AppKit
         XCTAssertEqual(session.loginDraft.method, .password, "Key display refresh after a connected remount must preserve Password choice")
         XCTAssertEqual(session.phase, .interrupted, "Restoration requires explicit reconnect")
     }
+    #endif
     #if os(macOS)
     func testRetainedDiskKeyRemountPreservesPasswordChoiceAndEditedAccount() async throws {
         let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Retained File Key", addresses: ["127.0.0.1"])
@@ -417,6 +425,7 @@ import AppKit
         try await wait { values().1 == "" }
     }
     #endif
+    #if os(macOS)
     func testMountedFilesRestoresClearedSavedPasswordAndPreservesEditedRetryDraft() async throws {
         if !DirectProAccess.shared.ready { await DirectProAccess.shared.refresh() }
         let probe = FilesDirectoryTestProbe()
@@ -538,7 +547,9 @@ import AppKit
         try await wait { values().0 == "synthetic" }
         XCTAssertEqual(values().1, "", "A removed saved login must never be restored")
     }
+    #endif
     #if os(iOS)
+    #if os(macOS)
     func testMountedFilesDefersFirstLoginUntilSignInBecomesAvailable() async throws {
         if !DirectProAccess.shared.ready { await DirectProAccess.shared.refresh() }
         // Keep the SSH handshake pending on an owned loopback socket, so the
@@ -568,6 +579,7 @@ import AppKit
         XCTAssertTrue(fields().contains { $0.text == "synthetic-saved-password" })
         XCTAssertEqual(session.phase, .interrupted, "Showing saved credentials must not reconnect automatically")
     }
+    #endif
     #endif
     #if os(macOS)
     func testMountedFilesRefreshesExternalDiskKeyChangesWithoutReloadingDrafts() async throws {

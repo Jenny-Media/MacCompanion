@@ -377,3 +377,49 @@ Opening a Terminal Live Activity after its owner view or process is gone loads
 sign-in details without auto-connect. It explains that the previous session
 cannot be recovered in this app; Connect is an explicit choice to open a new
 shell. Ordinary Mac-list entry retains the saved-login convenience.
+
+
+### iOS two-finger secondary click, 2026-10-14
+
+A short two-finger tap sends one balanced standard RFB secondary click. Desktop
+Pointer targets the touched location; Desktop Trackpad, video-free Trackpad &
+Keyboard and the tabletop trackpad keep the current remote cursor position.
+Scrolling, pinching and cancelled or retired touches must not become clicks.
+Desktop retains its existing two-finger double-tap smart zoom with precedence
+over secondary tap; video-free Trackpad & Keyboard has no image zoom to wait for.
+Mode/layout changes, inactivity and opening controls retire pending tap gestures.
+
+Compose Text remains the first free default Quick Action in all iOS modes,
+including Trackpad & Keyboard. Untouched old defaults gain it on read. Saved
+customized profiles keep their visibility and order; Add Action offers Compose
+Text without requiring Pro. Mode changes and reopening controls use the current
+profile, and the video-free session can compose without receiving desktop pixels.
+
+## iOS shared Login and Access, 2026-10-15
+
+On iOS, one device-only Keychain profile per saved Mac is the credential authority.
+Desktop and Trackpad & Keyboard use its default Mac account/password. Terminal
+inherits that login unless an explicit SSH password or named-key override is
+configured. Each private key remains in the existing shared key library; the
+profile stores only a key reference and account. Differing legacy SSH logins
+are preserved as overrides before old password items are cleaned up. An empty
+canonical profile never falls back to stale legacy data.
+
+Mac Settings has one Login & Access entry. Login, authentication method and key
+selection are read-only while this Mac is connecting, connected, reconnecting or
+closing. Disconnect & Edit warns about transfers and waits for teardown. Other
+Macs stay editable. Global key management permits cosmetic renames and unrelated
+new keys; a key in use cannot be deleted. Initial unsaved sign-in remains possible;
+connection forms do not create independent saved login stores.
+
+Files is an expandable companion sheet from Desktop, Trackpad and Terminal.
+It opens SFTP on the originating session's authenticated SSH client, with no
+second password prompt or password copy, including when Save Login is off.
+Standalone Browse Files defaults to the Mac login, with an explicit SSH-override
+choice; a key-only setup uses its SSH override. It starts no video or shell. Files shows its actual account and retains its folder and foreground
+transfers when the sheet closes. Ending a parent session can interrupt its Files
+channel after a transfer warning; completed downloads remain accessible through
+Browse Files. New sessions never replay a transfer automatically. Transfers and
+results remain bound to their original Mac/account. See the iOS revision in
+[Direct Files](../spec/capability-protocol/v0/direct-files.md). macOS and visionOS
+retain their existing access behavior.

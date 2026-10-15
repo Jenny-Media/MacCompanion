@@ -343,24 +343,114 @@
     }
   ],
   "namedKeyAccountCases": [
-    { "id": "initial-account", "priorAccount": "", "change": "none", "expectedAccount": "synthetic" },
-    { "id": "changed-account", "priorAccount": "old-account", "change": "none", "expectedAccount": "synthetic" },
-    { "id": "newer-key-selection", "priorAccount": "", "change": "key", "expectedAccount": "newer-account" },
-    { "id": "newer-account-edit", "priorAccount": "", "change": "account", "expectedAccount": "newer-account" },
-    { "id": "removed-association", "priorAccount": "", "change": "association", "expectedAccount": null },
-    { "id": "deleted-key", "priorAccount": "", "change": "delete", "expectedAccount": null }
+    {
+      "id": "initial-account",
+      "priorAccount": "",
+      "change": "none",
+      "expectedAccount": "synthetic"
+    },
+    {
+      "id": "changed-account",
+      "priorAccount": "old-account",
+      "change": "none",
+      "expectedAccount": "synthetic"
+    },
+    {
+      "id": "newer-key-selection",
+      "priorAccount": "",
+      "change": "key",
+      "expectedAccount": "newer-account"
+    },
+    {
+      "id": "newer-account-edit",
+      "priorAccount": "",
+      "change": "account",
+      "expectedAccount": "newer-account"
+    },
+    {
+      "id": "removed-association",
+      "priorAccount": "",
+      "change": "association",
+      "expectedAccount": null
+    },
+    {
+      "id": "deleted-key",
+      "priorAccount": "",
+      "change": "delete",
+      "expectedAccount": null
+    }
   ],
   "diskKeyAccountCases": [
-    { "id": "initial-account", "priorAccount": "", "change": "none", "login": "success", "expectedAccount": "synthetic" },
-    { "id": "changed-account", "priorAccount": "old-account", "change": "none", "login": "success", "expectedAccount": "synthetic" },
-    { "id": "newer-account-edit", "priorAccount": "old-account", "change": "account", "login": "success", "expectedAccount": "newer-account" },
-    { "id": "newer-key-selection", "priorAccount": "old-account", "change": "key", "login": "success", "expectedAccount": "newer-account" },
-    { "id": "reselected-file-reference", "priorAccount": "old-account", "change": "reference", "login": "success", "expectedAccount": "old-account" },
-    { "id": "removed-association", "priorAccount": "old-account", "change": "association", "login": "success", "expectedAccount": null },
-    { "id": "deleted-key", "priorAccount": "old-account", "change": "delete", "login": "success", "expectedAccount": null },
-    { "id": "rejected-login", "priorAccount": "old-account", "change": "none", "login": "rejected", "expectedAccount": "old-account" },
-    { "id": "cancelled-login", "priorAccount": "old-account", "change": "none", "login": "cancelled", "expectedAccount": "old-account" },
-    { "id": "repeated-login", "priorAccount": "old-account", "change": "none", "login": "repeated", "expectedAccount": "synthetic-second" }
+    {
+      "id": "initial-account",
+      "priorAccount": "",
+      "change": "none",
+      "login": "success",
+      "expectedAccount": "synthetic"
+    },
+    {
+      "id": "changed-account",
+      "priorAccount": "old-account",
+      "change": "none",
+      "login": "success",
+      "expectedAccount": "synthetic"
+    },
+    {
+      "id": "newer-account-edit",
+      "priorAccount": "old-account",
+      "change": "account",
+      "login": "success",
+      "expectedAccount": "newer-account"
+    },
+    {
+      "id": "newer-key-selection",
+      "priorAccount": "old-account",
+      "change": "key",
+      "login": "success",
+      "expectedAccount": "newer-account"
+    },
+    {
+      "id": "reselected-file-reference",
+      "priorAccount": "old-account",
+      "change": "reference",
+      "login": "success",
+      "expectedAccount": "old-account"
+    },
+    {
+      "id": "removed-association",
+      "priorAccount": "old-account",
+      "change": "association",
+      "login": "success",
+      "expectedAccount": null
+    },
+    {
+      "id": "deleted-key",
+      "priorAccount": "old-account",
+      "change": "delete",
+      "login": "success",
+      "expectedAccount": null
+    },
+    {
+      "id": "rejected-login",
+      "priorAccount": "old-account",
+      "change": "none",
+      "login": "rejected",
+      "expectedAccount": "old-account"
+    },
+    {
+      "id": "cancelled-login",
+      "priorAccount": "old-account",
+      "change": "none",
+      "login": "cancelled",
+      "expectedAccount": "old-account"
+    },
+    {
+      "id": "repeated-login",
+      "priorAccount": "old-account",
+      "change": "none",
+      "login": "repeated",
+      "expectedAccount": "synthetic-second"
+    }
   ],
   "hostApprovalCases": [
     {
@@ -856,5 +946,153 @@
       "remember": false,
       "reads": 0
     }
-  ]
+  ],
+  "iosSharedAccess": {
+    "migrationCases": [
+      {
+        "id": "empty",
+        "desktop": null,
+        "ssh": null,
+        "key": false,
+        "default": null,
+        "override": "inherit"
+      },
+      {
+        "id": "desktop-only",
+        "desktop": [
+          "alice",
+          "fixture-a"
+        ],
+        "ssh": null,
+        "key": false,
+        "default": [
+          "alice",
+          "fixture-a"
+        ],
+        "override": "inherit"
+      },
+      {
+        "id": "ssh-only",
+        "desktop": null,
+        "ssh": [
+          "alice",
+          "fixture-a"
+        ],
+        "key": false,
+        "default": [
+          "alice",
+          "fixture-a"
+        ],
+        "override": "inherit"
+      },
+      {
+        "id": "equal-passwords",
+        "desktop": [
+          "alice",
+          "fixture-a"
+        ],
+        "ssh": [
+          "alice",
+          "fixture-a"
+        ],
+        "key": false,
+        "default": [
+          "alice",
+          "fixture-a"
+        ],
+        "override": "inherit"
+      },
+      {
+        "id": "different-passwords",
+        "desktop": [
+          "alice",
+          "fixture-a"
+        ],
+        "ssh": [
+          "bob",
+          "fixture-b"
+        ],
+        "key": false,
+        "default": [
+          "alice",
+          "fixture-a"
+        ],
+        "override": "password"
+      },
+      {
+        "id": "named-key",
+        "desktop": [
+          "alice",
+          "fixture-a"
+        ],
+        "ssh": [
+          "bob",
+          "fixture-b"
+        ],
+        "key": true,
+        "default": [
+          "alice",
+          "fixture-a"
+        ],
+        "override": "key"
+      }
+    ],
+    "activityCases": [
+      {
+        "id": "idle",
+        "owners": [],
+        "editable": true
+      },
+      {
+        "id": "desktop",
+        "owners": [
+          "desktop"
+        ],
+        "editable": false
+      },
+      {
+        "id": "terminal",
+        "owners": [
+          "terminal"
+        ],
+        "editable": false
+      },
+      {
+        "id": "files",
+        "owners": [
+          "files"
+        ],
+        "editable": false
+      },
+      {
+        "id": "connecting",
+        "owners": [
+          "connecting"
+        ],
+        "editable": false
+      },
+      {
+        "id": "closing",
+        "owners": [
+          "closing"
+        ],
+        "editable": false
+      }
+    ],
+    "filesRules": [
+      "parent-account",
+      "no-second-authentication",
+      "sheet-dismissal-keeps-owner",
+      "sftp-close-keeps-parent",
+      "no-transfer-replay",
+      "account-bound-results",
+      "explicit-retry-after-interruption",
+      "standalone-default-mac-login",
+      "explicit-ssh-override-choice",
+      "mac-files-retention-preserves-ssh-override",
+      "pending-login-retention-blocks-stale-authentication",
+      "pending-sftp-open-holds-teardown-registration",
+      "removed-mac-downloads-stay-discoverable-without-remote-authority"
+    ]
+  }
 }

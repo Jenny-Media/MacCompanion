@@ -5,6 +5,50 @@ limits. It is not a connection mode. Both native clients expose Browse Files
 from saved Macs and Files from their existing session controls. No host helper,
 paired protocol, relay, shell command, or additional listening port is used.
 
+## iOS shared access revision, 2026-10-15
+
+This section supersedes the independent sign-in and credential-draft rules below
+for iOS only. macOS retains its existing independent Files login.
+
+Each saved Mac MUST have one authoritative device-only Login & Access profile.
+Desktop and Trackpad use its Mac account/password. SSH defaults to that login;
+an explicit SSH password or named-key override may be retained once. Files MUST
+NOT create a third login or change a parent's account. Opening Files from an
+established session MUST open SFTP using that session's authenticated SSH client,
+including when Save Login is off. Standalone Browse Files defaults to the Mac login, offering an explicit SSH
+override choice when configured. If no Mac password is available, it uses the
+configured SSH override. It never opens video or a shell. Retaining a successful
+Mac-login Files connection MUST NOT rewrite an SSH override. Files identifies
+its actual account. Hidden unsaved downloads for removed Macs MUST remain
+discoverable in My Macs until Save or explicit Discard, without restoring remote
+authority. Recovery entries are scoped to their originating saved-Mac library.
+
+Migrate legacy logins only after all inputs can be read. Preserve differing SSH
+passwords and selected key accounts as explicit overrides. Write and verify the
+canonical profile before cleaning legacy items. Existing canonical profiles,
+including intentionally empty ones, MUST never fall back to legacy credentials.
+A failed migration preserves old data. Keys remain in the one existing key library.
+
+Connecting, connected, reconnecting and closing owners register activity per Mac
+before asynchronous work starts. A pending successful-login save MUST block
+independent authentication using the old profile until retention completes or
+the attempt retires. Cancellation of a borrowed SFTP open keeps its activity
+registration until that bounded open completes and its channel closes.
+Login/account/method/key-selection changes and
+forget-login/trust actions MUST recheck that Mac's activity at commit. Unrelated
+Macs remain editable. A key in use cannot be deleted. Cosmetic renames and adding
+unrelated keys remain available. Disconnect & Edit explicitly stops this Mac's
+owners, warns about transfers, and waits for teardown before enabling edits.
+Authentication success may retain its captured login only through the owning
+attempt, not through a general management bypass.
+
+Files is an expandable companion sheet. Closing its presentation preserves the
+folder and foreground transfers. Closing an SFTP channel MUST NOT close the
+parent desktop/shell. Files and parent channels keep distinct cancellation and
+generation boundaries. Parent session closure may interrupt Files with an honest
+notice; it never silently retries a transfer. Completed unsaved downloads remain
+available under their original account. No indefinite background work is promised.
+
 ## Connection and identity
 
 Files MUST own an independent SSH/SFTP connection to the selected Mac's saved

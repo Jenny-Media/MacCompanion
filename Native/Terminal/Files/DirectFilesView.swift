@@ -8,6 +8,9 @@ import AppKit
 struct DirectFilesView: View {
     // The owner is the source of truth even when the library or parent changes.
     var mac: DirectMacRecordV1 { session.mac }
+    #if os(iOS)
+    var contextProvider: (@MainActor () -> DirectFilesConnectionContext?)? = nil
+    #endif
     let retainWhenDismissed: Bool
     private let closeOwnerWindow: (@MainActor () -> Void)?
     var accessAllowed: @MainActor () -> Bool = { DirectAppLockV1.shared.canAccess }
@@ -20,6 +23,12 @@ struct DirectFilesView: View {
     @State private var key: TerminalNamedKey?
     @State private var keyName = ""
     @State private var preparingKey = false
+    #if os(iOS)
+    @State private var contextBlocked = false
+    @State private var standaloneSSH = false
+    @State private var hasSSHOverride = false
+    @State private var hasMacLogin = false
+    #endif
     @State private var preparation = UUID()
     #if os(macOS)
     var selectedKeyFile: @MainActor (UUID) throws -> (file: MacSSHKeyFileReference, username: String)? = { try MacSSHKeyFileStore.selected($0) }
@@ -38,7 +47,7 @@ struct DirectFilesView: View {
     @State private var pro = DirectProAccess.shared
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    private enum Sheet: String, Identifiable { case keys, setup, upload, pro; var id: String { rawValue } }
+    private enum Sheet: String, Identifiable { case keys, setup, upload, pro, access; var id: String { rawValue } }
     private enum Confirmation {
         case disconnect, close, discard
         var title: String { switch self { case .disconnect: "Disconnect Files?"; case .close: "Close Files?"; case .discard: "Discard pending transfers?" } }
@@ -72,7 +81,13 @@ struct DirectFilesView: View {
                     Label("Mac removed", systemImage: "info.circle").font(.headline).padding(.top)
                     Text("Save or discard your downloads to close Files.").font(.subheadline).foregroundStyle(.secondary).padding()
                 }
-                else if session.phase == .ready { browser }
+                else if session.phase == .ready {
+                    #if os(iOS)
+                    if contextBlocked { signIn } else { browser }
+                    #else
+                    browser
+                    #endif
+                }
                 else { signIn }
                 if !session.results.isEmpty { transferResults }
             }
@@ -106,6 +121,12 @@ struct DirectFilesView: View {
                 case .setup: DirectMacSetupGuide().directAppearance()
                 case .upload: uploadReview
                 case .pro: DirectProView().directAppearance()
+                case .access:
+                    #if os(iOS)
+                    DirectMacAccessView(mac: mac)
+                    #else
+                    EmptyView()
+                    #endif
                 }
             }
             .sheet(item: Binding(get: { session.trust }, set: { if $0 == nil { session.answerTrust(false) } })) { trust in
@@ -164,7 +185,24 @@ struct DirectFilesView: View {
             #endif
         }
         .directAppearance()
-        .task { resumeSignIn(); if !pro.ready { await pro.refresh() } }
+        .task {
+            #if os(iOS)
+            refreshCompanionAccounts()
+            if contextProvider == nil && session.phase != .ready && !session.busy && !pro.ready { await pro.refresh() }
+            if contextProvider != nil || session.phase != .ready { connectCompanion() }
+            #else
+            resumeSignIn(); if !pro.ready { await pro.refresh() }
+            #endif
+        }
+        #if os(iOS)
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        #endif
+        .onChange(of: sheet) { _, value in
+            #if os(iOS)
+            if value == nil { refreshCompanionAccounts() }
+            #endif
+        }
         .onChange(of: draft.method) { _, _ in prepareSignIn() }
         .onChange(of: session.phase) { _, phase in
             if phase != .ready { refreshSignIn() }
@@ -253,6 +291,24 @@ struct DirectFilesView: View {
         }
     }
     private var signIn: some View {
+        #if os(iOS)
+        Form {
+            Section {
+                Label(session.busy ? "Opening Files…" : "Files for " + mac.name, systemImage: "folder")
+                if let message = session.message { Text(message).foregroundStyle(.secondary) }
+                else { Text(contextProvider == nil ? "Uses this Mac’s Login & Access settings and Remote Login." : "Uses your current session’s account. No additional sign-in is needed.").foregroundStyle(.secondary) }
+                if contextProvider == nil, hasMacLogin, hasSSHOverride {
+                    Toggle("Use SSH override", isOn: $standaloneSSH).disabled(session.busy)
+                        .accessibilityIdentifier("files-ssh-override")
+                }
+                if session.busy { ProgressView(); Button("Cancel") { session.disconnect() } }
+                else {
+                    Button("Open Files", systemImage: "folder") { connectCompanion() }.accessibilityIdentifier("files-connect")
+                    if contextProvider == nil { Button("Login & Access", systemImage: "person.badge.key") { sheet = .access } }
+                }
+            }
+        }.formStyle(.grouped)
+        #else
         Form {
             Section {
                 Label("Requires Remote Login", systemImage: "terminal").font(.headline)
@@ -291,6 +347,7 @@ struct DirectFilesView: View {
             }
             if let message = session.message { Section { Label(message, systemImage: "exclamationmark.circle").foregroundStyle(.secondary) } }
         }.formStyle(.grouped)
+        #endif
     }
     private var browser: some View {
         VStack(spacing: 0) {
@@ -458,7 +515,48 @@ struct DirectFilesView: View {
         guard accessAllowed(), sessionAvailable() else { return }
         resumeSignIn()
     }
+    #if os(iOS)
+    private func refreshCompanionAccounts() {
+        guard contextProvider == nil, accessAllowed(), sessionAvailable(), let profile = try? DirectMacAccessStore.load(mac.id) else { return }
+        hasMacLogin = profile.login != nil; hasSSHOverride = profile.sshMethod != .inherit
+        if !hasMacLogin { standaloneSSH = true }
+        else if session.phase == .ready {
+            standaloneSSH = session.account != profile.login?.username
+        }
+    }
+    private func connectCompanion() {
+        if let context = contextProvider?(), !session.account.isEmpty {
+            contextBlocked = session.account != context.account
+            if contextBlocked && session.busy { session.message = "A transfer is still running for " + session.account + ". Finish or cancel it before opening another account." }
+        }
+        guard accessAllowed(), sessionAvailable(), !session.busy, !session.isClosed, !session.macRemoved else { return }
+        let library = DirectMacLibraryV1(url: session.libraryURL)
+        guard library.readable, library.macs.contains(where: { $0.id == mac.id }) else { session.message = "This Mac is unavailable in My Macs."; return }
+        guard pro.ready, pro.canUseMac(mac.id, among: library.macs.map(\.id)) else { sheet = .pro; return }
+        if let contextProvider {
+            guard let context = contextProvider() else { session.message = "Reconnect the session, then open Files again."; return }
+            session.connectBorrowed(context)
+            contextBlocked = session.account != context.account
+            return
+        }
+        do {
+            let profile = try DirectMacAccessStore.load(mac.id)
+            let useSSH = standaloneSSH || profile.login == nil
+            if useSSH && profile.sshMethod == .key {
+                guard let selected = try TerminalKeyLibraryStore.selected(mac.id), try TerminalKeyLibraryStore.canUse(selected) else {
+                    session.message = "Choose an available SSH key in Login & Access."; return
+                }
+                session.connect(username: profile.keyUsername, password: "", key: selected.key, remember: false)
+            } else if let login = useSSH ? profile.passwordLogin : profile.login, login.valid {
+                session.connect(username: login.username, password: login.password, key: nil, remember: true, useMacLogin: !useSSH)
+            } else { session.message = "Add the Mac login in Login & Access to browse its files." }
+        } catch { session.message = "Saved access settings could not be read. Existing settings are kept." }
+    }
+    #endif
     private func prepareSignIn() {
+        #if os(iOS)
+        return
+        #endif
         guard !session.isClosed, !session.macRemoved else { return }
         let active = sessionAvailable(), allowed = accessAllowed()
         let signIn = session.phase != .ready && !session.busy
@@ -551,6 +649,14 @@ struct DirectFilesView: View {
                 } catch { session.message = "The selected key is unavailable. Choose an SSH key and retry." }
             } else { session.connect(username: draft.username, password: draft.password, key: nil, remember: draft.remember) }
         }
+    }
+}
+#endif
+
+#if os(iOS) && MACCOMPANION_VNC_DEVELOPMENT
+extension DirectFilesView {
+    func usingConnection(_ provider: @escaping @MainActor () -> DirectFilesConnectionContext?) -> Self {
+        var result = self; result.contextProvider = provider; return result
     }
 }
 #endif

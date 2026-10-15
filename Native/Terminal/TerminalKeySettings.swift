@@ -34,9 +34,13 @@ struct TerminalKeySettings: View {
             Form {
                 if let mac {
                     Section {
+                        #if os(iOS)
+                        NavigationLink("Login & Access", destination: DirectMacAccessView(mac: mac))
+                        #else
                         Button("Use Password Login", systemImage: "person.badge.key") {
                             library.perform { try TerminalSecretStore.forgetKey(mac.id) }; changed()
                         }
+                        #endif
                     } footer: { Text("Select a key below for \(mac.name). Keys can be used with any of your Macs.") }
                 }
                 Section("Keychain Keys") {
@@ -55,7 +59,13 @@ struct TerminalKeySettings: View {
                             if let mac {
                                 let selected = library.associations.contains { $0.macID == mac.id && $0.keyID == entry.id }
                                 if selected { Label("Selected for \(mac.name)", systemImage: "checkmark").font(.subheadline).foregroundStyle(.secondary) }
-                                else { Button("Use for \(mac.name)") { select(entry, for: mac) }.buttonStyle(.borderless).disabled(!pro.ready) }
+                                else {
+                                    #if os(iOS)
+                                    NavigationLink("Configure in Login & Access", destination: DirectMacAccessView(mac: mac))
+                                    #else
+                                    Button("Use for \(mac.name)") { select(entry, for: mac) }.buttonStyle(.borderless).disabled(!pro.ready)
+                                    #endif
+                                }
                             }
                         }
                     }
@@ -337,6 +347,12 @@ struct TerminalKeyDetail: View {
             if let issue { DirectRecoveryCard(notice: issue) }
             Section {
                 Button("Delete Key from This Device", role: .destructive) { deleting = true }
+                    #if os(iOS)
+                    .disabled(DirectMacConnections.shared.keyInUse(entry.id))
+                    #endif
+                #if os(iOS)
+                if DirectMacConnections.shared.keyInUse(entry.id) { Text("Disconnect sessions using this key before deleting it.").font(.footnote).foregroundStyle(.secondary) }
+                #endif
             } footer: { Text("This clears local selections. It does not remove the public key or revoke access on your Macs.") }
         }
         .navigationTitle("SSH Key").directInlineNavigationTitle()

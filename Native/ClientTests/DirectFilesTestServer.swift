@@ -21,8 +21,10 @@ struct FilesDirectoryTestPlan: Decodable, Sendable {
 }
 
 final class FilesDirectoryTestProbe: Sendable {
-    private struct State { var reads = 0; var closes = 0; var channels: [Channel] = [] }
+    private struct State { var reads = 0; var closes = 0; var authentications = 0; var channels: [Channel] = [] }
     private let state = NIOLockedValueBox(State())
+    var authentications: Int { state.withLockedValue { $0.authentications } }
+    func authenticated() { state.withLockedValue { $0.authentications += 1 } }
     var reads: Int { state.withLockedValue { $0.reads } }
     var closes: Int { state.withLockedValue { $0.closes } }
     func read() { state.withLockedValue { $0.reads += 1 } }
@@ -37,9 +39,12 @@ final class FilesDirectoryTestProbe: Sendable {
 }
 
 private final class FilesDirectoryTestAuth: NIOSSHServerUserAuthenticationDelegate, Sendable {
+    let probe: FilesDirectoryTestProbe
+    init(probe: FilesDirectoryTestProbe) { self.probe = probe }
     var supportedAuthenticationMethods: NIOSSHAvailableUserAuthenticationMethods { .password }
     func requestReceived(request: NIOSSHUserAuthenticationRequest, responsePromise: EventLoopPromise<NIOSSHUserAuthenticationOutcome>) {
         if case .password(let login) = request.request {
+            probe.authenticated()
             responsePromise.succeed(request.username == "synthetic" && login.password == "synthetic-only" ? .success : .failure)
         } else { responsePromise.succeed(.failure) }
     }
@@ -159,7 +164,7 @@ func filesDirectoryTestServer(plan: FilesDirectoryTestPlan = .empty, probe: File
     let hostKey = NIOSSHPrivateKey(ed25519Key: .init())
     return try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton).childChannelInitializer { channel in
         probe.opened(channel)
-        return channel.pipeline.addHandler(NIOSSHHandler(role: .server(.init(hostKeys: [hostKey], userAuthDelegate: FilesDirectoryTestAuth())),
+        return channel.pipeline.addHandler(NIOSSHHandler(role: .server(.init(hostKeys: [hostKey], userAuthDelegate: FilesDirectoryTestAuth(probe: probe))),
             allocator: channel.allocator, inboundChildChannelInitializer: { child, _ in
                 probe.opened(child)
                 return child.pipeline.addHandlers(SSHChannelDataUnwrapper(), SSHOutboundChannelDataWrapper(), FilesDirectoryTestChunks(),

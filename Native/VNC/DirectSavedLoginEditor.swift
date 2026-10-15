@@ -62,41 +62,6 @@ struct DirectSavedLoginEditor: View {
     init(mac: DirectMacRecordV1, service: DirectSavedLoginService) {
         self.mac = mac; _draft = State(initialValue: DirectSavedLoginDraft(macID: mac.id, service: service))
     }
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    Label(mac.name, systemImage: draft.service == .desktop ? "desktopcomputer" : "terminal").font(.headline)
-                    Text("Update the login saved on this iPhone for your next connection.").foregroundStyle(.secondary)
-                }
-                if let notice = draft.recovery {
-                    Section { DirectRecoveryCard(notice: notice, primary: .init(title: draft.readable ? "Try Saving Again" : "Retry", perform: {
-                        if draft.readable { if draft.save() { dismiss() } } else { draft.load() }
-                    })) }.listRowInsets(EdgeInsets()).listRowBackground(Color.clear)
-                }
-                Section {
-                    TextField("Mac account username", text: $draft.username)
-                        .textContentType(.username).textInputAutocapitalization(.never).autocorrectionDisabled().privacySensitive()
-                        .accessibilityIdentifier("saved-login-username")
-                    SecureField("Mac account password", text: $draft.password).textContentType(.password).privacySensitive()
-                        .accessibilityIdentifier("saved-login-password")
-                } header: { Text("Mac Account") } footer: {
-                    Text("Account: up to \(draft.service.accountLimit) UTF-8 bytes. Password: up to \(draft.service.passwordLimit) UTF-8 bytes. Both are required.")
-                }.disabled(!draft.readable)
-                Section {
-                    Text("This saves a login locally; it doesn’t change your Mac’s account password or test a connection. Desktop and Terminal logins are separate and aren’t included in iCloud Sync.")
-                    if draft.service == .terminal { Text("This edits password login. Your selected SSH key and its account are kept.") }
-                }.font(.footnote).foregroundStyle(.secondary)
-            }
-            .navigationTitle(draft.service.title).navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) { Button("Save") { if draft.save() { dismiss() } }.disabled(!draft.valid).accessibilityIdentifier("saved-login-save") }
-            }
-            .onAppear { draft.load() }
-            .onDisappear { draft.clear() }
-            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in draft.clear(); dismiss() }
-        }
-    }
+    var body: some View { DirectMacAccessView(mac: mac) }
 }
 #endif

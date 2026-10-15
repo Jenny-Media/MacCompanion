@@ -2223,5 +2223,221 @@
     "positionMessages": 0,
     "videoRects": 0,
     "coalescedDelivery": "latest dirty shape publishes after the pending callback drains"
+  },
+  "appleAutomaticUpdates": {
+    "opcode": 9,
+    "periodMicroseconds": 100000,
+    "disablePeriod": 4294967295,
+    "reservedBytes": [
+      0,
+      0,
+      0
+    ],
+    "requiresAppleBanner": true,
+    "requiresARD": true,
+    "requiresMatchingVersion5Layout": true,
+    "renewOnEveryLayout": true,
+    "inputOnlyEnabled": false,
+    "backgroundEnabled": false,
+    "routinePullRequestsWhileActive": false,
+    "explicitBaselineRefreshWrites": true,
+    "cases": [
+      {
+        "name": "retina-desktop-enable",
+        "size": [
+          8144,
+          2134
+        ],
+        "enabled": true,
+        "packet": [
+          9,
+          0,
+          0,
+          0,
+          0,
+          1,
+          134,
+          160,
+          0,
+          0,
+          0,
+          0,
+          31,
+          208,
+          8,
+          86
+        ]
+      },
+      {
+        "name": "retina-desktop-disable",
+        "size": [
+          8144,
+          2134
+        ],
+        "enabled": false,
+        "packet": [
+          9,
+          0,
+          0,
+          0,
+          255,
+          255,
+          255,
+          255,
+          0,
+          0,
+          0,
+          0,
+          31,
+          208,
+          8,
+          86
+        ]
+      },
+      {
+        "name": "small-enable",
+        "size": [
+          100,
+          100
+        ],
+        "enabled": true,
+        "packet": [
+          9,
+          0,
+          0,
+          0,
+          0,
+          1,
+          134,
+          160,
+          0,
+          0,
+          0,
+          0,
+          0,
+          100,
+          0,
+          100
+        ]
+      },
+      {
+        "name": "zero-width",
+        "size": [
+          0,
+          2
+        ],
+        "enabled": true,
+        "packet": null
+      },
+      {
+        "name": "negative-height",
+        "size": [
+          2,
+          -1
+        ],
+        "enabled": true,
+        "packet": null
+      },
+      {
+        "name": "axis-limit",
+        "size": [
+          16385,
+          1
+        ],
+        "enabled": true,
+        "packet": null
+      },
+      {
+        "name": "byte-budget",
+        "size": [
+          8192,
+          8192
+        ],
+        "enabled": true,
+        "packet": null
+      }
+    ],
+    "layoutBody": [
+      0,
+      5,
+      0,
+      100,
+      0,
+      100,
+      0,
+      100,
+      0,
+      100,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      100,
+      0,
+      100,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "platforms": [
+      "iOS",
+      "macOS"
+    ]
   }
 }

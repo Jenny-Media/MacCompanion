@@ -52,6 +52,15 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     var message: String?
     var trust: Trust?
     var conflict: Conflict?
+    #if os(iOS)
+    private let accessOwnerID = UUID()
+    private var connectionLease: UUID?
+    private var borrowedGeneration: UUID?
+    var isBorrowed: Bool { borrowedGeneration != nil }
+    func disconnectBorrowed(_ owner: UUID) {
+        if borrowedGeneration == owner { disconnect(message: "The parent session ended. Completed downloads are kept; reconnect before retrying interrupted transfers.") }
+    }
+    #endif
     private var generation = UUID()
     private var operation = UUID()
     private var work: Task<Void, Never>?
@@ -134,12 +143,60 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         guard generation == token, !closed, busy, canAccess(), conflict == nil else { return }
         armDeadline()
     }
-    func connect(username: String, password: String, key: TerminalSSHKey?, remember: Bool, keyFileID: UUID? = nil) {
+    #if os(iOS)
+    func connectBorrowed(_ context: DirectFilesConnectionContext) {
+        guard context.macID == mac.id, !closed, !macRemoved, canAccess(), DirectClientPlatformV1.sessionAvailable, !busy else { return }
+        if phase == .ready, borrowedGeneration == context.generation, account == context.account { return }
+        guard !transferActive else { message = "A transfer is still running for " + account + ". Finish or cancel it first."; return }
+        guard !hasPendingResults || resultsAccount.isEmpty || resultsAccount == context.account else {
+            message = "Save or discard the files for " + resultsAccount + " before opening another account."; return
+        }
+        let previousPath = account == context.account ? directory?.path : nil
+        observeLifecycle(); retire(); let token = generation
+        account = context.account; borrowedGeneration = context.generation
+        connectionLease = DirectMacConnections.shared.begin(macID: mac.id, kind: "files", keyID: context.keyID, ownerID: context.ownerID,
+            transferActive: { [weak self] in self?.transferActive == true }, disconnect: { [weak self] in self?.disconnect() })
+        phase = .connecting; busy = true; message = nil; status = "Opening Files…"; armDeadline()
+        work = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let logger = Logger(label: "Files", factory: { _ in SwiftLogNoOpLogHandler() })
+                let client = try await context.client.openSFTP(logger: logger)
+                do { try check(token) } catch { try? await client.close(); throw error }
+                let store = DirectFilesSFTPStore(client: client); self.store = store
+                client.closeFuture.whenComplete { [weak self] _ in
+                    Task { @MainActor in
+                        guard let self, self.generation == token else { return }
+                        self.disconnect(message: "Files connection ended. Reopen Files after reconnecting the session. Transfers will not restart automatically.")
+                    }
+                }
+                client.setResponseActivityHandler { [weak self] in await self?.receivedResponse(token) }
+                let previous = previousPath
+                let homePath = try await store.directory("."); try check(token)
+                let directory: DirectFilesDirectory
+                if let previous, previous != homePath.path { directory = (try? await store.directory(previous)) ?? homePath }
+                else { directory = homePath }
+                try check(token)
+                self.directory = directory; home = homePath.path
+                deadline?.cancel(); busy = false; phase = .ready; status = "Ready"
+            } catch {
+                guard generation == token else { return }
+                disconnect(message: "Files could not open on this connection. Check the session and retry. Nothing was transferred automatically.")
+            }
+        }
+    }
+    #endif
+    func connect(username: String, password: String, key: TerminalSSHKey?, remember: Bool, keyFileID: UUID? = nil, useMacLogin: Bool = false) {
         guard !closed, !macRemoved, canAccess(), !busy, phase != .ready else { return }
         guard !username.isEmpty, username.utf8.count <= 255, !username.contains("\0"),
               (key != nil || !password.isEmpty), password.utf8.count <= 4096, !password.contains("\0") else {
             message = "Enter a Mac account and password, or choose its SSH key."; return
         }
+        #if os(iOS)
+        do { try DirectMacAccessStore.checkConnection(macID: mac.id, username: username, password: password, key: key, ssh: !useMacLogin, ownerID: accessOwnerID) }
+        catch { message = "Disconnect this Mac before changing its login."; return }
+        guard !hasPendingResults || resultsAccount.isEmpty || resultsAccount == username else { message = "Save or discard files for " + resultsAccount + " before changing accounts."; return }
+        #endif
         let authentication: @Sendable () -> SSHAuthenticationMethod
         let namedSelection: TerminalNamedKey?
         #if os(macOS)
@@ -166,13 +223,29 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
             }
         } catch { message = "The SSH key could not be read."; return }
         let attempt = loginDraft.authenticationAttempt(account: username, password: key == nil ? password : nil, remember: remember)
+        #if os(iOS)
+        do { if key == nil && !remember {
+            if useMacLogin { try DesktopCredentialStoreV1.remove(mac.id) }
+            else { try TerminalSecretStore.forgetLogin(mac.id) }
+        } }
+        catch { message = "Disconnect this Mac before changing its saved login."; return }
+        #endif
         observeLifecycle()
         retire(); let token = generation, owner = TerminalSocketOwner(); socket = owner
+        #if os(iOS)
+        connectionLease = DirectMacConnections.shared.begin(macID: mac.id, kind: "files", keyID: key == nil ? nil : (try? DirectMacAccessStore.load(mac.id).keyID), ownerID: accessOwnerID,
+            pendingAccessChange: DirectMacAccessStore.willRetainChange(macID: mac.id, username: username, password: password, key: key, ssh: !useMacLogin, remember: remember),
+            transferActive: { [weak self] in self?.transferActive == true }, disconnect: { [weak self] in self?.disconnect() })
+        #endif
         phase = .connecting; busy = true; account = username; message = nil; status = "Contacting Remote Login…"; armDeadline(after: .seconds(60))
         let addresses = mac.addresses, port = mac.sshPort
         work = Task {
             do {
-                do { if key == nil && !remember { try TerminalSecretStore.forgetLogin(mac.id) } }
+                do {
+                    #if !os(iOS)
+                    if key == nil && !remember { try TerminalSecretStore.forgetLogin(mac.id) }
+                    #endif
+                }
                 catch {
                     retire(); phase = .interrupted; status = "Sign In Required"
                     message = "The saved SSH login could not be removed. Files did not connect."
@@ -230,7 +303,14 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                     try TerminalKeyLibraryStore.rememberAccount(username, macID: mac.id, selection: namedSelection)
                 } else if remember && key == nil {
                     let login = TerminalSecretStore.Login(username: username, password: password)
-                    do { try saveLogin(login, mac.id); retention = .saved }
+                    do {
+                        #if os(iOS)
+                        if let owner = connectionLease { try DirectMacAccessStore.retain(.init(username: username, password: password), macID: mac.id, ssh: !useMacLogin, owner: owner) }
+                        #else
+                        try saveLogin(login, mac.id)
+                        #endif
+                        retention = .saved
+                    }
                     catch { retention = .failed; throw error }
                 }
                 } catch { self.message = "Connected. The SSH login could not be saved on this device." }
@@ -453,15 +533,36 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         }
     }
     private func retire() {
+        #if os(iOS)
+        let pendingWork = work
+        #endif
         generation = UUID(); operation = UUID(); deadline?.cancel(); deadline = nil
         work?.cancel(); work = nil; stageWork?.cancel(); stageWork = nil
         discardPreparedUploads()
         let trust = trustReply; trustReply = nil; self.trust = nil; trust?.resume(returning: false)
         let conflict = conflictReply; conflictReply = nil; self.conflict = nil; conflict?.resume(returning: .cancel)
         socket?.cancel(); socket = nil
-        store?.close(); store = nil
+        #if os(iOS)
+        let sftp = (store as? DirectFilesSFTPStore)?.client
+        let lease = connectionLease; connectionLease = nil; borrowedGeneration = nil
+        #endif
+        #if os(iOS)
+        if sftp == nil { store?.close() }
+        #else
+        store?.close()
+        #endif
+        store = nil
         let old = ssh, channel = channel; ssh = nil; self.channel = nil
-        Task { try? await old?.close(); try? await channel?.close() }
+        Task {
+            #if os(iOS)
+            try? await sftp?.close()
+            #endif
+            try? await old?.close(); try? await channel?.close()
+            #if os(iOS)
+            await pendingWork?.value
+            DirectMacConnections.shared.end(lease)
+            #endif
+        }
         busy = false
     }
     func close() {

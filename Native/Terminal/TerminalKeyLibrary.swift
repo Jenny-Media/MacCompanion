@@ -71,6 +71,16 @@ struct TerminalKeyAssociation: Codable {
         try? TerminalSecretStore.removeLegacyKey(macID)
     }
     static func selected(_ macID: UUID) throws -> TerminalNamedKey? {
+        #if os(iOS)
+        let profile = try DirectMacAccessStore.load(macID)
+        guard profile.sshMethod == .key, let keyID = profile.keyID,
+              var entry = try load().keys.first(where: { $0.id == keyID }) else { return nil }
+        entry.key.username = profile.keyUsername; return entry
+        #else
+        return try selectedLegacy(macID)
+        #endif
+    }
+    static func selectedLegacy(_ macID: UUID) throws -> TerminalNamedKey? {
         try migrate(macID)
         let library = try load()
         guard let association = library.associations.first(where: { $0.macID == macID }),
@@ -127,6 +137,11 @@ struct TerminalKeyAssociation: Codable {
         library.keys[index].name = name.trimmingCharacters(in: .whitespacesAndNewlines); try save(library)
     }
     static func associate(_ keyID: UUID, macID: UUID, username: String) throws {
+        #if os(iOS)
+        guard try load().keys.contains(where: { $0.id == keyID }) else { throw TerminalSecretStore.Failure.storage }
+        try DirectMacAccessStore.selectKey(keyID, account: username, macID: macID)
+        return
+        #endif
         var library = try load()
         guard library.keys.contains(where: { $0.id == keyID }) else { throw TerminalSecretStore.Failure.storage }
         library.associations.removeAll { $0.macID == macID }
@@ -138,12 +153,19 @@ struct TerminalKeyAssociation: Codable {
         #endif
     }
     static func forgetAssociation(_ macID: UUID) throws {
+        #if os(iOS)
+        try DirectMacAccessStore.selectKey(nil, macID: macID)
+        return
+        #endif
         // Migrate first so removing a Mac never loses its only local copy of a key.
         try migrate(macID)
         var library = try load(); library.associations.removeAll { $0.macID == macID }; try save(library)
         try TerminalSecretStore.removeLegacyKey(macID)
     }
     static func delete(_ id: UUID) throws {
+        #if os(iOS)
+        guard !DirectMacConnections.shared.keyInUse(id) else { throw DirectMacAccessStore.Failure.busy }
+        #endif
         var library = try load()
         library.keys.removeAll { $0.id == id }; library.associations.removeAll { $0.keyID == id }
         try save(library)
@@ -156,6 +178,12 @@ struct TerminalKeyAssociation: Codable {
     /// Retain the authenticated account without recreating a removed key or
     /// overwriting a selection/account edited while the connection was pending.
     static func rememberAccount(_ username: String, macID: UUID, selection: TerminalNamedKey) throws {
+        #if os(iOS)
+        var profile = try DirectMacAccessStore.load(macID)
+        guard profile.sshMethod == .key, profile.keyID == selection.id, profile.keyUsername == selection.key.username,
+              try load().keys.contains(where: { $0.id == selection.id && $0.key.seed == selection.key.seed }) else { return }
+        profile.keyUsername = username; try DirectMacAccessStore.write(profile, id: macID); return
+        #endif
         #if os(macOS)
         guard try MacSSHKeyFileStore.selected(macID) == nil else { return }
         #endif
@@ -180,7 +208,18 @@ struct TerminalKeyAssociation: Codable {
     func reload(macs: [DirectMacRecordV1] = []) {
         do {
             for mac in macs { try TerminalKeyLibraryStore.migrate(mac.id, name: String(mac.name.prefix(70)) + " SSH Key") }
-            let value = try TerminalKeyLibraryStore.load(); keys = value.keys; associations = value.associations; readable = true; error = nil
+            let value = try TerminalKeyLibraryStore.load(); keys = value.keys
+            #if os(iOS)
+            let records = macs.isEmpty ? DirectMacLibraryV1().macs : macs
+            associations = try records.compactMap { mac in
+                let profile = try DirectMacAccessStore.load(mac.id)
+                guard profile.sshMethod == .key, let keyID = profile.keyID else { return nil }
+                return TerminalKeyAssociation(macID: mac.id, keyID: keyID, username: profile.keyUsername)
+            }
+            #else
+            associations = value.associations
+            #endif
+            readable = true; error = nil
         } catch { readable = false; recovery = .make(.savedDataUnavailable, message: "Saved SSH keys couldn’t be read. Existing keys are kept. Retry when device storage is available; unreadable data won’t be replaced.") }
     }
     @discardableResult func perform(_ action: () throws -> Void) -> Bool {

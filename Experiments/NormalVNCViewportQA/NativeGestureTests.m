@@ -17,6 +17,9 @@
 - (void)scrollRemote:(UIPanGestureRecognizer *)gesture;
 - (void)pinchRemote:(UIPinchGestureRecognizer *)gesture;
 - (void)releasePointer;
+- (void)secondaryClickAt:(UITapGestureRecognizer *)gesture;
+- (void)setTrackpadModeEnabled:(BOOL)enabled;
+- (void)becameInactive;
 @end
 @interface SyntheticPinch : UIPinchGestureRecognizer
 @property UIGestureRecognizerState syntheticState;
@@ -32,6 +35,16 @@
 - (UIGestureRecognizerState)state { return self.syntheticState; }
 - (CGPoint)translationInView:(UIView *)view { return self.delta; }
 - (void)setTranslation:(CGPoint)translation inView:(UIView *)view { self.delta = translation; }
+@end
+@interface SecondaryTapSample : UITapGestureRecognizer
+@property UIGestureRecognizerState sampleState;
+@property CGPoint point;
+@property NSUInteger cancellations;
+@end
+@implementation SecondaryTapSample
+- (UIGestureRecognizerState)state { return self.sampleState; }
+- (CGPoint)locationInView:(UIView *)view { return self.point; }
+- (void)setEnabled:(BOOL)enabled { if (!enabled) self.cancellations++; [super setEnabled:enabled]; }
 @end
 @interface NativeGestureTests : XCTestCase
 @end
@@ -223,4 +236,74 @@
     }
 }
 
+
+- (void)testTwoFingerTapUsesIndexedSecondaryClickTargetsAndBalancedButtonGroups {
+    NSURL *url = [[NSBundle bundleForClass:self.class] URLForResource:@"direct-screen-sharing-v1" withExtension:@"json"];
+    NSDictionary *profile = [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:url] options:0 error:NULL];
+    NSDictionary *contract = profile[@"twoFingerTap"];
+    XCTAssertEqualObjects(contract[@"touches"], @2); XCTAssertEqualObjects(contract[@"taps"], @1);
+    for (NSDictionary *sample in contract[@"cases"]) {
+        NSString *mode = sample[@"mode"];
+        CompanionVNCViewer *viewer = [CompanionVNCViewer new]; viewer.inputOnly = [mode isEqual:@"inputOnly"]; [viewer loadViewIfNeeded];
+        CompanionVNCSession *session = [self sessionWithInputOnly:viewer.inputOnly]; viewer.session = session;
+        [viewer setValue:[NSValue valueWithCGRect:CGRectMake(0,0,800,600)] forKey:@"activeCrop"];
+        [viewer setValue:[NSValue valueWithCGPoint:CGPointMake([sample[@"cursor"][0] doubleValue], [sample[@"cursor"][1] doubleValue])] forKey:@"cursorPosition"];
+        [viewer setValue:@YES forKey:@"cursorPositionKnown"];
+        ((UIView *)[viewer valueForKey:@"login"]).hidden = YES;
+        [viewer setTrackpadModeEnabled:![mode isEqual:@"pointer"] && ![mode isEqual:@"tabletop"]];
+        SecondaryTapSample *tap = [SecondaryTapSample new];
+        tap.point = CGPointMake([sample[@"touch"][0] doubleValue], [sample[@"touch"][1] doubleValue]);
+        [[viewer valueForKey:[mode isEqual:@"tabletop"] ? @"tabletopPad" : @"canvas"] addGestureRecognizer:tap];
+        tap.sampleState = UIGestureRecognizerStateRecognized; [viewer secondaryClickAt:tap];
+        NSArray *events = [self takeEvents:session]; XCTAssertEqual(events.count, 2, @"%@", mode);
+        for (NSDictionary *event in events) {
+            XCTAssertEqualObjects(event[@"x"], sample[@"expected"][0]); XCTAssertEqualObjects(event[@"y"], sample[@"expected"][1]);
+            XCTAssertEqualObjects(event[@"motion"], @NO); XCTAssertNil(event[@"key"]);
+        }
+        XCTAssertEqualObjects(events.firstObject[@"mask"], contract[@"buttonMask"]);
+        XCTAssertEqualObjects(events.lastObject[@"mask"], contract[@"releaseMask"]);
+        [session setValue:@NO forKey:@"running"];
+    }
+}
+- (void)testSecondaryTapRecognizersKeepScrollingPinchAndDesktopDoubleTapSeparate {
+    CompanionVNCViewer *viewer = [CompanionVNCViewer new]; [viewer loadViewIfNeeded];
+    UITapGestureRecognizer *secondary = [viewer valueForKey:@"secondaryTap"], *smart = [viewer valueForKey:@"smartTap"];
+    XCTAssertTrue([secondary.delegate gestureRecognizer:secondary shouldRequireFailureOfGestureRecognizer:smart]);
+    XCTAssertEqual(secondary.numberOfTouchesRequired, 2); XCTAssertEqual(secondary.numberOfTapsRequired, 1);
+    XCTAssertEqual(smart.numberOfTouchesRequired, 2); XCTAssertEqual(smart.numberOfTapsRequired, 2); XCTAssertTrue(smart.enabled);
+    UITapGestureRecognizer *tabletop = [viewer valueForKey:@"tabletopSecondaryTap"];
+    XCTAssertEqual(tabletop.numberOfTouchesRequired, 2); XCTAssertEqual(tabletop.numberOfTapsRequired, 1);
+    UIPanGestureRecognizer *scroll = [viewer valueForKey:@"remoteScroll"];
+    [viewer setTrackpadModeEnabled:YES]; XCTAssertTrue(scroll.enabled); XCTAssertEqual(scroll.minimumNumberOfTouches, 2);
+    viewer.inputOnly = YES; XCTAssertFalse([secondary.delegate gestureRecognizer:secondary shouldRequireFailureOfGestureRecognizer:smart]); XCTAssertFalse(smart.enabled); XCTAssertTrue([[viewer valueForKey:@"remotePinch"] isEnabled]);
+    viewer.inputOnly = NO; XCTAssertTrue(smart.enabled);
+}
+- (void)testCancelledSecondaryTapAndUnavailableSessionNeverQueueRemoteClicks {
+    CompanionVNCViewer *viewer = [CompanionVNCViewer new]; viewer.inputOnly = YES; [viewer loadViewIfNeeded];
+    CompanionVNCSession *session = [self session]; viewer.session = session;
+    [viewer setValue:[NSValue valueWithCGRect:CGRectMake(0,0,800,600)] forKey:@"activeCrop"];
+    ((UIView *)[viewer valueForKey:@"login"]).hidden = YES;
+    SecondaryTapSample *tap = [SecondaryTapSample new];
+    for (NSNumber *state in @[@(UIGestureRecognizerStatePossible), @(UIGestureRecognizerStateCancelled), @(UIGestureRecognizerStateFailed)]) {
+        tap.sampleState = state.integerValue; [viewer secondaryClickAt:tap]; XCTAssertEqual([self takeEvents:session].count, 0);
+    }
+    tap.sampleState = UIGestureRecognizerStateRecognized;
+    for (NSString *key in @[@"inputInactive", @"restoreViewportPending", @"checkingResume", @"exited"]) {
+        [viewer setValue:@YES forKey:key]; [viewer secondaryClickAt:tap]; XCTAssertEqual([self takeEvents:session].count, 0, @"%@", key);
+        [viewer setValue:@NO forKey:key];
+    }
+    [viewer setValue:@NO forKey:@"foreground"]; [viewer secondaryClickAt:tap]; XCTAssertEqual([self takeEvents:session].count, 0);
+    [viewer setValue:@YES forKey:@"foreground"]; [session setValue:@NO forKey:@"inputReady"];
+    [viewer secondaryClickAt:tap]; XCTAssertEqual([self takeEvents:session].count, 0);
+    [session setValue:@NO forKey:@"running"];
+}
+- (void)testPendingSecondaryTapIsRetiredByModeChangesControlsAndInactivity {
+    CompanionVNCViewer *viewer = [CompanionVNCViewer new]; viewer.inputOnly = YES; [viewer loadViewIfNeeded];
+    CompanionVNCSession *session = [self session]; viewer.session = session;
+    SecondaryTapSample *tap = [SecondaryTapSample new]; [viewer setValue:tap forKey:@"secondaryTap"];
+    [viewer setTrackpadModeEnabled:YES]; XCTAssertGreaterThan(tap.cancellations, 0);
+    NSUInteger before = tap.cancellations; [viewer releasePointer]; XCTAssertGreaterThan(tap.cancellations, before);
+    before = tap.cancellations; [viewer becameInactive]; XCTAssertGreaterThan(tap.cancellations, before);
+    XCTAssertEqual([self takeEvents:session].count, 0); [session setValue:@NO forKey:@"running"];
+}
 @end

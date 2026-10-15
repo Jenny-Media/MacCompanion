@@ -40,6 +40,14 @@ for index, case in enumerate(profile['cursorPixelCases']):
     if case['rgba'] is not None:
         checks.append(f"const uint8_t expected[] = {{{array(case['rgba'])}}}; assert(memcmp(rgba, expected, sizeof(expected)) == 0);")
     checks.append('}')
+for case in profile['appleAutomaticUpdates']['cases']:
+    checks.append('{ uint8_t packet[16] = {0};')
+    call = f"CompanionVNCAppleUpdatePacket({case['size'][0]}, {case['size'][1]}, {str(case['enabled']).lower()}, packet)"
+    checks.append(f"assert({call} == {str(case['packet'] is not None).lower()});")
+    if case['packet'] is not None:
+        values = ','.join(map(str, case['packet']))
+        checks.append(f"const uint8_t expected[] = {{{values}}}; assert(memcmp(packet, expected, sizeof(expected)) == 0);")
+    checks.append('}')
 for case in profile['smartZoomCases']:
     call = f"CompanionVNCSmartZoomRect({size(case['cropSize'])}, {size(case['canvasSize'])}, {point(case['point'])}, {case['minimumZoom']}, {case['maximumZoom']})"
     checks.append(f"assert(CGRectIsNull({call}));" if case['rect'] is None else f"assert(CGRectEqualToRect({call}, {rect(case['rect'])}));")
@@ -49,7 +57,7 @@ direct = json.loads((fixtures / direct_entry['path']).read_text())
 for case in direct['followCursorCases']:
     call = f"CompanionVNCFollowOffset({size(case['content'])}, {rect(case['viewport'])}, {point(case['cursor'])})"
     checks.append(f"mapped = {call}; assert(fabs(mapped.x - {case['offset'][0]}) < .0001 && fabs(mapped.y - {case['offset'][1]}) < .0001);")
-source = '\n'.join(['#include <assert.h>', '#include <string.h>', '#include "CompanionVNCViewport.h"', '#include "CompanionVNCCursor.h"',
+source = '\n'.join(['#include <assert.h>', '#include <string.h>', '#include "CompanionVNCAppleUpdates.h"', '#include "CompanionVNCViewport.h"', '#include "CompanionVNCCursor.h"',
     'int main(void) { CGPoint mapped;', *checks, 'return 0; }'])
 with tempfile.TemporaryDirectory(prefix='maccompanion-vnc-viewport-') as directory:
     path = Path(directory); (path/'test.c').write_text(source)

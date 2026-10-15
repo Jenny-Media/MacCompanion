@@ -4,6 +4,7 @@
 #import "CompanionVNCKeyboard.h"
 #import "CompanionVNCCursor.h"
 #import "CompanionVNCAppleCursor.h"
+#import "CompanionVNCAppleUpdates.h"
 #import "CompanionVNCDirectConnection.h"
 #import "CompanionVNCDirectEndpoint.h"
 #import "CompanionVNCDisplayLayout.h"
@@ -104,6 +105,9 @@ static void QuietLog(const char *format, ...) {
     NSMutableArray<NSNumber *> *_appleCursorOrder;
     NSUInteger _appleCursorBytes, _appleCursorStores, _appleCursorSelections, _appleCursorMisses;
     NSUInteger _standardCursorReports, _visibleCursorImages, _cursorPublications;
+    BOOL _automaticUpdatesActive, _automaticUpdatePending, _desktopRefreshPending;
+    int _automaticUpdateWidth, _automaticUpdateHeight;
+    NSUInteger _automaticUpdateStarts, _automaticUpdateStops;
 }
 - (rfbCredential *)credential:(int)type;
 - (rfbBool)allocate:(rfbClient *)client;
@@ -114,6 +118,10 @@ static void QuietLog(const char *format, ...) {
 - (void)cursorShape:(rfbClient *)client x:(int)x y:(int)y width:(int)width height:(int)height bytesPerPixel:(int)bytes;
 - (rfbBool)cursorPosition:(rfbClient *)client x:(int)x y:(int)y;
 - (void)publishCursor;
+- (BOOL)configureDesktopUpdates:(rfbClient *)client;
+- (BOOL)stopAutomaticUpdates:(rfbClient *)client;
+- (void)configureFramebufferRequests:(rfbClient *)client;
+- (BOOL)requestFullDesktop:(rfbClient *)client;
 - (void)report:(NSString *)state;
 - (void)beginSocket:(int)socket addresses:(NSArray<NSString *> *)addresses port:(NSInteger)port user:(NSString *)user password:(NSString *)password;
 - (BOOL)registerSocket:(int)socket;
@@ -459,6 +467,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
             NSArray *events = [self->_events copy]; [self->_events removeAllObjects];
             [self->_lock unlock];
             if (stopping) break;
+            if (resume || modeChanged) self->_automaticUpdatePending = YES;
             if (self->_sentMagnification.active && (release || paused || !inputOnly || gestureEpoch != self->_sentMagnificationEpoch)) {
                 healthy = [self releaseMagnification:client]; if (!healthy) break;
             }
@@ -469,10 +478,14 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
                 for (NSNumber *key in self->_heldKeys) if (!SendKeyEvent(client, key.unsignedIntValue, FALSE)) healthy = NO;
                 [self->_heldKeys removeAllObjects];
                 if (!SendPointerEvent(client, (int)self->_lastX, (int)self->_lastY, 0)) healthy = NO;
-                if (completion) dispatch_async(dispatch_get_main_queue(), completion);
-                if (reviewCompletion && healthy) dispatch_async(dispatch_get_main_queue(), reviewCompletion);
             }
             if (!healthy) break;
+            // Release actually-sent input first, then disable server delivery
+            // before acknowledging pause. A blocked subscription write cannot
+            // take Stop's release budget away from held keys or buttons.
+            healthy = [self configureDesktopUpdates:client]; if (!healthy) break;
+            if (completion) dispatch_async(dispatch_get_main_queue(), completion);
+            if (reviewCompletion) dispatch_async(dispatch_get_main_queue(), reviewCompletion);
             if (paused) {
                 // No polling, decoding, or update requests while hidden. Stop/resume wake the owner.
                 dispatch_semaphore_wait(self->_wake, DISPATCH_TIME_FOREVER); continue;
@@ -480,10 +493,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
             // LibVNCClient normally requests another frame automatically after every update.
             // On the sole socket owner, mask only update requests and use an empty rectangle
             // so even a server capability refresh cannot ask for desktop pixels in input-only.
-            unsigned char *requests = &client->supportedMessages.client2server[rfbFramebufferUpdateRequest / 8];
-            unsigned char bit = 1 << (rfbFramebufferUpdateRequest % 8);
             if (inputOnly) {
-                *requests &= ~bit; rfbRectangle empty = {0, 0, 0, 0}; rfbClientSetUpdateRect(client, &empty);
                 if (resume || modeChanged) {
                     [self->_lock lock];
                     BOOL current = presentationEpoch == self->_presentationEpoch && self->_running && self->_established
@@ -492,18 +502,21 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
                     [self->_lock unlock];
                     if (current) [self report:@"Connected"];
                 }
-            } else {
-                *requests |= bit; rfbClientSetUpdateRect(client, NULL);
             }
             if (resume || modeChanged) { self->_cursorPositionKnown = NO; self->_cursorDirty = YES; }
             if (!inputOnly && (resume || modeChanged)) {
-                if (![self resetBaseline:client] || !SendFramebufferUpdateRequest(client, 0, 0, client->width, client->height, FALSE)) { healthy = NO; break; }
+                if (![self resetBaseline:client]) { healthy = NO; break; }
+                self->_desktopRefreshPending = YES;
+            }
+            if (!inputOnly && self->_desktopRefreshPending) {
+                if (![self requestFullDesktop:client]) { healthy = NO; break; }
+                self->_desktopRefreshPending = NO;
             }
             if (!inputOnly && !CompanionVNCCoverageReady(&self->_coverage)) {
                 double now = NSProcessInfo.processInfo.systemUptime;
                 if (now - self->_baselineStarted >= 8) { [self->_lock lock]; self->_failureStage = 102; [self->_lock unlock]; healthy = NO; break; }
                 if (self->_fullRefreshRetries < 2 && now - self->_lastFullRefresh >= 1) {
-                    if (!SendFramebufferUpdateRequest(client, 0, 0, client->width, client->height, FALSE)) { healthy = NO; break; }
+                    if (![self requestFullDesktop:client]) { healthy = NO; break; }
                     [self->_lock lock]; self->_fullRefreshRetries++; [self->_lock unlock]; self->_lastFullRefresh = now;
                 }
             }
@@ -562,12 +575,15 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     for (NSNumber *key in self->_heldKeys) SendKeyEvent(client, key.unsignedIntValue, FALSE);
     [self->_heldKeys removeAllObjects];
     SendPointerEvent(client, (int)self->_lastX, (int)self->_lastY, 0);
+    [self stopAutomaticUpdates:client];
     [self registerSocket:-1]; rfbClientCleanup(client);
     if (self->_overflow) { [self->_lock lock]; self->_failureStage = 101; [self->_lock unlock]; }
     [self finish:self->_overflow ? @"Input queue full; disconnected safely" : self->_failureStage == 103 ? @"Desktop image could not be decoded — reconnect" : self->_failureStage == 102 ? @"Desktop did not finish loading — reconnect" : healthy ? @"Disconnected" : @"Connection ended — reconnect"];
 
 }
 - (void)configureClient:(rfbClient *)client {
+    _automaticUpdatesActive = NO; _automaticUpdatePending = YES; _desktopRefreshPending = NO;
+    _automaticUpdateWidth = _automaticUpdateHeight = 0;
     _appleCursorCache = [NSMutableDictionary new]; _appleCursorOrder = [NSMutableArray new]; _appleCursorBytes = 0;
     _cursorImage = nil; _cursorHotspot = CGPointZero; _cursorPositionKnown = NO; _cursorDirty = YES;
     [_lock lock]; _cursorImageAvailable = NO; [_lock unlock];
@@ -584,6 +600,59 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     client->format.redShift = 16; client->format.greenShift = 8; client->format.blueShift = 0;
     client->format.bigEndian = FALSE; client->format.depth = 24;
     client->appData.encodingsString = "zlib hextile raw";
+}
+// Never let a server capability refresh turn an input-only update into pixels.
+// Automatic Desktop delivery also uses an empty fallback rectangle while its
+// routine LibVNCClient pull request bit is masked.
+- (void)configureFramebufferRequests:(rfbClient *)client {
+    [_lock lock]; BOOL suppress = _inputOnly || _paused || _automaticUpdatesActive; [_lock unlock];
+    unsigned char *requests = &client->supportedMessages.client2server[rfbFramebufferUpdateRequest / 8];
+    unsigned char bit = 1 << (rfbFramebufferUpdateRequest % 8);
+    if (suppress) {
+        *requests &= ~bit;
+        rfbRectangle empty = {0, 0, 0, 0}; rfbClientSetUpdateRect(client, &empty);
+    } else { *requests |= bit; rfbClientSetUpdateRect(client, NULL); }
+}
+- (BOOL)requestFullDesktop:(rfbClient *)client {
+    [_lock lock]; BOOL permitted = _running && !_paused && !_inputOnly && !_stopping; [_lock unlock];
+    if (!permitted) return YES;
+    // The bit mask suppresses only the library's routine requests. An explicit
+    // baseline refresh must reach the wire even in automatic-update mode.
+    client->supportedMessages.client2server[rfbFramebufferUpdateRequest / 8] |= 1 << (rfbFramebufferUpdateRequest % 8);
+    BOOL sent = SendFramebufferUpdateRequest(client, 0, 0, client->width, client->height, FALSE);
+    [self configureFramebufferRequests:client]; return sent;
+}
+- (BOOL)stopAutomaticUpdates:(rfbClient *)client {
+    if (!_automaticUpdatesActive) return YES;
+    uint8_t packet[16];
+    BOOL sent = CompanionVNCAppleUpdatePacket(_automaticUpdateWidth, _automaticUpdateHeight, false, packet)
+        && WriteToRFBServer(client, (char *)packet, sizeof(packet));
+    [_lock lock]; _automaticUpdatesActive = NO; if (sent) _automaticUpdateStops++; [_lock unlock];
+    _automaticUpdatePending = YES;
+    return sent;
+}
+- (BOOL)configureDesktopUpdates:(rfbClient *)client {
+    [_lock lock];
+    BOOL permitted = _running && _established && !_paused && !_inputOnly && !_stopping && _appleGestureServer;
+    [_lock unlock];
+#if !(TARGET_OS_OSX || TARGET_OS_IOS)
+    // Only clients advertising and rendering Apple cached cursors opt in.
+    permitted = NO;
+#endif
+    BOOL eligible = permitted && _coverageLayoutValid && _coverageLayout.width == client->width
+        && _coverageLayout.height == client->height;
+    if (!eligible) {
+        if (![self stopAutomaticUpdates:client]) return NO;
+    } else if (!_automaticUpdatesActive || _automaticUpdatePending
+               || _automaticUpdateWidth != client->width || _automaticUpdateHeight != client->height) {
+        uint8_t packet[16];
+        if (!CompanionVNCAppleUpdatePacket(client->width, client->height, true, packet)
+            || !WriteToRFBServer(client, (char *)packet, sizeof(packet))) return NO;
+        _automaticUpdateWidth = client->width; _automaticUpdateHeight = client->height;
+        _automaticUpdatePending = NO; _desktopRefreshPending = YES;
+        [_lock lock]; _automaticUpdatesActive = YES; _automaticUpdateStarts++; [_lock unlock];
+    }
+    [self configureFramebufferRequests:client]; return YES;
 }
 - (void)finish:(NSString *)state {
     [self registerSocket:-1];
@@ -613,6 +682,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 - (rfbBool)allocate:(rfbClient *)client {
     [_lock lock]; [self cancelNativeGesturesLocked];
     _framebufferWidth = client->width; _framebufferHeight = client->height;
+    _automaticUpdatePending = YES; if (_established && !_inputOnly) _desktopRefreshPending = YES;
     _nativeGestureLayout = CompanionVNCNativeGesturesSupported(YES, _coverageLayoutValid, client->width, client->height, _coverageLayout.width, _coverageLayout.height);
     [_lock unlock];
     size_t bytes;
@@ -699,6 +769,8 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     }
     [_lock lock]; _layoutMessages++; _layoutDiagnostics = geometry; [_lock unlock];
     if (encoding == 1101) { [self report:@"Connected"]; return TRUE; }
+    // A same-geometry layout can signal an agent handoff that dropped arming.
+    _automaticUpdatePending = YES;
     BOOL changed = _coverageLayoutValid && (!parsed || _coverageLayout.width != decoded.width || _coverageLayout.height != decoded.height || _coverageLayout.count != decoded.count || memcmp(_coverageLayout.displays, decoded.displays, sizeof(CompanionVNCDisplay) * decoded.count) != 0);
     _coverageLayoutValid = parsed; if (parsed) _coverageLayout = decoded;
     [_lock lock];
@@ -707,7 +779,8 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     _nativeGestureLayout = gestureLayout; [_lock unlock];
     if (changed && _coverage.seen) {
         // Hot-plug/rearrangement also retires the old baseline without blanking its image.
-        if (![self resetBaseline:client] || !SendFramebufferUpdateRequest(client,0,0,client->width,client->height,FALSE)) _extensionFailed = YES;
+        if (![self resetBaseline:client]) _extensionFailed = YES;
+        else _desktopRefreshPending = YES;
     } else { [self applyCoverageLayout:client]; }
     if (parsed) {
         aspect = (CGFloat)decoded.width / decoded.height;
@@ -857,6 +930,8 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     [stats addEntriesFromDictionary:@{
         @"cursorShapeUpdates": @(_cursorShapes), @"cursorPositionUpdates": @(_cursorPositions),
         @"standardCursorReports": @(_standardCursorReports), @"decodedCursorImages": @(_visibleCursorImages),
+        @"automaticDesktopUpdates": @(_automaticUpdatesActive),
+        @"automaticUpdateStarts": @(_automaticUpdateStarts), @"automaticUpdateStops": @(_automaticUpdateStops),
         @"appleCursorStores": @(_appleCursorStores), @"appleCursorSelections": @(_appleCursorSelections),
         @"appleCursorCacheMisses": @(_appleCursorMisses), @"cursorPublications": @(_cursorPublications),
         @"cursorCachedImage": @(_cursorImageAvailable), @"inputEvents": @(_inputs),
@@ -882,6 +957,8 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
         @"backgroundPauses": @(_pauses), @"retainedResumes": @(_resumes), @"resumeFrames": @(_resumeFrames),
         @"cursorShapeUpdates": @(_cursorShapes), @"cursorPositionUpdates": @(_cursorPositions),
         @"standardCursorReports": @(_standardCursorReports), @"decodedCursorImages": @(_visibleCursorImages),
+        @"automaticDesktopUpdates": @(_automaticUpdatesActive),
+        @"automaticUpdateStarts": @(_automaticUpdateStarts), @"automaticUpdateStops": @(_automaticUpdateStops),
         @"appleCursorStores": @(_appleCursorStores), @"appleCursorSelections": @(_appleCursorSelections),
         @"appleCursorCacheMisses": @(_appleCursorMisses), @"cursorPublications": @(_cursorPublications)};
     _reportedCounters = stats;
