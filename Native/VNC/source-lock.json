@@ -5,5 +5,13 @@
   "revision": "9b54b1ec32731bd23158ca014dc18014db4194c3",
   "license": "GPL-2.0-or-later",
   "opensslVersion": "3.5.8",
-  "opensslSourceSHA256": "a8f84a39918ec6415ce765d9b429d313ba97b8143169c172e734b9514464f5b2"
+  "opensslSourceSHA256": "a8f84a39918ec6415ce765d9b429d313ba97b8143169c172e734b9514464f5b2",
+  "macOSCursorCallback": {
+    "path": "src/libvncclient/cursor.c",
+    "originalSHA256": "e0b25ad917a9e8cf6129d140b3d5df5e780448ec3b202bcaa803f69a235ac2f6",
+    "adaptedSHA256": "591f7665af1eba414e84230d057fd400a25cc8dc0912100d9e2af89834ff0af8",
+    "patchPath": "Native/VNC/macos-empty-cursor.patch",
+    "patchSHA256": "c5894894421a176b225e9f6b212a5eff82658f94f92718d24cbdc5d080da7fb8",
+    "purpose": "Both native direct-client generated builds deliver empty standard cursor reports; historical key and adapter filename retained for exact patch admission."
+  }
 }

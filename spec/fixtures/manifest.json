@@ -759,7 +759,7 @@
       "path": "vnc-desktop-tunnel-v0.1.json",
       "kind": "desktop.tunnel.profile.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "1c5956cd055630e21bcdccfeb1cb87d45d95acffe1aaadd739f48d1f06eae6be"
+      "canonicalSHA256": "ab0bc4e7dfbe1d0f80483c3417755172055ea500edc3c5e5868e6c97b679b908"
     },
     {
       "path": "valid/desktop-tunnel-open.json",
@@ -801,7 +801,7 @@
       "path": "direct-screen-sharing-v1.json",
       "kind": "directScreenSharing.v1",
       "expect": "valid",
-      "canonicalSHA256": "b26add23760471f05a64462ab9753cd2f3b28701135742b29caa2cf493b9eee6"
+      "canonicalSHA256": "5c0d71e2a7a1d5551e6b1466005b912be3b16b1a8fe4cc30f809409954a48368"
     },
     {
       "path": "native-macos-client-v1.json",
@@ -825,7 +825,7 @@
       "path": "ios-text-composer-v1.json",
       "kind": "client.iosTextComposer.v1",
       "expect": "valid",
-      "canonicalSHA256": "4846675db3ad21d4f8b4d48145cb47dd12b62da0877c5fb143e6a2884788ea2d"
+      "canonicalSHA256": "3b1b5b91e54ca8b0613a0ab0040b0b9f52c0fd7ac1a00fdd4be4618587ecea2f"
     }
   ]
 }

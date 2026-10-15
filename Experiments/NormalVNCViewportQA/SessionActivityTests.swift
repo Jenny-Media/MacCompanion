@@ -9,12 +9,18 @@ import XCTest
     var ids: [String] = []
     var events: [String] = []
     var nextID = "new"
+    var blockedEnds: Set<String> = []
+    var waitingEnds: [String: CheckedContinuation<Void, Never>] = [:]
+    func releaseEnd(_ id: String) { waitingEnds.removeValue(forKey: id)?.resume() }
     func existingIDs() -> [String] { ids }
     func start(_ attributes: RemoteSessionActivityAttributes, content: ActivityContent<RemoteSessionActivityAttributes.ContentState>) throws -> String {
         ids.append(nextID); events.append("start:" + content.state.phase.rawValue); return nextID
     }
     func update(_ id: String, content: ActivityContent<RemoteSessionActivityAttributes.ContentState>) async { events.append("update:" + content.state.phase.rawValue) }
-    func end(_ id: String) async { events.append("end:" + id); ids.removeAll { $0 == id } }
+    func end(_ id: String) async {
+        if blockedEnds.contains(id) { await withCheckedContinuation { waitingEnds[id] = $0 } }
+        events.append("end:" + id); ids.removeAll { $0 == id }
+    }
 }
 private final class ActivityActionTestSession: CompanionVNCSession {
     var alive = true
@@ -26,6 +32,62 @@ private final class ActivityActionTestSession: CompanionVNCSession {
 }
 @MainActor final class SessionActivityTests: XCTestCase {
     private func defaults() -> UserDefaults { UserDefaults(suiteName: "session-qa-" + UUID().uuidString)! }
+    private func startupRetirementCase(_ name: String) throws -> [String: Any] {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-screen-sharing-v1", withExtension: "json"))
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        let cases = try XCTUnwrap(fixture["liveActivityStartupRetirementCases"] as? [[String: Any]])
+        return try XCTUnwrap(cases.first { $0["name"] as? String == name })
+    }
+    private func settleActivityTasks() async { for _ in 0..<60 { await Task.yield() } }
+    private func startupBackend(_ vector: [String: Any]) throws -> RecordingActivityBackend {
+        let backend = RecordingActivityBackend()
+        backend.ids = try XCTUnwrap(vector["existingIDs"] as? [String]); backend.blockedEnds = Set(backend.ids)
+        return backend
+    }
+    private func waitForStartupEnd(_ backend: RecordingActivityBackend) async {
+        for _ in 0..<100 { if backend.waitingEnds["orphan"] != nil { break }; await Task.yield() }
+        XCTAssertNotNil(backend.waitingEnds["orphan"])
+    }
+    func testStartupRetirementRemainsCreationBarrierAfterEndedRetry() async throws {
+        let vector = try startupRetirementCase("ended-then-connected"), backend = try startupBackend(vector)
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic Mac", address: "test.local")
+        let owner = VNCSessionActivityController(mac: mac, defaults: defaults(), backend: backend)
+        defer { backend.releaseEnd("orphan"); owner.finish() }
+        await waitForStartupEnd(backend)
+        owner.setPhase("ended"); owner.setPhase("connected"); await settleActivityTasks()
+        XCTAssertEqual(backend.events.contains("start:connected"), vector["startsBeforeRetirement"] as? Bool)
+        backend.releaseEnd("orphan"); await owner.waitForUpdates(); await settleActivityTasks()
+        XCTAssertEqual(backend.events, vector["eventsAfterRetirement"] as? [String])
+        owner.finish(); await owner.waitForUpdates()
+    }
+    func testStartupRetirementRemainsCreationBarrierAfterOptOutAndOptIn() async throws {
+        let vector = try startupRetirementCase("opt-out-then-opt-in"), backend = try startupBackend(vector), defaults = defaults()
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic Mac", address: "test.local")
+        let owner = VNCSessionActivityController(mac: mac, defaults: defaults, backend: backend)
+        defer { backend.releaseEnd("orphan"); owner.finish() }
+        await waitForStartupEnd(backend); owner.setPhase("connected")
+        defaults.set(false, forKey: VNCSessionActivityController.preferenceKey); owner.preferenceChanged()
+        defaults.set(true, forKey: VNCSessionActivityController.preferenceKey); owner.preferenceChanged()
+        await settleActivityTasks()
+        XCTAssertEqual(backend.events.contains("start:connected"), vector["startsBeforeRetirement"] as? Bool)
+        backend.releaseEnd("orphan"); await owner.waitForUpdates(); await settleActivityTasks()
+        XCTAssertEqual(backend.events, vector["eventsAfterRetirement"] as? [String])
+        owner.finish(); await owner.waitForUpdates()
+    }
+    func testWaitingAfterEarlyEndStillTracksStartupRetirement() async throws {
+        let vector = try startupRetirementCase("ended-with-pending-startup-retirement"), backend = try startupBackend(vector)
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic Mac", address: "test.local")
+        let owner = VNCSessionActivityController(mac: mac, defaults: defaults(), backend: backend)
+        defer { backend.releaseEnd("orphan"); owner.finish() }
+        await waitForStartupEnd(backend); owner.setPhase("ended")
+        var finishedWaiting = false
+        let waiter = Task { await owner.waitForUpdates(); finishedWaiting = true }
+        await settleActivityTasks()
+        XCTAssertEqual(finishedWaiting, vector["waitCompletesBeforeRetirement"] as? Bool)
+        backend.releaseEnd("orphan"); await waiter.value; await settleActivityTasks()
+        XCTAssertTrue(finishedWaiting)
+        XCTAssertEqual(backend.events, vector["eventsAfterRetirement"] as? [String])
+    }
     func testIndexedEndActionsCannotTargetRetiredOrOtherActivities() async throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-screen-sharing-v1", withExtension: "json"))
         let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
@@ -144,7 +206,7 @@ private final class ActivityActionTestSession: CompanionVNCSession {
         defaults.set(true, forKey: VNCSessionActivityController.preferenceKey); owner.preferenceChanged(); await owner.waitForUpdates()
         XCTAssertTrue(backend.ids.isEmpty) // foreground is required for activity creation
         owner.setForeground(true); owner.setPhase("connected"); await owner.waitForUpdates()
-        XCTAssertEqual(backend.events.last, "update:connected")
+        XCTAssertEqual(backend.events.last, "start:connected")
         backend.ids = []; owner.setPhase("paused"); await owner.waitForUpdates()
         owner.setPhase("connected"); await owner.waitForUpdates()
         XCTAssertTrue(backend.ids.isEmpty) // respect dismissal until a deliberate opt-in
@@ -186,6 +248,8 @@ private final class ActivityActionTestSession: CompanionVNCSession {
         XCTAssertEqual(RemoteSessionActivityAttributes.resumeRoute(from: terminal.resumeURL), .init(macID: id, kind: .terminal))
         let encoded = try JSONEncoder().encode(RemoteSessionActivityAttributes(macID: id, macName: "Legacy Desktop"))
         let legacy = try JSONDecoder().decode(RemoteSessionActivityAttributes.self, from: encoded)
+        XCTAssertFalse(try XCTUnwrap(RemoteSessionActivityAttributes.resumeRoute(from: terminal.resumeURL)).automaticallyConnect)
+        XCTAssertTrue(try XCTUnwrap(RemoteSessionActivityAttributes.resumeRoute(from: legacy.resumeURL)).automaticallyConnect)
         XCTAssertNil(legacy.kind)
         XCTAssertEqual(RemoteSessionActivityAttributes.resumeRoute(from: legacy.resumeURL), .init(macID: id, kind: .desktop))
     }

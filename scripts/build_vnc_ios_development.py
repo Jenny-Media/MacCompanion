@@ -5,6 +5,7 @@ Generated development project; no Experimental app source is linked.
 Permanent release dependency/signing gates remain authoritative.
 """
 import argparse
+from build_cache import BuildSession, toolchain_identity, write_if_changed
 import hashlib
 import json
 import os
@@ -22,17 +23,35 @@ def run(*args, **kwargs):
 def output(*args):
     return subprocess.check_output([str(x) for x in args], text=True).strip()
 
+def cmake_source_options(build, source):
+    """Migrate the generated cache when its admitted source directory changes."""
+    cache = build / 'CMakeCache.txt'
+    expected = 'CMAKE_HOME_DIRECTORY:INTERNAL=' + str(source.resolve())
+    return ['--fresh'] if cache.exists() and expected not in cache.read_text().splitlines() else []
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--openssl', type=Path, required=True)
-    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--output', type=Path, required=True, help='Evidence directory outside the checkout; compiler files are reused separately')
+    parser.add_argument('--cache-root', type=Path, help='Override MACCOMPANION_BUILD_CACHE_ROOT')
+    parser.add_argument('--cold', action='store_true', help='Use a fresh compiler workspace without deleting existing caches')
     parser.add_argument('--sdk', choices=['iphoneos', 'iphonesimulator'], required=True)
     args = parser.parse_args()
+    identity = {'kind': 'native-ios', 'sdk': args.sdk, 'arch': 'arm64', 'toolchain': toolchain_identity((args.sdk,))}
+    with BuildSession(ROOT, args.output, identity, cache_root=args.cache_root, cold=args.cold) as session:
+        args.output = session.workspace
+        build(args, parser, session)
+
+
+def build(args, parser, session):
     sha = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
     def source_inputs():
-        return {str(p.relative_to(ROOT)): sha(p) for root in [HERE, ROOT / 'Native/SessionActivity', ROOT / 'Native/Terminal', ROOT / 'Native/Dependencies', ROOT / 'Apps/MacCompanionIOS', ROOT / 'Apps/MacCompanionSessionActivity', ROOT / 'Packages/MacCompanionKit/Sources']
-            for p in sorted(root.rglob('*')) if p.is_file()}
+        files = [p for root in [HERE, ROOT / 'Native/SessionActivity', ROOT / 'Native/Terminal', ROOT / 'Native/Dependencies', ROOT / 'Apps/MacCompanionIOS', ROOT / 'Apps/MacCompanionSessionActivity', ROOT / 'Packages/MacCompanionKit/Sources']
+                 for p in sorted(root.rglob('*')) if p.is_file()]
+        files += [Path(__file__), ROOT / 'scripts/build_cache.py']
+        return {str(p.relative_to(ROOT)): sha(p) for p in files}
     terminal_lock = json.loads((ROOT / 'Native/Terminal/source-lock.json').read_text())
     vendor = ROOT / terminal_lock['Citadel']['localPath']
     if {str(p.relative_to(vendor)): sha(p) for p in sorted(vendor.rglob('*')) if p.is_file()} != terminal_lock['Citadel']['files']:
@@ -57,9 +76,14 @@ def main():
         if hashlib.sha256((framework / path).read_bytes()).hexdigest() != digest:
             raise SystemExit('OpenSSL framework hash mismatch.')
     args.output.mkdir(parents=True, exist_ok=True)
+    from prepare_macos_vnc_cursor import prepare as prepare_cursor, verify as verify_cursor
+    cursor_source, cursor_tree, cursor_provenance = prepare_cursor(args.source, args.output, LOCK)
     deps = args.output / 'dependencies'
     deps.mkdir(exist_ok=True)
-    shutil.copytree(framework, deps / 'OpenSSL.framework', dirs_exist_ok=True)
+    cached_framework = deps / 'OpenSSL.framework'
+    cached_files = {str(p.relative_to(cached_framework)): sha(p) for p in cached_framework.rglob('*') if p.is_file()}
+    if cached_files != provenance['files']:
+        shutil.copytree(framework, cached_framework, dirs_exist_ok=True)
     sdk = output('xcrun', '--sdk', args.sdk, '--show-sdk-path')
     build = args.output / 'libvncclient'
     definitions = {
@@ -81,7 +105,7 @@ def main():
         'WITH_EXAMPLES': 'OFF', 'WITH_TESTS': 'OFF',
         'WITH_WEBSOCKETS': 'OFF', 'WITH_TIGHTVNC_FILETRANSFER': 'OFF'
     }
-    run('/opt/homebrew/bin/cmake', '-S', args.source, '-B', build,
+    run('/opt/homebrew/bin/cmake', *cmake_source_options(build, cursor_source), '-S', cursor_source, '-B', build,
         *['-D' + k + '=' + str(v) for k, v in definitions.items()])
     run('/opt/homebrew/bin/cmake', '--build', build, '--target', 'vncclient', '-j', '6')
     resolved = args.output / 'normal-project.json'
@@ -108,7 +132,7 @@ def main():
         'SWIFT_ACTIVE_COMPILATION_CONDITIONS': '$(inherited) DEBUG MACCOMPANION_VNC_DEVELOPMENT',
         'SWIFT_OBJC_BRIDGING_HEADER': str(HERE / 'MacCompanionVNC-Bridging-Header.h'),
         'CLANG_ENABLE_OBJC_ARC': 'YES', 'ENABLE_DEBUG_DYLIB': 'NO', 'CODE_SIGNING_ALLOWED': 'NO',
-        'HEADER_SEARCH_PATHS': [str(args.source / 'include'), str(build / 'include')],
+        'HEADER_SEARCH_PATHS': [str(cursor_source / 'include'), str(build / 'include')],
         'LIBRARY_SEARCH_PATHS': [str(build)], 'ARCHS': 'arm64', 'ONLY_ACTIVE_ARCH': 'YES', 'OTHER_LDFLAGS': ['$(inherited)', '-lz']})
     import plistlib
     direct_info = plistlib.loads((ROOT / base['INFOPLIST_FILE']).read_bytes())
@@ -123,13 +147,13 @@ def main():
     direct_info.pop('NSCameraUsageDescription', None)
     direct_info['NSFaceIDUsageDescription'] = 'Unlock Mac Companion to access your saved Macs and remote sessions.'
     info_path = args.output / 'DirectScreenSharing-Info.plist'
-    info_path.write_bytes(plistlib.dumps(direct_info))
+    write_if_changed(info_path, plistlib.dumps(direct_info))
     base['INFOPLIST_FILE'] = str(info_path)
     if args.sdk == 'iphonesimulator':
         import plistlib
         keychain = 'dev.maccompanion.simulator.media.jenny.maccompanion.ios'
         entitlements = args.output / 'SimulatorDevelopment.entitlements'
-        entitlements.write_bytes(plistlib.dumps({'application-identifier': keychain, 'keychain-access-groups': [keychain]}))
+        write_if_changed(entitlements, plistlib.dumps({'application-identifier': keychain, 'keychain-access-groups': [keychain]}))
         base.update({'CODE_SIGNING_ALLOWED': 'YES', 'CODE_SIGN_IDENTITY': '-', 'CODE_SIGN_ENTITLEMENTS': str(entitlements)})
     widget = {
         'type': 'app-extension', 'platform': 'iOS',
@@ -150,11 +174,11 @@ def main():
         'packages': {'Citadel': {'path': str(ROOT / 'Native/Dependencies/Citadel')}, 'SwiftTerm': {k: v for k, v in json.loads((ROOT / 'Native/Terminal/source-lock.json').read_text())['SwiftTerm'].items() if k in ['url', 'revision']}},
         'targets': {'MacCompanionIOS': target, 'MacCompanionSessionActivity': widget},
         'schemes': {'MacCompanionIOS': {'build': {'targets': {'MacCompanionIOS': 'all'}}, **{action: {'config': 'Debug'} for action in ['run', 'test', 'profile', 'analyze', 'archive']}}}}
-    (args.output / 'project.json').write_text(json.dumps(spec, indent=2))
-    run('/opt/homebrew/bin/xcodegen', 'generate', '--spec', args.output / 'project.json', '--project', args.output)
+    write_if_changed(args.output / 'project.json', json.dumps(spec, indent=2))
+    run('/opt/homebrew/bin/xcodegen', 'generate', '--use-cache', '--cache-path', args.output / '.xcodegen-cache', '--spec', args.output / 'project.json', '--project', args.output)
     package_lock = args.output / 'NormalVNCDevelopment.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
     package_lock.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(ROOT / 'Native/Terminal/Package.resolved', package_lock)
+    write_if_changed(package_lock, (ROOT / 'Native/Terminal/Package.resolved').read_bytes())
     with (args.output / 'resolve.log').open('w') as log:
         run('xcodebuild', '-project', args.output / 'NormalVNCDevelopment.xcodeproj', '-scheme', 'MacCompanionIOS',
             '-derivedDataPath', args.output / 'DerivedData', '-onlyUsePackageVersionsFromResolvedFile',
@@ -170,13 +194,15 @@ def main():
     if json.loads(package_lock.read_text())['pins'] != expected_pins:
         raise SystemExit('Resolved terminal package revisions changed during build.')
     app = args.output / ('DerivedData/Build/Products/Debug-' + args.sdk) / 'Mac Companion.app'
+    verify_cursor(cursor_source, cursor_tree)
     if inputs != source_inputs():
         raise SystemExit('Application sources changed during the build. Rebuild the final sources.')
-    (args.output / 'build-report.json').write_text(json.dumps({'profile': 'maccompanion.normal-ios-direct-screen-sharing-development.v1',
+    report = {'profile': 'maccompanion.normal-ios-direct-screen-sharing-development.v1',
         'normalSourceRoot': True, 'releaseAdmitted': False, 'sdk': args.sdk, 'app': str(app),
-        'upstream': LOCK, 'terminalDependencies': terminal_lock, 'terminalPackagePins': expected_pins, 'libVNCClientSHA256': sha(build / 'libvncclient.a'), 'inputs': inputs,
-        'normalApplicationBinarySHA256': sha(app / 'Mac Companion'), 'installed': False}, indent=2))
-    print('Normal VNC app:', app)
+        'cursorAdapter': cursor_provenance, 'upstream': LOCK, 'terminalDependencies': terminal_lock, 'terminalPackagePins': expected_pins, 'libVNCClientSHA256': sha(build / 'libvncclient.a'), 'inputs': inputs,
+        'normalApplicationBinarySHA256': sha(app / 'Mac Companion'), 'installed': False}
+    report = session.publish(report, app)
+    print('Normal VNC app:', report['app'])
 
 if __name__ == '__main__':
     main()

@@ -78,3 +78,196 @@ Sharing and Remote Login: native IME and dictation, explicit Paste, Unicode and
 emoji in a remote text editor, desktop Return/Tab behavior, and multiline shell
 input with bracketed paste enabled and disabled. Simulator and synthetic socket
 checks do not establish those hardware results.
+
+## Compact composer revision (historical, 2026-10-13)
+
+Compose Text is a built-in Quick Action in Desktop, Trackpad and Terminal.
+Untouched older default rows gain the action while retaining their existing
+identifiers; customized rows are preserved. The composer appears as a compact
+panel above the actual keyboard, leaving the desktop visible. Back returns to
+the destination without losing the draft; Expand provides more editing space.
+Send remains outside scrolling content, including at large accessibility sizes.
+Short landscape layouts use accessible Back, Discard and Send controls beside
+the scrollable editor; destination context and validation explanations stay accessible.
+Return/Tab confirmation, explicit delivery, size limits and generation/readiness
+fences remain in place. Background/lock cancellation clears the draft and
+dismisses even when it arrives during the presentation transition.
+
+Temporary inactive gestures do not present a lock cover. Real backgrounding
+retains the privacy mask. A valid grace return prepares visible presentation
+before becoming active without admitting inactive input; current successful
+authentication reveals the prepared local interface and enables local controls
+together. The remote-session unlocked notification still waits for actual activation;
+remote keyboard, mouse and transport checks remain independent of local UI readiness.
+Retained Desktop recovery keeps cached pixels at normal opacity, checks for a
+fresh frame silently, and shows delayed Updating desktop feedback after one
+second. Actual connection replacement alone uses Reconnecting. iOS can suspend
+a background app; these changes do not promise unlimited background networking.
+
+Simulator coverage exercises these policies with native windows and the keyboard
+layout guide, actual rendered Send geometry, current/canceled authentication
+callbacks, native editor input and existing VNC/Terminal lifecycle fences.
+Physical Face ID and third-party keyboard acceptance remain separate checks.
+
+
+## Maps-style resizing revision (2026-10-13)
+
+The keyboard-aware panel now has a grabber with compact and expanded snap
+positions. Dragging keeps the same native editor mounted, preserving the draft,
+selection and keyboard focus. Expand/Collapse also provides an accessible action.
+Editor scrolling leaves the panel size unchanged. A short canceled closing drag
+retains the draft; a completed swipe closes it while retaining unsent text.
+Sending prevents swipe dismissal. Background and lock still retire the draft.
+
+The panel uses public UIKit gestures and the actual keyboard guide. Native
+UISheetPresentationController prototypes expanded automatically with the
+keyboard and dismissed it during resizing, so they failed the required typing
+experience. The snapping panel preserves the verified keyboard-aware layout.
+Simulator UI tests use real grabber drags, editor scrolling, typing, dismissal
+and background transitions; native editor tests cover selection, short landscape
+and accessibility sizes. Physical iPhone acceptance remains a separate check.
+
+
+From the checkout, reproduce the drag suite after a normal simulator development
+build. Use the same `DEVELOPER_DIR` for the builder and these commands. The build
+output is saved evidence; the leased compiler workspace contains the QA project,
+intermediates and package checkouts. Choose a new result-bundle path for each run.
+
+```bash
+python3 scripts/verify_terminal_pro_simulator.py --build /absolute/build-output --simulator SIMULATOR_ID --generate-only --composer-ui
+python3 - /absolute/build-output SIMULATOR_ID /absolute/composer-results.xcresult <<'PY'
+from pathlib import Path
+import subprocess
+import sys
+
+root = Path.cwd()
+sys.path.insert(0, str(root / 'scripts'))
+from build_cache import compiler_workspace
+
+with compiler_workspace(Path(sys.argv[1]), root) as compiler:
+    subprocess.run([
+        'xcodebuild', '-project', str(compiler / 'QA/DirectClientQA.xcodeproj'),
+        '-scheme', 'ComposerSheetQA',
+        '-destination', 'platform=iOS Simulator,id=' + sys.argv[2],
+        '-derivedDataPath', str(compiler / 'DerivedData'),
+        '-clonedSourcePackagesDirPath', str(compiler / 'DerivedData/SourcePackages'),
+        '-onlyUsePackageVersionsFromResolvedFile', '-skipPackagePluginValidation',
+        '-parallel-testing-enabled', 'NO', '-collect-test-diagnostics', 'never',
+        '-resultBundlePath', sys.argv[3], 'test'
+    ], cwd=root, check=True)
+PY
+```
+
+The generated QA app links the experiment entry point only in its private
+target. Release and normal development targets do not link experiment sources.
+
+## Floating composer revision (historical, 2026-10-13)
+
+The default presentation is now a compact floating panel inside the session.
+Drag the grabber to move it; release near an edge to snap. The panel stays within
+the safe area above the actual keyboard, and relative placement follows rotation
+and keyboard changes. Undocked and floating tablet keyboards are tracked; near
+the top edge the panel uses readable space below or beside the keyboard.
+VoiceOver exposes movement actions on the grabber. Narrow compact windows group
+Discard, Expand and Dock in Composer actions, leaving Back, error details and
+Send directly reachable.
+
+Expand fills the available area; Collapse restores the compact panel. Dock
+attaches it near the keyboard with the existing Maps-style height snaps. Undock
+restores its floating position. All presentations share one mounted native editor,
+preserving draft, selection and typing focus. Back still retains the draft for
+choosing a remote destination. Background, lock and session replacement retire it.
+Sending blocks movement and presentation changes; late gestures from retired
+presentations cannot affect a new editor. Only Send Text delivers input, with the
+existing confirmation and readiness checks.
+
+Simulator coverage includes real grabber drags, edge snapping, docking,
+expansion, editor scrolling, rotation, actual keyboard geometry, retained selection,
+Dynamic Type and lifecycle cancellation. Tablet safe-area/keyboard geometry is
+covered by controlled native rendering on an iPad Simulator in portrait and
+landscape, including moved floating and full-width keyboard viewports. Actual iPad
+system-keyboard floating/undocking gestures remain a final hardware check, as
+explicitly agreed after the simulator could not enter those modes. Physical
+dictation and IME acceptance remain separate. Cursor and password-manager
+investigations stay paused.
+
+## Text bubble and persistent Unlock card (2026-10-13)
+
+The current composer is a smaller floating text bubble with a grabber, Close and
+circular arrow Send. The title, destination/presentation toolbar, Expand/Collapse,
+Dock/Undock and Discard controls are removed. Close keeps the draft; long text
+scrolls in the same native editor. Destination context is available to accessibility,
+and conditional validation/delivery-error details remain reachable. Drag/snapping,
+keyboard/orientation tracking, explicit confirmation and lifecycle fences remain.
+Close and Send have 44-point hit regions. Dynamic Type grows the editor within
+keyboard-safe bounds. Compatibility transitions remain internal and have no UI
+entry or grabber-tap action.
+
+Unlock uses one persistent card through authentication. Unlocking indicates
+evaluation and disables the button. Failure/cancellation exposes an explicit Unlock
+retry only while foreground and protected data permit it. Current successful
+authentication reveals the prepared main UI and enables local controls together,
+without waiting for the later UIKit activation event. There is no separate Opening
+or Mac Companion-only transition. Remote session resume still waits for activation.
+
+## Restrained Liquid Glass (2026-10-14)
+
+The floating bubble uses one native regular Liquid Glass outer surface. Editable
+text has a stable secondary system background; Close stays quiet and Send remains
+the single accent action. The native material keeps accessibility adaptations,
+with a system-material fallback where Liquid Glass is unavailable. No additional
+glass layers or controls are added. Drag, snapping, keyboard/selection retention,
+confirmation, delivery and background/lock retirement are unchanged.
+
+## Inline footer and unlock phase diagnostics (2026-10-14)
+
+The bubble uses one full-width multiline editor with Close, a draggable grip,
+conditional error details and Send inside its bottom edge. Its compact height
+grows with text up to six preferred body lines, then scrolls; keyboard-safe space
+and accessibility sizes still bound it. The same native editor stays mounted.
+Close keeps the draft, while multiline/tab confirmation and lifecycle retirement
+keep their existing behavior. No extra toolbar or presentation controls return.
+
+Development unlock diagnostics distinguish the raw LocalAuthentication callback
+from its MainActor handling, the actual UIKit activation notification, admission,
+cover removal, synchronous unlock observer return and the first eligible native
+display tick. That tick is a refresh opportunity, not proof of pixel delivery or
+system Face ID animation completion. The initial library wait is recorded separately
+and can overlap authentication. Every offset uses one continuous monotonic origin.
+Only fixed phase/outcome names, booleans and numeric offsets are recorded, bounded
+to eight attempts and 16 events per attempt; retired/duplicate callbacks cannot
+complete a replacement trace. Development snapshots are encoded and atomically
+written on an ordered utility queue to Caches/UnlockPhaseTimings-v1.json. Nothing
+is uploaded. Release builds disable the recorder and do not mount a display probe.
+The diagnostics do not add delays or change authentication, grace, cover or input
+admission. They establish evidence for a later measured latency change.
+
+
+## Authentication handoff measurement (2026-10-14)
+
+Accepted successful LocalAuthentication replies retire their callback token before
+explicitly invalidating the completed context. This requests framework cleanup;
+it does not assume the authentication animation has finished. As in Expense Map,
+an accepted current success reveals prepared local content and enables local controls
+in one main-actor transition, including during authentication dismissal. Protected
+data must remain available and actual background entry revokes the handoff. The
+separate active admission continues to fence remote-session resume and input.
+Settings and local editing do not wait for that event; Desktop/Terminal opening
+requested during the handoff is deferred until it arrives. A new route or actual
+background entry retires that deferred request. No synthetic delay is introduced.
+
+Development traces checkpoint admission without waiting for the optional native
+display tick. At most 64 public active/background samples at 50 ms intervals include
+numeric main-actor scheduling delay, distinguishing responsive inactivity from a
+blocked UI queue. The probe cannot change admission and stops on admission or
+retirement. It remains disabled outside DEBUG. A physical speed improvement must
+be measured; Simulator checks establish lifecycle safety rather than Face ID timing.
+
+The synchronous per-attempt canEvaluatePolicy preflight is removed: the same
+deviceOwnerAuthentication evaluation reports unavailable policy asynchronously.
+Enabling Require Unlock still validates device setup. A passcode-not-set reply
+keeps the card and explicit retry with setup guidance; cancellation and stale
+callbacks retain their existing fences. A device trace measured 104–110 ms before
+evaluation in the prior path; compare complete cold-launch timings before claiming
+an improvement. Responsive inactive samples attribute the later handoff to the
+system-owned foreground transition rather than an app main-thread stall.

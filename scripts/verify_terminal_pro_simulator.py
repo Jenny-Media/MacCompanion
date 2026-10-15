@@ -5,6 +5,7 @@ Requires a completed build_vnc_ios_development.py Simulator output. All test
 keys are fresh, temporary and synthetic. The user's ~/.ssh is never modified.
 """
 import argparse
+from build_cache import compiler_workspace
 import os
 import json
 from pathlib import Path
@@ -64,9 +65,19 @@ def main():
     parser.add_argument('--test-diagnostics', choices=['on-failure', 'never'], default='on-failure')
     parser.add_argument('--screenshots', action='store_true', help='Capture synthetic recovery screens in the hosted Simulator tests')
     parser.add_argument('--duo-review', action='store_true', help='Run only the opt-in interactive, synthetic Duo comparison capture')
+    parser.add_argument('--generate-only', action='store_true', help='Generate the private QA project without running tests')
+    parser.add_argument('--composer-ui', action='store_true', help='Generate the simulator-only Maps-style composer app and native drag test scheme')
+    parser.add_argument('--cold-start-ui', action='store_true', help='Generate native cold-start admission interaction tests')
     parser.add_argument('--settings-ui', action='store_true', help='Also test gear navigation and live sheet appearance using native UI interactions')
-    args = parser.parse_args(); base = args.build.resolve()
-    qa = base / 'QA'; qa.mkdir(exist_ok=True)
+    args = parser.parse_args()
+    with compiler_workspace(args.build, ROOT) as compiler:
+        execute(args, parser, compiler)
+
+
+def execute(args, parser, compiler):
+    base = args.build.resolve()
+    qa = compiler / 'QA'; qa.mkdir(exist_ok=True)
+    evidence = base / 'QA'; evidence.mkdir(exist_ok=True)
     spec = json.loads((base / 'project.json').read_text())
     spec['name'] = 'DirectClientQA'
     app = spec['targets']['MacCompanionIOS']; settings = app['settings']['base']
@@ -82,7 +93,7 @@ def main():
     for algorithm, name, secret in [('ed25519', 'synthetic-ed25519', 'synthetic-import-only'), ('rsa', 'synthetic-rsa', '')]:
         destination = qa / name
         if not destination.exists(): run('/usr/bin/ssh-keygen', '-q', '-t', algorithm, '-N', secret, '-f', destination)
-    resources = [ROOT / 'spec/fixtures/direct-screen-sharing-v1.json', ROOT / 'spec/fixtures/vnc-desktop-tunnel-v0.1.json',
+    resources = [ROOT / 'spec/fixtures/manifest.json', ROOT / 'spec/fixtures/direct-screen-sharing-v1.json', ROOT / 'spec/fixtures/vnc-desktop-tunnel-v0.1.json',
                  ROOT / 'spec/fixtures/direct-files-v1.json', ROOT / 'spec/fixtures/ios-text-composer-v1.json',
                  ROOT / 'spec/storekit/v0/LifetimePro.storekit', qa / 'synthetic-ed25519', qa / 'synthetic-ed25519.pub', qa / 'synthetic-rsa']
     spec['targets']['DirectClientTests'] = {
@@ -116,23 +127,68 @@ def main():
         spec['schemes']['DirectClientQA']['run']['environmentVariables'] = {'MACCOMPANION_SCREENSHOT_REVIEW': '1'}
     if args.duo_review:
         spec['schemes']['DirectClientQA']['run']['environmentVariables'] = {'MACCOMPANION_DUO_REVIEW': '1'}
+    if args.composer_ui:
+        import copy
+        sheet = copy.deepcopy(app)
+        sheet['sources'] = [row for row in sheet['sources'] if not row['path'].startswith(str(ROOT / 'Apps/MacCompanionIOS'))]
+        sheet['sources'].append({'path': str(ROOT / 'Experiments/ComposerSheetQA/ComposerSheetApplication.swift')})
+        sheet['settings']['base']['PRODUCT_BUNDLE_IDENTIFIER'] = 'dev.maccompanion.sheetqa.ios'
+        sheet['settings']['base']['PRODUCT_NAME'] = 'ComposerSheetQA'
+        sheet['settings']['base']['PRODUCT_MODULE_NAME'] = 'Mac_Companion'
+        sheet['dependencies'] = [row for row in sheet['dependencies'] if row.get('target') != 'MacCompanionSessionActivity']
+        spec['targets']['ComposerSheetApp'] = sheet
+        spec['targets']['ComposerSheetUITests'] = {
+            'type': 'bundle.ui-testing', 'platform': 'iOS',
+            'sources': [{'path': str(ROOT / 'Experiments/ComposerSheetQA/ComposerSheetUITests.swift')}],
+            'dependencies': [{'target': 'ComposerSheetApp'}],
+            'settings': {'base': {'GENERATE_INFOPLIST_FILE': 'YES', 'PRODUCT_BUNDLE_IDENTIFIER': 'dev.maccompanion.sheetqa.ios.tests',
+                'SWIFT_VERSION': '6.0', 'IPHONEOS_DEPLOYMENT_TARGET': '26.0', 'ARCHS': 'arm64', 'ONLY_ACTIVE_ARCH': 'YES',
+                'CODE_SIGN_IDENTITY': '-', 'CODE_SIGNING_ALLOWED': 'YES', 'TEST_TARGET_NAME': 'ComposerSheetApp'}}}
+        spec['schemes']['ComposerSheetQA'] = {'build': {'targets': {'ComposerSheetApp': 'all', 'ComposerSheetUITests': 'all'}},
+            'test': {'config': 'Debug', 'macroExpansion': 'ComposerSheetApp', 'targets': [{'name': 'ComposerSheetUITests', 'parallelizable': False}]}}
+        for action in ['run', 'profile', 'analyze', 'archive']:
+            spec['schemes']['ComposerSheetQA'][action] = {'config': 'Debug'}
+    if args.cold_start_ui:
+        import copy
+        cold = copy.deepcopy(app)
+        cold['sources'] = [row for row in cold['sources'] if not row['path'].startswith(str(ROOT / 'Apps/MacCompanionIOS'))]
+        cold['sources'].append({'path': str(ROOT / 'Experiments/ColdStartQA/ColdStartApplication.swift')})
+        cold['settings']['base'].update({'PRODUCT_BUNDLE_IDENTIFIER': 'dev.maccompanion.coldstartqa.ios',
+                                        'PRODUCT_NAME': 'ColdStartQA', 'PRODUCT_MODULE_NAME': 'Mac_Companion'})
+        cold['dependencies'] = [row for row in cold['dependencies'] if row.get('target') != 'MacCompanionSessionActivity']
+        spec['targets']['ColdStartApp'] = cold
+        spec['targets']['ColdStartUITests'] = {
+            'type': 'bundle.ui-testing', 'platform': 'iOS',
+            'sources': [{'path': str(ROOT / 'Experiments/ColdStartQA/ColdStartUITests.swift')}],
+            'dependencies': [{'target': 'ColdStartApp'}],
+            'settings': {'base': {'GENERATE_INFOPLIST_FILE': 'YES', 'PRODUCT_BUNDLE_IDENTIFIER': 'dev.maccompanion.coldstartqa.ios.tests',
+                'SWIFT_VERSION': '6.0', 'IPHONEOS_DEPLOYMENT_TARGET': '26.0', 'ARCHS': 'arm64', 'ONLY_ACTIVE_ARCH': 'YES',
+                'CODE_SIGN_IDENTITY': '-', 'CODE_SIGNING_ALLOWED': 'YES', 'TEST_TARGET_NAME': 'ColdStartApp'}}}
+        spec['schemes']['ColdStartQA'] = {'build': {'targets': {'ColdStartApp': 'all', 'ColdStartUITests': 'all'}},
+            'test': {'config': 'Debug', 'macroExpansion': 'ColdStartApp', 'targets': [{'name': 'ColdStartUITests', 'parallelizable': False}]}}
+        for action in ['run', 'profile', 'analyze', 'archive']:
+            spec['schemes']['ColdStartQA'][action] = {'config': 'Debug'}
     spec_path = qa / 'project.json'; spec_path.write_text(json.dumps(spec, indent=2))
     run('/opt/homebrew/bin/xcodegen', 'generate', '--spec', spec_path, '--project', qa)
     lock = qa / 'DirectClientQA.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
     lock.parent.mkdir(parents=True, exist_ok=True); shutil.copyfile(ROOT / 'Native/Terminal/Package.resolved', lock)
-    shutil.rmtree(qa / 'Results.xcresult', ignore_errors=True)
-    with (qa / 'test.log').open('w') as log:
+    if args.generate_only:
+        print(qa / 'DirectClientQA.xcodeproj')
+        return
+    import time
+    result = evidence / ('Results-' + str(time.time_ns()) + '.xcresult')
+    with (evidence / 'test.log').open('w') as log:
         run('xcodebuild', '-project', qa / 'DirectClientQA.xcodeproj', '-scheme', 'DirectClientQA',
-            '-destination', 'platform=iOS Simulator,id=' + args.simulator, '-derivedDataPath', base / 'DerivedData',
+            '-destination', 'platform=iOS Simulator,id=' + args.simulator, '-derivedDataPath', compiler / 'DerivedData',
             '-onlyUsePackageVersionsFromResolvedFile', '-skipPackagePluginValidation', '-parallel-testing-enabled', 'NO',
             *(['-only-testing:DirectClientTests/DuoComparisonTests/testInteractiveCapture'] if args.duo_review else []),
-            '-collect-test-diagnostics', args.test_diagnostics, '-resultBundlePath', qa / 'Results.xcresult', 'test', stdout=log, stderr=subprocess.STDOUT)
+            '-collect-test-diagnostics', args.test_diagnostics, '-resultBundlePath', result, 'test', stdout=log, stderr=subprocess.STDOUT)
     container = subprocess.check_output(['xcrun', 'simctl', 'get_app_container', args.simulator, bundle, 'data'], text=True).strip()
     if not args.duo_review:
         verify_external(Path(container) / 'Documents/synthetic-key-interop')
     for name in ['synthetic-ed25519', 'synthetic-ed25519.pub', 'synthetic-rsa', 'synthetic-rsa.pub']:
         (qa / name).unlink(missing_ok=True)
-    print('Direct client Simulator QA passed. Results:', qa / 'Results.xcresult')
+    print('Direct client Simulator QA passed. Results:', result)
 
 
 if __name__ == '__main__':

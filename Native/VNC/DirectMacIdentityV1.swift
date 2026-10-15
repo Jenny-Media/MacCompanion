@@ -2,7 +2,7 @@
 import Darwin
 import Foundation
 
-enum DirectMacConnection: String, Codable, CaseIterable, Identifiable {
+enum DirectMacConnection: String, Codable, CaseIterable, Identifiable, Sendable {
     case desktop, terminal, trackpad
     var id: String { rawValue }
     var title: String {

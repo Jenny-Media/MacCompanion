@@ -165,7 +165,9 @@ struct DirectTerminalView: View {
             if removed { sheet = nil; password = ""; key = nil; if !files.hasUnsavedDownloads { exit() } }
         }
         .onChange(of: files.shouldCloseAfterRemoval) { _, close in if close { exit() } }
-        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in session.background() }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in session.becameInactive() }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in session.background() }
+        .onReceive(NotificationCenter.default.publisher(for: DirectAppLockV1.locked)) { _ in session.background() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in returnAfterNormalExit(); session.foreground() }
         .onReceive(NotificationCenter.default.publisher(for: DirectAppLockV1.unlocked)) { _ in returnAfterNormalExit(); session.foreground() }
         .onReceive(NotificationCenter.default.publisher(for: VNCSessionPreferences.actionsChanged)) { _ in session.reloadKeyboard?() }
@@ -226,6 +228,11 @@ struct DirectTerminalView: View {
                 connectionButton(action.title, symbol: action.symbol, perform: action.perform)
                 detailsButton(notice: notice)
             } else {
+                if !autoConnect && session.recovery == nil && loginIssue == nil {
+                    Text("The previous Terminal session is unavailable in this app. Connect to open a new shell.")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("terminal-previous-session-unavailable")
+                }
                 let authentication = dynamicType.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4)) : AnyLayout(HStackLayout())
                 authentication {
                     Text("Sign in with").foregroundStyle(.secondary)

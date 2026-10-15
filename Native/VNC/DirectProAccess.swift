@@ -31,6 +31,12 @@ struct DirectProTrial {
     }
 }
 
+struct DirectProSnapshot {
+    var lifetime = false
+    var trial: DirectProTrial?
+    var historyUnavailable = false
+}
+
 @MainActor @Observable final class DirectProAccess {
     #if os(visionOS)
     static let shared = DirectProAccess(defaults: VisionDevelopmentQA.defaults)
@@ -66,8 +72,10 @@ struct DirectProTrial {
     private var evaluatedAt: Date
     private let now: () -> Date
     private let defaults: UserDefaults
-    init(defaults: UserDefaults = .standard, now: @escaping () -> Date = Date.init) {
-        self.defaults = defaults; self.now = now; evaluatedAt = now()
+    private let readEntitlements: @MainActor () async -> DirectProSnapshot
+    init(defaults: UserDefaults = .standard, now: @escaping () -> Date = Date.init,
+         readEntitlements: @escaping @MainActor () async -> DirectProSnapshot = { await DirectProAccess.storeSnapshot() }) {
+        self.defaults = defaults; self.now = now; evaluatedAt = now(); self.readEntitlements = readEntitlements
     }
     isolated deinit { updates?.cancel(); expiry?.cancel() }
 
@@ -104,27 +112,31 @@ struct DirectProTrial {
     }
     func refresh() async {
         refreshRevision += 1; let revision = refreshRevision
-        var lifetime = false
+        let snapshot = await readEntitlements()
+        guard revision == refreshRevision else { return }
+        hasLifetimePro = snapshot.lifetime; trial = snapshot.trial
+        trialHistoryUnavailable = snapshot.historyUnavailable
+        ready = true; reevaluateTrial()
+    }
+    private static func storeSnapshot() async -> DirectProSnapshot {
+        var snapshot = DirectProSnapshot()
         for await result in StoreKit.Transaction.currentEntitlements {
             if case .verified(let transaction) = result {
-                lifetime = lifetime || Self.admits(transaction, productID: Self.productID)
+                snapshot.lifetime = snapshot.lifetime || Self.admits(transaction, productID: Self.productID)
             }
         }
-        // History includes a revoked trial. A refund/restore must not make the
-        // Start Trial button reappear or reset the original purchase date.
+        // History includes revoked trials so refund/restore cannot restart them.
         let history = await StoreKit.Transaction.latest(for: Self.trialProductID)
-        guard revision == refreshRevision else { return }
-        hasLifetimePro = lifetime; trial = nil; trialHistoryUnavailable = false
         switch history {
         case .verified(let transaction):
             if transaction.productID == Self.trialProductID && transaction.productType == .nonConsumable {
-                trial = DirectProTrial(entitlement: Self.entitlement(transaction, productID: Self.trialProductID),
-                                       originalPurchaseDate: transaction.originalPurchaseDate)
-            } else { trialHistoryUnavailable = true }
-        case .unverified: trialHistoryUnavailable = true
+                snapshot.trial = DirectProTrial(entitlement: Self.entitlement(transaction, productID: Self.trialProductID),
+                                               originalPurchaseDate: transaction.originalPurchaseDate)
+            } else { snapshot.historyUnavailable = true }
+        case .unverified: snapshot.historyUnavailable = true
         case nil: break
         }
-        ready = true; reevaluateTrial()
+        return snapshot
     }
     private static func entitlement(_ transaction: StoreKit.Transaction, productID: String) -> DirectProEntitlement {
         DirectProEntitlement(verified: true, matchingProduct: transaction.productID == productID,

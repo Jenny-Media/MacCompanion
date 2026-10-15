@@ -4,7 +4,7 @@ import Observation
 import Security
 import SwiftUI
 
-struct DirectMacRecordV1: Codable, Identifiable, Equatable {
+struct DirectMacRecordV1: Codable, Identifiable, Equatable, Sendable {
     let id: UUID
     var name: String
     var addresses: [String]
@@ -127,9 +127,13 @@ enum DesktopCredentialStoreV1 {
     static var defaultURL: URL { DirectClientPlatformV1.dataURL("direct-macs-v1.json") }
     static let removed = Notification.Name("DirectMacLibraryRemovedV1")
     struct Removal: Sendable { let libraryURL: URL; let ids: Set<UUID> }
-    private struct File: Codable { var version = 5; var macs: [DirectMacRecordV1] }
+    private struct File: Codable, Sendable { var version = 5; var macs: [DirectMacRecordV1] }
     private(set) var macs: [DirectMacRecordV1] = []
     private(set) var readable = true
+    private(set) var loading = false
+    @ObservationIgnored private var initialRead: Task<[DirectMacRecordV1]?, Error>?
+    @ObservationIgnored private var readGeneration = UUID()
+    @ObservationIgnored private let readInitialRecords: @Sendable (URL) throws -> [DirectMacRecordV1]?
     var recovery: DirectRecoveryNotice?
     var failure: String? {
         get { recovery?.message }
@@ -140,28 +144,58 @@ enum DesktopCredentialStoreV1 {
     private let url: URL
     var storageURL: URL { url }
     private let removeLogin: (UUID) throws -> Void
-    init(url: URL? = nil, removeLogin: @escaping (UUID) throws -> Void = DesktopCredentialStoreV1.remove) {
+    init(url: URL? = nil, removeLogin: @escaping (UUID) throws -> Void = DesktopCredentialStoreV1.remove,
+         loadInBackground: Bool = false,
+         readInitialRecords: @escaping @Sendable (URL) throws -> [DirectMacRecordV1]? = { try DirectMacLibraryV1.readRecords(at: $0) }) {
         self.url = url ?? Self.defaultURL
-        self.removeLogin = removeLogin
-        reload()
+        self.removeLogin = removeLogin; self.readInitialRecords = readInitialRecords
+        if loadInBackground { loading = true; readable = false } else { reload() }
         discovery.updated = { [weak self] in
             guard let self else { return }
             self.updateDetectedMetadata(self.discovery.identities)
         }
     }
+    nonisolated static func readRecords(at url: URL) throws -> [DirectMacRecordV1]? {
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let file = try JSONDecoder().decode(File.self, from: Data(contentsOf: url))
+        guard (1...5).contains(file.version), file.macs.count <= 64,
+              Set(file.macs.map(\.id)).count == file.macs.count else { throw DirectMacRecordV1.LibraryFailure.invalid }
+        for mac in file.macs { _ = try mac.validated() }
+        return file.version < 5 ? file.macs.sorted(by: Self.alphabetical) : file.macs
+    }
+    private func publishRead(_ records: [DirectMacRecordV1]?) {
+        if let records { macs = records }
+        readable = true; recovery = nil; loading = false
+    }
+    private func readFailed() {
+        readable = false; loading = false
+        recovery = .make(.savedDataUnavailable, message: "Saved Macs couldn’t be read. Existing data is kept. Retry when device storage is available; unreadable data won’t be replaced.")
+    }
     func reload() {
-        do {
-            if FileManager.default.fileExists(atPath: url.path) {
-                let file = try JSONDecoder().decode(File.self, from: Data(contentsOf: url))
-                guard (1...5).contains(file.version), file.macs.count <= 64,
-                      Set(file.macs.map(\.id)).count == file.macs.count else { throw DirectMacRecordV1.LibraryFailure.invalid }
-                for mac in file.macs {
-                    _ = try mac.validated()
-                }
-                macs = file.version < 5 ? file.macs.sorted(by: Self.alphabetical) : file.macs
-            }
-            readable = true; recovery = nil
-        } catch { readable = false; recovery = .make(.savedDataUnavailable, message: "Saved Macs couldn’t be read. Existing data is kept. Retry when device storage is available; unreadable data won’t be replaced.") }
+        readGeneration = UUID(); initialRead?.cancel(); initialRead = nil
+        do { publishRead(try Self.readRecords(at: url)) } catch { readFailed() }
+    }
+    /// Initial iOS metadata is prepared beneath the existing privacy cover.
+    /// Mutations remain denied until the worker has produced a validated snapshot.
+    func loadInitial(onLoad: () -> Void = {}) async {
+        guard loading else { onLoad(); return }
+        if initialRead == nil {
+            let read = readInitialRecords, location = url
+            initialRead = Task.detached(priority: .userInitiated) { try read(location) }
+        }
+        guard let task = initialRead else { return }
+        let generation = readGeneration
+        let result = await task.result
+        guard generation == readGeneration, loading else { return }
+        initialRead = nil
+        switch result {
+        case .success(let records): publishRead(records); onLoad()
+        case .failure: readFailed()
+        }
+    }
+    func reloadInBackground(onLoad: () -> Void = {}) async {
+        if !loading { readGeneration = UUID(); loading = true; readable = false; recovery = nil }
+        await loadInitial(onLoad: onLoad)
     }
     func save(id: UUID?, name: String, address: String) -> Bool { save(id: id, name: name, addresses: [address]) }
     func save(id: UUID?, name: String, addresses: [String], port: Int = 5900, sshPort: Int? = nil,
@@ -221,7 +255,7 @@ enum DesktopCredentialStoreV1 {
         let ordered = macs.compactMap { records[$0.id] } + next.filter { !existingIDs.contains($0.id) }.sorted(by: Self.alphabetical)
         if ordered != macs { try write(ordered) }
     }
-    private static func alphabetical(_ lhs: DirectMacRecordV1, _ rhs: DirectMacRecordV1) -> Bool {
+    nonisolated private static func alphabetical(_ lhs: DirectMacRecordV1, _ rhs: DirectMacRecordV1) -> Bool {
         let comparison = lhs.name.localizedStandardCompare(rhs.name)
         return comparison == .orderedSame ? lhs.id.uuidString < rhs.id.uuidString : comparison == .orderedAscending
     }
@@ -266,12 +300,30 @@ struct DirectMacSessionSelection: Identifiable {
     let id = UUID()
     let mac: DirectMacRecordV1
     let connection: DirectMacConnection
+    var autoConnect = true
 }
 
 #if os(iOS)
 struct DirectMacLibraryRootV1: View {
     @State private var library: DirectMacLibraryV1
-    init(library: DirectMacLibraryV1 = DirectMacLibraryV1()) { _library = State(initialValue: library) }
+    init(library: DirectMacLibraryV1 = DirectMacLibraryV1(loadInBackground: true), appLock: DirectAppLockV1 = .shared,
+         pro: DirectProAccess = .shared, accessTimeout: Duration = .seconds(5)) {
+        _library = State(initialValue: library); _appLock = State(initialValue: appLock)
+        _pro = State(initialValue: pro); self.accessTimeout = accessTimeout
+    }
+    private let accessTimeout: Duration
+    private enum LibraryAction {
+        case edit(DirectMacRecordV1?)
+        case open(DirectMacRecordV1, DirectMacConnection, Bool)
+    }
+    private struct PendingAccess { let id = UUID(); let action: LibraryAction }
+    @State private var pendingAccess: PendingAccess?
+    @State private var deferredRoute: LibraryAction?
+    @State private var loadingRoute: URL?
+    @State private var servicesAttached = false
+    @State private var accessTimedOut = false
+    @State private var accessDeadline: Task<Void, Never>?
+
     @State private var files: DirectMacRecordV1?
     @State private var session: DirectMacSessionSelection?
     @State private var appLock = DirectAppLockV1.shared
@@ -293,10 +345,28 @@ struct DirectMacLibraryRootV1: View {
     var body: some View {
         NavigationStack {
             List {
-                if let notice = library.recovery {
-                    Section { DirectRecoveryCard(notice: notice, primary: .init(title: "Retry", perform: { library.reload() }), secondary: .init(title: "Help", perform: { setup = true })) }
+                if let pendingAccess {
+                    Section {
+                        if accessTimedOut {
+                            Text("Purchases couldn’t be checked. Try again when the App Store is available.")
+                                .accessibilityIdentifier("mac-access-timeout")
+                            Button("Retry") {
+                                request(pendingAccess.action)
+                                if !pro.ready { Task { await pro.refresh() } }
+                            }.accessibilityIdentifier("mac-access-retry")
+                        } else {
+                            HStack { ProgressView(); Text("Checking purchases…") }
+                                .accessibilityIdentifier("mac-access-progress")
+                        }
+                        Button("Cancel") { cancelAccess() }.accessibilityIdentifier("mac-access-cancel")
+                    }
                 }
-                if !library.readable {
+                if let notice = library.recovery {
+                    Section { DirectRecoveryCard(notice: notice, primary: .init(title: "Retry", perform: { Task { await library.reloadInBackground(onLoad: { attachLoadedServices() }) } }), secondary: .init(title: "Help", perform: { setup = true })) }
+                }
+                if library.loading {
+                    Section { HStack { ProgressView(); Text("Loading saved Macs…") }.accessibilityIdentifier("mac-library-loading") }
+                } else if !library.readable {
                     Section { Text("Saved Macs are unavailable. Adding and editing are paused to protect the existing file.").foregroundStyle(.secondary) }
                 } else if library.macs.isEmpty {
                     Section {
@@ -373,60 +443,152 @@ struct DirectMacLibraryRootV1: View {
             .sheet(isPresented: $setup) { DirectMacSetupV1() }
             .sheet(isPresented: $settings) { DirectSessionSettingsV1() }
             .sheet(isPresented: $paywall) { DirectProView() }
-            .task { pro.start(); let keys = TerminalKeyLibrary(); keys.reload(macs: library.macs) }
+            .task {
+                pro.start()
+                appLock.unlockTimings.libraryWaitStarted()
+                await library.loadInitial(onLoad: {
+                    // Bind cloud change tracking in this same actor turn, before
+                    // the newly loaded list can accept a user edit or deletion.
+                    attachLoadedServices()
+                })
+                appLock.unlockTimings.libraryWaitFinished(readable: library.readable)
+                guard !Task.isCancelled else { return }
+                attachLoadedServices()
+            }
+            .onChange(of: library.loading) { _, loading in
+                if !loading, library.readable {
+                    attachLoadedServices()
+                    if let route = loadingRoute { loadingRoute = nil; openRoute(route) }
+                }
+            }
             .refreshable {
+                guard library.readable else { return }
                 library.discovery.start()
                 while library.discovery.scanning && !Task.isCancelled { try? await Task.sleep(for: .milliseconds(100)) }
             }
             .onChange(of: appLock.canAccess) { _, unlocked in
-                if !unlocked { library.discovery.stop() }
+                if !unlocked { library.discovery.stop(); cancelAccess(); deferredRoute = nil; loadingRoute = nil }
+            }
+            .onChange(of: appLock.canInteract) { _, admitted in
+                if !admitted { cancelAccess() }
+            }
+            .onChange(of: appLock.canResumeRemoteSession) { _, ready in
+                if ready, let route = deferredRoute { deferredRoute = nil; request(route) }
+            }
+            .onChange(of: pro.ready) { _, ready in if ready { completePendingAccess() } }
+            .onChange(of: library.macs.map(\.id)) { _, ids in
+                guard let pending = pendingAccess else { return }
+                if case .open(let mac, _, _) = pending.action, !ids.contains(mac.id) { cancelAccess() }
             }
             .onChange(of: scenePhase) { _, phase in
-                if phase == .active { Task { await pro.refresh() } }
-                else { library.discovery.stop() }
+                if phase == .active {
+                    if pro.ready { Task { await pro.refresh() } } else { pro.start() }
+                } else {
+                    library.discovery.stop(); cancelAccess()
+                    if phase == .background { deferredRoute = nil; loadingRoute = nil }
+                }
             }
-            .onDisappear { library.discovery.stop() }
+            .onDisappear { library.discovery.stop(); cancelAccess(); deferredRoute = nil; loadingRoute = nil }
             .confirmationDialog("Remove this Mac and its saved login?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), titleVisibility: .visible) {
                 Button("Remove Mac", role: .destructive) { if let removing { library.remove(removing) }; removing = nil }
             } message: {
                 Text("Related sessions will close and transfers will stop. Unsaved downloads stay available until you save or discard them.")
             }
-            .onOpenURL { url in
-                guard let route = RemoteSessionActivityAttributes.resumeRoute(from: url),
-                      let mac = library.macs.first(where: { $0.id == route.macID }), session == nil else { return }
-                open(mac, connection: route.kind == .terminal ? .terminal : .desktop)
-            }
+            .onOpenURL { openRoute($0) }
             .fullScreenCover(item: $session) { selection in
                 switch selection.connection {
                 case .terminal:
-                    DirectTerminalView(mac: selection.mac, macLibrary: library, exit: { session = nil })
+                    DirectTerminalView(mac: selection.mac, macLibrary: library, autoConnect: selection.autoConnect, exit: { session = nil })
+                        #if DEBUG
+                        .background(DirectUnlockFrameProbe(lock: appLock, token: appLock.unlockTimingToken, phase: .terminalDisplayTick))
+                        #endif
                 case .desktop, .trackpad:
                     DirectDesktopSessionView(mac: selection.mac, inputOnly: selection.connection.inputOnly,
                                              connectionMacNames: library.macs.map(\.name), showMacs: { session = nil })
                         .ignoresSafeArea(.container, edges: .bottom)
+                        #if DEBUG
+                        .background(DirectUnlockFrameProbe(lock: appLock, token: appLock.unlockTimingToken, phase: .desktopDisplayTick))
+                        #endif
                 }
             }
         }
-        .opacity(appLock.canAccess ? 1 : 0)
-        .allowsHitTesting(appLock.canAccess)
-        .accessibilityHidden(!appLock.canAccess)
-        .onAppear { appLock.install(); DirectCloudSyncV1.shared.attach(library) }
+        #if DEBUG
+        .background(DirectUnlockFrameProbe(lock: appLock, token: appLock.unlockTimingToken, phase: .libraryDisplayTick,
+            enabled: session == nil && !settings && editor == nil && files == nil && !setup && !paywall))
+        #endif
+        .opacity(appLock.contentVisible ? 1 : 0)
+        .allowsHitTesting(appLock.canInteract)
+        .accessibilityHidden(!appLock.canInteract)
+        .onAppear { appLock.install() }
     }
-    private func edit(_ mac: DirectMacRecordV1?) {
-        Task {
-            if !pro.ready { await pro.refresh() }
-            guard mac != nil || pro.canAddMac(count: library.macs.count) else { paywall = true; return }
-            editor = EditorSelection(mac: mac)
+    private func attachLoadedServices() {
+        guard library.readable, !library.loading, !servicesAttached else { return }
+        servicesAttached = true
+        let keys = TerminalKeyLibrary(); keys.reload(macs: library.macs)
+        DirectCloudSyncV1.shared.attach(library)
+    }
+    private func openRoute(_ url: URL) {
+        guard let route = RemoteSessionActivityAttributes.resumeRoute(from: url) else { return }
+        if library.loading { loadingRoute = url; return }
+        guard let mac = library.macs.first(where: { $0.id == route.macID }), session == nil else { return }
+        request(.open(mac, route.kind == .terminal ? .terminal : .desktop, route.automaticallyConnect), deferUntilActive: true)
+    }
+    private func edit(_ mac: DirectMacRecordV1?) { request(.edit(mac)) }
+    private func open(_ mac: DirectMacRecordV1, connection: DirectMacConnection, autoConnect: Bool = true) {
+        request(.open(mac, connection, autoConnect))
+    }
+    private func cancelAccess() {
+        accessDeadline?.cancel(); accessDeadline = nil; pendingAccess = nil; accessTimedOut = false
+    }
+    private func admits(_ action: LibraryAction) -> Bool {
+        switch action {
+        case .edit: appLock.canInteract
+        case .open: appLock.canResumeRemoteSession
         }
     }
-    private func open(_ mac: DirectMacRecordV1, connection: DirectMacConnection) {
-        Task {
-            if !pro.ready { await pro.refresh() }
-            guard library.macs.contains(where: { $0.id == mac.id }) else { return }
-            guard pro.canUseMac(mac.id, among: library.macs.map(\.id)) else { paywall = true; return }
-            session = DirectMacSessionSelection(mac: mac, connection: connection)
+    private func request(_ action: LibraryAction, deferUntilActive: Bool = false) {
+        cancelAccess(); deferredRoute = nil
+        guard appLock.canInteract else { if deferUntilActive { deferredRoute = action }; return }
+        // Accept a local tap during the successful-authentication handoff, but
+        // start its remote session only after the real activation event.
+        guard admits(action) else { deferredRoute = action; return }
+        if performIfResolved(action) { return }
+        let pending = PendingAccess(action: action); pendingAccess = pending; pro.start()
+        accessDeadline = Task { @MainActor in
+            do { try await Task.sleep(for: accessTimeout) } catch { return }
+            guard !Task.isCancelled, pendingAccess?.id == pending.id, admits(pending.action) else { return }
+            if pro.ready { completePendingAccess() } else { accessTimedOut = true }
         }
     }
+    private func completePendingAccess() {
+        guard let pending = pendingAccess, !accessTimedOut, admits(pending.action) else { return }
+        if performIfResolved(pending.action) { cancelAccess() }
+    }
+    // Free actions are safe before purchase readiness. A paid denial is safe only
+    // after the current verified lookup has published its result.
+    private func performIfResolved(_ action: LibraryAction) -> Bool {
+        guard admits(action) else { return false }
+        switch action {
+        case .edit(let mac):
+            guard library.readable else { return true }
+            if let mac {
+                guard let current = library.macs.first(where: { $0.id == mac.id }) else { return true }
+                editor = EditorSelection(mac: current); return true
+            }
+            if pro.canAddMac(count: library.macs.count) { editor = EditorSelection(mac: nil); return true }
+            guard pro.ready else { return false }
+            paywall = true
+        case .open(let mac, let connection, let autoConnect):
+            guard let current = library.macs.first(where: { $0.id == mac.id }) else { return true }
+            if pro.canUseMac(mac.id, among: library.macs.map(\.id)) {
+                session = DirectMacSessionSelection(mac: current, connection: connection, autoConnect: autoConnect); return true
+            }
+            guard pro.ready else { return false }
+            paywall = true
+        }
+        return true
+    }
+
 }
 
 struct DirectMacEditorV1: View {

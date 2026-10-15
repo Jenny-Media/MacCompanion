@@ -20,7 +20,12 @@ struct RemoteSessionActivityAttributes: ActivityAttributes, Sendable {
     var kind: Kind? = nil
     var symbol: String { kind == .terminal ? "terminal" : "desktopcomputer" }
     var resumeURL: URL { URL(string: "maccompanion-session://" + (kind == .terminal ? "resume-terminal/" : "resume/") + macID.uuidString.lowercased())! }
-    struct ResumeRoute: Equatable { let macID: UUID; let kind: Kind }
+    struct ResumeRoute: Equatable {
+        let macID: UUID
+        let kind: Kind
+        // A cold Terminal return cannot recover the previous process-owned PTY.
+        var automaticallyConnect: Bool { kind != .terminal }
+    }
     static func resumeRoute(from url: URL) -> ResumeRoute? {
         guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
               parts.scheme == "maccompanion-session", ["resume", "resume-terminal"].contains(parts.host),

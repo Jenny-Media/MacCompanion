@@ -9,12 +9,31 @@ enum DirectControlMode: String, CaseIterable, Identifiable, Sendable {
     var title: String { switch self { case .desktop: "Desktop"; case .terminal: "Terminal"; case .trackpad: "Trackpad & Keyboard" } }
     // Stable local Keychain accounts; these are control profiles, never Mac IDs.
     var profileID: UUID { UUID(uuidString: "C063A810-0710-4000-8000-00000000000" + (self == .desktop ? "1" : self == .terminal ? "2" : "3"))! }
-    var defaults: [VNCQuickAction] {
+    var legacyDefaults: [VNCQuickAction] {
         switch self {
-        case .desktop: VNCQuickAction.defaults
+        case .desktop: VNCQuickAction.legacyDefaults
         case .trackpad: [.init(title: "Right Click", kind: .rightClick), .init(title: "Return", kind: .returnKey)]
         case .terminal: [.init(title: "Paste", kind: .paste), .init(title: "Interrupt · Ctrl-C", kind: .interrupt)]
         }
+    }
+    var defaults: [VNCQuickAction] {
+        #if os(iOS)
+        [VNCQuickAction.composeText] + legacyDefaults
+        #else
+        legacyDefaults
+        #endif
+    }
+    func upgradingUntouchedDefaults(_ saved: [VNCQuickAction]) -> [VNCQuickAction] {
+        #if os(iOS)
+        // Ignore generated UUIDs, but retain any user choice including title,
+        // disabled state, order, shortcut and snippet data. Do not write on read.
+        let legacy = legacyDefaults
+        if saved.count == legacy.count && zip(saved, legacy).allSatisfy({ a, b in
+            a.title == b.title && a.kind == b.kind && a.enabled == b.enabled &&
+            a.key == b.key && a.modifiers == b.modifiers && a.text == b.text
+        }) { return [VNCQuickAction.composeText] + saved }
+        #endif
+        return saved
     }
     var builtIns: [VNCQuickAction] {
         defaults + [.init(title: "Escape", kind: .escape), .init(title: "Tab", kind: .tab)] + (self == .trackpad ? [] : [.init(title: "Return", kind: .returnKey)])
@@ -22,9 +41,10 @@ enum DirectControlMode: String, CaseIterable, Identifiable, Sendable {
 }
 
 struct VNCQuickAction: Codable, Identifiable, Equatable, Sendable {
+    static var composeText: Self { .init(id: UUID(uuidString: "C063A810-0710-4000-9000-000000000004")!, title: "Compose Text", kind: .composeText) }
     static let maximumCount = 15
     static let maximumCustomCount = 12
-    enum Kind: String, Codable, CaseIterable, Sendable { case mode, fit, copyText, rightClick, shortcut, text, paste, interrupt, escape, tab, returnKey }
+    enum Kind: String, Codable, CaseIterable, Sendable { case mode, fit, copyText, composeText, rightClick, shortcut, text, paste, interrupt, escape, tab, returnKey }
     var id: UUID = UUID()
     var title: String
     var kind: Kind
@@ -38,6 +58,9 @@ struct VNCQuickAction: Codable, Identifiable, Equatable, Sendable {
         actions.count < maximumCount && actions.filter(\.isCustom).count < maximumCustomCount
     }
     static var defaults: [Self] {
+        DirectControlMode.desktop.defaults
+    }
+    static var legacyDefaults: [Self] {
         var actions = [Self(title: "Mouse Mode", kind: .mode)]
         #if os(iOS)
         actions.append(.init(title: "Copy Text", kind: .copyText))
@@ -53,6 +76,9 @@ struct VNCQuickAction: Codable, Identifiable, Equatable, Sendable {
             && (kind != .shortcut || keyValid) && (kind != .text || !text.isEmpty)
     }
     func compatible(with mode: DirectControlMode) -> Bool {
+        #if !os(iOS)
+        if kind == .composeText { return false }
+        #endif
         #if os(macOS)
         if kind == .copyText { return false }
         #endif
@@ -63,6 +89,7 @@ struct VNCQuickAction: Codable, Identifiable, Equatable, Sendable {
         switch kind {
         case .mode: "cursorarrow.motionlines"; case .fit: "arrow.down.right.and.arrow.up.left"
         case .copyText: "text.viewfinder"
+        case .composeText: "square.and.pencil"
         case .rightClick: "cursorarrow.click"; case .shortcut: "keyboard"; case .text: "text.quote"
         case .paste: "document.on.clipboard"; case .interrupt: "stop.circle"
         case .escape: "escape"; case .tab: "arrow.right.to.line"; case .returnKey: "return"
@@ -126,10 +153,10 @@ struct VNCQuickAction: Codable, Identifiable, Equatable, Sendable {
         guard DirectAppLockV1.shared.canAccess else { throw CocoaError(.fileReadNoPermission) }
         if let saved = try storedActions(mode.profileID) {
             guard saved.filter(\.isCustom).count <= VNCQuickAction.maximumCustomCount, saved.allSatisfy({ $0.compatible(with: mode) }) else { throw CocoaError(.fileReadCorruptFile) }
-            return saved
+            return mode.upgradingUntouchedDefaults(saved)
         }
         // Keep pre-existing Desktop customizations until a shared profile is saved.
-        if mode == .desktop, let legacyMac, let legacy = try storedActions(legacyMac) { return legacy }
+        if mode == .desktop, let legacyMac, let legacy = try storedActions(legacyMac) { return mode.upgradingUntouchedDefaults(legacy) }
         return mode.defaults
     }
     static func actions(_ mode: DirectControlMode, legacyMac: UUID? = nil) -> [VNCQuickAction] {

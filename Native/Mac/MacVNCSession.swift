@@ -47,6 +47,11 @@ struct MacVNCDisplay: Identifiable {
         }
     }
     var canInput: Bool { connected && !closed && canAccess() && transport?.connected == true }
+    var controlUnavailableHint: String {
+        if !canAccess() { return "Unlock Mac Companion to control" }
+        if connecting { return "Connecting…" }
+        return connected ? "Control unavailable" : "Disconnected"
+    }
     var crop: CGRect {
         let full = CGRect(origin: .zero, size: framebuffer)
         guard framebuffer.height > 0, layoutAspect > 0,
@@ -116,6 +121,7 @@ struct MacVNCDisplay: Identifiable {
                     }
                 } else if !next.running {
                     self.resetInput?(); self.connected = false; self.connecting = false; self.image = nil
+                    self.cursorImage = nil; self.cursorHotspot = .zero
                     self.pendingLogin = nil
                     self.recovery = .make(.desktopDisconnected, message: self.status)
                 }

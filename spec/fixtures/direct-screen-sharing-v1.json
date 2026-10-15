@@ -309,7 +309,25 @@
     "automaticReconnectAttempts": 1,
     "liveActivityDefaultEnabled": true,
     "connectedStatusStaleSeconds": 60,
-    "pausedStatusStaleSeconds": 900
+    "pausedStatusStaleSeconds": 60,
+    "inactiveRetainsEstablishedTransport": true,
+    "inputReleaseIndependentOfActivityUpdate": true,
+    "resumeIndicatorDelayMilliseconds": 1000,
+    "replacementPresentation": "matching-frame-and-display-layout",
+    "staleStatus": "open-to-check",
+    "renewConnectedStatusOnEvidence": true,
+    "retireCopiedInputOnInterruption": true,
+    "terminalReturnRenewsEvidence": false,
+    "terminalColdActivityReturnRequiresExplicitConnect": true,
+    "knownEndIndependentOfActivityUpdate": true,
+    "inactiveReturnRestoresLatestTerminalGrid": true,
+    "replacementComposeTextRequiresPresentedDesktop": true,
+    "replacementVideoModeChange": "defer-until-presentation-ready",
+    "retainedResumePhase": "paused",
+    "retainedResumeOpacity": 1,
+    "interruptionAdmissionSeparateFromReview": true,
+    "reviewInterruptedReturnRequiresFreshFrame": true,
+    "viewportDimensionScope": "selected-pixel-crop"
   },
   "lifecycleCases": [
     {
@@ -464,16 +482,26 @@
     ],
     "quickActionConfigurationRequiresConnection": false,
     "terminalDefaultQuickActionKinds": [
+      "composeText",
       "paste",
       "interrupt"
     ],
     "trackpadDefaultQuickActionKinds": [
+      "composeText",
       "rightClick",
       "returnKey"
     ],
     "scrollPointsPerWheelTick": 6,
     "scrollMaximumTicksPerUpdate": 8,
-    "scrollInputReplayedAfterGesture": false
+    "scrollInputReplayedAfterGesture": false,
+    "desktopDefaultQuickActionKinds": [
+      "composeText",
+      "mode",
+      "copyText",
+      "fit",
+      "rightClick"
+    ],
+    "defaultQuickActionPlatform": "ios"
   },
   "macLibraryPolicy": {
     "sharedEndpointAcrossRecordsAllowed": true,
@@ -489,7 +517,12 @@
     "cloudMergePreservesOrder": true,
     "metadataRefresh": "explicitOrEndpointEdit",
     "refreshOnForeground": false,
-    "refreshOnEditorEntry": false
+    "refreshOnEditorEntry": false,
+    "initialIOSLoad": "background-read-decode-validate",
+    "initialLoadMutationAdmission": "validated-readable-snapshot",
+    "initialLoadConcurrentCallers": "share-one-read",
+    "initialLoadSupersededCompletion": "ignored",
+    "initialLoadDeepLink": "defer-until-snapshot-then-existing-admission"
   },
   "macLibraryEditCases": [
     {
@@ -820,7 +853,51 @@
       "defaultEnabled": false,
       "policy": "deviceOwnerAuthentication",
       "backgroundRevokesAccess": true,
-      "promptInactiveRelocks": false
+      "promptInactiveRelocks": false,
+      "defaultGraceSeconds": 0,
+      "allowedGraceSeconds": [
+        0,
+        30
+      ],
+      "backgroundGraceDoesNotGrantBackgroundAccess": true,
+      "protectedDataLossRevokesGrace": true,
+      "processRestartRevokesGrace": true,
+      "graceClock": "continuous-including-device-sleep",
+      "inactiveShowsCover": false,
+      "graceForegroundEntryShowsCover": false,
+      "successfulInactiveAuthenticationShowsCover": false,
+      "successfulInactiveAuthenticationGrantsAccess": true,
+      "authenticationSuccessNeedsActiveAdmission": false,
+      "completedFailedAttemptRequiresExplicitRetry": true,
+      "authenticationPresentation": "persistentUnlockCard",
+      "evaluatingButtonTitle": "Unlocking…",
+      "lockedButtonTitle": "Unlock",
+      "busyButtonEnabled": false,
+      "separateBrandedTransition": false,
+      "retryRequiresActiveAndProtectedData": true,
+      "developmentTimings": {
+        "content": "fixed phases/outcomes and monotonic numeric offsets only",
+        "rawCallbackSeparateFromMainActor": true,
+        "actualActivationNotificationSeparateFromReconciliation": true,
+        "firstFrame": "eligible native display tick proxy",
+        "maximumAttempts": 8,
+        "maximumEventsPerAttempt": 16,
+        "lateOrRetiredRepliesIgnored": true,
+        "changesAdmission": false,
+        "releasePersistence": false,
+        "releaseDisplayProbe": false,
+        "automaticUpload": false,
+        "maximumActivitySamplesPerAttempt": 64,
+        "mainActorSchedulingDelaySeparateFromInactiveState": true,
+        "admissionCheckpointDoesNotRequireDisplayProbe": true,
+        "localAdmissionSeparateFromRemoteAdmission": true
+      },
+      "completedContextExplicitlyInvalidated": true,
+      "perAttemptSynchronousPreflight": false,
+      "unavailablePolicyHandledByEvaluationReply": true,
+      "remoteSessionResumeNeedsActiveAdmission": true,
+      "localRevealAndControlsTogether": true,
+      "subsequentInactivityRetiresSuccessfulHandoff": true
     },
     "fullscreen": {
       "reconnect": false,
@@ -1433,16 +1510,28 @@
     {
       "name": "reset during review return presentation",
       "reviewReturn": true,
-      "before": [2, 2],
-      "after": [4, 4],
+      "before": [
+        2,
+        2
+      ],
+      "after": [
+        4,
+        4
+      ],
       "allowsInputAfterReset": false,
       "allowsInputAfterCurrentFrame": true
     },
     {
       "name": "reset during live desktop presentation",
       "reviewReturn": false,
-      "before": [2, 2],
-      "after": [4, 4],
+      "before": [
+        2,
+        2
+      ],
+      "after": [
+        4,
+        4
+      ],
       "allowsInputAfterReset": false,
       "allowsInputAfterCurrentFrame": true
     }
@@ -2871,6 +2960,413 @@
       "key": 65507,
       "buttonMask": 4,
       "releasesBeforeClose": true
+    }
+  ],
+  "interruptionCases": [
+    {
+      "name": "brief-inactive-return",
+      "events": [
+        "inactive",
+        "active"
+      ],
+      "expect": [
+        "input-released",
+        "same-transport",
+        "same-display",
+        "no-reconnect-indicator"
+      ]
+    },
+    {
+      "name": "slow-activity-update",
+      "events": [
+        "background",
+        "input-release-complete",
+        "activity-update-stalled",
+        "pause-deadline"
+      ],
+      "expect": [
+        "transport-retained",
+        "background-assertion-ended"
+      ]
+    },
+    {
+      "name": "stalled-input-release",
+      "events": [
+        "background",
+        "input-release-stalled",
+        "pause-deadline"
+      ],
+      "expect": [
+        "transport-stopped",
+        "activity-ended"
+      ]
+    },
+    {
+      "name": "replacement-frame-first",
+      "events": [
+        "replacement",
+        "frame",
+        "layout"
+      ],
+      "expect": [
+        "previous-crop-until-layout",
+        "selected-display-restored"
+      ]
+    },
+    {
+      "name": "replacement-layout-first",
+      "events": [
+        "replacement",
+        "layout",
+        "frame"
+      ],
+      "expect": [
+        "previous-crop-until-frame",
+        "selected-display-restored"
+      ]
+    },
+    {
+      "name": "background-disconnect",
+      "events": [
+        "background",
+        "connection-ended"
+      ],
+      "expect": [
+        "activity-ended"
+      ]
+    },
+    {
+      "name": "observed-desktop-end-during-stalled-activity-update",
+      "events": [
+        "activity-update-stalled",
+        "connection-ended",
+        "replacement-connected",
+        "old-update-completes"
+      ],
+      "expect": [
+        "ownership-retired-synchronously",
+        "activity-ended-before-update-completes",
+        "replacement-activity-preserved"
+      ]
+    },
+    {
+      "name": "terminal-finish-during-stalled-activity-update",
+      "events": [
+        "activity-update-stalled",
+        "session-finished",
+        "old-update-completes"
+      ],
+      "expect": [
+        "ownership-retired-synchronously",
+        "activity-ended-before-update-completes",
+        "finished-owner-cannot-restart"
+      ]
+    },
+    {
+      "name": "brief-inactive-terminal-grid-change",
+      "events": [
+        "inactive",
+        "grid-changes",
+        "latest-grid-changes",
+        "compose-text",
+        "active",
+        "compose-text"
+      ],
+      "expect": [
+        "no-inactive-window-change",
+        "latest-grid-published-on-return",
+        "same-authentication-and-PTY",
+        "no-input-replay",
+        "no-inactive-composed-input",
+        "fresh-composed-input-on-foreground"
+      ]
+    },
+    {
+      "name": "replacement-frame-first-composer",
+      "events": [
+        "replacement",
+        "frame",
+        "compose-text",
+        "matching-layout",
+        "compose-text"
+      ],
+      "expect": [
+        "old-crop-retained",
+        "composer-entry-rejected",
+        "current-crop-presented",
+        "composer-entry-admitted"
+      ]
+    },
+    {
+      "name": "replacement-composer-delivery-before-layout",
+      "events": [
+        "composer-configured",
+        "replacement-presentation-pending",
+        "availability-check",
+        "final-send"
+      ],
+      "expect": [
+        "composer-unavailable",
+        "no-composed-events-queued"
+      ]
+    },
+    {
+      "name": "replacement-video-mode-change-before-frame",
+      "events": [
+        "replacement",
+        "trackpad-only-request",
+        "layout",
+        "frame",
+        "trackpad-only-request"
+      ],
+      "expect": [
+        "desktop-mode-retained",
+        "frame-requests-retained",
+        "current-crop-presented",
+        "trackpad-mode-admitted"
+      ]
+    },
+    {
+      "name": "replacement-video-mode-change-frame-first",
+      "events": [
+        "replacement",
+        "frame",
+        "trackpad-only-request",
+        "layout",
+        "trackpad-only-request"
+      ],
+      "expect": [
+        "desktop-mode-retained",
+        "pending-frame-retained",
+        "current-crop-presented",
+        "trackpad-mode-admitted"
+      ]
+    },
+    {
+      "name": "replacement-video-mode-replay-before-frame",
+      "events": [
+        "cached-trackpad-view",
+        "replacement",
+        "same-mode-replayed",
+        "matching-layout",
+        "frame"
+      ],
+      "expect": [
+        "current-mode-retained",
+        "replacement-frame-delivery-retained",
+        "current-presentation-ready",
+        "native-trackpad-admitted"
+      ]
+    },
+    {
+      "name": "cancelled-inactive-gesture-has-no-lock-cover",
+      "reconnect": false,
+      "showCover": false
+    },
+    {
+      "name": "authentication-success-before-active-retains-quiet-cover",
+      "publishUnlock": false,
+      "showCover": true,
+      "canAccess": false,
+      "canInteract": false
+    },
+    {
+      "name": "warm-retained-owner-return-keeps-pixels-and-paused-phase",
+      "opacity": 1,
+      "phase": "paused"
+    },
+    {
+      "name": "brief-inactive-cursor-shape-retained",
+      "events": [
+        "cursor-report",
+        "inactive",
+        "active",
+        "local-pointer-move"
+      ],
+      "expect": [
+        "cursor-hidden-inactive",
+        "same-owner-shape-and-hotspot",
+        "no-new-cursor-report",
+        "transparent-shape-does-not-use-fallback"
+      ]
+    },
+    {
+      "name": "copy-review-brief-inactive-awaits-fresh-frame",
+      "events": [
+        "copy-text-review",
+        "inactive",
+        "active",
+        "fresh-complete-frame"
+      ],
+      "expect": [
+        "review-retired",
+        "independent-interruption-gate",
+        "ordinary-and-composed-input-blocked-until-fresh-frame",
+        "fresh-frame-while-inactive-stays-input-blocked"
+      ]
+    }
+  ],
+  "appUnlockGraceCases": [
+    {
+      "name": "immediate-default",
+      "graceSeconds": 0,
+      "elapsedSeconds": 1,
+      "protectedDataAvailable": true,
+      "authenticate": true
+    },
+    {
+      "name": "short-opt-in-return",
+      "graceSeconds": 30,
+      "elapsedSeconds": 1,
+      "protectedDataAvailable": true,
+      "authenticate": false
+    },
+    {
+      "name": "expired-opt-in-return",
+      "graceSeconds": 30,
+      "elapsedSeconds": 30,
+      "protectedDataAvailable": true,
+      "authenticate": true
+    },
+    {
+      "name": "protected-data-loss",
+      "graceSeconds": 30,
+      "elapsedSeconds": 1,
+      "protectedDataAvailable": false,
+      "authenticate": true
+    }
+  ],
+  "coldStartAdmissionPolicy": {
+    "observableActivation": true,
+    "freeActionsWaitForPurchases": false,
+    "paidWaitTimeoutSeconds": 5,
+    "latePresentationAfterRetirement": false,
+    "denyPaidBeforeVerifiedReadiness": false
+  },
+  "liveActivityStartupRetirementCases": [
+    {
+      "name": "ended-then-connected",
+      "existingIDs": [
+        "orphan"
+      ],
+      "transition": "endedRetry",
+      "startsBeforeRetirement": false,
+      "eventsAfterRetirement": [
+        "end:orphan",
+        "start:connected"
+      ]
+    },
+    {
+      "name": "opt-out-then-opt-in",
+      "existingIDs": [
+        "orphan"
+      ],
+      "transition": "optOutIn",
+      "startsBeforeRetirement": false,
+      "eventsAfterRetirement": [
+        "end:orphan",
+        "start:connected"
+      ]
+    },
+    {
+      "name": "ended-with-pending-startup-retirement",
+      "existingIDs": [
+        "orphan"
+      ],
+      "transition": "ended",
+      "waitCompletesBeforeRetirement": false,
+      "eventsAfterRetirement": [
+        "end:orphan"
+      ]
+    }
+  ],
+  "appAuthenticationHandoffCases": [
+    {
+      "name": "success-before-activation",
+      "successBeforeActive": true,
+      "result": true,
+      "accessBeforeActive": true,
+      "coverBeforeActive": false,
+      "evaluationsAfterActive": 1,
+      "publishAfterActive": 1,
+      "unlockCardRetained": false,
+      "buttonEnabledBeforeAdmission": false,
+      "localControlsBeforeActive": true,
+      "remoteSessionBeforeActive": false
+    },
+    {
+      "name": "activation-before-success",
+      "successBeforeActive": false,
+      "result": true,
+      "accessBeforeResult": false,
+      "coverBeforeResult": true,
+      "evaluationsAfterResult": 1,
+      "publishAfterResult": 1,
+      "unlockCardRetained": false,
+      "buttonEnabledBeforeAdmission": false
+    },
+    {
+      "name": "already-active-success-without-notification",
+      "result": true,
+      "requiresNewActivationEvent": false,
+      "accessAfterResult": true,
+      "publishAfterResult": 1,
+      "unlockCardRetained": false,
+      "buttonEnabledBeforeAdmission": false
+    },
+    {
+      "name": "cancel-before-activation",
+      "successBeforeActive": true,
+      "result": false,
+      "accessAfterActive": false,
+      "coverAfterActive": true,
+      "evaluationsAfterActive": 1,
+      "publishAfterActive": 0,
+      "unlockCardRetained": true
+    }
+  ],
+  "viewportRestorationCases": [
+    {
+      "name": "selected-crop-resizes-total-framebuffer-unchanged",
+      "framebuffer": [
+        800,
+        600
+      ],
+      "oldCrop": [
+        0,
+        0,
+        400,
+        600
+      ],
+      "newCrop": [
+        0,
+        0,
+        200,
+        600
+      ],
+      "relativeZoom": 2,
+      "restoredRelativeZoom": 1
+    },
+    {
+      "name": "selected-crop-moves-with-matching-size",
+      "framebuffer": [
+        800,
+        600
+      ],
+      "oldCrop": [
+        0,
+        0,
+        400,
+        600
+      ],
+      "newCrop": [
+        400,
+        0,
+        400,
+        600
+      ],
+      "relativeZoom": 2,
+      "restoredRelativeZoom": 2
     }
   ]
 }

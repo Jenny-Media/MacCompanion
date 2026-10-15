@@ -1,6 +1,7 @@
 import XCTest
 import SwiftUI
 import StoreKitTest
+import StoreKit
 import Crypto
 import NIO
 import NIOSSH
@@ -15,11 +16,14 @@ import AppIntents
     var ids: [String] = []
     var attributes: RemoteSessionActivityAttributes?
     var phase: RemoteSessionActivityAttributes.Phase?
+    var blocked = false
+    var reply: CheckedContinuation<Void, Never>?
+    func release() { blocked = false; let saved = reply; reply = nil; saved?.resume() }
     func existingIDs() -> [String] { ids }
     func start(_ attributes: RemoteSessionActivityAttributes, content: ActivityContent<RemoteSessionActivityAttributes.ContentState>) throws -> String {
         self.attributes = attributes; phase = content.state.phase; ids = ["terminal-synthetic"]; return ids[0]
     }
-    func update(_ id: String, content: ActivityContent<RemoteSessionActivityAttributes.ContentState>) async { phase = content.state.phase }
+    func update(_ id: String, content: ActivityContent<RemoteSessionActivityAttributes.ContentState>) async { phase = content.state.phase; if blocked { await withCheckedContinuation { reply = $0 } } }
     func end(_ id: String) async { ids.removeAll { $0 == id } }
 }
 private final class SSHTestRecord: @unchecked Sendable {
@@ -28,6 +32,8 @@ private final class SSHTestRecord: @unchecked Sendable {
     private let lock=NSLock()
     private var auth=0, keyAuth=0
     private var execs=0
+    private var shellOpens=0
+    private var gridChanges: [[Int]] = []
     private var input: [UInt8] = []
     private var shell: Channel?
     private var transport: Channel?
@@ -40,7 +46,8 @@ private final class SSHTestRecord: @unchecked Sendable {
         if transportFailed { try await activeTransport()?.close().get() }
         else { try await channel.close().get() }
     }
-    func opened(_ channel: Channel) { lock.lock(); shell = channel; lock.unlock() }
+    func opened(_ channel: Channel) { lock.lock(); shell = channel; shellOpens += 1; lock.unlock() }
+    var shellRequests: Int { lock.lock(); defer { lock.unlock() }; return shellOpens }
     func emit(_ text: String) async throws {
         let channel = activeShell()
         try await channel?.writeAndFlush(SSHChannelData(type: .channel, data: .byteBuffer(ByteBuffer(string: text)))).get()
@@ -55,8 +62,9 @@ private final class SSHTestRecord: @unchecked Sendable {
     var keyRequests: Int { lock.lock(); defer { lock.unlock() }; return keyAuth }
     func keyAuthenticated() { lock.lock(); keyAuth += 1; lock.unlock() }
     var size: [Int] { lock.lock(); defer { lock.unlock() }; return [cols,rows] }
+    var sizes: [[Int]] { lock.lock(); defer { lock.unlock() }; return gridChanges }
     func authenticated() { lock.lock(); auth += 1; lock.unlock() }
-    func resized(_ cols:Int,_ rows:Int) { lock.lock(); self.cols=cols; self.rows=rows; lock.unlock() }
+    func resized(_ cols:Int,_ rows:Int) { lock.lock(); self.cols=cols; self.rows=rows; gridChanges.append([cols,rows]); lock.unlock() }
 }
 private final class SSHTestAuth: NIOSSHServerUserAuthenticationDelegate, @unchecked Sendable {
     let record:SSHTestRecord
@@ -188,8 +196,14 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         let store = try SKTestSession(contentsOf: url); store.disableDialogs = true; store.clearTransactions()
         defer { store.clearTransactions(); VNCSessionPreferences.clear(DirectControlMode.terminal.profileID) }
         let access = DirectProAccess.shared
+        access.start(); await access.loadProduct()
+        XCTAssertNotNil(access.product, "Synthetic StoreKit configuration must be loaded before purchase")
         _ = try await store.buyProduct(identifier: DirectProAccess.productID)
         await access.refresh()
+        if case .unverified(_, let error) = await StoreKit.Transaction.latest(for: DirectProAccess.productID) {
+            XCTFail("Synthetic StoreKit transaction failed native verification: \(error)")
+            throw error
+        }
         try await wait("synthetic StoreKit entitlement is verified") { access.hasPro }
         let text = VNCQuickAction(title: "Synthetic action", kind: .text, text: "synthetic-action-only")
         try VNCSessionPreferences.saveProfile([text], mode: .terminal)
@@ -209,6 +223,37 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         controls.actionHandler?(text.native)
         try await Task.sleep(for: .milliseconds(50))
         XCTAssertEqual(record.received.count, count, "A stale Pro action cannot send input after entitlement ends")
+    }
+    func testColdTerminalActivityReturnLoadsLoginButNeverSilentlyStartsAReplacementShell() async throws {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-screen-sharing-v1", withExtension: "json"))
+        let policy = try XCTUnwrap((JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])?["recoveryPolicy"] as? [String: Any])
+        XCTAssertEqual(policy["terminalColdActivityReturnRequiresExplicitConnect"] as? Bool, true)
+        let record = SSHTestRecord(), key = NIOSSHPrivateKey(ed25519Key: .init())
+        let server = try await server(record: record, key: key)
+        defer { _ = server.close() }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Cold Return", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+        try TerminalSecretStore.save(.init(username: "synthetic", password: "synthetic-only"), id: mac.id)
+        try TerminalSecretStore.write(Data(String(openSSHPublicKey: key.publicKey).utf8), id: mac.id, kind: "host-key")
+        let attributes = RemoteSessionActivityAttributes(macID: mac.id, macName: mac.name, kind: .terminal)
+        let route = try XCTUnwrap(RemoteSessionActivityAttributes.resumeRoute(from: attributes.resumeURL))
+        XCTAssertFalse(route.automaticallyConnect)
+        let selection = DirectMacSessionSelection(mac: mac, connection: .terminal, autoConnect: route.automaticallyConnect)
+        let session = DirectTerminalSession(mac: mac)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        let host = UIHostingController(rootView: DirectTerminalView(mac: selection.mac, session: session, autoConnect: selection.autoConnect, exit: {}).directAppearance())
+        window.rootViewController = host; window.makeKeyAndVisible()
+        defer { session.stop(); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible(); try? TerminalSecretStore.remove(mac.id) }
+        try await Task.sleep(for: .milliseconds(350))
+        NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+        NotificationCenter.default.post(name: DirectAppLockV1.unlocked, object: nil)
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertFalse(session.connecting); XCTAssertFalse(session.connected); XCTAssertEqual(record.passwordRequests, 0)
+        let image = UIGraphicsImageRenderer(size: host.view.bounds.size).image { _ in host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true) }
+        let attachment = XCTAttachment(image: image); attachment.name = "Cold Terminal return requires explicit new shell"; attachment.lifetime = .keepAlways; add(attachment)
+        session.connect(username: "synthetic", password: "synthetic-only", remember: false)
+        try await wait("explicit new shell") { session.connected }
+        XCTAssertEqual(record.passwordRequests, 1)
     }
     func testFailedSavedLoginRemainsVisibleWithoutAutomaticRetry() async throws {
         let record = SSHTestRecord(), key = NIOSSHPrivateKey(ed25519Key: .init())
@@ -602,6 +647,88 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         XCTAssertFalse(session.connected); XCTAssertFalse(session.endActivity("terminal-synthetic"))
         XCTAssertEqual(session.pausedOutputByteCount, 0)
     }
+    func testBriefInactivityPublishesLatestDeferredPTYSizeWithoutReplacingShellOrReplayingInput() async throws {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-screen-sharing-v1", withExtension: "json"))
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        let policy = try XCTUnwrap(fixture["recoveryPolicy"] as? [String: Any])
+        XCTAssertEqual(policy["inactiveReturnRestoresLatestTerminalGrid"] as? Bool, true)
+        let vectors = try XCTUnwrap(fixture["interruptionCases"] as? [[String: Any]])
+        let vector = try XCTUnwrap(vectors.first { $0["name"] as? String == "brief-inactive-terminal-grid-change" })
+        let expectations = try XCTUnwrap(vector["expect"] as? [String])
+        XCTAssertTrue(expectations.contains("no-inactive-composed-input"))
+        XCTAssertTrue(expectations.contains("fresh-composed-input-on-foreground"))
+        let record = SSHTestRecord(), server = try await server(record: record, key: NIOSSHPrivateKey(ed25519Key: .init()))
+        defer { _ = server.close() }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Grid Return", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+        let session = DirectTerminalSession(mac: mac, activityDefaults: UserDefaults(suiteName: UUID().uuidString)!, activityBackend: TerminalActivityTestBackend())
+        defer { session.stop(); try? TerminalSecretStore.remove(mac.id) }
+        session.resize(columns: 80, rows: 24)
+        session.connect(username: "synthetic", password: "synthetic-only", remember: false)
+        try await wait { session.trust != nil || !session.connecting }; session.answerTrust(true)
+        try await wait { session.connected && record.size == [80, 24] }
+        session.becameInactive(); XCTAssertFalse(session.suspended)
+        session.resize(columns: 100, rows: 30); session.resize(columns: 120, rows: 40)
+        session.send(Array("MUST-NOT-REPLAY".utf8))
+        XCTAssertFalse(session.canComposeText, "Composer entry waits for the session foreground handoff")
+        var inactiveComposeReply = false
+        var inactiveComposeIssue: String?
+        session.sendComposedText(Array("INACTIVE-COMPOSER-MUST-NOT-REPLAY".utf8), generation: session.composeGeneration) {
+            inactiveComposeReply = true; inactiveComposeIssue = $0
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertTrue(inactiveComposeReply)
+        XCTAssertNotNil(inactiveComposeIssue, "Composed input must be rejected even while UIKit is globally active")
+        XCTAssertEqual(record.sizes, [[80, 24]], "Inactive layout changes cannot write to the PTY")
+        XCTAssertTrue(record.received.isEmpty)
+        session.foreground()
+        session.send(Array("active-only".utf8))
+        try await wait("latest deferred grid and fresh input on retained shell") {
+            record.size == [120, 40] && String(decoding: record.received, as: UTF8.self) == "active-only"
+        }
+        XCTAssertEqual(record.sizes, [[80, 24], [120, 40]], "Only the latest inactive grid is published")
+        XCTAssertTrue(session.canComposeText)
+        var freshComposeReply = false
+        var freshComposeIssue: String?
+        session.sendComposedText(Array("fresh-compose-only".utf8), generation: session.composeGeneration) {
+            freshComposeReply = true; freshComposeIssue = $0
+        }
+        try await wait("fresh composed input on the same foreground PTY") {
+            freshComposeReply && String(decoding: record.received, as: UTF8.self) == "active-onlyfresh-compose-only"
+        }
+        XCTAssertNil(freshComposeIssue)
+        XCTAssertEqual(record.passwordRequests, 1); XCTAssertEqual(record.shellRequests, 1)
+        session.foreground(); try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(String(decoding: record.received, as: UTF8.self), "active-onlyfresh-compose-only", "Rejected input is never replayed")
+        XCTAssertEqual(record.sizes, [[80, 24], [120, 40]], "Duplicate active notifications do not resend an unchanged grid")
+    }
+    func testBriefInactivityAndSlowStatusUpdateRetainTheSameShellWithoutInputReplay() async throws {
+        let record = SSHTestRecord(), key = NIOSSHPrivateKey(ed25519Key: .init())
+        let server = try await server(record: record, key: key)
+        defer { _ = server.close() }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Interrupt", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+        let backend = TerminalActivityTestBackend()
+        let session = DirectTerminalSession(mac: mac, activityDefaults: UserDefaults(suiteName: UUID().uuidString)!, activityBackend: backend)
+        defer { backend.release(); session.stop(); try? TerminalSecretStore.remove(mac.id) }
+        var output = [UInt8](); session.received = { output += $0 }
+        session.connect(username: "synthetic", password: "synthetic-only", remember: false)
+        try await wait { session.trust != nil || !session.connecting }; session.answerTrust(true)
+        try await wait { session.connected && !output.isEmpty }; await session.waitForLifecycleUpdates()
+        output.removeAll(); session.becameInactive()
+        XCTAssertFalse(session.suspended); session.send(Array("MUST-NOT-REPLAY".utf8))
+        try await record.emit("inactive-output")
+        try await wait { session.pausedOutputByteCount > 0 }
+        XCTAssertTrue(output.isEmpty); XCTAssertTrue(record.received.isEmpty)
+        session.foreground()
+        XCTAssertEqual(String(decoding: output, as: UTF8.self), "inactive-output")
+        backend.blocked = true; session.background()
+        try await Task.sleep(for: .milliseconds(1150)); XCTAssertTrue(session.connected)
+        session.foreground()
+        try await wait { !session.suspended }
+        session.send(Array("active-only".utf8))
+        try await wait { String(decoding: record.received, as: UTF8.self) == "active-only" }
+        XCTAssertEqual(record.passwordRequests, 1)
+        backend.release(); await session.waitForLifecycleUpdates()
+    }
     func testBackgroundCancelsIncompleteTrustWithoutSendingLogin() async throws {
         let record = SSHTestRecord(), server = try await server(record: record, key: NIOSSHPrivateKey(ed25519Key: .init()))
         defer { _ = server.close() }
@@ -637,7 +764,7 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         await session.waitForLifecycleUpdates()
         let id = try XCTUnwrap(Activity<RemoteSessionActivityAttributes>.activities.first { $0.attributes.macID == mac.id }?.id)
         NotificationCenter.default.post(name: UIApplication.willResignActiveNotification, object: nil)
-        await session.waitForLifecycleUpdates(); XCTAssertTrue(session.connected); XCTAssertTrue(session.suspended)
+        await session.waitForLifecycleUpdates(); XCTAssertTrue(session.connected); XCTAssertFalse(session.suspended)
         NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
         await session.waitForLifecycleUpdates(); XCTAssertTrue(session.connected); XCTAssertFalse(session.suspended)
         XCTAssertEqual(record.passwordRequests, 1)

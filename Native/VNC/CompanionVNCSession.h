@@ -13,6 +13,8 @@ typedef UIImage CompanionVNCImage;
 @property(nonatomic, copy) void (^stateHandler)(NSString *state, NSDictionary *counters);
 @property(nonatomic, copy) void (^displayLayoutHandler)(NSDictionary *layout);
 @property(nonatomic, readonly) BOOL running;
+/// Fresh numeric/boolean diagnostics; never includes screen or input content.
+@property(nonatomic, readonly) NSDictionary *diagnosticCounters;
 /// Authenticated transport, including paused or fresh-frame-waiting states.
 @property(nonatomic, readonly) BOOL established;
 @property(nonatomic, readonly) BOOL connected;
@@ -34,6 +36,9 @@ typedef UIImage CompanionVNCImage;
 /// Local snapshot review closes input while the socket continues receiving.
 - (BOOL)suspendInputForReview:(void (^)(void))completion;
 - (void)resumeInputAfterReview;
+/// Brief inactivity releases held input without resetting an established baseline.
+- (void)suspendInputForInterruption;
+- (void)resumeInputAfterInterruption;
 - (void)connectSocket:(int)socket username:(NSString *)username password:(NSString *)password;
 - (void)connectHost:(NSString *)host username:(NSString *)username password:(NSString *)password;
 - (void)connectAddresses:(NSArray<NSString *> *)addresses port:(NSInteger)port username:(NSString *)username password:(NSString *)password;
