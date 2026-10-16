@@ -86,7 +86,7 @@ struct MacMachineLibraryView: View {
                     ContentUnavailableView { Label("Your Macs, within reach", systemImage: "desktopcomputer") }
                         description: { Text("Add a Mac on your local network or private VPN.") }
                         actions: { Button("Add Mac") { add() }.buttonStyle(.borderedProminent) }
-                } else { ContentUnavailableView("Choose a Mac", systemImage: "desktopcomputer", description: Text("Open Desktop or Terminal.")) }
+                } else { ContentUnavailableView("Choose a Mac", systemImage: "desktopcomputer", description: Text("Open Screen Sharing or Terminal.")) }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .safeAreaInset(edge: .bottom, spacing: 0) {

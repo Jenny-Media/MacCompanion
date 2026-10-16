@@ -379,9 +379,9 @@ struct DirectProView: View {
     }
     private var freeFeatures: [String] {
         #if os(iOS)
-        let modes = "Desktop, Trackpad & Keyboard, and basic Terminal"
+        let modes = "Screen Sharing, Trackpad & Keyboard, and basic Terminal"
         #else
-        let modes = "Desktop and basic Terminal"
+        let modes = "Screen Sharing and basic Terminal"
         #endif
         return ["One saved Mac and one SSH key", modes, "Standard keyboard controls, display selection and zoom",
             "Local and private VPN connections", "Security, accessibility and SSH key import/export"]

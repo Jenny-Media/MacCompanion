@@ -437,12 +437,12 @@ compatibility check. No helper, authentication or encrypted record-layer change
 is introduced.
 
 
-## Disposable external Desktop workspace prototype (2026-10-14)
+## Disposable Screen Sharing and Terminal prototype (2026-10-15)
 
 The approved feasibility experiment lives entirely under
 `Experiments/MacWorkspacePrototype/`. It does not replace or link into the
 shipping macOS target. A separate temporary app reuses the native Mac editor
-and SSH Terminal while handing Desktop to `com.apple.ScreenSharing` through a
+and SSH Terminal while handing Screen Sharing to `com.apple.ScreenSharing` through a
 credential-free VNC URL. Its saved Macs are local to the prototype; it neither
 imports installed-app credentials nor starts cloud sync or a host/helper.
 
@@ -454,10 +454,12 @@ state and the external window. An accepted URL reports Opened in Screen Sharing,
 never Connected. App unlock/quit controls only this app's UI and SSH sessions;
 it cannot lock or end an external Desktop session.
 
-Open Workspace requests one native SSH Terminal window and one external Desktop
-handoff for the same immutable saved Mac. Reuse the Terminal window until it
-closes. Ignore repeated clicks while a handoff is pending. Failed Desktop launch
-must leave Terminal usable. Bound the asynchronous wait; lock, removal, edited
+The Mac detail page offers Screen Sharing and Terminal as independent actions.
+Screen Sharing shows an external-app arrow and Opens Apple Screen Sharing subtitle;
+it never opens Terminal implicitly. Terminal reuses its window until it closes
+and never launches Screen Sharing. There is no combined launch or workspace
+concept in the interface. Ignore repeated Screen Sharing clicks while its handoff
+is pending. Failed Screen Sharing launch must leave Terminal usable. Bound the asynchronous wait; lock, removal, edited
 addresses/ports and replacement requests retire pending work and late callbacks.
 No automatic public-endpoint fallback, password injection, UI scripting or
 external window embedding is introduced. The experiment retains existing native

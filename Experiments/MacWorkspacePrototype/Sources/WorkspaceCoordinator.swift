@@ -17,8 +17,8 @@ enum WorkspaceFailure: Error, Equatable {
         case .invalidAddress: "Use a local or private VPN address and a port from 1 to 65535."
         case .unavailableAddress: "No local or private VPN address could be resolved. Check the addresses and VPN connection, then retry."
         case .missingApplication: "Apple Screen Sharing could not be found on this Mac. Terminal is still available."
-        case .launchFailed: "Screen Sharing could not be opened. Terminal is still available; you can retry Desktop separately."
-        case .timedOut: "Opening Screen Sharing took too long. Terminal is still available; retry Desktop when ready."
+        case .launchFailed: "Screen Sharing could not be opened. Terminal is still available; you can retry Screen Sharing."
+        case .timedOut: "Opening Screen Sharing took too long. Terminal is still available; retry when ready."
         }
     }
 }
@@ -27,10 +27,10 @@ enum WorkspaceDesktopState: Equatable {
     case idle, opening, openedExternally, failed(WorkspaceFailure)
     var title: String {
         switch self {
-        case .idle: "Desktop opens in Screen Sharing"
+        case .idle: "Opens Apple Screen Sharing"
         case .opening: "Opening Screen Sharing…"
         case .openedExternally: "Opened in Screen Sharing"
-        case .failed: "Desktop could not be opened"
+        case .failed: "Screen Sharing could not be opened"
         }
     }
 }
@@ -91,7 +91,7 @@ enum WorkspaceEndpoint {
 /// Experiment-only handoff owner. Opening an external app is never proof of a
 /// remote connection; no credentials or per-session control cross this boundary.
 @MainActor @Observable final class WorkspaceCoordinator {
-    enum Action { case workspace, desktop, terminal }
+    enum Action { case desktop, terminal }
     private(set) var states: [UUID: WorkspaceDesktopState] = [:]
     private var terminalWindows: [UUID: UUID] = [:]
     private var pending: (token: UUID, machine: WorkspaceMachine)?
@@ -114,12 +114,12 @@ enum WorkspaceEndpoint {
     }
     func open(_ machine: WorkspaceMachine, action: Action) {
         guard canAccess(), isCurrent(machine) else { return }
-        if action != .terminal, pending?.machine == machine { return }
-        if action != .desktop {
+        if action == .terminal {
             let window = terminalWindows[machine.id] ?? UUID()
             terminalWindows[machine.id] = window; openTerminal(machine.id, window)
+            return
         }
-        guard action != .terminal else { return }
+        if pending?.machine == machine { return }
         invalidate()
         let token = UUID(); pending = (token, machine); states[machine.id] = .opening
         let resolver = resolve, opener = openDesktop

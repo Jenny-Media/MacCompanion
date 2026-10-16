@@ -90,7 +90,7 @@ import XCTest
         shell.typeKey(.return, modifierFlags: [])
         capture(terminal, name: "02-connected-terminal")
 
-        let desktop = open("desktop", title: "Desktop")
+        let desktop = open("desktop", title: "Screen Sharing")
         connectVNC(desktop)
         capture(desktop, name: "03-connected-desktop")
         // These are distinct live owning windows, not successive replacements.
@@ -106,7 +106,7 @@ import XCTest
         showLibrary(app)
         XCTAssertEqual(library.buttons.matching(NSPredicate(format: "label == %@", "Show Window")).count, 2)
 
-        show("Sample macOS VM · Desktop", app: app)
+        show("Sample macOS VM · Screen Sharing", app: app)
         app.typeKey("w", modifierFlags: .command)
         showLibrary(app)
         XCTAssertEqual(library.buttons.matching(NSPredicate(format: "label == %@", "Show Window")).count, 1)

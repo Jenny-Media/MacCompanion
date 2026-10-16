@@ -25,7 +25,7 @@ import UIKit
         for _ in 0..<4 where !row.isHittable { app.swipeUp() }
         XCTAssertTrue(row.isHittable)
         var heights: [CGFloat] = []
-        for title in ["Desktop", "Trackpad & Keyboard", "Terminal"] {
+        for title in ["Screen Sharing", "Trackpad & Keyboard", "Terminal"] {
             row.tap()
             XCTAssertTrue(app.buttons[title].firstMatch.waitForExistence(timeout: 5))
             app.buttons[title].firstMatch.tap()

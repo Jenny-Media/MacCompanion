@@ -39,7 +39,7 @@ struct MacSettingsView: View {
                             Section("Pro") { destination(DirectProAccess.shared.accessTitle, symbol: "sparkles", sheet: .pro) }
                         case .controls:
                             Section("Quick Actions") {
-                                destination("Desktop", symbol: "display", sheet: .desktop)
+                                destination("Screen Sharing", symbol: "display", sheet: .desktop)
                                 destination("Terminal", symbol: "terminal", sheet: .terminal)
                             }
                             Section {} footer: { Text("Each editor shows whether a preference applies to one Mac or all connections on this device.") }

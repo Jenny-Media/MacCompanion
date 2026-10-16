@@ -5,7 +5,7 @@ import UIKit
 
 enum DirectSavedLoginService: String {
     case desktop, terminal
-    var title: String { self == .desktop ? "Desktop Login" : "Terminal Login" }
+    var title: String { self == .desktop ? "Screen Sharing Login" : "Terminal Login" }
     var accountLimit: Int { self == .desktop ? 63 : 255 }
     var passwordLimit: Int { self == .desktop ? 63 : 4096 }
 }

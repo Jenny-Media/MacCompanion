@@ -30,7 +30,7 @@ struct WorkspaceTerminalRequest: Codable, Hashable { let id: UUID; let macID: UU
 @main struct WorkspacePrototypeApplication: App {
     @State private var model = WorkspacePrototypeModel()
     var body: some Scene {
-        Window("Mac Workspace Prototype", id: "workspace-library") {
+        Window("Mac Companion Prototype", id: "workspace-library") {
             WorkspaceLibraryView(model: model).directAppearance().modifier(MacPrivacyCover())
         }.defaultSize(width: 850, height: 560)
         WindowGroup("Terminal", id: "workspace-terminal", for: WorkspaceTerminalRequest.self) { $request in
@@ -80,7 +80,7 @@ private struct WorkspaceLibraryView: View {
     @State private var search = ""
     @State private var editor: Editor?
     @State private var needsFreeMac: DirectMacRecordV1?
-    @State private var pendingAction = WorkspaceCoordinator.Action.workspace
+    @State private var pendingAction = WorkspaceCoordinator.Action.desktop
     private struct Editor: Identifiable { let id = UUID(); let mac: DirectMacRecordV1? }
     private var selectedMac: DirectMacRecordV1? { model.library.macs.first { $0.id == selected } }
     var body: some View {
@@ -97,36 +97,41 @@ private struct WorkspaceLibraryView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 22) {
                         Label(mac.name, systemImage: mac.family.symbol).font(.largeTitle)
-                        Text(mac.addresses.joined(separator: "\n")).foregroundStyle(.secondary).textSelection(.enabled)
-                        Button("Open Workspace", systemImage: "rectangle.split.2x1") { open(mac, .workspace) }
-                            .buttonStyle(.borderedProminent).controlSize(.large)
-                            .accessibilityIdentifier("workspace-open")
-                            .disabled(model.coordinator?.states[mac.id] == .opening)
-                        HStack {
-                            Button("Desktop", systemImage: "desktopcomputer") { open(mac, .desktop) }
+                        HStack(alignment: .top, spacing: 20) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Button { open(mac, .desktop) } label: {
+                                    HStack(spacing: 8) {
+                                        Label("Screen Sharing", systemImage: "desktopcomputer")
+                                        Image(systemName: "arrow.up.right").font(.caption).accessibilityHidden(true)
+                                    }
+                                }
+                                .accessibilityIdentifier("prototype-screen-sharing")
+                                .accessibilityHint("Opens Apple Screen Sharing")
                                 .disabled(model.coordinator?.states[mac.id] == .opening)
+                                Text("Opens Apple Screen Sharing").font(.caption).foregroundStyle(.secondary)
+                            }
                             Button("Terminal", systemImage: "terminal") { open(mac, .terminal) }
-                        }.controlSize(.large)
+                                .accessibilityIdentifier("prototype-terminal")
+                        }.buttonStyle(.bordered).controlSize(.large)
                         let state = model.coordinator?.states[mac.id] ?? .idle
-                        Label(state.title, systemImage: state == .opening ? "hourglass" : "arrow.up.forward.app")
-                            .foregroundStyle(.secondary).accessibilityIdentifier("workspace-desktop-status")
-                        if case .failed(let reason) = state {
-                            Text(reason.message).foregroundStyle(.secondary)
-                            Button("Retry Desktop") { open(mac, .desktop) }
+                        if state != .idle {
+                            Label(state.title, systemImage: state == .opening ? "hourglass" : "arrow.up.forward.app")
+                                .font(.callout).foregroundStyle(.secondary)
+                                .accessibilityIdentifier("workspace-desktop-status")
                         }
-                        Divider()
-                        Text("One Mac, two windows").font(.headline)
-                        Text("Desktop opens in Apple Screen Sharing. Terminal stays here, with its existing SSH login and host verification.")
-                        Text("Apple Screen Sharing keeps its own login and connection. Locking or quitting this app does not end that Desktop session.")
-                            .font(.callout).foregroundStyle(.secondary)
+                        if case .failed(let reason) = state {
+                            Text(reason.message).font(.callout).foregroundStyle(.secondary)
+                            Button("Retry Screen Sharing") { open(mac, .desktop) }
+                        }
                         Button("Connection Settings", systemImage: "gearshape") { editor = Editor(mac: mac) }
+                            .buttonStyle(.link).font(.callout)
                     }.padding(32).frame(maxWidth: 620, alignment: .leading)
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ContentUnavailableView {
-                    Label("Open a Mac workspace", systemImage: "desktopcomputer")
+                    Label("Your Macs", systemImage: "desktopcomputer")
                 } description: {
-                    Text("Add a Mac to open Desktop and Terminal together. This prototype uses its own local Mac list.")
+                    Text("Add a Mac to use Screen Sharing or Terminal.")
                 } actions: {
                     Button("Add Mac") { editor = Editor(mac: nil) }.disabled(!model.library.readable)
                 }

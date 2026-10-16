@@ -80,7 +80,7 @@ private final class UIConnections: @unchecked Sendable {
         XCTAssertTrue(row.waitForExistence(timeout: 5)); row.click()
         XCTAssertTrue(library(app).buttons["mac-open-desktop"].waitForExistence(timeout: 5))
         row.doubleClick()
-        let desktop = windows("Desktop", app: app).firstMatch
+        let desktop = windows("Screen Sharing", app: app).firstMatch
         XCTAssertTrue(desktop.waitForExistence(timeout: 5))
         let account = desktop.textFields["mac-vnc-account"], password = desktop.secureTextFields["mac-vnc-password"]
         replace(account, with: "synthetic-account")
@@ -131,7 +131,7 @@ private final class UIConnections: @unchecked Sendable {
         let row = library(app).outlines.staticTexts["Synthetic GUI"].firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 5)); row.click()
         open("desktop", app: app)
-        XCTAssertTrue(windows("Desktop", app: app).firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(windows("Screen Sharing", app: app).firstMatch.waitForExistence(timeout: 5))
         XCTAssertFalse(library(app).buttons["mac-open-trackpad"].exists)
         open("terminal", app: app)
         let openedFirst = windows("Terminal", app: app).firstMatch
@@ -161,7 +161,7 @@ private final class UIConnections: @unchecked Sendable {
         XCTAssertEqual(records.connections[1].received, [66])
         app.typeKey("w", modifierFlags: .command)
         try await wait("own terminal window closes") { windows("Terminal", app: app).count == 1 }
-        XCTAssertTrue(windows("Desktop", app: app).firstMatch.exists)
+        XCTAssertTrue(windows("Screen Sharing", app: app).firstMatch.exists)
         surfaceB.click(); app.typeText("D")
         try await wait("surviving terminal keyboard input") { records.connections[1].received == [66, 68] }
         ownSecond.buttons["Disconnect"].click()

@@ -6,7 +6,7 @@ enum DirectMacConnection: String, Codable, CaseIterable, Identifiable, Sendable 
     case desktop, terminal, trackpad
     var id: String { rawValue }
     var title: String {
-        switch self { case .desktop: "Desktop"; case .terminal: "Terminal"; case .trackpad: "Trackpad & Keyboard" }
+        switch self { case .desktop: "Screen Sharing"; case .terminal: "Terminal"; case .trackpad: "Trackpad & Keyboard" }
     }
     var symbol: String {
         switch self { case .desktop: "macwindow"; case .terminal: "terminal"; case .trackpad: "rectangle.and.hand.point.up.left" }

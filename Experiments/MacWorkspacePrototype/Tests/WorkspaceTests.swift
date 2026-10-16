@@ -83,8 +83,10 @@ private actor Gate {
             do {
                 let h = Harness()
                 let owner = h.coordinator()
-                owner.open(h.first, action: .workspace)
+                owner.open(h.first, action: .desktop)
                 try await eventually("Workspace handoff did not finish") { owner.states[h.first.id] == .openedExternally }
+                try expect(h.terminals.isEmpty, "Screen Sharing implicitly opened Terminal")
+                owner.open(h.first, action: .terminal)
                 try expect(h.terminals.count == 1 && h.terminals[0].0 == h.first.id, "Terminal targets a different Mac")
                 try expect(h.urls.map(\.absoluteString) == ["vnc://127.0.0.1:5900"], "Desktop targets a different Mac")
                 try expect(owner.states[h.first.id]?.title == "Opened in Screen Sharing", "External handoff claims a connection")
@@ -92,22 +94,26 @@ private actor Gate {
             }
             for failure in [WorkspaceFailure.missingApplication, .launchFailed] {
                 let h = Harness(), c = h.coordinator(failure: failure)
-                c.open(h.first, action: .workspace)
+                c.open(h.first, action: .desktop)
                 try await eventually("Failure was not reported") { c.states[h.first.id] == .failed(failure) }
-                try expect(h.terminals.count == 1, "Desktop failure suppressed Terminal")
+                try expect(h.terminals.isEmpty, "Failed Screen Sharing implicitly opened Terminal")
+                c.open(h.first, action: .terminal)
                 c.open(h.first, action: .terminal)
                 try expect(h.terminals.count == 2 && h.terminals[0].1 == h.terminals[1].1, "Terminal was closed by Desktop failure")
                 count += 1
             }
             do {
                 let h = Harness(), gate = Gate(), c = h.coordinator(gate: gate)
-                c.open(h.first, action: .workspace); c.open(h.first, action: .workspace)
-                try expect(h.terminals.count == 1, "Pending double click duplicates Terminal")
+                c.open(h.first, action: .desktop); c.open(h.first, action: .desktop)
+                try expect(h.terminals.isEmpty, "Pending Screen Sharing opened Terminal")
+                c.open(h.first, action: .terminal)
                 await gate.release()
                 try await eventually("Pending handoff did not finish") { c.states[h.first.id] == .openedExternally }
-                c.open(h.first, action: .workspace)
+                c.open(h.first, action: .desktop)
                 try await eventually("Repeated completed handoff did not run") { h.urls.count == 2 }
-                try expect(h.terminals.count == 2 && h.terminals[0].1 == h.terminals[1].1, "Completed handoff does not reuse Terminal window")
+                try expect(h.terminals.count == 1, "Repeated Screen Sharing reopened Terminal")
+                c.open(h.first, action: .terminal)
+                try expect(h.terminals.count == 2 && h.terminals[0].1 == h.terminals[1].1, "Terminal did not reuse its window")
                 c.terminalClosed(macID: h.first.id, windowID: h.terminals[0].1)
                 c.open(h.first, action: .terminal)
                 let replacement = h.terminals[2].1
@@ -119,15 +125,16 @@ private actor Gate {
             }
             do {
                 let h = Harness(), c = h.coordinator()
-                h.allowed = false; c.open(h.first, action: .workspace)
-                h.allowed = true; h.current[h.first.id] = nil; c.open(h.first, action: .workspace)
+                h.allowed = false; c.open(h.first, action: .desktop)
+                h.allowed = true; h.current[h.first.id] = nil; c.open(h.first, action: .desktop)
                 try await settle()
                 try expect(h.terminals.isEmpty && h.urls.isEmpty && c.states.isEmpty, "Locked or removed Mac launched work")
                 count += 2
             }
             for retirement in 0..<4 {
                 let h = Harness(), gate = Gate(), c = h.coordinator(gate: gate)
-                c.open(h.first, action: .workspace)
+                c.open(h.first, action: .terminal)
+                c.open(h.first, action: .desktop)
                 if retirement == 0 { h.allowed = false; c.invalidate() }
                 if retirement == 1 { h.current[h.first.id] = nil; c.recordsChanged(validIDs: Set(h.current.keys)) }
                 if retirement == 2 {
@@ -155,7 +162,8 @@ private actor Gate {
             for phase in 0..<2 {
                 let h = Harness(), gate = Gate()
                 let c = h.coordinator(timeout: .milliseconds(20), gate: phase == 0 ? gate : nil, launchGate: phase == 1 ? gate : nil)
-                c.open(h.first, action: .workspace)
+                c.open(h.first, action: .terminal)
+                c.open(h.first, action: .desktop)
                 try await eventually("Timed-out request stayed pending") { c.states[h.first.id] == .failed(.timedOut) }
                 await gate.release(); try await settle()
                 try expect(c.states[h.first.id] == .failed(.timedOut), "Late completion resurrected timed-out state")

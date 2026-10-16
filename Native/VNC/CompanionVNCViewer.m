@@ -35,6 +35,7 @@
 @property UIStackView *loginFields, *progressRow, *keyRow;
 @property UIStackView *loginIntro, *loginIdentity, *credentialColumns;
 @property UILabel *loginSubtitle;
+@property UILabel *loginPurpose;
 @property UIButton *loginDetails;
 @property UILabel *loginDetailsText;
 @property BOOL loginDetailsExpanded;
@@ -339,15 +340,17 @@
     self.loginIconWidth = [tile.widthAnchor constraintEqualToConstant:52]; self.loginIconWidth.active = YES;
     UILabel *title = [UILabel new]; title.text = self.macName ?: @"Mac"; title.numberOfLines = 2;
     title.font = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleTitle3] scaledFontForFont:[UIFont systemFontOfSize:20 weight:UIFontWeightSemibold]]; title.textAlignment = NSTextAlignmentLeft;
-    UILabel *subtitle = [UILabel new]; subtitle.text = @"Desktop"; subtitle.textColor = UIColor.secondaryLabelColor; subtitle.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
-    subtitle.numberOfLines = 0; self.loginSubtitle = subtitle;
+    UILabel *subtitle = [UILabel new]; subtitle.text = @"Screen Sharing"; subtitle.textColor = UIColor.secondaryLabelColor; subtitle.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
+    subtitle.numberOfLines = 0; subtitle.accessibilityHint = @"View and control this Mac"; self.loginSubtitle = subtitle;
     UIStackView *identityText = [[UIStackView alloc] initWithArrangedSubviews:@[title, subtitle]]; identityText.axis = UILayoutConstraintAxisVertical; identityText.spacing = 4;
     self.loginClose = [self button:@"" action:@selector(showMacs)]; [self.loginClose setImage:[UIImage systemImageNamed:@"xmark"] forState:UIControlStateNormal];
     [self.loginClose setPreferredSymbolConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:18 weight:UIImageSymbolWeightMedium] forImageInState:UIControlStateNormal];
     self.loginClose.accessibilityLabel = @"Cancel connection"; self.loginClose.accessibilityIdentifier = @"mac-login-close"; self.loginClose.tintColor = UIColor.secondaryLabelColor;
     self.loginClose.layer.cornerRadius = 22; [self.loginClose.widthAnchor constraintEqualToConstant:44].active = YES;
     self.loginIdentity = [[UIStackView alloc] initWithArrangedSubviews:@[tile, identityText, self.loginClose]]; self.loginIdentity.axis = UILayoutConstraintAxisHorizontal; self.loginIdentity.spacing = 12; self.loginIdentity.alignment = UIStackViewAlignmentCenter;
-    self.loginIntro = [[UIStackView alloc] initWithArrangedSubviews:@[self.loginIdentity]];
+    self.loginPurpose = [UILabel new]; self.loginPurpose.text = @"View and control this Mac";
+    self.loginPurpose.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote]; self.loginPurpose.textColor = UIColor.secondaryLabelColor; self.loginPurpose.numberOfLines = 0;
+    self.loginIntro = [[UIStackView alloc] initWithArrangedSubviews:@[self.loginIdentity, self.loginPurpose]];
     self.loginIntro.axis = UILayoutConstraintAxisVertical; self.loginIntro.spacing = 16;
     self.spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
     self.progressLabel = [UILabel new]; self.progressLabel.numberOfLines = 0;
@@ -1560,7 +1563,9 @@
     self.controls.quickActions = quickActions ?: [DirectConnectionBridge defaultQuickActionsForInputOnly:self.inputOnly];
 }
 - (void)updateConnectionChrome {
-    self.loginSubtitle.text = self.inputOnly ? @"Trackpad & Keyboard" : @"Desktop";
+    self.loginSubtitle.text = self.inputOnly ? @"Trackpad & Keyboard" : @"Screen Sharing";
+    self.loginPurpose.hidden = self.inputOnly;
+    self.loginSubtitle.accessibilityHint = self.inputOnly ? @"Control this Mac without video" : @"View and control this Mac";
     self.loginIcon.image = [UIImage systemImageNamed:self.inputOnly ? @"rectangle.and.hand.point.up.left" : @"desktopcomputer"];
     BOOL progress = self.starting || (self.session.running && !self.lastFramebuffer);
     BOOL loginVisible = !self.login.hidden;
@@ -1780,10 +1785,10 @@
         @{@"kind": @"fit", @"title": @"Fit to Window", @"symbol": @"arrow.down.right.and.arrow.up.left", @"disabled": @(self.inputOnly)}] mutableCopy];
     if (!self.inputOnly) [desktopItems addObject:@{@"kind": @"copyText", @"title": @"Copy Text from Screen", @"symbol": @"text.viewfinder", @"disabled": @(![self canCopyScreenText])}];
     [self presentMenu:@"View & Display" sections:@[
-        @{@"title": @"Desktop", @"items": desktopItems},
+        @{@"title": @"Screen Sharing", @"items": desktopItems},
         @{@"title": @"Presentation", @"items": @[
             @{@"kind": @"fullscreen", @"title": self.fullscreen ? @"Show Keyboard Bar" : @"Hide Keyboard Bar", @"symbol": self.fullscreen ? @"keyboard" : @"keyboard.chevron.compact.down"},
-            @{@"kind": @"inputOnly", @"title": self.inputOnly ? @"Show Desktop" : @"Trackpad & Keyboard Only", @"symbol": self.inputOnly ? @"desktopcomputer" : @"rectangle.and.hand.point.up.left", @"subtitle": self.inputOnly ? @"Resume desktop video" : @"Control your Mac without video", @"disabled": @(self.restoreViewportPending)}]}]];
+            @{@"kind": @"inputOnly", @"title": self.inputOnly ? @"Show Mac Screen" : @"Trackpad & Keyboard Only", @"symbol": self.inputOnly ? @"desktopcomputer" : @"rectangle.and.hand.point.up.left", @"subtitle": self.inputOnly ? @"Resume desktop video" : @"Control your Mac without video", @"disabled": @(self.restoreViewportPending)}]}]];
 }
 - (void)showInputMenu {
     NSArray *mouseItems = @[

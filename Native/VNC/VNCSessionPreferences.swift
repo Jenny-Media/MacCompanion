@@ -6,7 +6,7 @@ import SwiftUI
 enum DirectControlMode: String, CaseIterable, Identifiable, Sendable {
     case desktop, terminal, trackpad
     var id: String { rawValue }
-    var title: String { switch self { case .desktop: "Desktop"; case .terminal: "Terminal"; case .trackpad: "Trackpad & Keyboard" } }
+    var title: String { switch self { case .desktop: "Screen Sharing"; case .terminal: "Terminal"; case .trackpad: "Trackpad & Keyboard" } }
     // Stable local Keychain accounts; these are control profiles, never Mac IDs.
     var profileID: UUID { UUID(uuidString: "C063A810-0710-4000-8000-00000000000" + (self == .desktop ? "1" : self == .terminal ? "2" : "3"))! }
     var legacyDefaults: [VNCQuickAction] {

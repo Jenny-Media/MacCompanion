@@ -76,13 +76,13 @@ def main():
         for key in ['DEVELOPMENT_TEAM', 'CODE_SIGN_ENTITLEMENTS', 'PROVISIONING_PROFILE_SPECIFIER', 'PROVISIONING_PROFILE']:
             settings.pop(key, None)
         settings.update(PRODUCT_BUNDLE_IDENTIFIER='dev.maccompanion.workspaceprototype',
-                        PRODUCT_NAME='Mac Workspace Prototype', PRODUCT_MODULE_NAME='MacWorkspacePrototype',
+                        PRODUCT_NAME='Mac Companion Prototype', PRODUCT_MODULE_NAME='MacWorkspacePrototype',
                         CODE_SIGNING_ALLOWED='YES', CODE_SIGN_IDENTITY='-', CODE_SIGN_STYLE='Manual',
                         SWIFT_OBJC_BRIDGING_HEADER=str(EXPERIMENT / 'Workspace-Bridging-Header.h'),
                         INFOPLIST_FILE=str(work / 'Info.plist'))
         metadata = plistlib.loads((normal / 'Info.plist').read_bytes())
         metadata.pop('MacCompanionSharedKeychainGroup', None)
-        metadata.update(CFBundleName='Mac Workspace Prototype', CFBundleDisplayName='Mac Workspace Prototype')
+        metadata.update(CFBundleName='Mac Companion Prototype', CFBundleDisplayName='Mac Companion Prototype')
         write_if_changed(work / 'Info.plist', plistlib.dumps(metadata))
         signing = None
         if args.signing_identity:
@@ -132,7 +132,7 @@ def main():
         verify_inputs(original)
         if before != inputs():
             raise RuntimeError('Experiment changed during validation. Rerun against a stable snapshot.')
-        app = work / 'DerivedData/Build/Products/Debug/Mac Workspace Prototype.app'
+        app = work / 'DerivedData/Build/Products/Debug/Mac Companion Prototype.app'
         run('codesign', '--verify', '--deep', '--strict', app, log=work / 'signature.log')
         if signing:
             from direct_mac_development_signing import verify

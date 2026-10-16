@@ -127,7 +127,7 @@ struct MacSignInPanel<Content: View, Status: View>: View {
                         .frame(width: 52, height: 52).background(.tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
                     VStack(alignment: .leading, spacing: 4) {
                         Text(mac.name).font(.title2.bold())
-                        Text(mode == .desktop ? "Desktop · Screen Sharing" : "Terminal · Remote Login").font(.subheadline).foregroundStyle(.secondary)
+                        Text(mode == .desktop ? "Screen Sharing" : "Terminal · Remote Login").font(.subheadline).foregroundStyle(.secondary)
                     }
                 }
                 content()

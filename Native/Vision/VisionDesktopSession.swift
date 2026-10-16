@@ -115,7 +115,7 @@ import UIKit
                         if let login = self.pendingLogin {
                             self.pendingLogin = nil
                             do { try DesktopCredentialStoreV1.save(login, hostID: self.mac.id) }
-                            catch { self.recovery = .make(.saveFailed, message: "Connected, but the Desktop login couldn’t be saved on this device.") }
+                            catch { self.recovery = .make(.saveFailed, message: "Connected, but the Screen Sharing login couldn’t be saved on this device.") }
                         }
                     }
                 } else if !next.running {

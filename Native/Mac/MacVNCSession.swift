@@ -68,7 +68,7 @@ struct MacVNCDisplay: Identifiable {
         catch MacLoginPolicy.Failure.invalidLogin {
             recovery = .make(.loginRejected, message: "Enter a Mac account and password of 1–63 UTF-8 bytes per field, with no NUL characters."); return
         } catch {
-            recovery = .make(.removeFailed, message: "The old saved Desktop login couldn’t be removed. This connection wasn’t started. Retry when local Keychain is available."); return
+            recovery = .make(.removeFailed, message: "The old saved Screen Sharing login couldn’t be removed. This connection wasn’t started. Retry when local Keychain is available."); return
         }
         retire(); let token = UUID(); generation = token
         let next = makeTransport(); transport = next; next.inputOnly = false

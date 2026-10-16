@@ -1038,6 +1038,17 @@
         "port": 5900,
         "allowed": false
       }
-    ]
+    ],
+    "presentation": {
+      "actions": [
+        "Screen Sharing",
+        "Terminal"
+      ],
+      "combinedLaunchAction": false,
+      "screenSharingSubtitle": "Opens Apple Screen Sharing",
+      "externalApplicationIndicator": true,
+      "applicationName": "Mac Companion Prototype",
+      "savedDataIdentityChanged": false
+    }
   }
 }

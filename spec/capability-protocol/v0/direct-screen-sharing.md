@@ -667,7 +667,7 @@ with additional safe details, and captures the notice when tapped so subsequent
 session changes cannot empty or replace the presented issue.
 Remote OSC clipboard reads are denied and writes/URL launches require user action.
 
-My Macs uses the leading icon for detected hardware. Name, plain Open Desktop,
+My Macs uses the leading icon for detected hardware. Name, plain Open Screen Sharing,
 Open Terminal or Open Trackpad & Keyboard text, and address share one text column.
 The hardware badge and sole trailing menu control center vertically against that
 column; the row has no connection-action icon or disclosure chevron. Text wraps
