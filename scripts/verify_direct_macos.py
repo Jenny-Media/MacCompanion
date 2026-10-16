@@ -18,6 +18,15 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def hosted_app_paths(settings):
+    # Existing build folders retain their generated product settings. The old
+    # target used its target name as both the wrapper and executable default.
+    product = settings.get('PRODUCT_NAME', 'MacCompanion')
+    executable = settings.get('EXECUTABLE_NAME', product)
+    wrapper = product + '.app'
+    return wrapper, '$(BUILT_PRODUCTS_DIR)/' + wrapper + '/Contents/MacOS/' + executable
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--build', type=Path, required=True)
@@ -65,6 +74,7 @@ def execute(args, parser, compiler):
     spec['packages']['Citadel'] = {'path': str(qa_citadel)}
     app = spec['targets']['MacCompanion']
     settings = app['settings']['base']
+    app_bundle_name, app_test_host = hosted_app_paths(settings)
     settings['PRODUCT_BUNDLE_IDENTIFIER'] = 'dev.maccompanion.macqa'
     settings['PRODUCT_MODULE_NAME'] = 'MacCompanion'
     settings['CODE_SIGNING_ALLOWED'] = 'YES'
@@ -89,7 +99,7 @@ def execute(args, parser, compiler):
             'CODE_SIGNING_ALLOWED': 'YES', 'CODE_SIGN_IDENTITY': '-',
             'HEADER_SEARCH_PATHS': settings['HEADER_SEARCH_PATHS'],
             'CLANG_ENABLE_OBJC_ARC': 'YES',
-            'TEST_HOST': '$(BUILT_PRODUCTS_DIR)/MacCompanion.app/Contents/MacOS/MacCompanion', 'BUNDLE_LOADER': '$(TEST_HOST)'}}}
+            'TEST_HOST': app_test_host, 'BUNDLE_LOADER': '$(TEST_HOST)'}}}
     spec['schemes'] = {'NativeMacClientQA': {
         'build': {'targets': {'MacCompanion': 'all', 'NativeClientTests': 'all'}},
         'run': {'config': 'Debug', 'executable': 'MacCompanion', 'macroExpansion': 'MacCompanion',
@@ -149,7 +159,7 @@ def execute(args, parser, compiler):
             stdout=log, stderr=subprocess.STDOUT, check=True)
     if admission:
         from direct_mac_development_signing import verify
-        verify(qa / 'DerivedData/Build/Products/Debug/MacCompanion.app', admission, qa)
+        verify(qa / 'DerivedData/Build/Products/Debug' / app_bundle_name, admission, qa)
     print('Native Mac hosted QA completed (inspect skipped acceptance checks):', result)
 
 

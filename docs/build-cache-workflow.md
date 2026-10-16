@@ -32,6 +32,25 @@ application targets do not inherit this direct-client declaration.
 See [Apple's key reference](https://developer.apple.com/documentation/bundleresources/information-property-list/itsappusesnonexemptencryption)
 and [the saved France exclusion](execution-status.md#2026-10-06--france-excluded-from-app-store-distribution).
 
+## Application names
+
+The normal direct iOS, macOS and visionOS clients all build as
+`Mac Companion.app`, with both `CFBundleName` and `CFBundleDisplayName` set to
+`Mac Companion`. Bundle identifiers, Keychain access groups and signing
+identities are unchanged. Executables and Swift module names stay compatible:
+
+| Platform | Executable | Swift module |
+| --- | --- | --- |
+| iOS | `Mac Companion` | `Mac_Companion` |
+| macOS | `MacCompanion` | `MacCompanion` |
+| visionOS | `MacCompanionVision` | `MacCompanionVision` |
+
+Build/archive callers must use the build report's `app` path and the app's
+`CFBundleExecutable`, rather than inferring either from a scheme or target name.
+Hosted test paths follow the same wrapper/executable split. Each normal builder
+verifies the finished names before publishing its report. Disposable probes,
+extensions and gated legacy target identities are unchanged.
+
 ## Normal usage
 
 Keep using the existing builder arguments, including `--output`. For example:

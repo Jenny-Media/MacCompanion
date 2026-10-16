@@ -5,6 +5,7 @@
 never installs or contacts a device. Outputs and package caches stay outside Git.
 """
 import argparse
+from direct_app_naming import APP_BUNDLE_NAME, configure as configure_app_name, test_host, verify as verify_app_name
 from build_cache import BuildSession, cmake_refresh_args, toolchain_identity, write_if_changed
 import hashlib
 import json
@@ -22,7 +23,7 @@ def application_inputs(probe):
              ROOT / ('Experiments/VisionOSFeasibility' if probe else 'Native/Vision')]
     files = [p for folder in roots for p in sorted(folder.rglob('*')) if p.is_file()]
     files += [ROOT / 'Native/Mac' / (name + '.swift') for name in ['MacSessionStatus', 'MacTerminalHeldInput', 'MacTerminalMouseReport']]
-    files += [Path(__file__), *[ROOT / 'scripts' / name for name in ['build_cache.py', 'verify_direct_client_dependencies.py',
+    files += [Path(__file__), *[ROOT / 'scripts' / name for name in ['build_cache.py', 'direct_app_naming.py', 'verify_direct_client_dependencies.py',
         'prepare_swiftterm_build_tool.py', 'prepare_visionos_swiftterm.py', 'dependency_checkout_provenance.py']],
         ROOT / 'spec/dependency-policy/v0/direct-client-development.json',
         ROOT / 'spec/privacy-manifest/v0/targets/ios-app/PrivacyInfo.xcprivacy']
@@ -185,11 +186,12 @@ def build(args, parser, session):
     if application_inputs(args.probe) != application_before:
         raise SystemExit('Application inputs changed during build. Rebuild the final source.')
     verify_checkouts(args.output / 'DerivedData/SourcePackages', expected, previous=package_sources, transforms=transforms)
-    app = args.output / ('DerivedData/Build/Products/Debug-' + args.sdk) / (name + '.app')
+    app = args.output / ('DerivedData/Build/Products/Debug-' + args.sdk) / (name + '.app' if args.probe else APP_BUNDLE_NAME)
+    naming = None if args.probe else verify_app_name(app, 'visionos')
     if not args.probe and plistlib.loads((app / 'Info.plist').read_bytes()).get('ITSAppUsesNonExemptEncryption') is not False:
         raise SystemExit('Built app is missing the approved export compliance metadata.')
     report = {'profile': 'maccompanion.native-visionos-development.v1',
-        'sdk': args.sdk, 'toolchain': version, 'app': str(app), 'binarySHA256': digest(app / name),
+        'appNaming': naming, 'sdk': args.sdk, 'toolchain': version, 'app': str(app), 'binarySHA256': digest(app / name),
         'applicationCode': {str(p.relative_to(app)): digest(p) for p in sorted(app.rglob('*'))
                             if p.is_file() and (p == app / name or p.suffix == '.dylib')},
         'libVNCClientSources': vnc_before, 'pins': expected, 'packageSources': package_sources,
@@ -207,6 +209,7 @@ def configure_client(spec, name, args):
         'TerminalKeyInstallation', 'TerminalKeyboard', 'TerminalLoginSelection', 'TerminalIdentityGuide',
         'TerminalKeySettings', 'TerminalKeyInstallView', 'TerminalKeyboardSettings']
     target = spec['targets'][name]
+    configure_app_name(target['settings']['base'], target['info']['properties'], 'visionos')
     # Only the shipping client carries the approved outside-France declaration.
     target['info']['properties']['ITSAppUsesNonExemptEncryption'] = False
     target['sources'] += [{'path': str(ROOT / 'Native/VNC' / (p + '.swift'))} for p in shared_vnc]
@@ -217,7 +220,7 @@ def configure_client(spec, name, args):
     test_settings = {'PRODUCT_BUNDLE_IDENTIFIER': 'dev.maccompanion.visionos.client.tests',
         'SWIFT_VERSION': '6.0', 'SWIFT_STRICT_CONCURRENCY': 'complete',
         'CODE_SIGNING_ALLOWED': 'YES' if args.sdk == 'xrsimulator' else 'NO', 'CODE_SIGN_IDENTITY': '-',
-        'GENERATE_INFOPLIST_FILE': 'YES', 'TEST_HOST': '$(BUILT_PRODUCTS_DIR)/' + name + '.app/' + name,
+        'GENERATE_INFOPLIST_FILE': 'YES', 'TEST_HOST': test_host('visionos'),
         'BUNDLE_LOADER': '$(TEST_HOST)', 'SWIFT_ACTIVE_COMPILATION_CONDITIONS': '$(inherited) MACCOMPANION_VNC_DEVELOPMENT'}
     test_settings['HEADER_SEARCH_PATHS'] = target['settings']['base']['HEADER_SEARCH_PATHS']
     spec['targets']['VisionClientTests'] = {'type': 'bundle.unit-test', 'platform': 'visionOS',
