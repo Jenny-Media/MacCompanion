@@ -205,11 +205,11 @@ private struct DirectCloudSettingsSection: View {
             DisclosureGroup("What Syncs") {
                 VStack(alignment: .leading, spacing: 12) {
                     DirectInformationGroup(title: "Across devices", symbol: "icloud", items: [
-                        "Saved Macs, names and models", "Addresses and service ports", "Default connection mode",
+                        "Saved Macs, names and models", "Addresses and service ports", "My Macs tap and swipe shortcuts",
                         "Display selection and fullscreen", "Pointer speed, input mode and cursor following"])
                     Divider()
                     DirectInformationGroup(title: "On this device", symbol: "lock.shield", items: [
-                        "Passwords and SSH keys", "Trusted Mac identities", "Shortcuts and saved text", "Appearance and app-lock settings"])
+                        "Passwords and SSH keys", "Trusted Mac identities", "Session quick actions and saved text", "Appearance and app-lock settings"])
                 }
             }
             DisclosureGroup("Manage Sync") {

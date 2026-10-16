@@ -111,7 +111,7 @@ struct DirectCloudKeychain: DirectCloudTransport {
     static let shared = DirectCloudSyncV1()
     static let enabledKey = "direct-cloud-library-enabled-v1"
     static let preferenceChanged = Notification.Name("DirectCloudLocalPreferencesChangedV1")
-    static let disclosure = "Across your devices: Mac names and models, addresses, ports, default connection modes and desktop preferences. These details describe your Macs and network.\n\nPasswords, private keys, trusted Mac identities, shortcuts and saved text don’t sync.\n\nUses iCloud Keychain with your Apple Account and trusted devices; there is no separate cloud password. Enable iCloud Keychain on each device.\n\nTurning sync off keeps existing iCloud data. Use Delete Mac Data from iCloud to remove it."
+    static let disclosure = "Across your devices: Mac names and models, addresses, ports, My Macs tap and swipe shortcuts, and desktop preferences. These details describe your Macs and network.\n\nPasswords, private keys, trusted Mac identities, session quick actions and saved text don’t sync.\n\nUses iCloud Keychain with your Apple Account and trusted devices; there is no separate cloud password. Enable iCloud Keychain on each device.\n\nTurning sync off keeps existing iCloud data. Use Delete Mac Data from iCloud to remove it."
     private struct Journal: Codable { var schema = 1; var versions: [DirectCloudVersion] }
     private let defaults: UserDefaults
     private let url: URL

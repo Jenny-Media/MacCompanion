@@ -186,7 +186,7 @@ struct DirectTerminalView: View {
             if autoConnect && loginIssue == nil && session.recovery == nil { connect() }
         }
         .confirmationDialog("End this session?", isPresented: $confirmingExit, titleVisibility: .visible) {
-            Button("End Session", role: .destructive) { session.stop(); exit() }
+            Button("End Session", role: .destructive) { CompanionVNCPlayInterfaceFeedback("end"); session.stop(); exit() }
             Button("Keep Session", role: .cancel) {}
         } message: { Text("The active file transfer will be interrupted. Completed downloads are kept in Files.") }
         .onDisappear { if let context = session.filesContext { files.disconnectBorrowed(context.generation) }; session.stop() }
@@ -225,7 +225,7 @@ struct DirectTerminalView: View {
         case "customize": sheet = .keyboard
         case "exit":
             if files.isBorrowed && files.transferActive { confirmingExit = true }
-            else { session.stop(); exit() }
+            else { if session.connected { CompanionVNCPlayInterfaceFeedback("end") }; session.stop(); exit() }
         default: break
         }
     }

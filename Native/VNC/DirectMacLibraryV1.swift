@@ -14,9 +14,11 @@ struct DirectMacRecordV1: Codable, Identifiable, Equatable, Sendable {
     var detectedName: String?
     var modelIdentifier: String?
     var preferredConnection: DirectMacConnection = .desktop
+    var swipeLeft: DirectMacSwipeAction = .terminal
+    var swipeRight: DirectMacSwipeAction = .trackpad
     var family: DirectMacFamily { .detect(modelIdentifier) }
     var address: String { addresses.first ?? "" }
-    private enum CodingKeys: String, CodingKey { case id, name, address, addresses, port, sshPort, usesAutomaticName, detectedName, modelIdentifier, preferredConnection }
+    private enum CodingKeys: String, CodingKey { case id, name, address, addresses, port, sshPort, usesAutomaticName, detectedName, modelIdentifier, preferredConnection, swipeLeft, swipeRight }
     init(id: UUID, name: String, addresses: [String], port: Int = 5900, sshPort: Int = 22) {
         self.id = id; self.name = name; self.addresses = addresses; self.port = port; self.sshPort = sshPort
     }
@@ -30,6 +32,8 @@ struct DirectMacRecordV1: Codable, Identifiable, Equatable, Sendable {
         detectedName = try c.decodeIfPresent(String.self, forKey: .detectedName)
         modelIdentifier = try c.decodeIfPresent(String.self, forKey: .modelIdentifier)
         preferredConnection = try c.decodeIfPresent(DirectMacConnection.self, forKey: .preferredConnection) ?? .desktop
+        swipeLeft = try c.decodeIfPresent(DirectMacSwipeAction.self, forKey: .swipeLeft) ?? .terminal
+        swipeRight = try c.decodeIfPresent(DirectMacSwipeAction.self, forKey: .swipeRight) ?? .trackpad
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
@@ -38,6 +42,7 @@ struct DirectMacRecordV1: Codable, Identifiable, Equatable, Sendable {
         try c.encode(usesAutomaticName, forKey: .usesAutomaticName)
         try c.encodeIfPresent(detectedName, forKey: .detectedName); try c.encodeIfPresent(modelIdentifier, forKey: .modelIdentifier)
         try c.encode(preferredConnection, forKey: .preferredConnection)
+        try c.encode(swipeLeft, forKey: .swipeLeft); try c.encode(swipeRight, forKey: .swipeRight)
     }
     static func normalized(id: UUID = UUID(), name: String, address: String) throws -> Self {
         try normalized(id: id, name: name, addresses: [address])
@@ -231,13 +236,16 @@ enum DesktopCredentialStoreV1 {
     }
     func save(id: UUID?, name: String, address: String) -> Bool { save(id: id, name: name, addresses: [address]) }
     func save(id: UUID?, name: String, addresses: [String], port: Int = 5900, sshPort: Int? = nil,
-              usesAutomaticName: Bool? = nil, preferredConnection: DirectMacConnection? = nil) -> Bool {
+              usesAutomaticName: Bool? = nil, preferredConnection: DirectMacConnection? = nil,
+              swipeLeft: DirectMacSwipeAction? = nil, swipeRight: DirectMacSwipeAction? = nil) -> Bool {
         do {
             guard readable else { return false }
             let old = macs.first { $0.id == id }
             var record = try DirectMacRecordV1.normalized(id: id ?? UUID(), name: name, addresses: addresses, port: port, sshPort: sshPort ?? old?.sshPort ?? 22)
             record.usesAutomaticName = usesAutomaticName ?? (old?.name == record.name ? old?.usesAutomaticName : false) ?? false
             record.preferredConnection = preferredConnection ?? old?.preferredConnection ?? .desktop
+            record.swipeLeft = swipeLeft ?? old?.swipeLeft ?? .terminal
+            record.swipeRight = swipeRight ?? old?.swipeRight ?? .trackpad
             if let old, Set(old.addresses) == Set(record.addresses), old.port == record.port, old.sshPort == record.sshPort {
                 record.detectedName = old.detectedName; record.modelIdentifier = old.modelIdentifier
             }
@@ -371,7 +379,6 @@ struct DirectMacLibraryRootV1: View {
     @State private var editMode: EditMode = .inactive
     @State private var pro = DirectProAccess.shared
     @State private var paywall = false
-    @ScaledMetric(relativeTo: .title2) private var menuIconSize = 22
     @Environment(\.scenePhase) private var scenePhase
     private var visibleMacs: [DirectMacRecordV1] {
         library.macs.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) || $0.addresses.contains { $0.localizedCaseInsensitiveContains(search) } }
@@ -427,34 +434,11 @@ struct DirectMacLibraryRootV1: View {
                 } else {
                     Section {
                         ForEach(visibleMacs) { mac in
-                            HStack(spacing: 12) {
-                                Button { open(mac, connection: mac.preferredConnection) } label: {
-                                    DirectMacListRowLabel(mac: mac)
-                                }.buttonStyle(.plain).disabled(editMode.isEditing)
-                                    .accessibilityLabel("Connect to " + mac.name + " using " + mac.preferredConnection.title)
-                                    .accessibilityHint(mac.family.title)
-                                if !editMode.isEditing {
-                                    Menu {
-                                        Section("Connect") {
-                                            Button("Screen Sharing", systemImage: DirectMacConnection.desktop.symbol) { open(mac, connection: .desktop) }
-                                                .accessibilityHint("View and control this Mac")
-                                            Button("Trackpad & Keyboard", systemImage: "rectangle.and.hand.point.up.left") { open(mac, connection: .trackpad) }
-                                            Button("Terminal", systemImage: "terminal") { open(mac, connection: .terminal) }
-                                        }
-                                        Button("Browse Files", systemImage: "folder") { files = mac }
-                                        Section("Manage Mac") {
-                                            Button("Mac Settings", systemImage: "gearshape") { edit(mac) }
-                                            if !pro.hasPro { Button("Use as My Free Mac") { pro.chooseFreeMac(mac.id) } }
-                                            Button("Remove Mac", systemImage: "trash", role: .destructive) { removing = mac }
-                                        }
-                                    } label: { Image(systemName: "ellipsis.circle").font(.system(size: min(menuIconSize, 32))).frame(width: 44, height: 44) }
-                                        .accessibilityLabel("Manage " + mac.name)
-                                }
-                            }.padding(.vertical, 4)
-                                .swipeActions {
-                                    Button("Remove", role: .destructive) { removing = mac }
-                                    Button("Edit") { edit(mac) }.tint(.blue)
-                                }
+                            DirectMacLibraryRow(mac: mac, reordering: editMode.isEditing,
+                                canChooseFreeMac: !pro.hasPro,
+                                open: { open(mac, connection: $0) }, browseFiles: { files = mac },
+                                edit: { edit(mac) }, remove: { removing = mac },
+                                chooseFreeMac: { pro.chooseFreeMac(mac.id) })
                         }.onMove { offsets, destination in
                             guard search.isEmpty else { return }
                             if let first = library.macs.first { _ = pro.canUseMac(first.id, among: library.macs.map(\.id)) }
@@ -470,7 +454,7 @@ struct DirectMacLibraryRootV1: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     if library.readable && library.macs.count > 1 {
-                        Button(editMode.isEditing ? "Done" : "Edit") {
+                        Button(editMode.isEditing ? "Done" : "Reorder") {
                             withAnimation { editMode = editMode.isEditing ? .inactive : .active }
                         }.disabled(!search.isEmpty).accessibilityIdentifier("macs-edit-order")
                     }
@@ -627,6 +611,7 @@ struct DirectMacLibraryRootV1: View {
         case .open(let mac, let connection, let autoConnect):
             guard let current = library.macs.first(where: { $0.id == mac.id }) else { return true }
             if pro.canUseMac(mac.id, among: library.macs.map(\.id)) {
+                CompanionVNCPlayInterfaceFeedback("open")
                 session = DirectMacSessionSelection(mac: current, connection: connection, autoConnect: autoConnect); return true
             }
             guard pro.ready else { return false }
@@ -638,6 +623,7 @@ struct DirectMacLibraryRootV1: View {
 }
 
 struct DirectMacEditorV1: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.dismiss) private var dismiss
     let mac: DirectMacRecordV1?
     @Bindable var library: DirectMacLibraryV1
@@ -645,6 +631,8 @@ struct DirectMacEditorV1: View {
     @State private var name: String
     @State private var usesAutomaticName: Bool
     @State private var preferredConnection: DirectMacConnection
+    @State private var swipeLeft: DirectMacSwipeAction
+    @State private var swipeRight: DirectMacSwipeAction
     @State private var credentialAction: CredentialAction?
     private enum CredentialAction: String, Identifiable {
         case desktop, terminal, serverKey
@@ -657,8 +645,8 @@ struct DirectMacEditorV1: View {
     @State private var sshPort: String
     @State private var advanced = false
     private enum SSHSheet: Identifiable {
-        case keys(DirectMacRecordV1), install(DirectMacRecordV1), manual(DirectMacRecordV1), login(DirectSavedLoginService), pro
-        var id: String { switch self { case .keys: "keys"; case .install: "install"; case .manual: "manual"; case .login(let service): "login-" + service.rawValue; case .pro: "pro" } }
+        case keys(DirectMacRecordV1), install(DirectMacRecordV1), manual(DirectMacRecordV1), login(DirectSavedLoginService), pro, shortcuts
+        var id: String { switch self { case .keys: "keys"; case .install: "install"; case .manual: "manual"; case .login(let service): "login-" + service.rawValue; case .pro: "pro"; case .shortcuts: "shortcuts" } }
     }
     @State private var sshSheet: SSHSheet?
     @State private var selectedKeyName = "No SSH key selected"
@@ -680,6 +668,8 @@ struct DirectMacEditorV1: View {
         _name = State(initialValue: mac?.name ?? "My Mac")
         _usesAutomaticName = State(initialValue: mac?.usesAutomaticName ?? true)
         _preferredConnection = State(initialValue: mac?.preferredConnection ?? .desktop)
+        _swipeLeft = State(initialValue: mac?.swipeLeft ?? .terminal)
+        _swipeRight = State(initialValue: mac?.swipeRight ?? .trackpad)
         _addresses = State(initialValue: (mac?.addresses ?? [""]).map { Draft(address: $0) })
         _sshPort = State(initialValue: mac.map { $0.sshPort == 22 ? "" : String($0.sshPort) } ?? "")
         _port = State(initialValue: mac.map { $0.port == 5900 ? "" : String($0.port) } ?? "")
@@ -756,11 +746,11 @@ struct DirectMacEditorV1: View {
                     TextField("Name", text: Binding(get: { name }, set: { name = $0; usesAutomaticName = false }))
                         .accessibilityIdentifier("mac-name")
                     Toggle("Use Detected Name", isOn: $usesAutomaticName).accessibilityIdentifier("mac-use-detected-name")
-                    DirectConnectionModePicker(selection: $preferredConnection)
                     if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || name.count > 80 || name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) {
                         Text("Use a name from 1 to 80 characters, without control characters.").font(.footnote).foregroundStyle(.secondary)
                     }
                 }
+                DirectMacShortcutsSection { sshSheet = .shortcuts }
                 if discoveryKey != nil {
                     Section {
                         DisclosureGroup("Mac Details") {
@@ -804,6 +794,10 @@ struct DirectMacEditorV1: View {
             .accessibilityIdentifier("mac-editor-form")
             .sheet(item: $sshSheet, onDismiss: { refreshSelectedKey() }) { selection in
                 switch selection {
+                case .shortcuts:
+                    DirectMacShortcutsSheet(macName: name, family: mac?.family ?? .unknown,
+                                            tap: $preferredConnection, swipeLeft: $swipeLeft, swipeRight: $swipeRight)
+                        .dynamicTypeSize(dynamicTypeSize)
                 case .keys(let mac): TerminalKeySettings(mac: mac)
                 case .install(let mac): TerminalKeyInstallView(mac: mac, changed: { refreshSelectedKey() })
                 case .manual(let mac): TerminalManualKeySetupView(mac: mac)
@@ -831,7 +825,8 @@ struct DirectMacEditorV1: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         if mac == nil && !DirectProAccess.shared.canAddMac(count: library.macs.count) { sshSheet = .pro; return }
-                        if let resolvedPort, library.save(id: mac?.id, name: name, addresses: addresses.map(\.address), port: resolvedPort, sshPort: resolvedSSHPort, usesAutomaticName: usesAutomaticName, preferredConnection: preferredConnection) { startAutomaticDiscovery(); dismiss() }
+                        if let resolvedPort, library.save(id: mac?.id, name: name, addresses: addresses.map(\.address), port: resolvedPort, sshPort: resolvedSSHPort, usesAutomaticName: usesAutomaticName, preferredConnection: preferredConnection, swipeLeft: swipeLeft, swipeRight: swipeRight) { CompanionVNCPlayInterfaceFeedback("success"); startAutomaticDiscovery(); dismiss() }
+                        else { CompanionVNCPlayInterfaceFeedback("error") }
                     }.disabled(!valid)
                 }
             }
@@ -915,8 +910,8 @@ struct DirectSessionSettingsV1: View {
             }
             Section {
                 Toggle("Show session in Dynamic Island", isOn: $showSession).accessibilityIdentifier("session-live-activity")
-                Toggle("Menu Haptics", isOn: $controlsHaptics).accessibilityIdentifier("controls-haptics")
-            } header: { Text("This Device") } footer: { Text("Dynamic Island shows session status with Resume and End actions. Menu haptics confirm a local selection.") }
+                Toggle("Interface Haptics", isOn: $controlsHaptics).accessibilityIdentifier("controls-haptics")
+            } header: { Text("This Device") } footer: { Text("Dynamic Island shows session status with Resume and End actions. Interface haptics confirm gestures, opening modes and explicit session actions. Trackpad haptics are controlled separately.") }
         }.navigationBarTitleDisplayMode(.inline)
     }
     private var sync: some View {

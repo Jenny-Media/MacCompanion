@@ -1,4 +1,5 @@
 #import "CompanionVNCTextReview.h"
+#import "CompanionVNCControls.h"
 #import "CompanionVNCTextGeometry.h"
 #import <Vision/Vision.h>
 #import "Mac_Companion-Swift.h"
@@ -747,6 +748,7 @@
 - (void)copyString:(NSString *)text {
     if (self.invalidated || self.busy || !text.length || text.length > 65536) return;
     UIPasteboard.generalPasteboard.string = text; self.status.text = @"Copied"; [self updateActions];
+    CompanionVNCPlayInterfaceFeedback(@"success");
     UIAccessibilityPostNotification(UIAccessibilityAnnouncementNotification,@"Text copied");
 }
 - (void)textViewDidChange:(UITextView *)textView {

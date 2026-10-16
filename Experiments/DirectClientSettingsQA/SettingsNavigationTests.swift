@@ -21,24 +21,33 @@ import UIKit
         continueAfterFailure = false
         let app = app(); app.launch(); defer { app.terminate() }
         XCTAssertTrue(app.buttons["Add Mac"].firstMatch.waitForExistence(timeout: 10)); app.buttons["Add Mac"].firstMatch.tap()
+        let shortcuts = app.buttons["mac-shortcuts-open"]
+        for _ in 0..<4 where !shortcuts.isHittable { app.swipeUp() }
+        XCTAssertTrue(shortcuts.isHittable); shortcuts.tap()
         let row = app.buttons["mac-open-on-tap"]
-        for _ in 0..<4 where !row.isHittable { app.swipeUp() }
-        XCTAssertTrue(row.isHittable)
-        var heights: [CGFloat] = []
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
         for title in ["Screen Sharing", "Trackpad & Keyboard", "Terminal"] {
             row.tap()
             XCTAssertTrue(app.buttons[title].firstMatch.waitForExistence(timeout: 5))
             app.buttons[title].firstMatch.tap()
             XCTAssertEqual(row.value as? String, title)
-            heights.append(row.frame.height)
+            XCTAssertGreaterThanOrEqual(row.frame.height, 44)
+            XCTAssertLessThanOrEqual(row.frame.maxX, app.frame.maxX)
             capture("ios-open-on-tap-" + title.lowercased().replacingOccurrences(of: " ", with: "-"), app: app)
         }
-        XCTAssertLessThan((heights.max() ?? 0) - (heights.min() ?? 0), 2, "Changing modes must keep the same row layout")
+        app.buttons["mac-shortcut-done"].tap()
         let ports = app.buttons["Service Ports"]
         let form = app.descendants(matching: .any)["mac-editor-form"].firstMatch
         for _ in 0..<4 where !ports.isHittable { form.swipeUp() }
         XCTAssertTrue(ports.isHittable); ports.tap()
-        XCTAssertTrue(app.textFields["mac-ssh-port"].waitForExistence(timeout: 5))
+        let sshPort = app.textFields["mac-ssh-port"]
+        // Expanding below the new shortcuts section can put SSH just below
+        // the viewport; verify it remains reachable, not pre-rendered offscreen.
+        for _ in 0..<8 where !sshPort.isHittable {
+            let start = form.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8))
+            start.press(forDuration: 0.15, thenDragTo: form.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)))
+        }
+        XCTAssertTrue(sshPort.isHittable)
         capture("ios-add-mac-ports", app: app)
         app.buttons["Cancel"].firstMatch.tap()
     }

@@ -326,7 +326,11 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
             guard files.isBorrowed, files.transferActive, let viewer, viewer.presentedViewController == nil else { return false }
             let alert = UIAlertController(title: "End this session?", message: "The active file transfer will be interrupted. Completed downloads are kept in Files.", preferredStyle: .alert)
             alert.addAction(UIAlertAction(title: "Keep Session", style: .cancel))
-            alert.addAction(UIAlertAction(title: "End Session", style: .destructive) { [weak self] _ in self?.endSession() })
+            alert.addAction(UIAlertAction(title: "End Session", style: .destructive) { [weak self] _ in
+                guard let self else { return }
+                CompanionVNCPlayInterfaceFeedback("end")
+                self.endSession()
+            })
             viewer.present(alert, animated: true); return true
         }
         func showFiles() {
