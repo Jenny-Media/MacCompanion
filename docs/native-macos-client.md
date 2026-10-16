@@ -9,11 +9,25 @@ Apple owns authentication, connection status, input and the external window.
 An accepted handoff says Opened in Screen Sharing, never Connected. This app's
 lock, removal and quit do not lock or close that external session.
 
+After a password-based Terminal disconnect, the form restores a remembered
+same-account login while unlocked without opening another shell. An unsaved
+successful session returns to blank username/password fields. Credential drafts
+preserve explicit edits and user-cleared fields across unrelated UI updates;
+privacy-cleared remembered secrets restore only through their captured account.
+The existing credential-draft state model is shared with Files.
+
 Terminal stays in Mac Companion with existing saved Macs, SSH credentials,
 server trust, key selection and Files. Restored Terminal windows register for
 reuse. Restored requests for the previous embedded screen view show an explicit
 Open in Screen Sharing action and never launch externally during restoration.
-Files receives the existing library's explicit URL. The macOS settings omit
+Files opened from a connected Terminal borrows that exact authenticated SSH
+connection and opens its own SFTP channel, with no second sign-in or key-file
+read. Its request is pinned to the source window, connection generation, Mac
+endpoint and library. Closing Files leaves the shell connected; ending the shell
+interrupts Files while keeping completed downloads available. Restored or stale
+requests ask the user to reconnect Terminal and reopen Files, without silently
+switching accounts or authenticating independently. Standalone Browse Files
+continues to use saved SSH settings. Files receives the existing library's explicit URL. The macOS settings omit
 embedded screen controls. Shared raw modes, window IDs, Keychain groups and the
 Mac library are preserved; no prototype data is silently imported.
 

@@ -122,6 +122,45 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
     }
 }
 @MainActor final class TerminalIntegrationTests:XCTestCase {
+    func testHostedCredentialReturnAfterUnexpectedEndKeepsPauseRecoveryAndDoesNotReconnect() async throws {
+        for remember in [true, false] {
+            let record = SSHTestRecord(), hostKey = NIOSSHPrivateKey(ed25519Key: .init())
+            let peer = try await server(record: record, key: hostKey)
+            defer { _ = peer.close() }
+            let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic credential return", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(peer.localAddress?.port))
+            var draft = DirectFilesLoginDraft()
+            draft.username = "synthetic"; draft.password = "synthetic-only"; draft.remember = remember
+            let form = DirectTerminalLoginForm(draft: draft)
+            try TerminalSecretStore.approveHostKey(String(openSSHPublicKey: hostKey.publicKey), id: mac.id)
+            let session = DirectTerminalSession(mac: mac)
+            let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first(where: { $0.activationState == .foregroundActive }))
+            let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+            let host = UIHostingController(rootView: DirectTerminalView(mac: mac, session: session, loginForm: form, exit: { XCTFail("An unexpected end must stay in recovery") }).directAppearance())
+            window.frame = scene.coordinateSpace.bounds
+            window.rootViewController = host; window.makeKeyAndVisible()
+            defer { session.stop(); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible(); try? TerminalSecretStore.remove(mac.id) }
+            try await wait { session.connected }
+            // Observe the actual view-bound owner, including its onChange
+            // lifecycle, rather than assuming SwiftUI creates UITextField nodes.
+            try await wait("successful-login secret cleanup") { form.draft.password.isEmpty }
+            XCTAssertEqual(form.draft.username, "synthetic")
+            session.background(); await session.waitForLifecycleUpdates()
+            XCTAssertTrue(session.connected); session.foreground()
+            try await wait { !session.suspended }
+            session.send(Array("synthetic-after-pause".utf8))
+            try await wait { String(decoding: record.received, as: UTF8.self).contains("synthetic-after-pause") }
+            XCTAssertEqual(record.passwordRequests, 1)
+            try await record.finish(status: nil, transportFailed: true)
+            try await wait { !session.connected && !session.connecting }
+            try await wait("view-bound credential return") {
+                form.draft.username == (remember ? "synthetic" : "") && form.draft.password == (remember ? "synthetic-only" : "")
+            }
+            XCTAssertEqual(form.draft.remember, remember)
+            XCTAssertEqual(session.recovery?.reason, .terminalEnded)
+            try await Task.sleep(for: .milliseconds(100))
+            XCTAssertEqual(record.passwordRequests, 1, "A return form cannot silently open a new shell")
+        }
+    }
     func testComposerUsesCurrentPTYBracketingAndNeverAddsReturnOrReplaysAfterStop() async throws {
         let record = SSHTestRecord(), key = NIOSSHPrivateKey(ed25519Key: .init())
         let server = try await server(record: record, key: key)

@@ -7,10 +7,12 @@ struct MacDirectTerminalView: View {
     @Environment(\.openWindow) private var openWindow
     let mac: DirectMacRecordV1
     let sessionID: UUID
+    private let sessionLibraryURL: URL
     @State private var session: DirectTerminalSession
-    @State private var login = TerminalLoginSelection()
-    @State private var password = ""
-    @State private var remember = false
+    @State private var draft: DirectFilesLoginDraft
+    @State private var loginAttempt: DirectFilesLoginDraft.AuthenticationAttempt?
+    private var password: String { draft.password }
+    private var remember: Bool { draft.remember }
     @State private var key: TerminalSSHKey?
     @State private var keyName = ""
     @State private var keyFile: MacSSHKeyFileReference?
@@ -30,8 +32,10 @@ struct MacDirectTerminalView: View {
     @State private var closed = false
     @Environment(\.colorScheme) private var colorScheme
     private enum Sheet: String, Identifiable { case keys, controls, keyboard, install, manual, identity, pro; var id: String { rawValue } }
-    init(mac: DirectMacRecordV1, sessionID: UUID = UUID(), libraryURL: URL = DirectMacLibraryV1.defaultURL) {
-        self.mac = mac; self.sessionID = sessionID; _session = State(initialValue: DirectTerminalSession(mac: mac, libraryURL: libraryURL))
+    init(mac: DirectMacRecordV1, sessionID: UUID = UUID(), libraryURL: URL = DirectMacLibraryV1.defaultURL,
+         session: DirectTerminalSession? = nil, loginDraft: DirectFilesLoginDraft = DirectFilesLoginDraft()) {
+        self.mac = mac; self.sessionID = sessionID; self.sessionLibraryURL = libraryURL; _session = State(initialValue: session ?? DirectTerminalSession(mac: mac, libraryURL: libraryURL))
+        _draft = State(initialValue: loginDraft)
         _storedFontSize = State(initialValue: UserDefaults.standard.object(forKey: "mac-terminal-font-size-v1") as? Double ?? 14)
     }
     private var fontSize: Double { storedFontSize.isFinite ? min(28, max(10, storedFontSize)) : 14 }
@@ -45,13 +49,13 @@ struct MacDirectTerminalView: View {
                 .opacity(session.connected ? 1 : 0)
             if !session.connected {
                 MacSignInPanel(mac: mac, mode: .terminal) {
-                        Picker("Sign in with", selection: Binding(get: { login.method }, set: { login.select($0); keyPassphrase = ""; needsPassphrase = false })) {
+                        Picker("Sign in with", selection: Binding(get: { draft.method }, set: { draft.selectMethod($0); keyPassphrase = ""; needsPassphrase = false; loadLogin() })) {
                             ForEach(TerminalLoginMethod.allCases) { Text($0.rawValue).tag($0) }
                         }.pickerStyle(.segmented).disabled(busy)
-                        MacCredentialFields(username: $login.username, password: $password, showsPassword: login.method == .password,
+                        MacCredentialFields(username: $draft.username, password: $draft.password, showsPassword: draft.method == .password,
                                             enabled: !busy && DirectAppLockV1.shared.canAccess, prefix: "mac-terminal", submit: connect)
-                            .frame(height: login.method == .password ? 104 : 45)
-                        if login.method == .sshKey {
+                            .frame(height: draft.method == .password ? 104 : 45)
+                        if draft.method == .sshKey {
                             HStack {
                                 Label(key == nil && keyFile == nil ? "No SSH key selected" : keyName, systemImage: keyFile == nil ? "key" : "doc")
                                 Spacer()
@@ -66,12 +70,12 @@ struct MacDirectTerminalView: View {
                                     Button("Manual Key Setup") { sheet = .manual }
                                 }.disabled(busy)
                             }
-                        } else { Toggle("Save login on this Mac", isOn: $remember).disabled(busy).help("Store this Mac’s Terminal credentials in Keychain.") }
+                        } else { Toggle("Save login on this Mac", isOn: $draft.remember).disabled(busy).help("Store this Mac’s Terminal credentials in Keychain.") }
                         DisclosureGroup("Connection Details") { DirectConnectionDetailsRows(mac: mac, desktop: false) }
                             .font(.subheadline).disabled(busy)
                         if let issue { DirectRecoveryCard(notice: issue, primary: .init(title: "Retry") { loadLogin() }) }
                         if let recovery = session.recovery {
-                            DirectRecoveryCard(notice: recovery, primary: recoveryAction(recovery), secondary: recovery.reason == .keyRejected ? .init(title: "Use Password") { login.select(.password); session.clearRecovery() } : nil)
+                            DirectRecoveryCard(notice: recovery, primary: recoveryAction(recovery), secondary: recovery.reason == .keyRejected ? .init(title: "Use Password") { draft.selectMethod(.password); loadLogin(); session.clearRecovery() } : nil)
                         }
                 } status: {
                     HStack {
@@ -79,13 +83,13 @@ struct MacDirectTerminalView: View {
                             ProgressView().controlSize(.small)
                             Text(preparingKey ? "Reading key file…" : session.status).font(.subheadline).foregroundStyle(.secondary)
                             Spacer()
-                            Button("Cancel") { cancelPreparation(); session.cancelConnection(); password = "" }
+                            Button("Cancel") { cancelPreparation(); session.cancelConnection(); loginAttempt = nil }
                         } else {
                             Button("Cancel") { window.window?.performClose(nil) }.keyboardShortcut(.cancelAction)
                                 .accessibilityIdentifier("mac-terminal-login-cancel")
                             Spacer()
                             Button("Connect", systemImage: "arrow.right", action: connect).buttonStyle(.borderedProminent).controlSize(.large).keyboardShortcut(.defaultAction)
-                                .disabled(login.username.isEmpty || (login.method == .sshKey ? key == nil && keyFile == nil : password.isEmpty))
+                                .disabled(draft.username.isEmpty || (draft.method == .sshKey ? key == nil && keyFile == nil : password.isEmpty))
                                 .accessibilityIdentifier("mac-terminal-connect")
                         }
                     }.frame(height: 36)
@@ -96,12 +100,14 @@ struct MacDirectTerminalView: View {
         .frame(minWidth: 520, minHeight: 360)
         .navigationTitle(mac.name + " · Terminal")
         .toolbar {
-            Button("Files", systemImage: "folder") { openWindow(id: "direct-files", value: DirectFilesWindowRequest(macID: mac.id)) }
-                .help("Browse and transfer files using Remote Login (SSH)").accessibilityIdentifier("session-files")
+            Button("Files", systemImage: "folder") {
+                guard let context = session.filesContext else { return }
+                openWindow(id: "direct-files", value: DirectFilesWindowRequest(macID: mac.id, terminalID: sessionID, connectionGeneration: context.generation))
+            }
+                .disabled(!session.connected)
+                .help("Browse files using this Terminal connection").accessibilityIdentifier("session-files")
 
             if session.connected {
-                Button("Interrupt", systemImage: "stop") { if window.acceptsActions { session.send([3]) } }
-                    .labelStyle(.titleAndIcon).help("Send Ctrl+C to interrupt the running command")
                 Button("Disconnect", systemImage: "power") { session.stop() }
                     .labelStyle(.titleAndIcon).help("End this SSH connection and keep its window open")
                 Menu("Text Size", systemImage: "textformat.size") {
@@ -131,7 +137,7 @@ struct MacDirectTerminalView: View {
                 case .keys: MacSSHKeyManager(mac: mac, changed: { loadKey(preferSelected: true); session.clearRecovery() })
                 case .controls: MacDesktopSettings(mode: .terminal, changed: loadControls)
                 case .keyboard: TerminalKeyboardSettings(macID: mac.id, changed: loadControls)
-                case .install: TerminalKeyInstallView(mac: mac, initialUsername: login.username, changed: { loadKey(preferSelected: true) })
+                case .install: TerminalKeyInstallView(mac: mac, initialUsername: draft.username, changed: { loadKey(preferSelected: true) })
                 case .manual: TerminalManualKeySetupView(mac: mac)
                 case .identity: TerminalIdentityGuide(macName: mac.name)
                 case .pro: DirectProView()
@@ -142,16 +148,27 @@ struct MacDirectTerminalView: View {
             TerminalServerTrustView(macName: mac.name, fingerprint: request.fingerprint) { session.answerTrust($0) }
                 .frame(width: 480, height: 410).modifier(MacSheetPrivacyCover())
         }
-        .background(MacWindowLifetime { closed = true; cancelPreparation(); password = ""; key = nil; session.stop(); MacConnectionRegistry.shared.remove(sessionID) }.frame(width: 0, height: 0))
+        .background(MacWindowLifetime { closed = true; MacTerminalFilesRegistry.shared.remove(session, windowID: sessionID); cancelPreparation(); draft.invalidate(); key = nil; session.stop(); MacConnectionRegistry.shared.remove(sessionID) }.frame(width: 0, height: 0))
         .background(MacWindowReader(handle: window).frame(width: 0, height: 0))
-        .onAppear { loadInitialLogin(); publishStatus() }
+        .onAppear {
+            MacTerminalFilesRegistry.shared.register(session, windowID: sessionID, libraryURL: sessionLibraryURL)
+            loadInitialLogin(); publishStatus()
+        }
         .onChange(of: phase) { _, _ in publishStatus() }
         .onChange(of: session.macRemoved) { _, removed in
-            if removed { sheet = nil; cancelPreparation(); password = ""; key = nil; window.window?.close() }
+            if removed { sheet = nil; cancelPreparation(); draft.invalidate(); key = nil; window.window?.close() }
         }
         .onChange(of: storedFontSize) { _, value in UserDefaults.standard.set(value, forKey: "mac-terminal-font-size-v1") }
         .onReceive(NotificationCenter.default.publisher(for: VNCSessionPreferences.actionsChanged)) { _ in loadControls() }
-        .onChange(of: session.connected) { _, connected in if connected { password = ""; keyPassphrase = "" } }
+        .onChange(of: session.connected) { _, connected in
+            if connected {
+                draft.authenticationSucceeded(loginAttempt, retention: draft.method == .password && remember ? .saved : .notRequested)
+                loginAttempt = nil; keyPassphrase = ""
+            } else {
+                draft.passwordSessionEnded()
+                loadLogin()
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: MacSSHKeyFileStore.changed)) { _ in
             if !session.connected && !busy {
                 do { if try MacSSHKeyFileStore.selected(mac.id)?.file != keyFile { loadKey(preferSelected: true) } }
@@ -159,11 +176,11 @@ struct MacDirectTerminalView: View {
             }
         }
         .modifier(MacTerminalLifecycle(canResume: { !closed && DirectAppLockV1.shared.canAccess }, suspend: {
-            cancelPreparation(); password = ""; session.background()
-        }, resume: { session.foreground() }))
+            cancelPreparation(); draft.suspend(); session.background()
+        }, resume: { draft.resume(); session.foreground(); loadLogin() }))
         .onChange(of: DirectAppLockV1.shared.canAccess) { _, allowed in
-            if !allowed { sheet = nil; cancelPreparation(); password = ""; key = nil; surface.view?.lockLocalActions(); session.background() }
-            else { session.foreground(); if loadedInitialLogin { loadLogin(); loadControls() } else { loadInitialLogin() } }
+            if !allowed { sheet = nil; cancelPreparation(); draft.suspend(); key = nil; surface.view?.lockLocalActions(); session.background() }
+            else { draft.resume(); session.foreground(); if loadedInitialLogin { loadLogin(); loadControls() } else { loadInitialLogin() } }
         }
     }
     private func publishStatus() {
@@ -175,14 +192,17 @@ struct MacDirectTerminalView: View {
         loadedInitialLogin = true; loadLogin(preferSelected: true); loadControls()
         // Match iPhone's single initial attempt. Cancellation, disconnect and
         // later unlocks still require an explicit request for a new shell.
-        if issue == nil, session.recovery == nil, !login.username.isEmpty,
-           (login.method == .sshKey ? key != nil || keyFile != nil : !password.isEmpty) { connect() }
+        if issue == nil, session.recovery == nil, !draft.username.isEmpty,
+           (draft.method == .sshKey ? key != nil || keyFile != nil : !password.isEmpty) { connect() }
     }
     private func loadLogin(preferSelected: Bool = false) {
-        guard DirectAppLockV1.shared.canAccess, !session.connected, !busy else { return }
+        guard !closed, !session.macRemoved, DirectAppLockV1.shared.canAccess, !session.connected, !busy else { return }
         issue = nil
         do {
-            if let saved = try TerminalSecretStore.login(mac.id) { login.loadPasswordAccount(saved.username); password = saved.password; remember = true }
+            if draft.needsInitialLoad(active: true, allowed: true, signIn: true) {
+                draft.initialize(saved: try TerminalSecretStore.login(mac.id))
+            }
+            try draft.restorePassword(active: true, allowed: true, signIn: true) { try TerminalSecretStore.login(mac.id) }
             loadKey(preferSelected: preferSelected)
         } catch { issue = .make(.savedDataUnavailable) }
     }
@@ -194,15 +214,17 @@ struct MacDirectTerminalView: View {
                 keyPassphrase = ""; needsPassphrase = false
                 if issue?.reason == .importUnlock { issue = nil }
             }
+            let fileChanged = draft.updateKeyFile(selection?.file)
             if let selection {
                 keyFile = selection.file; key = nil; keyName = selection.file.name
-                login.loadKeyAccount(selection.username, preferSelected: preferSelected)
+                if fileChanged || preferSelected { draft.loadKeyAccount(selection.username, preferSelected: preferSelected) }
                 return
             }
             keyFile = nil; keyPassphrase = ""; needsPassphrase = false
             let selected = try TerminalKeyLibraryStore.selected(mac.id)
             key = selected?.key; keyName = selected?.name ?? ""
-            login.loadKeyAccount(selected?.key.username, preferSelected: preferSelected)
+            let identity = selected.map { DirectFilesLoginDraft.NamedKeyIdentity(id: $0.id, fingerprint: $0.key.fingerprint) }
+            if draft.updateNamedKey(identity) || fileChanged || preferSelected { draft.loadKeyAccount(selected?.key.username, preferSelected: preferSelected) }
         } catch { issue = .make(.savedDataUnavailable) }
     }
     private func loadControls() {
@@ -214,7 +236,7 @@ struct MacDirectTerminalView: View {
     private func connect() {
         issue = nil
         guard !closed, DirectAppLockV1.shared.canAccess, !session.connected, !busy else { return }
-        if login.method == .sshKey {
+        if draft.method == .sshKey {
             if let keyFile {
                 connectFile(keyFile); return
             } else {
@@ -223,14 +245,15 @@ struct MacDirectTerminalView: View {
                 catch { issue = .make(.savedDataUnavailable, message: "The selected SSH key is unavailable. Existing keys are kept; choose a key and retry."); return }
             }
         }
-        session.connect(username: login.username, password: password, remember: remember,
-                        key: login.method == .sshKey ? key : nil)
+        loginAttempt = draft.authenticationAttempt(account: draft.username, password: draft.method == .password ? password : nil, remember: remember)
+        session.connect(username: draft.username, password: password, remember: remember,
+                        key: draft.method == .sshKey ? key : nil)
     }
     private func cancelPreparation() { preparation = UUID(); preparingKey = false; keyPassphrase = "" }
     private func connectFile(_ file: MacSSHKeyFileReference) {
         do { guard try MacSSHKeyFileStore.canUse(file) else { sheet = .pro; return } }
         catch { issue = .make(.savedDataUnavailable, message: error.localizedDescription); return }
-        let token = UUID(), account = login.username, passphrase = keyPassphrase
+        let token = UUID(), account = draft.username, passphrase = keyPassphrase
         preparingKey = true; preparation = token; keyPassphrase = ""
         Task {
             let result = await Task.detached(priority: .userInitiated) { try file.read(passphrase: passphrase) }.result
@@ -240,6 +263,7 @@ struct MacDirectTerminalView: View {
                 guard keyFile == file, try MacSSHKeyFileStore.selected(mac.id)?.file == file else { throw MacSSHKeyFileStore.Failure.unavailable }
                 guard try MacSSHKeyFileStore.canUse(file) else { sheet = .pro; return }
                 let parsed = try result.get()
+                loginAttempt = draft.authenticationAttempt(account: account, password: nil, remember: false)
                 session.connect(username: account, password: "", remember: false, key: parsed, keyFileID: file.id)
             } catch TerminalSSHKey.KeyFailure.passphrase {
                 needsPassphrase = true
@@ -260,8 +284,8 @@ struct MacDirectTerminalView: View {
         }
     }
     private func reconnect() {
-        if login.method == .password, password.isEmpty { loadLogin() }
-        if login.method == .sshKey, key == nil { loadKey() }
+        if draft.method == .password, password.isEmpty { loadLogin() }
+        if draft.method == .sshKey, key == nil { loadKey() }
         if issue == nil { connect() }
     }
 }

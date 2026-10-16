@@ -49,6 +49,63 @@ generation boundaries. Parent session closure may interrupt Files with an honest
 notice; it never silently retries a transfer. Completed unsaved downloads remain
 available under their original account. No indefinite background work is promised.
 
+## macOS Terminal connection reuse revision, 2026-10-15
+
+This section supersedes independent authentication below for Files opened from
+an authenticated macOS Terminal. Open a new SFTP channel on that exact Terminal's
+SSH client without reading credentials, selecting a method, or authenticating
+again, including unsaved passwords and passphrase-protected disk keys. Files
+shows the authenticated account. Closing or failing Files MUST NOT close the
+parent shell; closing the parent interrupts Files without replaying transfers.
+Completed downloads remain available under the original account.
+
+The native window request contains only a Terminal-window identifier and its
+connection generation, never a secret or live transport. Resolve it through a
+process-local weak registry scoped to the originating library and Mac snapshot.
+A missing owner, another Mac/library, replaced connection, locked app or restored
+request from a previous process MUST NOT borrow a different connection or fall
+back to a separate sign-in form. Explain that the user must reconnect Terminal
+and reopen Files. Files is available from Terminal only while connected. Existing
+standalone Browse Files requests remain decodable and keep their independent
+SSH login; Apple Screen Sharing owns a separate external connection that this
+app cannot borrow. iOS retains its existing shared-access flow. visionOS has no
+remote Files-browser entry point in this revision.
+
+## macOS Terminal password-form return, 2026-10-15
+
+A successful password connection clears its visible secret. When that shell ends
+or the user disconnects, an unlocked sign-in form MUST restore the remembered
+password for the same account without opening another SSH connection. Reuse the
+existing credential-draft provenance: manual edits/clears, account/method changes,
+and privacy suspension are distinct from successful-login secret cleanup. A
+locked form defers restoration until unlock. Failed reads show recovery without
+losing remembered provenance. An unchecked Save Login clears both password and
+password-account fields after a successful session ends, without reading an old
+saved login. Unchecking during entry does not discard the current typed draft;
+failed or cancelled authentication does not impersonate a completed session.
+SSH-key account associations and one-connection key passphrases are separate from
+this password-login checkbox.
+
+## Credential-form lifecycle on all direct clients, 2026-10-15
+
+The same return policy applies to standalone Files, retained Screen Sharing
+forms, iOS/iPadOS Terminal and visionOS sessions. Successful key authentication
+MUST preserve only the provenance of an unedited saved password for a later
+method switch. Empty accounts are isolated per method; no other method supplies
+a fallback username. An ended unsaved password session clears both form fields.
+Failed/cancelled initial authentication preserves its editable draft. Privacy
+suspension clears visible secrets and defers saved reads until unlocked/active.
+
+iOS Screen Sharing recovery MUST NOT depend on visible text controls: the
+active owner may keep its attempt credentials only for its bounded automatic
+resume/replacement. Clear that recovery material on final failure, explicit end
+or editing a new login. Retiring an established session restores a saved form
+or clears an unsaved form without reconnecting. A recoverable pause does not
+retire its login or the live SSH shell. Existing transport-generation, foreground,
+unlock, host identity and shared-access lease checks remain authoritative.
+Closing or cancelling Login & Access MUST NOT replace an unsaved session draft;
+only a successful explicit Save or Forget commits a managed-login refresh.
+
 ## Connection and identity
 
 Files MUST own an independent SSH/SFTP connection to the selected Mac's saved

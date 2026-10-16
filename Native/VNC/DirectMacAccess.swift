@@ -191,15 +191,6 @@ struct DirectMacAccessProfile: Codable, Equatable {
     }
 }
 
-/// A borrowed authenticated context never contains a password or private key.
-@MainActor struct DirectFilesConnectionContext {
-    let client: SSHClient
-    let macID: UUID
-    var ownerID = UUID()
-    let account: String
-    let keyID: UUID?
-    let generation: UUID
-}
 @MainActor enum DirectFilesWorkspace {
     private struct Key: Hashable { let macID: UUID; let library: URL }
     @MainActor @Observable fileprivate final class Signals { var revision = 0 }

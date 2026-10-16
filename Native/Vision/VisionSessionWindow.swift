@@ -9,10 +9,12 @@ struct VisionSessionWindow: View {
     @State private var terminalOutput: VisionTerminalOutput?
     @State private var terminalInteraction = VisionTerminalInteraction()
     @State private var lock = DirectAppLockV1.shared
-    @State private var username = ""
-    @State private var password = ""
-    @State private var remember = false
-    @State private var useKey = false
+    @State private var draft = DirectFilesLoginDraft()
+    @State private var loginAttempt: DirectFilesLoginDraft.AuthenticationAttempt?
+    private var username: String { draft.username }
+    private var password: String { draft.password }
+    private var remember: Bool { draft.remember }
+    private var useKey: Bool { draft.method == .sshKey }
     @State private var key: TerminalNamedKey?
     @State private var desktopInteraction = VisionDesktopInteraction()
     @State private var keysShown = false
@@ -93,14 +95,19 @@ struct VisionSessionWindow: View {
             .onAppear { sessions.add(request); loadLogin() }
             .onDisappear { sessions.remove(request.id); desktop?.close(); terminal?.stop(); clearDraft() }
             .onChange(of: phase) { _, value in
-                if value == .active && lock.canAccess { desktop?.resume(); terminal?.foreground() }
+                if value == .active && lock.canAccess { draft.resume(); desktop?.resume(); terminal?.foreground(); loadLogin() }
                 else { interrupt() }
             }
             .onChange(of: lock.canAccess) { _, available in
-                if available && phase == .active { desktop?.resume(); terminal?.foreground() }
+                if available && phase == .active { draft.resume(); desktop?.resume(); terminal?.foreground(); loadLogin() }
                 else { interrupt() }
             }
-            .onChange(of: connected) { _, value in if value { clearDraft() } }
+            .onChange(of: connected) { _, value in
+                if value {
+                    draft.authenticationSucceeded(loginAttempt, retention: remember && !useKey ? (recovery?.reason == .saveFailed ? .failed : .saved) : .notRequested)
+                    loginAttempt = nil
+                } else { draft.passwordSessionEnded(); loadLogin() }
+            }
             .onChange(of: desktop?.closed) { _, value in if value == true { closeWindow() } }
             .onChange(of: terminal?.macRemoved) { _, value in if value == true { closeWindow() } }
             .onChange(of: library.macs) { _, records in
@@ -124,23 +131,23 @@ struct VisionSessionWindow: View {
                 if request.connection == .desktop { Text("View and control this Mac").foregroundStyle(.secondary) }
                 Text(request.connection == .desktop ? "Enable Screen Sharing and Remote Login on your Mac, then sign in with an allowed Mac account." : "Enable Remote Login on your Mac, then sign in with an allowed Mac account.")
                     .foregroundStyle(.secondary)
-                TextField("Mac Account", text: $username).directNoAutocapitalization().autocorrectionDisabled().textFieldStyle(.roundedBorder)
+                TextField("Mac Account", text: $draft.username).directNoAutocapitalization().autocorrectionDisabled().textFieldStyle(.roundedBorder)
                     .accessibilityIdentifier("vision-login-account")
                     .focused($loginFocus, equals: .account).submitLabel(.next)
                     .onSubmit { loginFocus = .password }
                 if request.connection == .terminal, let key {
-                    Toggle("Use SSH Key: \(key.name)", isOn: $useKey)
+                    Toggle("Use SSH Key: \(key.name)", isOn: Binding(get: { useKey }, set: { draft.selectMethod($0 ? .sshKey : .password); loadLogin() }))
                 }
                 if !useKey {
-                    SecureField("Mac Password", text: $password).textFieldStyle(.roundedBorder).accessibilityIdentifier("vision-login-password")
+                    SecureField("Mac Password", text: $draft.password).textFieldStyle(.roundedBorder).accessibilityIdentifier("vision-login-password")
                         .focused($loginFocus, equals: .password).submitLabel(.go)
                         .onSubmit { if !connecting { connect() } }
-                    Toggle("Remember This Login on This Device", isOn: $remember)
+                    Toggle("Remember This Login on This Device", isOn: $draft.remember)
                 }
                 if let draftError { Text(draftError).foregroundStyle(.red) }
                 HStack {
                     if connecting {
-                        ProgressView(); Button("Cancel Connection") { desktop?.disconnect(); terminal?.cancelConnection(); clearDraft() }
+                        ProgressView(); Button("Cancel Connection") { desktop?.disconnect(); terminal?.cancelConnection(); loginAttempt = nil }
                     } else {
                         Button("Connect") { connect() }.buttonStyle(.borderedProminent).accessibilityIdentifier("vision-connect")
                     }
@@ -240,6 +247,7 @@ struct VisionSessionWindow: View {
             draftError = "Open an available saved Mac from Your Macs."; return
         }
         draftError = nil
+        loginAttempt = draft.authenticationAttempt(account: username, password: useKey ? nil : password, remember: remember)
         if let desktop { desktop.connect(username: username, password: password, remember: remember) }
         else if let terminal {
             if useKey {
@@ -251,20 +259,26 @@ struct VisionSessionWindow: View {
         }
     }
     private func loadLogin() {
-        guard phase == .active, lock.canAccess else { return }
+        guard phase == .active, lock.canAccess, !connected, !connecting, !closing else { return }
         do {
-            if request.connection == .desktop, let login = try DesktopCredentialStoreV1.readChecked(request.mac.id) {
-                username = login.username; password = login.password; remember = true
-            } else if request.connection == .terminal {
-                key = try TerminalKeyLibraryStore.selected(request.mac.id)
-                useKey = key != nil
-                if let key { username = key.key.username }
-                else if let login = try TerminalSecretStore.login(request.mac.id) { username = login.username; password = login.password; remember = true }
+            let initial = draft.needsInitialLoad(active: true, allowed: true, signIn: true)
+            func saved() throws -> TerminalSecretStore.Login? {
+                if request.connection == .desktop {
+                    return try DesktopCredentialStoreV1.readChecked(request.mac.id).map { .init(username: $0.username, password: $0.password) }
+                }
+                return try TerminalSecretStore.login(request.mac.id)
             }
+            if initial { draft.initialize(saved: try saved()) }
+            if request.connection == .terminal {
+                key = try TerminalKeyLibraryStore.selected(request.mac.id)
+                let identity = key.map { DirectFilesLoginDraft.NamedKeyIdentity(id: $0.id, fingerprint: $0.key.fingerprint) }
+                if draft.updateNamedKey(identity) || initial { draft.loadKeyAccount(key?.key.username, preferSelected: initial) }
+            }
+            try draft.restorePassword(active: true, allowed: true, signIn: true, read: saved)
         } catch { draftError = "The saved login couldn’t be read. Existing local data is kept." }
     }
     private func answerTrust(_ accepted: Bool) { desktop?.answerTrust(accepted); terminal?.answerTrust(accepted) }
-    private func clearDraft() { username = ""; password = ""; key = nil; useKey = false; remember = false; draftError = nil }
-    private func interrupt() { desktop?.pause(); terminal?.background(); clearDraft(); desktopInteraction.dismissKeyboard() }
+    private func clearDraft() { draft.invalidate(); loginAttempt = nil; key = nil; draftError = nil }
+    private func interrupt() { desktop?.pause(); terminal?.background(); draft.suspend(); desktopInteraction.dismissKeyboard() }
 }
 #endif

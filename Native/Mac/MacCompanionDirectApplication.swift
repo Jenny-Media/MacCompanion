@@ -29,8 +29,13 @@ import SwiftUI
             .commands { MacClientCommands() }
         WindowGroup("Files", id: "direct-files", for: DirectFilesWindowRequest.self) { $request in
             if let request {
-                MacFilesWindow(mac: library.macs.first { $0.id == request.macID },
-                    makeSession: { DirectFilesSession(mac: $0, libraryURL: library.storageURL) })
+                let saved = library.macs.first { $0.id == request.macID }
+                let mac = saved == nil ? nil : MacTerminalFilesRegistry.shared.record(for: request, libraryURL: library.storageURL) ?? saved
+                MacFilesWindow(mac: mac,
+                    contextProvider: request.terminalID == nil ? nil : {
+                        guard let mac else { return nil }
+                        return MacTerminalFilesRegistry.shared.context(for: request, mac: mac, libraryURL: library.storageURL)
+                    }, makeSession: { DirectFilesSession(mac: $0, libraryURL: library.storageURL) })
                     .directAppearance().modifier(MacPrivacyCover())
             } else {
                 ContentUnavailableView("Mac unavailable", systemImage: "folder")
