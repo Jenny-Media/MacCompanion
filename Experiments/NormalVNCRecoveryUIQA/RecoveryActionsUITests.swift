@@ -101,10 +101,10 @@ final class RecoveryActionsUITests: XCTestCase {
     }
     @MainActor func testMacListUsesCachedDetailsAndClearOpenAction() async throws {
         let app = launch("mac-list")
-        XCTAssertTrue(app.buttons["Connect to Synthetic Mac using Desktop"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["Open Desktop"].exists)
+        XCTAssertTrue(app.buttons["Connect to Synthetic Mac using Screen Sharing"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Open Screen Sharing"].exists)
         app.terminate(); app.launch()
-        XCTAssertTrue(app.staticTexts["Open Desktop"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Open Screen Sharing"].waitForExistence(timeout: 10))
         capture(app, "synthetic-mac-open-desktop")
     }
     @MainActor private func checkMacListAlignment(_ size: String, captureName: String) {

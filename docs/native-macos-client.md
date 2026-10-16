@@ -456,8 +456,10 @@ it cannot lock or end an external Desktop session.
 
 The Mac detail page offers Screen Sharing and Terminal as independent actions.
 Screen Sharing shows an external-app arrow and Opens Apple Screen Sharing subtitle;
-it never opens Terminal implicitly. Terminal reuses its window until it closes
-and never launches Screen Sharing. There is no combined launch or workspace
+it never opens Terminal implicitly. Terminal registers restored windows and reuses
+an existing window until it closes; it never launches Screen Sharing. Files
+sessions use the same explicit prototype library URL for membership checks and
+removal observation. There is no combined launch or workspace
 concept in the interface. Ignore repeated Screen Sharing clicks while its handoff
 is pending. Failed Screen Sharing launch must leave Terminal usable. Bound the asynchronous wait; lock, removal, edited
 addresses/ports and replacement requests retire pending work and late callbacks.

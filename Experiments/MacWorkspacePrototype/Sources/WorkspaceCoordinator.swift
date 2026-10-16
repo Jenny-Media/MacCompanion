@@ -93,7 +93,7 @@ enum WorkspaceEndpoint {
 @MainActor @Observable final class WorkspaceCoordinator {
     enum Action { case desktop, terminal }
     private(set) var states: [UUID: WorkspaceDesktopState] = [:]
-    private var terminalWindows: [UUID: UUID] = [:]
+    private var terminalWindows: [UUID: [UUID]] = [:]
     private var pending: (token: UUID, machine: WorkspaceMachine)?
     private var work: Task<Void, Never>?
     private var deadline: Task<Void, Never>?
@@ -115,8 +115,9 @@ enum WorkspaceEndpoint {
     func open(_ machine: WorkspaceMachine, action: Action) {
         guard canAccess(), isCurrent(machine) else { return }
         if action == .terminal {
-            let window = terminalWindows[machine.id] ?? UUID()
-            terminalWindows[machine.id] = window; openTerminal(machine.id, window)
+            let window = terminalWindows[machine.id]?.first ?? UUID()
+            terminalOpened(macID: machine.id, windowID: window)
+            openTerminal(machine.id, window)
             return
         }
         if pending?.machine == machine { return }
@@ -161,8 +162,16 @@ enum WorkspaceEndpoint {
         states = states.filter { validIDs.contains($0.key) }
         terminalWindows = terminalWindows.filter { validIDs.contains($0.key) }
     }
+    func terminalOpened(macID: UUID, windowID: UUID) {
+        // Register restoration without launching or connecting anything. Keep
+        // other restored windows available if the preferred one closes.
+        if terminalWindows[macID]?.contains(windowID) != true {
+            terminalWindows[macID, default: []].append(windowID)
+        }
+    }
     func terminalClosed(macID: UUID, windowID: UUID) {
-        if terminalWindows[macID] == windowID { terminalWindows[macID] = nil }
+        terminalWindows[macID]?.removeAll { $0 == windowID }
+        if terminalWindows[macID]?.isEmpty == true { terminalWindows[macID] = nil }
     }
     isolated deinit { work?.cancel(); deadline?.cancel() }
 }

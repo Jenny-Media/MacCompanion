@@ -30,6 +30,17 @@ def run(*args, **kwargs):
     subprocess.run([str(x) for x in args], check=True, **kwargs)
 
 
+def source_inputs(root=ROOT):
+    roots = [root / 'Native/Mac', root / 'Native/VNC', root / 'Native/Terminal', root / 'Native/Dependencies',
+             root / 'Apps/MacCompanionMac/Assets.xcassets']
+    files = [p for folder in roots for p in sorted(folder.rglob('*')) if p.is_file()]
+    files += [root / 'scripts/build_direct_macos.py', *[root / 'scripts' / name for name in [
+        'build_cache.py', 'direct_mac_development_signing.py', 'verify_direct_client_dependencies.py',
+        'prepare_swiftterm_build_tool.py', 'dependency_checkout_provenance.py', 'prepare_macos_vnc_cursor.py', 'prepare_vnc_read_service.py']],
+        root / 'spec/dependency-policy/v0/direct-client-development.json',
+        root / 'spec/privacy-manifest/v0/targets/mac-containing-app/PrivacyInfo.xcprivacy']
+    return {str(p.relative_to(root)): sha(p) for p in files}
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, required=True, help='Clean pinned LibVNCClient checkout')
@@ -49,16 +60,6 @@ def main():
 
 
 def build(args, parser, session):
-    def source_inputs():
-        roots = [ROOT / 'Native/Mac', ROOT / 'Native/VNC', ROOT / 'Native/Terminal', ROOT / 'Native/Dependencies',
-                 ROOT / 'Apps/MacCompanionMac/Assets.xcassets']
-        files = [p for folder in roots for p in sorted(folder.rglob('*')) if p.is_file()]
-        files += [Path(__file__), *[ROOT / 'scripts' / name for name in [
-            'build_cache.py', 'direct_mac_development_signing.py', 'verify_direct_client_dependencies.py',
-            'prepare_swiftterm_build_tool.py', 'dependency_checkout_provenance.py', 'prepare_macos_vnc_cursor.py', 'prepare_vnc_read_service.py']],
-            ROOT / 'spec/dependency-policy/v0/direct-client-development.json',
-            ROOT / 'spec/privacy-manifest/v0/targets/mac-containing-app/PrivacyInfo.xcprivacy']
-        return {str(p.relative_to(ROOT)): sha(p) for p in files}
     application_inputs = source_inputs()
     args.output = args.output.resolve()
     if args.output.is_relative_to(ROOT):

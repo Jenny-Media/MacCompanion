@@ -33,6 +33,7 @@ Every prototype build compiles the actual coordinator into a headless native
 test executable. The tests read `spec/fixtures/native-macos-client-v1.json`
 through the existing fixture manifest; there is no second fixture corpus.
 Coverage includes private IPv4/IPv6 URL admission, credential/query injection,
+restored Terminal reuse and closure, exact native source membership before/after,
 Independent launches, Screen Sharing failures, duplicate clicks, Terminal reuse/close, lock/removal/edits,
 replacement requests, timeouts and late callbacks. No GUI, credentials or remote
 connection is needed. Also run `bash scripts/validate.sh` before handoff.
@@ -66,7 +67,9 @@ profile download or certificate creation is enabled.
 4. Choose **Terminal** independently and enter its SSH credentials privately.
    Confirm both windows target the intended Mac. Choose Terminal again: it should
    focus its existing window. Close Terminal and reopen it to create a new window.
-   Apple owns whether it reuses its Screen Sharing window.
+   Apple owns whether it reuses its Screen Sharing window. Terminal windows
+   restored after relaunch register for the same reuse policy. Files uses this
+   prototype's exact library URL when checking membership and observing removal.
 5. Cancel Screen Sharing login and check Terminal remains usable. Retry **Screen
    Sharing** independently. Editing/removing a Mac or locking this app during
    address resolution should retire the pending handoff.

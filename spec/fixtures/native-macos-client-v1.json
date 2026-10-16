@@ -969,7 +969,7 @@
     "addressPolicy": "existingPrivateLocalEndpointPolicy",
     "launchesWhileLocked": false,
     "duplicatePendingLaunches": false,
-    "terminalWindowPerMac": "reuseUntilClosed",
+    "terminalWindowPerMac": "registerRestoredAndReuseUntilClosed",
     "desktopFailureClosesTerminal": false,
     "retiredRepliesChangeState": false,
     "urlCases": [
@@ -1049,6 +1049,8 @@
       "externalApplicationIndicator": true,
       "applicationName": "Mac Companion Prototype",
       "savedDataIdentityChanged": false
-    }
+    },
+    "filesLibrary": "samePrototypeLibraryURL",
+    "buildAdmission": "exactNativeSourceManifestBeforeAndAfter"
   }
 }

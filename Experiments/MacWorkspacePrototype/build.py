@@ -18,6 +18,7 @@ EXPERIMENT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / 'scripts'))
 from build_cache import BuildSession, compiler_workspace, toolchain_identity, write_if_changed
 from dependency_checkout_provenance import verify_checkouts
+from build_direct_macos import source_inputs as native_source_inputs
 
 
 def sha(path):
@@ -32,9 +33,8 @@ def inputs():
 
 
 def verify_inputs(expected):
-    for relative, digest in expected.items():
-        if sha(ROOT / relative) != digest:
-            raise RuntimeError('Source snapshot changed: ' + relative + '. Rebuild against a stable snapshot.')
+    if native_source_inputs() != expected:
+        raise RuntimeError('Native source snapshot changed. Rebuild the normal Mac client against the complete current source set.')
 
 
 def run(*command, log):
@@ -94,6 +94,7 @@ def main():
 
         # Compile the actual coordinator, not a copy of its logic. The fixture
         # remains in the single authoritative specification manifest.
+        run(sys.executable, EXPERIMENT / 'Tests/BuildAdmissionTests.py', log=work / 'admission-tests.log')
         tests = work / 'workspace-tests'
         run('xcrun', '--sdk', 'macosx', 'swiftc', '-swift-version', '6', '-parse-as-library',
             '-target', 'arm64-apple-macosx26.0', '-module-cache-path', work / 'TestModuleCache',

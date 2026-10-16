@@ -188,6 +188,39 @@ private actor Gate {
                 try expect(h.terminals.count == 1, "Desktop-only opened Terminal")
                 count += 2
             }
+            do {
+                let h = Harness(), c = h.coordinator(), restored = UUID(), other = UUID()
+                c.terminalOpened(macID: h.first.id, windowID: restored)
+                c.terminalOpened(macID: h.first.id, windowID: restored)
+                try expect(h.terminals.isEmpty && h.urls.isEmpty, "Restoration launched new work")
+                c.open(h.first, action: .terminal)
+                try expect(h.terminals.last?.1 == restored, "Restored Terminal was duplicated")
+                c.terminalOpened(macID: h.first.id, windowID: other)
+                c.terminalClosed(macID: h.first.id, windowID: restored)
+                c.terminalClosed(macID: h.first.id, windowID: restored)
+                c.open(h.first, action: .terminal)
+                try expect(h.terminals.last?.1 == other, "Closing one restored window lost another")
+                c.terminalClosed(macID: h.first.id, windowID: other)
+                c.open(h.first, action: .terminal)
+                try expect(h.terminals.last?.1 != restored && h.terminals.last?.1 != other, "Closed restored window was reused")
+                count += 4
+            }
+            do {
+                let h = Harness(), c = h.coordinator(), restored = UUID()
+                h.allowed = false
+                c.terminalOpened(macID: h.first.id, windowID: restored)
+                c.open(h.first, action: .terminal)
+                try expect(h.terminals.isEmpty, "Restored Terminal bypassed app lock")
+                h.allowed = true
+                c.open(h.first, action: .terminal)
+                try expect(h.terminals.last?.1 == restored, "Unlock forgot the restored Terminal")
+                h.current[h.first.id] = nil
+                c.recordsChanged(validIDs: Set(h.current.keys))
+                h.current[h.first.id] = h.first
+                c.open(h.first, action: .terminal)
+                try expect(h.terminals.last?.1 != restored, "Removed Mac kept an old restored window")
+                count += 3
+            }
             print("PASS: \(count) workspace endpoint and lifecycle checks (no GUI or credentials)")
         } catch {
             print("FAIL: \(error)")

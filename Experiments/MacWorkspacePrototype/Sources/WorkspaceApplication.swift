@@ -42,7 +42,8 @@ struct WorkspaceTerminalRequest: Codable, Hashable { let id: UUID; let macID: UU
         }.defaultSize(width: 1000, height: 680)
         WindowGroup("Files", id: "direct-files", for: DirectFilesWindowRequest.self) { $request in
             if let request {
-                MacFilesWindow(mac: model.library.macs.first { $0.id == request.macID })
+                MacFilesWindow(mac: model.library.macs.first { $0.id == request.macID },
+                    makeSession: { DirectFilesSession(mac: $0, libraryURL: model.library.storageURL) })
                     .directAppearance().modifier(MacPrivacyCover())
             }
         }.defaultSize(width: 720, height: 640)
@@ -60,6 +61,7 @@ struct WorkspaceTerminalRequest: Codable, Hashable { let id: UUID; let macID: UU
 private struct WorkspaceTerminalWindow: View {
     let request: WorkspaceTerminalRequest
     let model: WorkspacePrototypeModel
+    @Environment(\.openWindow) private var openWindow
     @State private var nativeRequest: MacSessionRequest
     init(request: WorkspaceTerminalRequest, model: WorkspacePrototypeModel) {
         self.request = request; self.model = model
@@ -67,6 +69,13 @@ private struct WorkspaceTerminalWindow: View {
     }
     var body: some View {
         MacSessionWindow(request: nativeRequest, library: model.library)
+            .onAppear {
+                // A restored Terminal can appear before the library window.
+                model.install { macID, windowID in
+                    openWindow(id: "workspace-terminal", value: WorkspaceTerminalRequest(id: windowID, macID: macID))
+                }
+                model.coordinator?.terminalOpened(macID: request.macID, windowID: request.id)
+            }
             .background(MacWindowLifetime {
                 model.coordinator?.terminalClosed(macID: request.macID, windowID: request.id)
             }.frame(width: 0, height: 0))
