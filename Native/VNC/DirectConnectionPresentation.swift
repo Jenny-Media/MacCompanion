@@ -105,10 +105,20 @@ extension DirectRecoveryNotice {
 
 struct DirectConnectionNotice: View {
     let notice: DirectRecoveryNotice
-    private var color: Color { notice.severity == .critical ? .red : .orange }
+    var color: Color {
+        switch notice.severity { case .information: .blue; case .warning: .orange; case .critical: .red; case .success: .green }
+    }
+    var symbol: String {
+        switch notice.severity {
+        case .information: "info.circle"
+        case .warning: "exclamationmark.circle"
+        case .critical: "exclamationmark.shield"
+        case .success: "checkmark.circle"
+        }
+    }
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: notice.severity == .critical ? "exclamationmark.shield" : "exclamationmark.circle").font(.body).foregroundStyle(color).padding(.top, 2)
+            Image(systemName: symbol).font(.body).foregroundStyle(color).padding(.top, 2)
             VStack(alignment: .leading, spacing: 5) {
                 Text(notice.connectionTitle).font(.subheadline.weight(.semibold))
                 DirectNoticeMessage(message: notice.connectionMessage).font(.subheadline)

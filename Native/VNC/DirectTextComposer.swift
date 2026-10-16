@@ -116,6 +116,8 @@ struct DirectComposedText: Equatable {
 @MainActor @objc(DirectTextComposer) final class DirectTextComposer: NSObject {
     let draft: DirectTextComposerDraft
     @objc var interruptionHandler: (() -> Void)?
+    @objc weak var shortcutBar: UIView?
+    var presentationChanged: ((Bool) -> Void)?
     private weak var host: UIViewController?
     private var invalidating = false
     private var observers: [NSObjectProtocol] = []
@@ -161,6 +163,11 @@ struct DirectComposedText: Equatable {
         guard !draft.sending, DirectAppLockV1.shared.canAccess, available(), controller.presentedViewController == nil else { return }
         draft.configure(available: { DirectAppLockV1.shared.canAccess && DirectClientPlatformV1.sessionAvailable && available() }, send: send)
         let host = DirectTextComposerPanel(draft: draft)
+        host.shortcutBar = shortcutBar
+        host.visibilityChanged = { [weak self, weak host] visible in
+            guard let self, let host, self.host === host else { return }
+            self.presentationChanged?(visible)
+        }
         controller.definesPresentationContext = true
         host.modalPresentationStyle = .overCurrentContext
         host.modalTransitionStyle = .crossDissolve
@@ -182,20 +189,29 @@ struct DirectComposerPlacement {
         let top = safe.minY + (room < 284 ? 8 : 48)
         return CGRect(x: safe.minX + 8, y: top, width: max(0, safe.width - 16), height: max(0, keyboardTop - 8 - top))
     }
-    static func area(safe: CGRect, keyboard: CGRect) -> CGRect {
-        let visible = keyboard.intersection(safe)
-        guard !visible.isNull, !visible.isEmpty else { return area(safe: safe, keyboardTop: safe.maxY) }
-        let above = area(safe: safe, keyboardTop: visible.minY)
+    static func area(safe: CGRect, keyboard: CGRect, shortcutBar: CGRect = .null) -> CGRect {
+        // Keep separate obstacles separate: an undocked keyboard can sit near
+        // the top while the app's shortcut row remains at the bottom.
+        let obstacles = [keyboard, shortcutBar].map { $0.intersection(safe) }
+            .filter { !$0.isNull && !$0.isEmpty }
+        guard let ceiling = obstacles.map(\.minY).min() else { return area(safe: safe, keyboardTop: safe.maxY) }
+        let above = area(safe: safe, keyboardTop: ceiling)
         if above.height >= 180 { return above }
         let base = area(safe: safe, keyboardTop: safe.maxY)
-        let belowY = max(base.minY, visible.maxY + 8)
-        let below = CGRect(x: base.minX, y: belowY, width: base.width, height: max(0, base.maxY - belowY))
-        let left = CGRect(x: base.minX, y: base.minY, width: max(0, visible.minX - 8 - base.minX), height: base.height)
-        let rightX = max(base.minX, visible.maxX + 8)
-        let right = CGRect(x: rightX, y: base.minY, width: max(0, base.maxX - rightX), height: base.height)
-        let candidates = [above, below, left, right]
-        // Prefer a region that can hold the compact editor and its actions;
-        // moving an undocked keyboard near the top must not collapse the card.
+        let free = obstacles.reduce([base]) { regions, obstacle in
+            regions.flatMap { region -> [CGRect] in
+                guard region.intersects(obstacle) else { return [region] }
+                let belowY = max(region.minY, obstacle.maxY + 8)
+                let rightX = max(region.minX, obstacle.maxX + 8)
+                return [
+                    CGRect(x: region.minX, y: region.minY, width: region.width, height: max(0, min(region.maxY, obstacle.minY - 8) - region.minY)),
+                    CGRect(x: region.minX, y: belowY, width: region.width, height: max(0, region.maxY - belowY)),
+                    CGRect(x: region.minX, y: region.minY, width: max(0, min(region.maxX, obstacle.minX - 8) - region.minX), height: region.height),
+                    CGRect(x: rightX, y: region.minY, width: max(0, region.maxX - rightX), height: region.height)
+                ].filter { !$0.isEmpty }
+            }
+        }
+        let candidates = [above] + free
         let readable = candidates.filter { $0.width >= 264 && $0.height >= 112 }
         return (readable.isEmpty ? candidates : readable).max {
             $0.width * min(324, $0.height) < $1.width * min(324, $1.height)
@@ -263,8 +279,14 @@ struct DirectComposerPlacement {
         #endif
         return view.keyboardLayoutGuide.layoutFrame
     }
+    weak var shortcutBar: UIView?
+    var visibilityChanged: ((Bool) -> Void)?
     var placementArea: CGRect {
-        DirectComposerPlacement.area(safe: view.safeAreaLayoutGuide.layoutFrame, keyboard: keyboardFrame)
+        let bar: CGRect
+        if let shortcutBar, shortcutBar.window === view.window, !shortcutBar.isHidden, shortcutBar.alpha > 0 {
+            bar = view.convert(shortcutBar.bounds, from: shortcutBar)
+        } else { bar = .null }
+        return DirectComposerPlacement.area(safe: view.safeAreaLayoutGuide.layoutFrame, keyboard: keyboardFrame, shortcutBar: bar)
     }
     init(draft: DirectTextComposerDraft) { self.draft = draft; presentationEpoch = draft.presentationEpoch; super.init(nibName: nil, bundle: nil) }
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
@@ -417,6 +439,12 @@ struct DirectComposerPlacement {
             cancelMovement(); draft.expanded = initialExpanded; draft.floatingAnchor = initialAnchor; settle()
         default: break
         }
+    }
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated); visibilityChanged?(true)
+    }
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated); visibilityChanged?(false)
     }
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()

@@ -30,6 +30,16 @@ import SwiftUI
         XCTAssertEqual(selection.method, .password)
         XCTAssertEqual(selection.username, "edited-password-account")
     }
+    func testConnectionNoticesRespectInformationalWarningCriticalAndSuccessSeverity() {
+        let ended = DirectConnectionNotice(notice: .make(.terminalEnded))
+        XCTAssertEqual(ended.color, .blue); XCTAssertEqual(ended.symbol, "info.circle")
+        let warning = DirectConnectionNotice(notice: .make(.terminalConnection))
+        XCTAssertEqual(warning.color, .orange); XCTAssertEqual(warning.symbol, "exclamationmark.circle")
+        let critical = DirectConnectionNotice(notice: .make(.serverChanged))
+        XCTAssertEqual(critical.color, .red); XCTAssertEqual(critical.symbol, "exclamationmark.shield")
+        let success = DirectConnectionNotice(notice: .make(.setupVerified))
+        XCTAssertEqual(success.color, .green); XCTAssertEqual(success.symbol, "checkmark.circle")
+    }
     func testRecoveryCardWithRetainedLoginRendersWithoutTheFullSignInForm() async throws {
         let mac = try DirectMacRecordV1.normalized(name: "Synthetic Mac", address: "synthetic.local")
         try TerminalSecretStore.save(.init(username: "synthetic", password: "synthetic-only"), id: mac.id)

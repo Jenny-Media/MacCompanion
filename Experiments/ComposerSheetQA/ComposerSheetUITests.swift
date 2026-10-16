@@ -2,9 +2,9 @@ import XCTest
 @MainActor final class ComposerSheetUITests: XCTestCase {
     override func setUp() { super.setUp(); continueAfterFailure = false; XCUIDevice.shared.orientation = .portrait }
     override func tearDown() { XCUIDevice.shared.orientation = .portrait; super.tearDown() }
-    private func open(narrow: Bool = false) -> XCUIApplication {
+    private func open(narrow: Bool = false, shortcutBar: Bool = false) -> XCUIApplication {
         let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.sheetqa.ios")
-        app.launchArguments = narrow ? ["--qa-narrow-composer"] : []; app.launch()
+        app.launchArguments = (narrow ? ["--qa-narrow-composer"] : []) + (shortcutBar ? ["--qa-shortcut-bar"] : []); app.launch()
         XCTAssertTrue(app.buttons["qa-compose"].waitForExistence(timeout: 10)); app.buttons["qa-compose"].tap()
         XCTAssertTrue(app.textViews["compose-text"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5)); return app
@@ -27,6 +27,32 @@ import XCTest
     private func grabber(_ app: XCUIApplication) -> XCUICoordinate {
         let button = app.buttons["compose-grabber"]
         return button.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+    }
+
+    func testBubbleSitsAboveShortcutBarAndStillDragsTypesAndSends() async {
+        let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.sheetqa.ios")
+        app.launchArguments = ["--qa-shortcut-bar", "--qa-delivery-result"]; app.launch()
+        defer { app.terminate() }
+        XCTAssertTrue(app.buttons["qa-compose"].waitForExistence(timeout: 10)); app.buttons["qa-compose"].tap()
+        let editor = app.textViews["compose-text"], panel = app.otherElements["compose-panel"].firstMatch
+        XCTAssertTrue(editor.waitForExistence(timeout: 5)); editor.typeText("retained draft")
+        await waitForKeyboardAndPanel(app)
+        let bar = app.otherElements["qa-shortcut-bar"]
+        XCTAssertTrue(bar.exists); XCTAssertEqual(panel.frame.maxY, bar.frame.minY - 8, accuracy: 2)
+        XCTAssertFalse(panel.frame.intersects(bar.frame))
+        let start = grabber(app); start.press(forDuration: 0.15, thenDragTo: start.withOffset(CGVector(dx: -40, dy: -90)))
+        XCTAssertLessThan(panel.frame.maxY, bar.frame.minY - 30)
+        editor.typeText(" typed"); XCTAssertEqual(editor.value as? String, "retained draft typed")
+        app.buttons["compose-back"].tap(); app.buttons["qa-compose"].tap()
+        XCTAssertTrue(editor.waitForExistence(timeout: 5)); XCTAssertEqual(editor.value as? String, "retained draft typed")
+        app.buttons["compose-send"].tap()
+        XCTAssertTrue(app.buttons["compose-error"].waitForExistence(timeout: 5))
+        XCTAssertEqual(editor.value as? String, "retained draft typed")
+        app.buttons["compose-error"].tap()
+        XCTAssertTrue(app.staticTexts["Synthetic delivery failure"].waitForExistence(timeout: 5))
+        app.buttons["compose-error-done"].tap(); app.buttons["compose-send"].tap()
+        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: app.buttons["qa-compose"])
+        XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed); XCTAssertFalse(editor.exists)
     }
 
     func testInlineFooterGrowsMultilineWithoutTextControlOverlapAndRetainsDraft() async {
@@ -158,18 +184,20 @@ import XCTest
         XCTAssertEqual(editor.value as? String, ""); XCTAssertFalse(app.buttons["compose-error"].exists)
     }
     func testFloatingRotationKeepsEditorCloseAndSendAboveKeyboard() async {
-        let app = open(); defer { app.terminate() }
+        let app = open(shortcutBar: true); defer { app.terminate() }
         let editor = app.textViews["compose-text"]; editor.typeText("rotation draft")
         XCUIDevice.shared.orientation = .landscapeLeft
         await waitForKeyboardAndPanel(app)
         let keyboard = app.keyboards.firstMatch, panel = app.otherElements["compose-panel"].firstMatch
         XCTAssertGreaterThanOrEqual(panel.frame.minY, app.frame.minY + 8)
         XCTAssertLessThanOrEqual(panel.frame.maxY, keyboard.frame.minY + 2)
+        XCTAssertFalse(panel.frame.intersects(app.otherElements["qa-shortcut-bar"].frame))
         XCTAssertGreaterThan(editor.frame.height, 35)
         XCTAssertTrue(app.buttons["compose-send"].isHittable); XCTAssertTrue(app.buttons["compose-back"].isHittable)
         XCTAssertFalse(editor.frame.intersects(app.buttons["compose-send"].frame))
         app.typeText(" retained"); XCTAssertEqual(editor.value as? String, "rotation draft retained")
         XCUIDevice.shared.orientation = .portrait
         await waitForKeyboardAndPanel(app); XCTAssertTrue(app.buttons["compose-send"].isHittable)
+        XCTAssertFalse(panel.frame.intersects(app.otherElements["qa-shortcut-bar"].frame))
     }
 }

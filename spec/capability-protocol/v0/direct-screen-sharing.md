@@ -398,7 +398,15 @@ Desktop, Trackpad & Keyboard and Terminal offer a free **Compose Text** session
 Quick Action (also available under Keyboard & Input). Existing untouched default
 profiles gain this action; preserve all customized profiles and their disabled
 actions. macOS does not expose this tool. Present a small floating text bubble
-above the native keyboard, retaining visible session content. Use one multiline
+above the visible app shortcut bar and native keyboard, retaining visible session
+content. Reserve the bar's actual frame with a small gap, not a fixed assumed
+height. A hidden bar reserves no space; hardware and moved tablet keyboards still
+leave the visible bar unobscured. Treat a floating keyboard and bottom shortcut bar
+as separate obstacles, retaining the usable space between them. While Terminal's
+composer is visible, keep its main shortcut row and temporarily hide the extra
+number/custom-key rows. If even the main row leaves less than the 112-point editor
+minimum in a short viewport, hide that row during composition. Restore row visibility
+and extra rows on dismissal without changing saved preferences. Use one multiline
 input surface with a full-width editor and an inline bottom row containing Close,
 a drag grip and circular arrow Send. Grow the compact bubble with text up to six
 preferred body lines, then scroll within the same editor; clamp to keyboard-safe
@@ -657,6 +665,10 @@ Retain the SSH server's exit status or exit signal until PTY output has drained.
 Only a reported exit status of zero, followed by channel closure without a transport
 error, returns to My Macs and ends the session's Live Activity. Nonzero status,
 exit signal, missing status, and transport failure offer explicit recovery instead.
+PTY window-change notifications are advisory. A failed size write must not cancel
+the output reader or overwrite its authoritative completion, including while it
+drains final output and exit status. Keyboard and view layout changes can send
+size notifications without a user resize; operation names are not error causes.
 Never infer shell completion by inspecting typed input. Completion from an old
 session cannot dismiss a replacement session; navigation waits for app unlock and
 active foreground state. Recovery with retained credentials offers a new shell

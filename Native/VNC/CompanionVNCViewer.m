@@ -1880,6 +1880,7 @@
 - (void)showTextComposer {
     if (![self composedTextAvailable]) return;
     if (!self.textComposer) self.textComposer = [[DirectTextComposer alloc] initWithMacName:self.macName ?: @"Mac" mode:self.inputOnly ? @"trackpad" : @"desktop"];
+    self.textComposer.shortcutBar = self.toolbar;
     [self.view endEditing:YES]; [self resetModifiers]; [self releasePointer];
     [self cancelTrackpadTouches]; [self.controls close];
     __weak CompanionVNCViewer *weak = self;

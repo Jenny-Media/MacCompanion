@@ -2540,6 +2540,33 @@
       "transportFailed": false,
       "currentSession": false,
       "returnToMacs": false
+    },
+    {
+      "name": "normalExitAfterResizeFailure",
+      "exitStatus": 0,
+      "exitSignal": null,
+      "transportFailed": false,
+      "currentSession": true,
+      "returnToMacs": true,
+      "resizeWriteFailed": true
+    },
+    {
+      "name": "transportLossAfterResizeFailure",
+      "exitStatus": 0,
+      "exitSignal": null,
+      "transportFailed": true,
+      "currentSession": true,
+      "returnToMacs": false,
+      "resizeWriteFailed": true
+    },
+    {
+      "name": "nonzeroExitAfterResizeFailure",
+      "exitStatus": 1,
+      "exitSignal": null,
+      "transportFailed": false,
+      "currentSession": true,
+      "returnToMacs": false,
+      "resizeWriteFailed": true
     }
   ],
   "connectionActionCases": [
