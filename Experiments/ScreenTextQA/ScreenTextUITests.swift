@@ -31,6 +31,19 @@ final class ScreenTextUITests: XCTestCase {
         copy.tap()
         XCTAssertEqual(status.label, "Copied")
         XCTAssertFalse(app.textViews["text-copy-result"].exists)
+        app.buttons["text-copy-edit"].tap()
+        let editor = app.textViews["text-copy-result"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        editor.tap()
+        editor.typeText(" corrected")
+        let corrected = editor.value as? String
+        XCTAssertTrue(corrected?.contains("corrected") == true)
+        app.buttons["text-copy-edit"].tap()
+        XCTAssertFalse(editor.exists)
+        app.buttons["text-copy-copy"].tap()
+        XCTAssertEqual(status.label, "Copied")
+        app.buttons["text-copy-edit"].tap()
+        XCTAssertEqual(editor.value as? String, corrected)
     }
 
     func testAreaRecognizesAutomaticallyAndKeepsEditingAndDoneReachable() {

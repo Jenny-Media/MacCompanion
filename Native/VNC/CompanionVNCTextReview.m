@@ -32,6 +32,7 @@
 @property(nonatomic) CGRect selection, initialRect, startRect;
 @property(nonatomic) BOOL fitted;
 @property(nonatomic) BOOL selectionEnabled;
+@property(nonatomic) BOOL adjustingSelection;
 @property(nonatomic) UIPanGestureRecognizer *moveGesture;
 @property(nonatomic) UIImageView *magnifier;
 @property(nonatomic, copy) void (^selectionChanged)(void);
@@ -143,14 +144,17 @@
     return YES;
 }
 - (void)moveSelection:(UIPanGestureRecognizer *)gesture {
+    self.adjustingSelection = gesture.state == UIGestureRecognizerStateBegan || gesture.state == UIGestureRecognizerStateChanged;
     if (gesture.state == UIGestureRecognizerStateBegan) self.startRect = self.selection;
     CGPoint delta = [gesture translationInView:self.imageView]; CGSize size = self.imageView.bounds.size;
     if (gesture.state == UIGestureRecognizerStateBegan || gesture.state == UIGestureRecognizerStateChanged)
         self.selection = CGRectMake(MAX(0,MIN(size.width-self.startRect.size.width,self.startRect.origin.x+delta.x)),
                                     MAX(0,MIN(size.height-self.startRect.size.height,self.startRect.origin.y+delta.y)),
                                     self.startRect.size.width,self.startRect.size.height);
+    if (!self.adjustingSelection && self.selectionChanged) self.selectionChanged();
 }
 - (void)resize:(UIPanGestureRecognizer *)gesture {
+    self.adjustingSelection = gesture.state == UIGestureRecognizerStateBegan || gesture.state == UIGestureRecognizerStateChanged;
     if (gesture.state == UIGestureRecognizerStateBegan) self.startRect = self.selection;
     CGPoint delta = [gesture translationInView:self.imageView]; NSInteger corner = gesture.view.tag;
     CGFloat left=self.startRect.origin.x, top=self.startRect.origin.y, right=CGRectGetMaxX(self.startRect), bottom=CGRectGetMaxY(self.startRect);
@@ -167,7 +171,10 @@
             self.magnifier.frame = CGRectMake(MAX(4,MIN(self.bounds.size.width-114,local.x-55)),MAX(4,local.y-110),110,82);
             self.magnifier.hidden = NO; [self bringSubviewToFront:self.magnifier];
         }
-    } else { self.magnifier.hidden = YES; self.magnifier.image = nil; }
+    } else {
+        self.magnifier.hidden = YES; self.magnifier.image = nil;
+        if (self.selectionChanged) self.selectionChanged();
+    }
 }
 - (void)clear { self.selectionChanged = nil; self.imageView.image = nil; self.magnifier.image = nil; self.magnifier.hidden = YES; self.outline.path = nil; }
 @end
@@ -194,6 +201,7 @@
 @property(nonatomic) UIButton *areaButton, *editButton, *moreButton;
 @property(nonatomic) CompanionVNCTextSelection *nativeSelection;
 @property(nonatomic) BOOL areaMode, editorOpen, started;
+@property(nonatomic) BOOL hasNativeReview;
 @property(nonatomic) NSUInteger automaticGeneration;
 @end
 
@@ -299,7 +307,7 @@
         self.nativeSelection = [[CompanionVNCTextSelection alloc] initWithImageView:self.crop.imageView];
     self.areaMode = self.nativeSelection == nil; self.crop.selectionEnabled = self.areaMode;
     __weak CompanionVNCTextReview *weak = self;
-    self.nativeSelection.selectionChanged = ^{ [weak updateActions]; };
+    self.nativeSelection.selectionChanged = ^{ [weak nativeSelectionChanged]; };
     self.crop.selectionChanged = ^{ [weak scheduleRecognition]; };
     [self updateActions];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(retireForBackground:) name:UIApplicationDidEnterBackgroundNotification object:nil];
@@ -319,13 +327,21 @@
     if (fabs(self.cropHeight.constant-height)>.5) self.cropHeight.constant = height;
 }
 - (NSString *)exportText {
-    return self.areaMode || self.editorOpen ? self.editor.text : self.nativeSelection.selectedText;
+    return self.areaMode || self.editorOpen || self.hasNativeReview ? self.editor.text : self.nativeSelection.selectedText;
+}
+- (void)nativeSelectionChanged {
+    // Hiding the review preserves corrections. A new native selection retires
+    // them, even when another occurrence contains the same recognized string.
+    if (!self.editorOpen && self.hasNativeReview) {
+        self.hasNativeReview = NO; self.editor.text = @"";
+    }
+    [self updateActions];
 }
 - (void)updateActions {
     if (self.invalidated) return;
     NSString *text = [self exportText];
     self.exportButton.enabled = !self.busy && text.length > 0 && text.length <= 65536;
-    self.editButton.enabled = !self.busy && (self.editorOpen || (self.areaMode ? self.editor.text.length : self.nativeSelection.text.length));
+    self.editButton.enabled = !self.busy && (self.editorOpen || self.hasNativeReview || (self.areaMode ? self.editor.text.length : self.nativeSelection.text.length));
     UIButtonConfiguration *edit = self.editButton.configuration; edit.title = self.editorOpen ? @"Hide Review" : @"Edit…"; self.editButton.configuration = edit;
     UIButtonConfiguration *area = self.areaButton.configuration; area.title = self.areaMode ? @"Select Text" : @"Select Area"; self.areaButton.configuration = area;
     self.areaButton.hidden = self.nativeSelection == nil;
@@ -336,7 +352,7 @@
     UIAction *share = [UIAction actionWithTitle:@"Share Selected Text" image:[UIImage systemImageNamed:@"square.and.arrow.up"] identifier:nil handler:^(__unused UIAction *action) { [weak shareText]; }];
     share.attributes = text.length && !self.busy ? 0 : UIMenuElementAttributesDisabled; [items addObject:share];
     UIAction *copyAll = items.firstObject;
-    copyAll.attributes = !self.busy && (self.areaMode || self.editorOpen ? self.editor.text.length : self.nativeSelection.text.length) ? 0 : UIMenuElementAttributesDisabled;
+    copyAll.attributes = !self.busy && (self.areaMode || self.editorOpen || self.hasNativeReview ? self.editor.text.length : self.nativeSelection.text.length) ? 0 : UIMenuElementAttributesDisabled;
     if (self.areaMode) {
         [items addObject:[UIAction actionWithTitle:@"Select Visible Area" image:nil identifier:nil handler:^(__unused UIAction *action) { [weak selectVisible]; }]];
         [items addObject:[UIAction actionWithTitle:@"Select Full Image" image:nil identifier:nil handler:^(__unused UIAction *action) { [weak selectAll]; }]];
@@ -357,6 +373,7 @@
 - (void)startNativeAnalysis {
     if (self.invalidated || self.areaMode || !self.nativeSelection) return;
     [self cancelRecognition]; self.automaticGeneration++; NSUInteger automatic = self.automaticGeneration;
+    self.hasNativeReview = NO;
     self.editorOpen = NO; self.editor.text = @""; self.resultContent.hidden = YES; self.editor.hidden = YES;
     [self.editor resignFirstResponder]; self.preview.image = nil;
     self.busy = YES; self.status.text = @"Finding text…"; [self.spinner startAnimating]; [self updateActions];
@@ -397,6 +414,7 @@
 - (void)scheduleRecognition {
     if (self.invalidated || !self.areaMode) return;
     [self cancelRecognition]; NSUInteger automatic = ++self.automaticGeneration;
+    self.hasNativeReview = NO;
     [self.editor resignFirstResponder]; self.editor.text = @""; self.preview.image = nil;
     self.editorOpen = NO; self.resultContent.hidden = YES; self.editor.hidden = YES;
     self.status.text = @"Reading selected area…"; [self updateActions];
@@ -406,6 +424,9 @@
 }
 - (void)runAutomaticRecognition:(NSUInteger)automatic {
     if (self.invalidated || !self.areaMode || self.automaticGeneration != automatic) return;
+    // A paused drag is still an adjustment. Opening results would resize the
+    // viewport under the user's finger; the gesture's end schedules a new read.
+    if (self.crop.adjustingSelection) return;
     if (self.nativeSelection.busy || self.recognitionQueue.operationCount) {
         __weak CompanionVNCTextReview *weak = self;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,.1*NSEC_PER_SEC),dispatch_get_main_queue(), ^{ [weak runAutomaticRecognition:automatic]; }); return;
@@ -480,9 +501,11 @@
     if (self.invalidated || self.busy) return;
     if (self.editorOpen) { [self.editor resignFirstResponder]; self.editorOpen = NO; self.editor.hidden = YES; self.resultContent.hidden = YES; }
     else {
-        NSString *text = self.areaMode ? self.editor.text : (self.nativeSelection.selectedText.length ? self.nativeSelection.selectedText : self.nativeSelection.text);
-        if (!text.length || text.length > 65536) return;
+        BOOL existingReview = self.areaMode || self.hasNativeReview;
+        NSString *text = existingReview ? self.editor.text : (self.nativeSelection.selectedText.length ? self.nativeSelection.selectedText : self.nativeSelection.text);
+        if (!existingReview && (!text.length || text.length > 65536)) return;
         self.editor.text = text; self.editorOpen = YES; self.editor.hidden = NO; self.resultContent.hidden = NO;
+        if (!self.areaMode) self.hasNativeReview = YES;
         self.status.text = @"Review text before copying";
     }
     [self updateActions]; [self.view setNeedsLayout];
@@ -490,7 +513,7 @@
 - (void)reselect { [self selectArea]; [self scheduleRecognition]; }
 - (void)copyAllText {
     if (self.invalidated || self.busy) return;
-    NSString *text = self.areaMode || self.editorOpen ? self.editor.text : self.nativeSelection.text;
+    NSString *text = self.areaMode || self.editorOpen || self.hasNativeReview ? self.editor.text : self.nativeSelection.text;
     [self copyString:text];
 }
 - (void)copyString:(NSString *)text {
@@ -518,6 +541,7 @@
     if (self.invalidated) return; self.invalidated = YES; self.automaticGeneration++;
     [self.nativeSelection invalidate]; [self cancelRecognition]; [self.view endEditing:YES];
     self.snapshot = nil; [self.crop clear]; self.preview.image = nil; self.editor.text = @"";
+    self.hasNativeReview = NO;
     self.status.text = @""; self.returnHandler = nil;
     if (self.presentedViewController) [self dismissViewControllerAnimated:NO completion:nil];
     [[NSNotificationCenter defaultCenter] removeObserver:self];

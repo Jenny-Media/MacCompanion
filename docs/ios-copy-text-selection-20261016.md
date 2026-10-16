@@ -8,9 +8,10 @@ Done explicitly returns to Screen Sharing.
 Select Area retains the accurate Vision recognizer for difficult layouts and
 unsupported/oversized full images. Its rectangle has accessible resize corners,
 a transient magnifier, drag-to-move, local pan/zoom and visible/full-image actions
-in More. Recognition starts after adjustment settles; old results become
+in More. Recognition starts after adjustment settles and the drag ends; old results become
 uncopyable immediately when the area changes. Language, retry, Copy All and
-explicit Share actions live in More.
+explicit Share actions live in More. Hiding and reopening a native review keeps
+corrections until the native selection changes, and Copy uses the retained review.
 
 Native and area analysis are bounded and serialized. Native interaction types
 must be applied after assigning the completed analysis; configuring them only

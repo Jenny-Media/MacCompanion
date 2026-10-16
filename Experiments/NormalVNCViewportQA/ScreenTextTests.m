@@ -17,6 +17,7 @@
 - (void)selectVisible;
 - (void)selectArea;
 - (void)editText;
+- (void)nativeSelectionChanged;
 - (void)scheduleRecognition;
 - (void)returnToDesktop;
 @end
@@ -148,6 +149,42 @@
     [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.5]];
     XCTAssertNil([review valueForKey:@"snapshot"]); XCTAssertNil(((UIImageView *)[crop valueForKey:@"magnifier"]).image);
     XCTAssertEqualObjects(((UITextView *)[review valueForKey:@"editor"]).text,@"");
+}
+- (void)testNativeReviewPreservesCorrectionsUntilSelectionChanges {
+    CompanionVNCTextReview *review=[[CompanionVNCTextReview alloc] initWithImage:[self image:CGSizeMake(760,280) scale:1 text:@"mini.local"] visibleRect:CGRectMake(0,0,760,280)];
+    [review loadViewIfNeeded];
+    if (![review valueForKey:@"nativeSelection"]) { XCTSkip(@"System Live Text unavailable"); return; }
+    [review viewDidAppear:NO]; [self waitForRecognition:review];
+    [review editText]; UITextView *editor=[review valueForKey:@"editor"];
+    XCTAssertTrue([editor.text containsString:@"mini.local"]);
+    editor.text=@"Corrected synthetic hostname";
+    [review editText]; XCTAssertTrue(editor.hidden);
+    [review copyText]; XCTAssertEqualObjects(UIPasteboard.generalPasteboard.string,@"Corrected synthetic hostname");
+    [review editText]; XCTAssertEqualObjects(editor.text,@"Corrected synthetic hostname");
+    editor.text=@""; [review editText]; [review editText];
+    XCTAssertFalse(editor.hidden); XCTAssertEqualObjects(editor.text,@"");
+    [review editText]; [review nativeSelectionChanged];
+    XCTAssertFalse([[review valueForKey:@"hasNativeReview"] boolValue]);
+    XCTAssertEqualObjects(editor.text,@"");
+    XCTAssertFalse(((UIButton *)[review valueForKey:@"exportButton"]).enabled);
+    [review editText]; XCTAssertTrue([editor.text containsString:@"mini.local"]);
+    [review invalidate]; UIPasteboard.generalPasteboard.items=@[];
+}
+- (void)testAutomaticAreaRecognitionWaitsForDragToEnd {
+    CompanionVNCTextReview *review=[self review:[self image:CGSizeMake(760,280) scale:1 text:@"mini.local"] rect:CGRectMake(0,0,760,280)];
+    id crop=[review valueForKey:@"crop"];
+    [crop setValue:@YES forKey:@"adjustingSelection"]; [review viewDidAppear:NO];
+    [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.6]];
+    XCTAssertFalse([[review valueForKey:@"busy"] boolValue]);
+    XCTAssertFalse([[review valueForKey:@"editorOpen"] boolValue]);
+    XCTAssertNil([review valueForKey:@"request"]);
+    [crop setValue:@NO forKey:@"adjustingSelection"];
+    void (^changed)(void)=[crop valueForKey:@"selectionChanged"]; changed();
+    XCTestExpectation *read=[[XCTNSPredicateExpectation alloc] initWithPredicate:[NSPredicate predicateWithBlock:^BOOL(id object,NSDictionary *bindings) {
+        return [((UITextView *)[review valueForKey:@"editor"]).text containsString:@"mini.local"];
+    }] object:review];
+    [self waitForExpectations:@[read] timeout:20];
+    [review invalidate];
 }
 - (void)testOriginalRetinaPixelsVisibleCropAndAccessibleZoomControls {
     UIImage *image=[self image:CGSizeMake(800,600) scale:2 text:@"Synthetic only"];

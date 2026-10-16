@@ -31,7 +31,7 @@ system image analysis is unsupported or the full image exceeds recognition
 bounds. Retain generous crop handles, a transient magnifier while resizing,
 accessible expand/shrink actions and visible/full-image selection in More. Drag
 inside the rectangle to move it; pan outside it or with two fingers. Automatically
-recognize after selection adjustment settles, with only one request in flight
+recognize after selection adjustment settles and any active crop drag ends, with only one request in flight
 across the native and area paths. Editing the selection cancels/invalidates old
 results before they can be copied. No separate Recognize step is required.
 Round an admitted selection outward to pixel boundaries and intersect it with
@@ -62,7 +62,9 @@ an override chosen only from the request's supported languages. Disable language
 correction in this fallback. System Live Text owns its own recognition heuristics;
 do not promise identical results or whitespace to the configurable Vision path. Retain best-effort line order, breaks and indentation; never claim
 lossless code/whitespace recovery from pixels. Keep the frozen image visible while an optional compact editable review is open.
-Area results appear in that compact review automatically. Disable autocorrection
+Area results appear in that compact review automatically. Hiding and reopening a
+native review preserves corrections until the native selection changes; Copy
+continues to use that reviewed text while it is hidden. Disable autocorrection
 and smart substitutions in editable text. Expose Copy and optional Share through
 explicit actions, plus loading, empty-result and retry states. Copy confirms
 without dismissing review. Done returns to the live screen explicitly; interactive
