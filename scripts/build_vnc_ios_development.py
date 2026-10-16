@@ -5,7 +5,7 @@ Generated development project; no Experimental app source is linked.
 Permanent release dependency/signing gates remain authoritative.
 """
 import argparse
-from direct_app_naming import APP_BUNDLE_NAME, configure as configure_app_name, verify as verify_app_name
+from direct_app_naming import APP_BUNDLE_NAME, verify as verify_app_name
 from build_cache import BuildSession, toolchain_identity, write_if_changed
 import hashlib
 import json
@@ -137,7 +137,6 @@ def build(args, parser, session):
         'LIBRARY_SEARCH_PATHS': [str(build)], 'ARCHS': 'arm64', 'ONLY_ACTIVE_ARCH': 'YES', 'OTHER_LDFLAGS': ['$(inherited)', '-lz']})
     import plistlib
     direct_info = plistlib.loads((ROOT / base['INFOPLIST_FILE']).read_bytes())
-    configure_app_name(base, direct_info, 'ios')
     # Preserve the approved standard-encryption declaration for distribution outside France.
     direct_info['ITSAppUsesNonExemptEncryption'] = False
     direct_info['NSBonjourServices'] = ['_rfb._tcp', '_ssh._tcp', '_device-info._tcp']
