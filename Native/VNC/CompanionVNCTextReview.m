@@ -145,7 +145,11 @@
 }
 - (void)moveSelection:(UIPanGestureRecognizer *)gesture {
     self.adjustingSelection = gesture.state == UIGestureRecognizerStateBegan || gesture.state == UIGestureRecognizerStateChanged;
-    if (gesture.state == UIGestureRecognizerStateBegan) self.startRect = self.selection;
+    if (gesture.state == UIGestureRecognizerStateBegan) {
+        self.startRect = self.selection;
+        // Cancel any read even if pixel clamping leaves the rectangle unchanged.
+        if (self.selectionChanged) self.selectionChanged();
+    }
     CGPoint delta = [gesture translationInView:self.imageView]; CGSize size = self.imageView.bounds.size;
     if (gesture.state == UIGestureRecognizerStateBegan || gesture.state == UIGestureRecognizerStateChanged)
         self.selection = CGRectMake(MAX(0,MIN(size.width-self.startRect.size.width,self.startRect.origin.x+delta.x)),
@@ -155,7 +159,10 @@
 }
 - (void)resize:(UIPanGestureRecognizer *)gesture {
     self.adjustingSelection = gesture.state == UIGestureRecognizerStateBegan || gesture.state == UIGestureRecognizerStateChanged;
-    if (gesture.state == UIGestureRecognizerStateBegan) self.startRect = self.selection;
+    if (gesture.state == UIGestureRecognizerStateBegan) {
+        self.startRect = self.selection;
+        if (self.selectionChanged) self.selectionChanged();
+    }
     CGPoint delta = [gesture translationInView:self.imageView]; NSInteger corner = gesture.view.tag;
     CGFloat left=self.startRect.origin.x, top=self.startRect.origin.y, right=CGRectGetMaxX(self.startRect), bottom=CGRectGetMaxY(self.startRect);
     if (corner == 0 || corner == 3) left=MIN(right-1, left+delta.x); else right=MAX(left+1,right+delta.x);
@@ -322,6 +329,7 @@
     [super viewDidLayoutSubviews];
     BOOL large = UIContentSizeCategoryIsAccessibilityCategory(self.traitCollection.preferredContentSizeCategory);
     self.resultActions.axis = large ? UILayoutConstraintAxisVertical : UILayoutConstraintAxisHorizontal;
+    if (self.crop.adjustingSelection) return;
     CGFloat available = self.contentScroll.bounds.size.height - (self.editorOpen ? 148 : 0);
     CGFloat height = MAX(100,available);
     if (fabs(self.cropHeight.constant-height)>.5) self.cropHeight.constant = height;
@@ -350,9 +358,10 @@
     NSMutableArray *items = [NSMutableArray new]; __weak CompanionVNCTextReview *weak = self;
     [items addObject:[UIAction actionWithTitle:@"Copy All Text" image:[UIImage systemImageNamed:@"doc.on.doc"] identifier:nil handler:^(__unused UIAction *action) { [weak copyAllText]; }]];
     UIAction *share = [UIAction actionWithTitle:@"Share Selected Text" image:[UIImage systemImageNamed:@"square.and.arrow.up"] identifier:nil handler:^(__unused UIAction *action) { [weak shareText]; }];
-    share.attributes = text.length && !self.busy ? 0 : UIMenuElementAttributesDisabled; [items addObject:share];
+    share.attributes = text.length && text.length <= 65536 && !self.busy ? 0 : UIMenuElementAttributesDisabled; [items addObject:share];
     UIAction *copyAll = items.firstObject;
-    copyAll.attributes = !self.busy && (self.areaMode || self.editorOpen || self.hasNativeReview ? self.editor.text.length : self.nativeSelection.text.length) ? 0 : UIMenuElementAttributesDisabled;
+    NSUInteger allLength = self.areaMode || self.editorOpen || self.hasNativeReview ? self.editor.text.length : self.nativeSelection.text.length;
+    copyAll.attributes = !self.busy && allLength && allLength <= 65536 ? 0 : UIMenuElementAttributesDisabled;
     if (self.areaMode) {
         [items addObject:[UIAction actionWithTitle:@"Select Visible Area" image:nil identifier:nil handler:^(__unused UIAction *action) { [weak selectVisible]; }]];
         [items addObject:[UIAction actionWithTitle:@"Select Full Image" image:nil identifier:nil handler:^(__unused UIAction *action) { [weak selectAll]; }]];
@@ -417,6 +426,7 @@
     self.hasNativeReview = NO;
     [self.editor resignFirstResponder]; self.editor.text = @""; self.preview.image = nil;
     self.editorOpen = NO; self.resultContent.hidden = YES; self.editor.hidden = YES;
+    [self.view setNeedsLayout];
     self.status.text = @"Reading selected area…"; [self updateActions];
     if (!self.started) return;
     __weak CompanionVNCTextReview *weak = self;

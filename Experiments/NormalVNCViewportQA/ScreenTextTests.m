@@ -20,6 +20,18 @@
 - (void)nativeSelectionChanged;
 - (void)scheduleRecognition;
 - (void)returnToDesktop;
+- (void)textViewDidChange:(UITextView *)textView;
+@end
+@interface UIView (ScreenTextDragTests)
+- (void)moveSelection:(UIPanGestureRecognizer *)gesture;
+- (void)resize:(UIPanGestureRecognizer *)gesture;
+@end
+@interface ScreenTextDrag : UIPanGestureRecognizer
+@property(nonatomic) UIGestureRecognizerState phase;
+@end
+@implementation ScreenTextDrag
+- (UIGestureRecognizerState)state { return self.phase; }
+- (CGPoint)translationInView:(UIView *)view { return CGPointZero; }
 @end
 @interface CompanionVNCSession (ScreenTextTests)
 - (void)configureClient:(rfbClient *)client;
@@ -163,6 +175,11 @@
     [review editText]; XCTAssertEqualObjects(editor.text,@"Corrected synthetic hostname");
     editor.text=@""; [review editText]; [review editText];
     XCTAssertFalse(editor.hidden); XCTAssertEqualObjects(editor.text,@"");
+    editor.text=[@"x" stringByPaddingToLength:65537 withString:@"x" startingAtIndex:0]; [review textViewDidChange:editor];
+    UIButton *more=[review valueForKey:@"moreButton"];
+    for (UIAction *action in [more.menu.children subarrayWithRange:NSMakeRange(0,2)])
+        XCTAssertTrue(action.attributes & UIMenuElementAttributesDisabled);
+    [review editText]; [review editText]; XCTAssertEqual(editor.text.length,65537);
     [review editText]; [review nativeSelectionChanged];
     XCTAssertFalse([[review valueForKey:@"hasNativeReview"] boolValue]);
     XCTAssertEqualObjects(editor.text,@"");
@@ -185,6 +202,33 @@
     }] object:review];
     [self waitForExpectations:@[read] timeout:20];
     [review invalidate];
+}
+- (void)testClampedDragCancelsAnInflightReadAndKeepsCropHeightUntilRelease {
+    for (NSNumber *resize in @[@NO,@YES]) {
+        CompanionVNCTextReview *review=[self review:[self image:CGSizeMake(760,280) scale:1 text:@"mini.local"] rect:CGRectMake(0,0,760,280)];
+        [review recognize]; [self waitForRecognition:review]; [self settleLayout:review];
+        UIView *crop=[review valueForKey:@"crop"]; CGRect selection=[[crop valueForKey:@"selection"] CGRectValue];
+        CGFloat height=((NSLayoutConstraint *)[review valueForKey:@"cropHeight"]).constant;
+        // The completed review reserves its editor height while another read runs.
+        [review recognize]; XCTAssertTrue([[review valueForKey:@"busy"] boolValue]);
+        NSUInteger generation=[[review valueForKey:@"generation"] unsignedIntegerValue];
+        ScreenTextDrag *drag=[ScreenTextDrag new]; drag.phase=UIGestureRecognizerStateBegan;
+        if (resize.boolValue) {
+            UIButton *corner=((NSArray *)[crop valueForKey:@"handles"])[2]; [corner addGestureRecognizer:drag]; [crop resize:drag];
+        } else { [crop addGestureRecognizer:drag]; [crop moveSelection:drag]; }
+        XCTAssertTrue(CGRectEqualToRect([[crop valueForKey:@"selection"] CGRectValue],selection));
+        XCTAssertGreaterThan([[review valueForKey:@"generation"] unsignedIntegerValue],generation);
+        XCTAssertNil([review valueForKey:@"request"]); XCTAssertFalse([[review valueForKey:@"busy"] boolValue]);
+        [self settleLayout:review];
+        XCTAssertEqualWithAccuracy(((NSLayoutConstraint *)[review valueForKey:@"cropHeight"]).constant,height,.5);
+        [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.5]];
+        XCTAssertFalse([[review valueForKey:@"editorOpen"] boolValue]);
+        drag.phase=UIGestureRecognizerStateEnded;
+        if (resize.boolValue) [crop resize:drag]; else [crop moveSelection:drag];
+        [self settleLayout:review];
+        XCTAssertFalse([[crop valueForKey:@"adjustingSelection"] boolValue]);
+        [review invalidate];
+    }
 }
 - (void)testOriginalRetinaPixelsVisibleCropAndAccessibleZoomControls {
     UIImage *image=[self image:CGSizeMake(800,600) scale:2 text:@"Synthetic only"];
