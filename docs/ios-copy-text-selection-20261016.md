@@ -30,12 +30,13 @@ best-effort for code, columns and whitespace.
 
 ## Validation
 
-Stable Xcode 27: 21 focused hosted tests passed, including native analysis and
+Stable Xcode 27: 24 focused hosted tests passed, including native analysis and
 cancellation, canonical availability/bounds, original-pixel cropping, automatic
 area recognition, editable copy, large text/layout and session/lifecycle checks.
-Three native UI journeys passed on both the dedicated iPhone and iPad Simulators:
+Four native UI journeys passed on both the dedicated iPhone and iPad Simulators:
 word selection/copy without review, area drag/automatic recognition/editing and
-rotation with Done reachable, and background snapshot retirement. No skips.
+rotation with Done reachable, background snapshot retirement, and largest-text
+editing/copying while the keyboard is open. All 32 tests passed; no skips.
 
 The simulator-only application and UI tests live in Experiments/ScreenTextQA;
 `verify_terminal_pro_simulator.py --screen-text-ui --generate-only` adds their
@@ -43,8 +44,15 @@ private scheme. They are not linked into the normal app. Synthetic screenshots,
 logs and result bundles remain outside Git under
 `/private/tmp/maccompanion-copy-text-20261016/`.
 
-Stable `bash scripts/validate.sh` passed. Development build 1.0 (74) was installed
-and launched on the user's iPhone 18 Pro Max; the installed bundle version was
-read back from the device. Real Screen Sharing acceptance remains for the user
-to confirm, separately from simulator results. Cursor investigation remains
+Stable `bash scripts/validate.sh` passed. Initial development build 1.0 (74) was
+installed and launched on the user's iPhone 18 Pro Max; the installed bundle
+version was read back from the device. Subsequent review fixes were validated in
+Simulator; the installed phone build remains 74. Physical acceptance of those
+follow-ups remains separate from simulator results. Cursor investigation stays
 paused, and macOS/visionOS do not link this iOS selection adapter.
+
+Independent subagent reviews identified lost native corrections, crop reflow
+during an active drag, an inaccessible largest-text keyboard layout, and an
+empty area review that could not reopen. These were fixed with regression
+coverage. The final full reviews and focused layout follow-ups found no
+remaining actionable issues.
