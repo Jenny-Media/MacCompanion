@@ -9,6 +9,7 @@ import unittest
 
 import direct_app_naming as naming
 from build_direct_visionos import configure_client
+from verify_direct_macos import hosted_app_paths
 
 
 class DirectAppNamingTests(unittest.TestCase):
@@ -75,6 +76,18 @@ class DirectAppNamingTests(unittest.TestCase):
         self.assertEqual(tests['TEST_HOST'],
                          '$(BUILT_PRODUCTS_DIR)/Mac Companion.app/MacCompanionVision')
         self.assertEqual(tests['BUNDLE_LOADER'], '$(TEST_HOST)')
+
+    def test_mac_hosted_qa_accepts_current_and_legacy_generated_projects(self):
+        current = {'PRODUCT_NAME': 'Mac Companion', 'EXECUTABLE_NAME': 'MacCompanion',
+                   'PRODUCT_BUNDLE_IDENTIFIER': 'media.jenny.maccompanion'}
+        legacy = {'PRODUCT_BUNDLE_IDENTIFIER': 'media.jenny.maccompanion'}
+        self.assertEqual(hosted_app_paths(current), (
+            'Mac Companion.app',
+            '$(BUILT_PRODUCTS_DIR)/Mac Companion.app/Contents/MacOS/MacCompanion'))
+        self.assertEqual(hosted_app_paths(legacy), (
+            'MacCompanion.app',
+            '$(BUILT_PRODUCTS_DIR)/MacCompanion.app/Contents/MacOS/MacCompanion'))
+        self.assertEqual(legacy, {'PRODUCT_BUNDLE_IDENTIFIER': 'media.jenny.maccompanion'})
 
     def artifact(self, directory, platform, wrapper='Mac Companion.app'):
         app = Path(directory) / wrapper
