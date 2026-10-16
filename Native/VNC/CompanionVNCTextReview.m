@@ -214,6 +214,7 @@
 @property(nonatomic) CompanionVNCTextSelection *nativeSelection;
 @property(nonatomic) BOOL areaMode, editorOpen, started;
 @property(nonatomic) BOOL hasNativeReview;
+@property(nonatomic) BOOL hasAreaReview;
 @property(nonatomic) NSUInteger automaticGeneration;
 @end
 
@@ -379,7 +380,7 @@
     if (self.invalidated) return;
     NSString *text = [self exportText];
     self.exportButton.enabled = !self.busy && text.length > 0 && text.length <= 65536;
-    self.editButton.enabled = !self.busy && (self.editorOpen || self.hasNativeReview || (self.areaMode ? self.editor.text.length : self.nativeSelection.text.length));
+    self.editButton.enabled = !self.busy && (self.editorOpen || self.hasNativeReview || self.hasAreaReview || (self.areaMode ? self.editor.text.length : self.nativeSelection.text.length));
     UIButtonConfiguration *edit = self.editButton.configuration; edit.title = self.editorOpen ? @"Hide Review" : @"Edit…"; self.editButton.configuration = edit;
     UIButtonConfiguration *area = self.areaButton.configuration; area.title = self.areaMode ? @"Select Text" : @"Select Area"; self.areaButton.configuration = area;
     self.areaButton.hidden = self.nativeSelection == nil;
@@ -413,6 +414,7 @@
     if (self.invalidated || self.areaMode || !self.nativeSelection) return;
     [self cancelRecognition]; self.automaticGeneration++; NSUInteger automatic = self.automaticGeneration;
     self.hasNativeReview = NO;
+    self.hasAreaReview = NO;
     self.editorOpen = NO; self.editor.text = @""; self.resultContent.hidden = YES; self.editor.hidden = YES;
     [self.editor resignFirstResponder]; self.preview.image = nil;
     self.busy = YES; self.status.text = @"Finding text…"; [self.spinner startAnimating]; [self updateActions];
@@ -454,6 +456,7 @@
     if (self.invalidated || !self.areaMode) return;
     [self cancelRecognition]; NSUInteger automatic = ++self.automaticGeneration;
     self.hasNativeReview = NO;
+    self.hasAreaReview = NO;
     [self.editor resignFirstResponder]; self.editor.text = @""; self.preview.image = nil;
     self.editorOpen = NO; self.resultContent.hidden = YES; self.editor.hidden = YES;
     [self.view setNeedsLayout];
@@ -533,7 +536,7 @@
     }
     NSString *text = [lines componentsJoinedByString:@"\n"];
     if (!text.length) { self.preview.image = nil; self.status.text = @"No text found. Try a closer or clearer area."; return; }
-    self.editor.text = text; self.editorOpen = YES; self.editor.hidden = NO; self.resultContent.hidden = NO;
+    self.editor.text = text; self.hasAreaReview = YES; self.editorOpen = YES; self.editor.hidden = NO; self.resultContent.hidden = NO;
     self.status.text = @"Review text before copying"; [self updateActions]; [self.view setNeedsLayout];
     UIAccessibilityPostNotification(UIAccessibilityLayoutChangedNotification,self.editor);
 }
@@ -582,6 +585,7 @@
     [self.nativeSelection invalidate]; [self cancelRecognition]; [self.view endEditing:YES];
     self.snapshot = nil; [self.crop clear]; self.preview.image = nil; self.editor.text = @"";
     self.hasNativeReview = NO;
+    self.hasAreaReview = NO;
     self.status.text = @""; self.returnHandler = nil;
     if (self.presentedViewController) [self dismissViewControllerAnimated:NO completion:nil];
     [[NSNotificationCenter defaultCenter] removeObserver:self];

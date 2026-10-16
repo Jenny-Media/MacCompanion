@@ -101,6 +101,14 @@
     [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.1]];
     [review.view layoutIfNeeded];
 }
+- (void)assertReview:(CompanionVNCTextReview *)review copiesText:(NSString *)text {
+    // Let UIKit finish its pasteboard notification before synchronously reading
+    // back the synthetic value; reading in the write's turn can deadlock the
+    // Simulator pasteboard notification queue against the main thread.
+    XCTestExpectation *changed=[self expectationForNotification:UIPasteboardChangedNotification object:UIPasteboard.generalPasteboard handler:nil];
+    [review copyText]; [self waitForExpectations:@[changed] timeout:5];
+    XCTAssertEqualObjects(UIPasteboard.generalPasteboard.string,text);
+}
 - (void)assertButtonTitlesFit:(UIView *)view {
     if (view.hidden) return;
     if ([view isKindOfClass:UIButton.class]) {
@@ -144,9 +152,12 @@
     [self waitForExpectations:@[read] timeout:20];
     XCTAssertFalse(((UIView *)[review valueForKey:@"crop"]).hidden);
     XCTAssertTrue([[review valueForKey:@"editorOpen"] boolValue]);
-    UITextView *editor=[review valueForKey:@"editor"]; editor.text=@"Reviewed synthetic text"; [review copyText];
-    XCTAssertEqualObjects(UIPasteboard.generalPasteboard.string,editor.text);
+    UITextView *editor=[review valueForKey:@"editor"]; editor.text=@"Reviewed synthetic text";
+    [self assertReview:review copiesText:editor.text];
     [review editText]; XCTAssertTrue(editor.hidden); [review editText]; XCTAssertEqualObjects(editor.text,@"Reviewed synthetic text");
+    editor.text=@""; [review editText];
+    XCTAssertTrue(((UIButton *)[review valueForKey:@"editButton"]).enabled);
+    [review editText]; XCTAssertFalse(editor.hidden); XCTAssertEqualObjects(editor.text,@"");
     [review invalidate]; UIPasteboard.generalPasteboard.items=@[];
 }
 - (void)testChangingAreaImmediatelyRetiresItsOldCopyAndPendingAnalysis {
@@ -171,7 +182,7 @@
     XCTAssertTrue([editor.text containsString:@"mini.local"]);
     editor.text=@"Corrected synthetic hostname";
     [review editText]; XCTAssertTrue(editor.hidden);
-    [review copyText]; XCTAssertEqualObjects(UIPasteboard.generalPasteboard.string,@"Corrected synthetic hostname");
+    [self assertReview:review copiesText:@"Corrected synthetic hostname"];
     [review editText]; XCTAssertEqualObjects(editor.text,@"Corrected synthetic hostname");
     editor.text=@""; [review editText]; [review editText];
     XCTAssertFalse(editor.hidden); XCTAssertEqualObjects(editor.text,@"");
@@ -260,8 +271,7 @@
         XCTAssertTrue([editor.text containsString:@"return value_42"],@"%@",editor.text);
         XCTAssertTrue([editor.text containsString:@"你好"],@"%@",editor.text);
         XCTAssertNotNil(((UIImageView *)[review valueForKey:@"preview"]).image);
-        editor.text=@"Edited synthetic result"; [review copyText];
-        XCTAssertEqualObjects(UIPasteboard.generalPasteboard.string,editor.text);
+        editor.text=@"Edited synthetic result"; [self assertReview:review copiesText:editor.text];
         XCTAssertFalse([[review valueForKey:@"invalidated"] boolValue]);
         [review reselect]; XCTAssertEqualObjects(editor.text,@"");
         XCTAssertNil(((UIImageView *)[review valueForKey:@"preview"]).image); [review invalidate];
