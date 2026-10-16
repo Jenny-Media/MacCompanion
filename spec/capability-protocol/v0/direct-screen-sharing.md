@@ -401,7 +401,12 @@ actions. macOS does not expose this tool. Present a small floating text bubble
 above the visible app shortcut bar and native keyboard, retaining visible session
 content. Reserve the bar's actual frame with a small gap, not a fixed assumed
 height. A hidden bar reserves no space; hardware and moved tablet keyboards still
-leave the visible bar unobscured. Use one multiline
+leave the visible bar unobscured. Treat a floating keyboard and bottom shortcut bar
+as separate obstacles, retaining the usable space between them. While Terminal's
+composer is visible, keep its main shortcut row and temporarily hide the extra
+number/custom-key rows. If even the main row leaves less than the 112-point editor
+minimum in a short viewport, hide that row during composition. Restore row visibility
+and extra rows on dismissal without changing saved preferences. Use one multiline
 input surface with a full-width editor and an inline bottom row containing Close,
 a drag grip and circular arrow Send. Grow the compact bubble with text up to six
 preferred body lines, then scroll within the same editor; clamp to keyboard-safe

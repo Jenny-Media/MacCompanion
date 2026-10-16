@@ -136,12 +136,13 @@ struct TerminalKeyboardPreferences: Codable {
     private var more = UIButton(type: .system)
     var toggleKeyboard: (() -> Void)?
     private var softwareKeyboardVisible = false
+    private var composerVisible = false
     private var hasCustomKeys = false
     var showsNumberRow = true {
         didSet { if oldValue != showsNumberRow { updateRows() } }
     }
     var height: CGFloat {
-        8 + (modifierHeight?.constant ?? 52) + (softwareKeyboardVisible ?
+        8 + (modifierHeight?.constant ?? 52) + (softwareKeyboardVisible && !composerVisible ?
             (showsNumberRow ? keyRows[0].1.constant + 4 : 0) + (hasCustomKeys ? keyRows[1].1.constant + 4 : 0) : 0)
     }
     init(terminal: SessionTerminalView, preferences: TerminalKeyboardPreferences) {
@@ -246,9 +247,13 @@ struct TerminalKeyboardPreferences: Codable {
         keyboardButton.accessibilityLabel = focused ? "Hide Keyboard" : "Show Keyboard"
         keyboardButton.configuration?.image = UIImage(systemName: focused ? "keyboard.chevron.compact.down" : "keyboard")
     }
+    func setComposerVisible(_ visible: Bool) {
+        guard composerVisible != visible else { return }
+        composerVisible = visible; updateRows()
+    }
     private func updateRows() {
-        numbers.isHidden = !softwareKeyboardVisible || !showsNumberRow
-        custom.isHidden = !softwareKeyboardVisible || !hasCustomKeys
+        numbers.isHidden = !softwareKeyboardVisible || composerVisible || !showsNumberRow
+        custom.isHidden = !softwareKeyboardVisible || composerVisible || !hasCustomKeys
         numberScroll.isHidden = numbers.isHidden; customScroll.isHidden = custom.isHidden
         invalidateIntrinsicContentSize(); setNeedsLayout()
     }

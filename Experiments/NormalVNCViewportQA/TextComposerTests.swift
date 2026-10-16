@@ -1,5 +1,6 @@
 import XCTest
 import UIKit
+import StoreKitTest
 @testable import Mac_Companion
 
 @MainActor private final class ComposerAdmissionProbe: NSObject {
@@ -32,6 +33,79 @@ import UIKit
         XCTAssertTrue(controller.textComposer.shortcutBar === controller.keyboardBar)
     }
 
+    func testTerminalComposerCompactsExtraRowsAndRestoresThemAfterCloseAndInvalidation() async throws {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "LifetimePro", withExtension: "storekit"))
+        let store = try SKTestSession(contentsOf: url); store.disableDialogs = true; store.clearTransactions()
+        DirectProAccess.shared.start(); _ = try await store.buyProduct(identifier: DirectProAccess.productID)
+        for _ in 0..<100 {
+            await DirectProAccess.shared.refresh()
+            if DirectProAccess.shared.hasPro { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertTrue(DirectProAccess.shared.hasPro)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic", address: "synthetic.invalid")
+        let session = DirectTerminalSession(mac: mac), controller = TerminalController(session: session, customize: {})
+        session.connected = true // Synthetic connected chrome; no transport or input is used.
+        window.rootViewController = controller; window.makeKeyAndVisible(); controller.updateControls()
+        defer {
+            controller.textComposer.invalidate(); session.stop(); window.isHidden = true; window.rootViewController = nil
+            previous?.makeKeyAndVisible(); scene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait)); store.clearTransactions()
+        }
+        let bar = controller.keyboardBar
+        let preferences = TerminalKeyboardPreferences(keys: [.f1, .f2])
+        bar.configure(preferences); bar.showsNumberRow = true; bar.setSoftwareKeyboardVisible(true)
+        XCTAssertEqual(bar.height, 156, accuracy: 1, "Reproduce the real three-row Terminal bar")
+        for landscape in [false, true] {
+            scene.requestGeometryUpdate(.iOS(interfaceOrientations: landscape ? .landscapeRight : .portrait))
+            for _ in 0..<300 {
+                if (window.bounds.width > window.bounds.height) == landscape && controller.transitionCoordinator == nil { break }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            XCTAssertEqual(window.bounds.width > window.bounds.height, landscape)
+            for invalidate in [false, true] {
+                controller.textComposer.present(from: controller, available: { true }, send: { _, _ in XCTFail("Layout must not send input") })
+                let panel = try XCTUnwrap(controller.presentedViewController as? DirectTextComposerPanel)
+                var lastFrames: [CGRect] = []
+                for _ in 0..<300 {
+                    let frames = [panel.view.keyboardLayoutGuide.layoutFrame, bar.frame, panel.panelFrame]
+                    if !panel.isBeingPresented && panel.transitionCoordinator == nil && frames[0].height > 100 && frames == lastFrames { break }
+                    lastFrames = frames; try await Task.sleep(for: .milliseconds(20))
+                }
+                XCTAssertFalse(panel.isBeingPresented)
+                XCTAssertGreaterThan(panel.view.keyboardLayoutGuide.layoutFrame.height, 100)
+                controller.textComposer.draft.edit("retained landscape draft")
+                panel.view.setNeedsLayout(); panel.view.layoutIfNeeded()
+                XCTAssertEqual(bar.height, 60, accuracy: 1)
+                XCTAssertEqual(controller.controls.isHidden, bar.isHidden, "Do not leave an orphan menu button when the row yields space")
+                XCTAssertGreaterThanOrEqual(panel.panelFrame.height, 112)
+                if bar.isHidden {
+                    XCTAssertTrue(landscape, "Portrait must retain its visible shortcut row")
+                    XCTAssertEqual(panel.panelFrame.maxY, panel.view.keyboardLayoutGuide.layoutFrame.minY - 8, accuracy: 1)
+                } else {
+                    XCTAssertEqual(bar.bounds.height, 60, accuracy: 1)
+                    let shortcut = panel.view.convert(bar.bounds, from: bar)
+                    XCTAssertEqual(panel.panelFrame.maxY, shortcut.minY - 8, accuracy: 1)
+                    XCTAssertFalse(panel.panelFrame.intersects(shortcut))
+                }
+                XCTAssertTrue(panel.panelFrame.contains(panel.closeActionFrame)); XCTAssertTrue(panel.panelFrame.contains(panel.deliveryActionFrame))
+                if invalidate { controller.textComposer.invalidate() }
+                else { controller.textComposer.draft.close?() }
+                for _ in 0..<300 {
+                    if controller.presentedViewController == nil { break }
+                    try await Task.sleep(for: .milliseconds(10))
+                }
+                XCTAssertNil(controller.presentedViewController)
+                bar.setSoftwareKeyboardVisible(true)
+                XCTAssertFalse(bar.isHidden, "Restore the shortcut row after either close path")
+                XCTAssertFalse(controller.controls.isHidden, "Restore the anchored menu with the row")
+                XCTAssertEqual(bar.height, 156, accuracy: 1, "Restore number and custom rows without reconfiguring preferences")
+                XCTAssertTrue(bar.showsNumberRow)
+            }
+        }
+    }
+
     func testComposerReservesTheShortcutBarAcrossKeyboardLayouts() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
@@ -49,7 +123,9 @@ import UIKit
             (.init(width: 440, height: 956), .init(x: 0, y: 640, width: 440, height: 316), .init(x: 0, y: 532, width: 440, height: 108)),
             (.init(width: 956, height: 440), .init(x: 0, y: 246, width: 956, height: 194), .init(x: 0, y: 194, width: 956, height: 52)),
             (.init(width: 1024, height: 1280), .zero, .init(x: 0, y: 1190, width: 1024, height: 52)),
-            (.init(width: 1024, height: 1280), .init(x: 352, y: 100, width: 320, height: 260), .init(x: 0, y: 48, width: 1024, height: 52))
+            (.init(width: 1024, height: 1280), .init(x: 352, y: 100, width: 320, height: 260), .init(x: 0, y: 48, width: 1024, height: 52)),
+            (.init(width: 1024, height: 1280), .init(x: 352, y: 60, width: 320, height: 260), .init(x: 0, y: 1190, width: 1024, height: 52)),
+            (.init(width: 1024, height: 1280), .init(x: 352, y: 100, width: 320, height: 260), .init(x: 0, y: 1124, width: 1024, height: 156))
         ]
         draft.edit("retained layout draft")
         for (size, keyboard, shortcut) in layouts {

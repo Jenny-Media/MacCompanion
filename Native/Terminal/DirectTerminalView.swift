@@ -437,10 +437,16 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     lazy var textComposer: DirectTextComposer = {
         let composer = DirectTextComposer(macName: session.mac.name, mode: "terminal")
         composer.interruptionHandler = { [weak session] in session?.interruptComposedText() }
+        composer.presentationChanged = { [weak self] visible in
+            guard let self else { return }
+            self.composerVisible = visible
+            self.keyboardBar.setComposerVisible(visible); self.updateKeyboardBarVisibility(); self.view.setNeedsLayout()
+        }
         return composer
     }()
     lazy var keyboardBar = TerminalKeyboardBar(terminal: terminal, preferences: .init())
     private var reportedGrid: (columns: Int, rows: Int)?
+    private var composerVisible = false
     private var paletteIsDark: Bool?
     private var normalBottom: NSLayoutConstraint!
     private var foldedBottom: NSLayoutConstraint!
@@ -509,7 +515,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     }
     func updateControls() {
         controls.isHidden = !session.connected
-        keyboardBar.isHidden = !session.connected
+        updateKeyboardBarVisibility()
         keyboardBar.setKeyboardFocused(terminal.isFirstResponder)
         if !session.connected { controls.close() }
         controls.macName = session.mac.name
@@ -617,6 +623,14 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         let frame = view.keyboardLayoutGuide.layoutFrame
         return frame.width > 0 ? frame.minY : view.bounds.inset(by: view.safeAreaInsets).maxY
     }
+    private func updateKeyboardBarVisibility() {
+        let safe = view.bounds.inset(by: view.safeAreaInsets)
+        let room = keyboardCeiling() - safe.minY - 16 - keyboardBar.height
+        // The local editor needs its own text and 44-point actions. The remote
+        // shortcut row can yield in a short landscape viewport and returns on close.
+        let hidden = !session.connected || (composerVisible && room < 112)
+        keyboardBar.isHidden = hidden; controls.isHidden = hidden
+    }
     override func viewWillLayoutSubviews() {
         super.viewWillLayoutSubviews()
         let safe = view.bounds.inset(by: view.safeAreaInsets)
@@ -630,6 +644,8 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         } ?? safe.maxY
         let softwareKeyboard = ceiling < restingBottom - 1
         keyboardBar.setSoftwareKeyboardVisible(softwareKeyboard)
+        updateKeyboardBarVisibility()
+        let reservedBarHeight = composerVisible && keyboardBar.isHidden ? 0 : keyboardBar.height
         let inset = max(0, safe.maxY - ceiling)
         if controls.bottomInset != inset { controls.cancelSlideForLayoutChange(); controls.bottomInset = inset; controls.setNeedsLayout() }
         // A closed or hardware-only keyboard leaves the entire terminal usable.
@@ -652,11 +668,11 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         }
         if reserveUpper {
             normalBottom.isActive = false
-            foldedBottom.constant = wholeRowBottom(max(top, min(content.maxY - 8, ceiling - keyboardBar.height)))
+            foldedBottom.constant = wholeRowBottom(max(top, min(content.maxY - 8, ceiling - reservedBarHeight)))
             foldedBottom.isActive = true
         } else {
             foldedBottom.isActive = false
-            normalBottom.constant = wholeRowBottom(ceiling - keyboardBar.height) - ceiling
+            normalBottom.constant = wholeRowBottom(ceiling - reservedBarHeight) - ceiling
             normalBottom.isActive = true
         }
     }
