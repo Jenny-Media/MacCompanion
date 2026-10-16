@@ -84,14 +84,14 @@ struct VisionDesktopSurface: View {
                             interaction.canvas?.spatialEnded()
                         })
                     .modifier(VisionHandMovement(interaction: interaction))
-                    .accessibilityLabel("Remote Desktop")
+                    .accessibilityLabel("Remote Mac screen")
                     .accessibilityHint("Pinch to click, pinch and move to scroll, or hold for actions. Use Adjust View to zoom or pan.")
                     .accessibilityIdentifier("vision-desktop-canvas")
                     .accessibilityValue(interaction.diagnostic)
                 if let target = interaction.contextTarget {
                     ScrollView {
                         VStack(spacing: 12) {
-                            Text("Desktop Actions").font(.headline)
+                            Text("Screen Sharing Actions").font(.headline)
                             Button("Right Click") { interaction.canvas?.targetAction(.right) }
                                 .accessibilityIdentifier("vision-target-right-click")
                             Button("Double Click") { interaction.canvas?.targetAction(.doubleClick) }
@@ -170,7 +170,7 @@ final class VisionDesktopCanvas: UIView, UIGestureRecognizerDelegate {
         self.session = session; self.interaction = interaction; super.init(frame: .zero)
         backgroundColor = .black; isOpaque = true; clipsToBounds = true
         isAccessibilityElement = true
-        accessibilityLabel = "Remote Desktop"; accessibilityIdentifier = "vision-desktop-canvas"
+        accessibilityLabel = "Remote Mac screen"; accessibilityIdentifier = "vision-desktop-canvas"
         focus.view = self
         physical.send = { [weak session] key, down in session?.key(key, down: down) }
         session.invalidatePhysicalPresses = { [weak self] in self?.physicalPresses.removeAll() }

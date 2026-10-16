@@ -99,7 +99,7 @@ struct MacMachineEditor: View {
                     }
                     Section {
                         DisclosureGroup("Reset Login & Trust") {
-                            Button("Forget Desktop Login", role: .destructive) { forgetting = .desktop }
+                            Button("Forget Screen Sharing Login", role: .destructive) { forgetting = .desktop }
                             Button("Forget Terminal Login", role: .destructive) { forgetting = .terminal }
                             Button("Forget SSH Key Selection", role: .destructive) { forgetting = .keySelection }
                             Button("Forget SSH Server Key", role: .destructive) { forgetting = .serverKey }
@@ -205,7 +205,7 @@ struct MacNearbyGrid: View {
                                 Text(item.name).font(.headline).foregroundStyle(.primary)
                                 Text(item.host).font(.caption).foregroundStyle(.secondary)
                                 HStack(spacing: 8) {
-                                    if item.services.contains(where: { $0.connection == .desktop }) { Label("Desktop", systemImage: "macwindow") }
+                                    if item.services.contains(where: { $0.connection == .desktop }) { Label("Screen Sharing", systemImage: "macwindow") }
                                     if item.services.contains(where: { $0.connection == .terminal }) { Label("Terminal", systemImage: "terminal") }
                                 }.font(.caption2).foregroundStyle(.secondary)
                             }.frame(maxWidth: .infinity, alignment: .leading)

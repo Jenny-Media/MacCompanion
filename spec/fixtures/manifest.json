@@ -801,13 +801,13 @@
       "path": "direct-screen-sharing-v1.json",
       "kind": "directScreenSharing.v1",
       "expect": "valid",
-      "canonicalSHA256": "68215b8c84a2f49b0b314f0f75367ca6e842264499a1d8d8993c310bdf785240"
+      "canonicalSHA256": "e28e4f780ae48954d3a249a9ddcab780b86df23ce13b7cfb4a216c06b584c878"
     },
     {
       "path": "native-macos-client-v1.json",
       "kind": "client.nativeMac.v1",
       "expect": "valid",
-      "canonicalSHA256": "ceca82d6e0b6c99a0c34fa571877e579d1c409fcf217eeeb9c0d01929bff2880"
+      "canonicalSHA256": "683b7324cbb525a763ecf2dfc750cc6204d0b51ef7ebdc37b802858d7b667f81"
     },
     {
       "path": "native-visionos-client-v1.json",

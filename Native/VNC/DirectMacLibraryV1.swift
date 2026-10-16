@@ -280,7 +280,7 @@ enum DesktopCredentialStoreV1 {
         guard !DirectMacConnections.shared.isActive(mac.id) else { recovery = .make(.removeFailed, message: "Disconnect this Mac before forgetting its login."); return }
         #endif
         do { try removeLogin(mac.id); failure = nil }
-        catch { recovery = .make(.removeFailed, message: "The saved Desktop login couldn’t be removed. Review it and retry.") }
+        catch { recovery = .make(.removeFailed, message: "The saved Screen Sharing login couldn’t be removed. Review it and retry.") }
     }
     func applyCloud(_ next: [DirectMacRecordV1]) throws {
         guard readable, next.count <= 64, Set(next.map(\.id)).count == next.count else { throw DirectCloudError.invalid }
@@ -436,7 +436,8 @@ struct DirectMacLibraryRootV1: View {
                                 if !editMode.isEditing {
                                     Menu {
                                         Section("Connect") {
-                                            Button("Desktop", systemImage: DirectMacConnection.desktop.symbol) { open(mac, connection: .desktop) }
+                                            Button("Screen Sharing", systemImage: DirectMacConnection.desktop.symbol) { open(mac, connection: .desktop) }
+                                                .accessibilityHint("View and control this Mac")
                                             Button("Trackpad & Keyboard", systemImage: "rectangle.and.hand.point.up.left") { open(mac, connection: .trackpad) }
                                             Button("Terminal", systemImage: "terminal") { open(mac, connection: .terminal) }
                                         }
@@ -648,7 +649,7 @@ struct DirectMacEditorV1: View {
     private enum CredentialAction: String, Identifiable {
         case desktop, terminal, serverKey
         var id: String { rawValue }
-        var title: String { switch self { case .desktop: "Forget Desktop Login"; case .terminal: "Forget Terminal Login"; case .serverKey: "Forget SSH Server Key" } }
+        var title: String { switch self { case .desktop: "Forget Screen Sharing Login"; case .terminal: "Forget Terminal Login"; case .serverKey: "Forget SSH Server Key" } }
         var detail: String { self == .serverKey ? "You will need to verify the server fingerprint the next time you connect in any mode." : "You will need to enter this Mac’s login the next time you connect. The other login is kept." }
     }
     @State private var addresses: [Draft]
@@ -908,7 +909,7 @@ struct DirectSessionSettingsV1: View {
     private var controls: some View {
         Form {
             Section("Controls") {
-                control("Desktop", symbol: "desktopcomputer", sheet: .desktop)
+                control("Screen Sharing", symbol: "desktopcomputer", sheet: .desktop)
                 control("Terminal", symbol: "terminal", sheet: .terminal)
                 control("Trackpad & Keyboard", symbol: "rectangle.and.hand.point.up.left", sheet: .trackpad)
             }

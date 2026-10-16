@@ -14,7 +14,7 @@ struct DirectComposedText: Equatable {
             switch self {
             case .empty: "Enter some text first."
             case .controls: "Remove control characters before sending. Line breaks and tabs are supported."
-            case .tooLarge(let mode): mode == .terminal ? "Terminal can send up to 4096 UTF-8 bytes at once." : "Desktop input can send up to 256 Unicode characters at once."
+            case .tooLarge(let mode): mode == .terminal ? "Terminal can send up to 4096 UTF-8 bytes at once." : "Screen Sharing input can send up to 256 Unicode characters at once."
             }
         }
     }

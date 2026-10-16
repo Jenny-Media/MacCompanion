@@ -128,7 +128,7 @@ struct DirectMacAccessView: View {
                         if !finished { draft.message = "Connections are still closing. Wait a moment and retry." }
                     }
                 }
-            } message: { Text(connections.hasTransfers(mac.id) ? "Active file transfers will be interrupted. Completed downloads are kept so you can save them." : "Desktop, Terminal and Files connections to this Mac will close. Other Macs stay connected.") }
+            } message: { Text(connections.hasTransfers(mac.id) ? "Active file transfers will be interrupted. Completed downloads are kept so you can save them." : "Screen Sharing, Terminal and Files connections to this Mac will close. Other Macs stay connected.") }
             .confirmationDialog("Forget this Mac’s saved login?", isPresented: $forgetConfirmation, titleVisibility: .visible) {
                 Button("Forget Saved Login", role: .destructive) {
                     guard draft.editable else { return }; draft.value = .init()
@@ -142,8 +142,8 @@ struct DirectMacAccessView: View {
     private var terminalDescription: String {
         switch draft.value.sshMethod {
         case .inherit: "Terminal uses your Mac account."
-        case .key: "Terminal signs in using this SSH key. Desktop still requires your Mac password."
-        case .password: "Terminal uses this account. Desktop still uses the Mac account above."
+        case .key: "Terminal signs in using this SSH key. Screen Sharing still requires your Mac password."
+        case .password: "Terminal uses this account. Screen Sharing still uses the Mac account above."
         }
     }
     private func load() { draft.load(); loadKeys() }

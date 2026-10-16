@@ -59,7 +59,7 @@ struct VisionLibrary: View {
                 if !sessions.requests.isEmpty {
                     Section("Open Windows") {
                         ForEach(sessions.requests) { request in
-                            Button(request.mac.name + " · " + (request.connection == .desktop ? "Desktop" : "Terminal")) {
+                            Button(request.mac.name + " · " + (request.connection == .desktop ? "Screen Sharing" : "Terminal")) {
                                 openWindow(id: "connection", value: request)
                             }.accessibilityIdentifier("vision-existing-session-" + request.id.uuidString)
                         }
@@ -77,12 +77,13 @@ struct VisionLibrary: View {
                         Label(mac.name, systemImage: mac.family.symbol).font(.headline)
                         Text(mac.address).font(.caption).foregroundStyle(.secondary)
                         HStack {
-                            Button("Desktop", systemImage: "desktopcomputer") { open(mac, .desktop) }
+                            Button("Screen Sharing", systemImage: "desktopcomputer") { open(mac, .desktop) }
                                 .accessibilityIdentifier("vision-open-desktop-" + mac.id.uuidString)
+                                .accessibilityHint("View and control this Mac")
                             Button("Terminal", systemImage: "terminal") { open(mac, .terminal) }
                                 .accessibilityIdentifier("vision-open-terminal-" + mac.id.uuidString)
                             Menu("Open Another Window", systemImage: "plus.rectangle.on.rectangle") {
-                                Button("Another Desktop") { open(mac, .desktop, another: true) }
+                                Button("Another Screen Sharing Window") { open(mac, .desktop, another: true) }
                                 Button("Another Terminal") { open(mac, .terminal, another: true) }
                             }.labelStyle(.iconOnly).accessibilityIdentifier("vision-another-window-" + mac.id.uuidString)
                             Menu {
@@ -93,7 +94,7 @@ struct VisionLibrary: View {
                                         pro.chooseFreeMac(mac.id)
                                     }.accessibilityIdentifier("vision-free-mac-" + mac.id.uuidString)
                                 }
-                                Button("Forget Desktop Login") { library.forgetLogin(mac) }
+                                Button("Forget Screen Sharing Login") { library.forgetLogin(mac) }
                                 Button("Remove Mac", role: .destructive) { deleting = mac }
                             } label: { Image(systemName: "ellipsis") }.accessibilityLabel("Manage " + mac.name)
                                 .accessibilityIdentifier("vision-manage-mac-" + mac.id.uuidString)
@@ -142,7 +143,7 @@ struct VisionMacEditor: View {
                 Section("Built-in Services") {
                     DirectServicePortField(title: "Screen Sharing", defaultPort: "5900", value: $desktopPort, identifier: "vision-desktop-port")
                     DirectServicePortField(title: "Remote Login", defaultPort: "22", value: $sshPort, identifier: "vision-ssh-port")
-                    Text("Desktop uses verified SSH to forward to Screen Sharing on this Mac. Enable both services in System Settings → General → Sharing.").font(.footnote)
+                    Text("Screen Sharing uses verified SSH to forward to Screen Sharing on this Mac. Enable both services in System Settings → General → Sharing.").font(.footnote)
                 }
                 if let failure = library.failure { Text(failure).foregroundStyle(.red) }
             }.navigationTitle(mac == nil ? "Add Mac" : "Edit Mac")
@@ -207,11 +208,11 @@ struct VisionSettings: View {
                 }
                 Section("Connections") {
                     NavigationLink("SSH Keys") { TerminalKeySettings(embedded: true) }
-                    NavigationLink("Desktop Quick Actions") { VisionQuickActionsSettings(mode: .desktop) }
+                    NavigationLink("Screen Sharing Quick Actions") { VisionQuickActionsSettings(mode: .desktop) }
                     NavigationLink("Terminal Quick Actions") { VisionQuickActionsSettings(mode: .terminal) }
                     NavigationLink("Mac Companion Pro") { DirectProView() }
                 }
-                Section("Desktop View") {
+                Section("Screen Sharing View") {
                     Text("Resize each window independently. Fit preserves wide and ultrawide desktop aspect ratios; Zoom and Pan affect only your local view.")
                     Text("Curved windows are currently unavailable through Apple’s public APIs for third-party apps.").font(.footnote).foregroundStyle(.secondary)
                 }

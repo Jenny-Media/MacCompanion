@@ -28,7 +28,7 @@ struct DirectRecoveryNotice: Equatable, Sendable {
         case .addressNotFound: copy = ("Address couldn’t be found", "Check the saved hostname or use a reachable local or private VPN address.", .warning)
         case .macUnreachable: copy = ("Couldn’t reach this Mac", "The sharing service didn’t respond. Check the Mac’s network route, sharing settings and service port.", .warning)
         case .desktopUnavailable: copy = ("Couldn’t open the desktop", "Screen Sharing ended before the desktop was ready. Your login and view settings are kept.", .warning)
-        case .desktopDisconnected: copy = ("Desktop disconnected", "Reconnect to continue. Your display and zoom will be restored when the Mac’s display layout is compatible.", .warning)
+        case .desktopDisconnected: copy = ("Screen Sharing disconnected", "Reconnect to continue. Your display and zoom will be restored when the Mac’s display layout is compatible.", .warning)
         case .terminalEnded: copy = ("Terminal session ended", "Open a new shell to continue. The previous shell won’t be restored and input won’t be replayed.", .information)
         case .inputPaused: copy = ("Input paused", "The connection couldn’t accept more input. Reconnect before continuing; input won’t be replayed.", .warning)
         case .serverChanged: copy = ("This Mac’s identity changed", "Login was stopped because the SSH server key differs from the one you trusted. Independently verify the Mac before changing saved server trust.", .critical)
@@ -125,9 +125,9 @@ struct DirectMacSetupGuide: View {
                 Section("1. Enable access on your Mac") {
                     #if os(iOS) || os(visionOS)
                     DirectGuidanceRow(title: "Remote Login · All modes", detail: "Turn on Remote Login and allow your Mac account.", symbol: "terminal")
-                    DirectGuidanceRow(title: "Desktop & Trackpad", detail: "Also turn on Screen Sharing and allow your Mac account.", symbol: "macwindow")
+                    DirectGuidanceRow(title: "Screen Sharing & Trackpad", detail: "Also turn on Screen Sharing and allow your Mac account.", symbol: "macwindow")
                     #else
-                    DirectGuidanceRow(title: "Desktop", detail: "Turn on Screen Sharing and allow your Mac account.", symbol: "macwindow")
+                    DirectGuidanceRow(title: "Screen Sharing", detail: "Turn on Screen Sharing and allow your Mac account.", symbol: "macwindow")
                     DirectGuidanceRow(title: "Terminal", detail: "Turn on Remote Login and allow your Mac account.", symbol: "terminal")
                     #endif
                     Label("System Settings → General → Sharing", systemImage: "gearshape").font(.footnote).foregroundStyle(.secondary)

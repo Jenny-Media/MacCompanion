@@ -179,7 +179,7 @@
     self.bodyStack.spacing = 8; self.bodyStack.translatesAutoresizingMaskIntoConstraints = NO;
     self.contentScroll=[UIScrollView new]; self.contentScroll.translatesAutoresizingMaskIntoConstraints=NO;
     [self.view addSubview:self.contentScroll]; [self.contentScroll addSubview:self.bodyStack];
-    self.returnButton=[self button:@"Return to Live Desktop" action:@selector(returnToDesktop)];
+    self.returnButton=[self button:@"Return to Mac Screen" action:@selector(returnToDesktop)];
     self.returnButton.accessibilityIdentifier=@"text-copy-return"; self.returnButton.translatesAutoresizingMaskIntoConstraints=NO;
     [self.view addSubview:self.returnButton];
     [NSLayoutConstraint activateConstraints:@[

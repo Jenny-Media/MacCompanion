@@ -954,5 +954,103 @@
     "encrypted": "prompt for passphrase per connection; never persist it",
     "policy": "count unique public keys across imported keys and file references",
     "selectionRemoval": "no fallback to an old imported-key preference"
+  },
+  "workspacePrototype": {
+    "shippingRouteChanged": false,
+    "releaseTargetLinked": false,
+    "desktopApplication": "com.apple.ScreenSharing",
+    "desktopScheme": "vnc",
+    "desktopCredentialsInURL": false,
+    "desktopStatus": "openedExternallyNotConnected",
+    "appLockOwnsExternalDesktop": false,
+    "terminalImplementation": "existingNativeSSH",
+    "storage": "isolatedPrototypeDirectory",
+    "automaticCloudSync": false,
+    "addressPolicy": "existingPrivateLocalEndpointPolicy",
+    "launchesWhileLocked": false,
+    "duplicatePendingLaunches": false,
+    "terminalWindowPerMac": "registerRestoredAndReuseUntilClosed",
+    "desktopFailureClosesTerminal": false,
+    "retiredRepliesChangeState": false,
+    "urlCases": [
+      {
+        "host": "192.168.1.25",
+        "port": 5900,
+        "allowed": true,
+        "url": "vnc://192.168.1.25:5900"
+      },
+      {
+        "host": "100.101.102.103",
+        "port": 5901,
+        "allowed": true,
+        "url": "vnc://100.101.102.103:5901"
+      },
+      {
+        "host": "127.0.0.1",
+        "port": 5900,
+        "allowed": true,
+        "url": "vnc://127.0.0.1:5900"
+      },
+      {
+        "host": "fd00::1234",
+        "port": 5900,
+        "allowed": true,
+        "url": "vnc://[fd00::1234]:5900"
+      },
+      {
+        "host": "::1",
+        "port": 65535,
+        "allowed": true,
+        "url": "vnc://[::1]:65535"
+      },
+      {
+        "host": "8.8.8.8",
+        "port": 5900,
+        "allowed": false
+      },
+      {
+        "host": "2001:4860:4860::8888",
+        "port": 5900,
+        "allowed": false
+      },
+      {
+        "host": "192.168.1.25",
+        "port": 0,
+        "allowed": false
+      },
+      {
+        "host": "192.168.1.25",
+        "port": 65536,
+        "allowed": false
+      },
+      {
+        "host": "user:secret@192.168.1.25",
+        "port": 5900,
+        "allowed": false
+      },
+      {
+        "host": "192.168.1.25/path?password=secret",
+        "port": 5900,
+        "allowed": false
+      },
+      {
+        "host": "fe80::1",
+        "port": 5900,
+        "allowed": false
+      }
+    ],
+    "presentation": {
+      "actions": [
+        "Screen Sharing",
+        "Terminal"
+      ],
+      "combinedLaunchAction": false,
+      "screenSharingSubtitle": "Opens Apple Screen Sharing",
+      "externalApplicationIndicator": true,
+      "applicationName": "Mac Companion Prototype",
+      "savedDataIdentityChanged": false
+    },
+    "filesLibrary": "samePrototypeLibraryURL",
+    "buildAdmission": "exactNativeSourceManifestBeforeAndAfter"
   }
 }

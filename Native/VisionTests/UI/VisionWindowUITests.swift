@@ -202,14 +202,14 @@ import XCTest
         let app = launch(); addMac(app)
         let desktop = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vision-open-desktop-")).firstMatch
         desktop.tap()
-        XCTAssertTrue(app.staticTexts["Synthetic Vision Mac · Desktop"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["Synthetic Vision Mac · Screen Sharing"].waitForExistence(timeout: 15))
         XCTAssertTrue(app.secureTextFields["vision-login-password"].exists)
         app.buttons["Your Macs"].firstMatch.tap(); desktop.tap()
-        let titles = app.staticTexts.matching(identifier: "Synthetic Vision Mac · Desktop")
+        let titles = app.staticTexts.matching(identifier: "Synthetic Vision Mac · Screen Sharing")
         XCTAssertEqual(titles.count, 1, "The default action returns to the existing owner")
         app.buttons["Your Macs"].firstMatch.tap()
         app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "vision-another-window-")).firstMatch.tap()
-        app.buttons["Another Desktop"].tap()
+        app.buttons["Another Screen Sharing Window"].tap()
         let two = NSPredicate(format: "count == 2")
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: two, object: titles)], timeout: 15), .completed)
         app.buttons["Your Macs"].firstMatch.tap()
@@ -232,7 +232,7 @@ import XCTest
             settingsWindow.swipeUp(velocity: .slow)
         }
         XCTAssertTrue(privacyNote.waitForExistence(timeout: 10), app.debugDescription)
-        let desktopActions = app.buttons["Desktop Quick Actions"]
+        let desktopActions = app.buttons["Screen Sharing Quick Actions"]
         let settingsWindow = app.windows.containing(.staticText, identifier: "Privacy").firstMatch
         reveal(desktopActions, in: settingsWindow); desktopActions.tap()
         let layout = app.staticTexts["Your session layout"]
@@ -317,7 +317,7 @@ import XCTest
         app.buttons["Done"].tap()
         app.buttons["Manage Synthetic Second Mac"].tap(); app.buttons["Use as My Free Mac"].tap()
         desktop.tap()
-        XCTAssertTrue(app.staticTexts["Synthetic Second Mac · Desktop"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["Synthetic Second Mac · Screen Sharing"].waitForExistence(timeout: 10), app.debugDescription)
         app.buttons["Your Macs"].firstMatch.tap()
         XCTAssertTrue(app.staticTexts["Synthetic First Mac"].exists); XCTAssertTrue(app.staticTexts["Synthetic Second Mac"].exists)
         let capture = XCTAttachment(string: app.collectionViews.firstMatch.debugDescription); capture.name = "Native library retains both Macs after free choice"; capture.lifetime = .keepAlways; add(capture)
@@ -333,10 +333,10 @@ import XCTest
         XCTAssertTrue(app.buttons["Your Macs"].isHittable)
         let canvas = app.descendants(matching: .any).matching(identifier: "vision-desktop-canvas").firstMatch
         connect(app, surface: canvas); XCTAssertTrue(canvas.waitForExistence(timeout: 20))
-        let owner = app.windows.containing(.staticText, identifier: "Synthetic Vision Mac · Desktop").firstMatch
+        let owner = app.windows.containing(.staticText, identifier: "Synthetic Vision Mac · Screen Sharing").firstMatch
         XCTAssertEqual(owner.frame.width, 600); XCTAssertEqual(owner.frame.height, 420)
         XCTAssertTrue(app.buttons["vision-keyboard-button"].isHittable); XCTAssertTrue(app.buttons["vision-adjust-view"].isHittable)
-        app.buttons["More"].tap(); app.buttons["Desktop Actions"].tap()
+        app.buttons["More"].tap(); app.buttons["Screen Sharing Actions"].tap()
         let cancel = app.buttons["vision-target-cancel"]
         reveal(cancel, in: app.scrollViews["vision-desktop-target-actions"]); cancel.tap()
         app.buttons["vision-adjust-view"].tap()

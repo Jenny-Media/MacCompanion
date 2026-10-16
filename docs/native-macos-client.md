@@ -435,3 +435,36 @@ Synthetic native Mac and simulator wire tests verify this path; live Screen
 Sharing shape delivery on the existing classic transport remains a separate
 compatibility check. No helper, authentication or encrypted record-layer change
 is introduced.
+
+
+## Disposable Screen Sharing and Terminal prototype (2026-10-15)
+
+The approved feasibility experiment lives entirely under
+`Experiments/MacWorkspacePrototype/`. It does not replace or link into the
+shipping macOS target. A separate temporary app reuses the native Mac editor
+and SSH Terminal while handing Screen Sharing to `com.apple.ScreenSharing` through a
+credential-free VNC URL. Its saved Macs are local to the prototype; it neither
+imports installed-app credentials nor starts cloud sync or a host/helper.
+
+Resolve hostnames off the main actor and admit only numeric local/private
+endpoints through the existing native endpoint policy. The URI contains only
+scheme, admitted numeric host and saved Desktop port. Never pass a username,
+password, path, query or fragment. Apple owns Desktop authentication, connection
+state and the external window. An accepted URL reports Opened in Screen Sharing,
+never Connected. App unlock/quit controls only this app's UI and SSH sessions;
+it cannot lock or end an external Desktop session.
+
+The Mac detail page offers Screen Sharing and Terminal as independent actions.
+Screen Sharing shows an external-app arrow and Opens Apple Screen Sharing subtitle;
+it never opens Terminal implicitly. Terminal registers restored windows and reuses
+an existing window until it closes; it never launches Screen Sharing. Files
+sessions use the same explicit prototype library URL for membership checks and
+removal observation. There is no combined launch or workspace
+concept in the interface. Ignore repeated Screen Sharing clicks while its handoff
+is pending. Failed Screen Sharing launch must leave Terminal usable. Bound the asynchronous wait; lock, removal, edited
+addresses/ports and replacement requests retire pending work and late callbacks.
+No automatic public-endpoint fallback, password injection, UI scripting or
+external window embedding is introduced. The experiment retains existing native
+code/dependencies for reuse; it does not claim that VNC code has been removed
+from the application binary. The fixture contract is indexed only by the
+existing `spec/fixtures/manifest.json`.

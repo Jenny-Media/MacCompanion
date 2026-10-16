@@ -288,7 +288,7 @@
         UITextField *password = [viewer valueForKey:@"password"]; password.text = @"synthetic-draft-only";
         CompanionVNCSession *owner = viewer.session;
         XCTAssertNotNil(card);
-        XCTAssertEqualObjects(((UILabel *)[viewer valueForKey:@"loginSubtitle"]).text, inputOnly.boolValue ? @"Trackpad & Keyboard" : @"Desktop");
+        XCTAssertEqualObjects(((UILabel *)[viewer valueForKey:@"loginSubtitle"]).text, inputOnly.boolValue ? @"Trackpad & Keyboard" : @"Screen Sharing");
         XCTAssertTrue(((UIView *)[viewer valueForKey:@"trackpadHelp"]).hidden);
         XCTAssertEqualWithAccuracy(CGRectGetMidY(card.frame), CGRectGetMidY(scroll.bounds), 2);
         [viewer setValue:@YES forKey:@"starting"]; [viewer updateConnectionChrome]; [viewer.view layoutIfNeeded];

@@ -41,7 +41,7 @@ struct VisionSessionWindow: View {
     var body: some View {
         NavigationStack { VStack(spacing: 0) {
             HStack {
-                Label(request.mac.name + " · " + (request.connection == .desktop ? "Desktop" : "Terminal"), systemImage: request.connection == .desktop ? "desktopcomputer" : "terminal")
+                Label(request.mac.name + " · " + (request.connection == .desktop ? "Screen Sharing" : "Terminal"), systemImage: request.connection == .desktop ? "desktopcomputer" : "terminal")
                     .font(.headline)
                 Spacer()
                 Text(status).font(.caption).foregroundStyle(.secondary).lineLimit(2)
@@ -120,7 +120,8 @@ struct VisionSessionWindow: View {
                     Text(recovery.title).font(.title2)
                     DirectNoticeMessage(message: recovery.message)
                 }
-                Text(request.connection == .desktop ? "Screen Sharing over SSH" : "Remote Login").font(.title2)
+                Text(request.connection == .desktop ? "Screen Sharing" : "Remote Login").font(.title2)
+                if request.connection == .desktop { Text("View and control this Mac").foregroundStyle(.secondary) }
                 Text(request.connection == .desktop ? "Enable Screen Sharing and Remote Login on your Mac, then sign in with an allowed Mac account." : "Enable Remote Login on your Mac, then sign in with an allowed Mac account.")
                     .foregroundStyle(.secondary)
                 TextField("Mac Account", text: $username).directNoAutocapitalization().autocorrectionDisabled().textFieldStyle(.roundedBorder)
@@ -165,7 +166,7 @@ struct VisionSessionWindow: View {
                 desktopInteraction.canvas?.setAdjusting(!desktopInteraction.adjusting)
             }.accessibilityIdentifier("vision-adjust-view")
             Menu("More", systemImage: "ellipsis") {
-                Button("Desktop Actions") { desktopInteraction.canvas?.showActions() }
+                Button("Screen Sharing Actions") { desktopInteraction.canvas?.showActions() }
                 ForEach(VisionQuickActionPresentation.presented(VNCSessionPreferences.actions(.desktop), mode: .desktop).filter { $0.enabled && $0.valid }) { action in
                     Button(action.displayTitle) { desktopInteraction.performQuickAction(action) }
                 }

@@ -30,7 +30,7 @@ struct MacDirectDesktopView: View {
                     MacCredentialFields(username: $username, password: $password, enabled: !session.connecting && DirectAppLockV1.shared.canAccess, prefix: "mac-vnc", submit: connect)
                         .frame(height: 104)
                     Toggle("Save login on this Mac", isOn: $remember).disabled(session.connecting)
-                        .help("Store this Mac’s Desktop credentials in Keychain.")
+                        .help("Store this Mac’s Screen Sharing credentials in Keychain.")
                     DisclosureGroup("Connection Details") { DirectConnectionDetailsRows(mac: mac, desktop: true) }
                         .font(.subheadline).disabled(session.connecting)
                     if let notice = issue ?? session.recovery {
@@ -64,7 +64,7 @@ struct MacDirectDesktopView: View {
             if window.fullScreen && session.connected { MacDesktopFullScreenControls(session: session, window: window, actions: actions, files: { openWindow(id: "direct-files", value: DirectFilesWindowRequest(macID: mac.id)) }) { controls = true } }
         }
         .frame(minWidth: 520, minHeight: 360)
-        .navigationTitle(mac.name + " · Desktop")
+        .navigationTitle(mac.name + " · Screen Sharing")
         .toolbar {
             Button("Files", systemImage: "folder") { openWindow(id: "direct-files", value: DirectFilesWindowRequest(macID: mac.id)) }
                 .help("Browse and transfer files using Remote Login (SSH)").accessibilityIdentifier("session-files")

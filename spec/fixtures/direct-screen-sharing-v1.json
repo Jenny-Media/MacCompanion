@@ -2545,7 +2545,7 @@
   "connectionActionCases": [
     {
       "mode": "desktop",
-      "title": "Open Desktop",
+      "title": "Open Screen Sharing",
       "symbol": "macwindow"
     },
     {

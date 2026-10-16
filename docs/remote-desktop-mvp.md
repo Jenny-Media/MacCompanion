@@ -440,3 +440,13 @@ Shape-only updates never reposition it. The cursor stays visible independently
 of Touch & Haptics indicators; input-only mode shows finger feedback without a
 desktop pointer. Keep Pointer Visible only pans a zoomed viewport. No Mac helper,
 new wire extension or automatic cursor probing is introduced.
+
+### Connection naming, 2026-10-15
+
+Screen Sharing is the visible connection name on iOS, macOS and visionOS.
+Existing `desktop` record values, restoration IDs and credential accounts stay
+unchanged. On iOS and visionOS it opens the in-app remote screen, described as
+View and control this Mac. The isolated Mac prototype opens Apple Screen Sharing
+in a separate application, with an external-app arrow and Opens Apple Screen
+Sharing subtitle. Terminal remains an independent action. No combined launch
+or workspace terminology is required in the interface.
