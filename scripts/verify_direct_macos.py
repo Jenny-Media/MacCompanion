@@ -7,6 +7,7 @@ disposable fixture with built-in Screen Sharing and Remote Login. Neither lane
 certifies signed iCloud delivery. Output remains outside the repository.
 """
 import argparse
+from direct_app_naming import APP_BUNDLE_NAME, test_host
 from build_cache import compiler_workspace
 import fcntl
 import json
@@ -89,7 +90,7 @@ def execute(args, parser, compiler):
             'CODE_SIGNING_ALLOWED': 'YES', 'CODE_SIGN_IDENTITY': '-',
             'HEADER_SEARCH_PATHS': settings['HEADER_SEARCH_PATHS'],
             'CLANG_ENABLE_OBJC_ARC': 'YES',
-            'TEST_HOST': '$(BUILT_PRODUCTS_DIR)/MacCompanion.app/Contents/MacOS/MacCompanion', 'BUNDLE_LOADER': '$(TEST_HOST)'}}}
+            'TEST_HOST': test_host('macos'), 'BUNDLE_LOADER': '$(TEST_HOST)'}}}
     spec['schemes'] = {'NativeMacClientQA': {
         'build': {'targets': {'MacCompanion': 'all', 'NativeClientTests': 'all'}},
         'run': {'config': 'Debug', 'executable': 'MacCompanion', 'macroExpansion': 'MacCompanion',
@@ -149,7 +150,7 @@ def execute(args, parser, compiler):
             stdout=log, stderr=subprocess.STDOUT, check=True)
     if admission:
         from direct_mac_development_signing import verify
-        verify(qa / 'DerivedData/Build/Products/Debug/MacCompanion.app', admission, qa)
+        verify(qa / 'DerivedData/Build/Products/Debug' / APP_BUNDLE_NAME, admission, qa)
     print('Native Mac hosted QA completed (inspect skipped acceptance checks):', result)
 
 

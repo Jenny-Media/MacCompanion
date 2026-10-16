@@ -5,6 +5,7 @@ Generated development project; no Experimental app source is linked.
 Permanent release dependency/signing gates remain authoritative.
 """
 import argparse
+from direct_app_naming import APP_BUNDLE_NAME, configure as configure_app_name, verify as verify_app_name
 from build_cache import BuildSession, toolchain_identity, write_if_changed
 import hashlib
 import json
@@ -50,7 +51,7 @@ def build(args, parser, session):
     def source_inputs():
         files = [p for root in [HERE, ROOT / 'Native/SessionActivity', ROOT / 'Native/Terminal', ROOT / 'Native/Dependencies', ROOT / 'Apps/MacCompanionIOS', ROOT / 'Apps/MacCompanionSessionActivity', ROOT / 'Packages/MacCompanionKit/Sources']
                  for p in sorted(root.rglob('*')) if p.is_file()]
-        files += [Path(__file__), *[ROOT / 'scripts' / name for name in ['build_cache.py', 'prepare_macos_vnc_cursor.py', 'prepare_vnc_read_service.py']]]
+        files += [Path(__file__), *[ROOT / 'scripts' / name for name in ['build_cache.py', 'direct_app_naming.py', 'prepare_macos_vnc_cursor.py', 'prepare_vnc_read_service.py']]]
         return {str(p.relative_to(ROOT)): sha(p) for p in files}
     terminal_lock = json.loads((ROOT / 'Native/Terminal/source-lock.json').read_text())
     vendor = ROOT / terminal_lock['Citadel']['localPath']
@@ -136,6 +137,7 @@ def build(args, parser, session):
         'LIBRARY_SEARCH_PATHS': [str(build)], 'ARCHS': 'arm64', 'ONLY_ACTIVE_ARCH': 'YES', 'OTHER_LDFLAGS': ['$(inherited)', '-lz']})
     import plistlib
     direct_info = plistlib.loads((ROOT / base['INFOPLIST_FILE']).read_bytes())
+    configure_app_name(base, direct_info, 'ios')
     # Preserve the approved standard-encryption declaration for distribution outside France.
     direct_info['ITSAppUsesNonExemptEncryption'] = False
     direct_info['NSBonjourServices'] = ['_rfb._tcp', '_ssh._tcp', '_device-info._tcp']
@@ -195,14 +197,15 @@ def build(args, parser, session):
     expected_pins = json.loads((ROOT / 'Native/Terminal/Package.resolved').read_text())['pins']
     if json.loads(package_lock.read_text())['pins'] != expected_pins:
         raise SystemExit('Resolved terminal package revisions changed during build.')
-    app = args.output / ('DerivedData/Build/Products/Debug-' + args.sdk) / 'Mac Companion.app'
+    app = args.output / ('DerivedData/Build/Products/Debug-' + args.sdk) / APP_BUNDLE_NAME
+    naming = verify_app_name(app, 'ios')
     if plistlib.loads((app / 'Info.plist').read_bytes()).get('ITSAppUsesNonExemptEncryption') is not False:
         raise SystemExit('Built app is missing the approved export compliance metadata.')
     verify_cursor(cursor_source, cursor_tree)
     if inputs != source_inputs():
         raise SystemExit('Application sources changed during the build. Rebuild the final sources.')
     report = {'profile': 'maccompanion.normal-ios-direct-screen-sharing-development.v1',
-        'normalSourceRoot': True, 'releaseAdmitted': False, 'sdk': args.sdk, 'app': str(app),
+        'appNaming': naming, 'normalSourceRoot': True, 'releaseAdmitted': False, 'sdk': args.sdk, 'app': str(app),
         'cursorAdapter': cursor_provenance, 'upstream': LOCK, 'terminalDependencies': terminal_lock, 'terminalPackagePins': expected_pins, 'libVNCClientSHA256': sha(build / 'libvncclient.a'), 'inputs': inputs,
         'normalApplicationBinarySHA256': sha(app / 'Mac Companion'), 'installed': False}
     report = session.publish(report, app)

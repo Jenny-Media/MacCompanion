@@ -5,6 +5,7 @@ Generated development output stays outside the checkout. No host/Agent sources
 or experiments are linked into the client. Distribution admission is separate.
 """
 import argparse
+from direct_app_naming import APP_BUNDLE_NAME, configure as configure_app_name, verify as verify_app_name
 from build_cache import BuildSession, cmake_refresh_args, toolchain_identity, write_if_changed
 import hashlib
 import json
@@ -35,7 +36,7 @@ def source_inputs(root=ROOT):
              root / 'Apps/MacCompanionMac/Assets.xcassets']
     files = [p for folder in roots for p in sorted(folder.rglob('*')) if p.is_file()]
     files += [root / 'scripts/build_direct_macos.py', *[root / 'scripts' / name for name in [
-        'build_cache.py', 'direct_mac_development_signing.py', 'verify_direct_client_dependencies.py',
+        'build_cache.py', 'direct_app_naming.py', 'direct_mac_development_signing.py', 'verify_direct_client_dependencies.py',
         'prepare_swiftterm_build_tool.py', 'dependency_checkout_provenance.py', 'prepare_macos_vnc_cursor.py', 'prepare_vnc_read_service.py']],
         root / 'spec/dependency-policy/v0/direct-client-development.json',
         root / 'spec/privacy-manifest/v0/targets/mac-containing-app/PrivacyInfo.xcprivacy']
@@ -133,14 +134,14 @@ def build(args, parser, session):
         {'path': str(ROOT / 'Apps/MacCompanionMac/Assets.xcassets'), 'buildPhase': 'resources'},
         {'path': str(ROOT / 'spec/privacy-manifest/v0/targets/mac-containing-app/PrivacyInfo.xcprivacy'), 'buildPhase': 'resources'}]
     info = args.output / 'Info.plist'
-    write_if_changed(info, plistlib.dumps({'CFBundleIdentifier': '$(PRODUCT_BUNDLE_IDENTIFIER)', 'CFBundleExecutable': '$(EXECUTABLE_NAME)',
+    metadata = {'CFBundleIdentifier': '$(PRODUCT_BUNDLE_IDENTIFIER)', 'CFBundleExecutable': '$(EXECUTABLE_NAME)',
         'CFBundleName': 'Mac Companion', 'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': '1.0', 'CFBundleVersion': '1',
         # Approved standard-encryption declaration; France remains excluded from distribution.
         'ITSAppUsesNonExemptEncryption': False,
         'LSMinimumSystemVersion': '26.0', 'NSHighResolutionCapable': True, 'LSApplicationCategoryType': 'public.app-category.utilities',
         'NSLocalNetworkUsageDescription': 'Connect to your Macs using Screen Sharing and Remote Login.',
         'NSBonjourServices': ['_rfb._tcp', '_ssh._tcp', '_device-info._tcp'],
-        'MacCompanionSharedKeychainGroup': '$(TeamIdentifierPrefix)media.jenny.maccompanion.ios'}))
+        'MacCompanionSharedKeychainGroup': '$(TeamIdentifierPrefix)media.jenny.maccompanion.ios'}
     terminal_lock = json.loads((ROOT / 'Native/Terminal/source-lock.json').read_text())
     spec = {'name': 'NativeMacClient', 'options': {'deploymentTarget': {'macOS': '26.0'}},
         'packages': {'Citadel': {'path': str(ROOT / 'Native/Dependencies/Citadel')},
@@ -157,6 +158,8 @@ def build(args, parser, session):
                 'ASSETCATALOG_COMPILER_APPICON_NAME': 'AppIcon',
                 'OTHER_LDFLAGS': ['$(inherited)', '-lz'], 'ARCHS': args.arch, 'ONLY_ACTIVE_ARCH': 'YES'}}}},
         'schemes': {'MacCompanion': {'build': {'targets': {'MacCompanion': 'all'}}}}}
+    configure_app_name(spec['targets']['MacCompanion']['settings']['base'], metadata, 'macos')
+    write_if_changed(info, plistlib.dumps(metadata))
     signing = None
     if any([args.signing_identity, args.team, args.profile]):
         if not all([args.signing_identity, args.team, args.profile]):
@@ -196,7 +199,8 @@ def build(args, parser, session):
     mac_vnc_after = verify_cursor(mac_vnc_source, mac_vnc_expected)
     if source_inputs() != application_inputs:
         raise SystemExit('Application sources changed during the build. Rerun against a stable source snapshot.')
-    app = args.output / 'DerivedData/Build/Products/Debug/MacCompanion.app'
+    app = args.output / 'DerivedData/Build/Products/Debug' / APP_BUNDLE_NAME
+    naming = verify_app_name(app, 'macos')
     executable = app / 'Contents/MacOS/MacCompanion'
     if plistlib.loads((app / 'Contents/Info.plist').read_bytes()).get('ITSAppUsesNonExemptEncryption') is not False:
         raise SystemExit('Built app is missing the approved export compliance metadata.')
@@ -211,7 +215,7 @@ def build(args, parser, session):
                                'macOSCursorAdapter': {'policy': lock['macOSCursorCallback'], 'readServicePolicy': lock['desktopReadInputService'], 'source': str(mac_vnc_source),
                                                       'beforeBuild': mac_vnc_before, 'afterBuild': mac_vnc_after},
                                'SwiftPackageSources': {'beforeBuild': package_sources, 'afterBuild': package_sources_after}},
-              'app': str(app), 'executableSHA256': sha(executable),
+              'app': str(app), 'appNaming': naming, 'executableSHA256': sha(executable),
               'artifactFiles': {str(p.relative_to(app)): sha(p) for p in sorted(app.rglob('*')) if p.is_file() and not p.is_symlink()},
               'signedDeviceAcceptance': False,
               'developmentSigning': signing, 'iCloudDeliveryVerified': False, 'releaseReadiness': False}
