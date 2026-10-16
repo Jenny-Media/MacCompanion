@@ -2951,21 +2951,24 @@
       "transition": "baselineReset",
       "key": 97,
       "buttonMask": 1,
-      "releasesBeforeClose": true
+      "releasesBeforeClose": true,
+      "connectedBeforeStop": false
     },
     {
       "name": "stop while entering input-only",
       "transition": "inputOnly",
       "key": 65505,
       "buttonMask": 1,
-      "releasesBeforeClose": true
+      "releasesBeforeClose": true,
+      "connectedBeforeStop": false
     },
     {
-      "name": "stop during review return fresh-frame wait",
+      "name": "stop after local review return with live baseline",
       "transition": "reviewReturn",
       "key": 65507,
       "buttonMask": 4,
-      "releasesBeforeClose": true
+      "releasesBeforeClose": true,
+      "connectedBeforeStop": true
     }
   ],
   "interruptionCases": [
@@ -3197,18 +3200,17 @@
       ]
     },
     {
-      "name": "copy-review-brief-inactive-awaits-fresh-frame",
+      "name": "copy-review-brief-inactive-retains-live-baseline",
       "events": [
         "copy-text-review",
         "inactive",
-        "active",
-        "fresh-complete-frame"
+        "active"
       ],
       "expect": [
         "review-retired",
         "independent-interruption-gate",
-        "ordinary-and-composed-input-blocked-until-fresh-frame",
-        "fresh-frame-while-inactive-stays-input-blocked"
+        "ordinary-and-composed-input-blocked-until-active",
+        "same-complete-baseline-no-new-full-refresh"
       ]
     }
   ],
@@ -3490,5 +3492,64 @@
       ],
       "initialMode": "area"
     }
-  ]
+  ],
+  "copyTextReturnCases": [
+    {
+      "name": "live owner returns without full refresh",
+      "running": true,
+      "baselinePresented": true,
+      "awaitingResumeFrame": false,
+      "paused": false,
+      "interrupted": false,
+      "allowsInputAfterReturn": true,
+      "requestsFullRefresh": false
+    },
+    {
+      "name": "baseline changed during local review",
+      "running": true,
+      "baselinePresented": false,
+      "awaitingResumeFrame": true,
+      "paused": false,
+      "interrupted": false,
+      "allowsInputAfterReturn": false,
+      "requestsFullRefresh": false
+    },
+    {
+      "name": "background pause still owns readiness",
+      "running": true,
+      "baselinePresented": true,
+      "awaitingResumeFrame": false,
+      "paused": true,
+      "interrupted": false,
+      "allowsInputAfterReturn": false,
+      "requestsFullRefresh": false
+    },
+    {
+      "name": "interruption still owns input admission",
+      "running": true,
+      "baselinePresented": true,
+      "awaitingResumeFrame": false,
+      "paused": false,
+      "interrupted": true,
+      "allowsInputAfterReturn": false,
+      "requestsFullRefresh": false
+    },
+    {
+      "name": "ended connection stays ended",
+      "running": false,
+      "baselinePresented": true,
+      "awaitingResumeFrame": false,
+      "paused": false,
+      "interrupted": false,
+      "allowsInputAfterReturn": false,
+      "requestsFullRefresh": false
+    }
+  ],
+  "copyTextFailurePolicy": {
+    "keepSnapshotAfterRemoteFailure": true,
+    "allowsLocalCopyAfterRemoteFailure": true,
+    "presentRecoveryDuringReview": false,
+    "presentRecoveryAfterBack": true,
+    "endTransportImmediately": true
+  }
 }

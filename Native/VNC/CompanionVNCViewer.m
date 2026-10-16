@@ -127,6 +127,7 @@
 @property CGPoint resumeCenter;
 @property(nonatomic, weak) CompanionVNCDisplayPicker *displayPicker;
 @property CompanionVNCTextReview *textReview;
+@property NSNumber *deferredTextReviewFailure;
 @property NSUInteger textReviewGeneration;
 @property CGRect textReviewCrop;
 @property CGSize textReviewFramebuffer;
@@ -499,6 +500,7 @@
     return self.inputOnly ? @"Connecting to Trackpad & Keyboard…" : @"Connecting to Screen Sharing…";
 }
 - (void)prepareConnection {
+    self.deferredTextReviewFailure = nil;
     self.diagnosticGeneration++; self.diagnosticScheduled = NO; self.diagnosticFlags = nil;
     [self retireTextDraft];
     [self invalidateTextReview:NO]; self.textReviewViewportPending=NO;
@@ -529,6 +531,12 @@
         strong.latestCounters = stats;
         if (strong.exited) return;
         BOOL running = strong.session.running, connected = [state isEqualToString:@"Connected"] && strong.session.connected && strong.lastFramebuffer != nil && !strong.restoreViewportPending;
+        if (!running && strong.textReview) {
+            [strong retireTextDraft];
+            if (strong.disconnectHandler) strong.disconnectHandler();
+            [strong showConnectionFailureStage:[stats[@"failureStage"] integerValue]];
+            [strong reportDiagnostics:stats]; return;
+        }
         if (!strong.foreground) {
             strong.status.text = @"Paused · Return to resume";
             if (!running) { if (strong.sessionPhaseHandler) strong.sessionPhaseHandler(@"ended"); if (strong.disconnectHandler) strong.disconnectHandler(); }
@@ -600,7 +608,7 @@
     if (!login || ![login[@"username"] length] || ![login[@"password"] length]) {
         [self finishCredentialSession]; self.login.hidden = NO; self.starting = NO; [self updateConnectionChrome]; return;
     }
-    [self invalidateTextReview:NO]; self.textReviewViewportPending=NO;
+    [self invalidateTextReview:NO]; self.textReviewViewportPending=NO; self.deferredTextReviewFailure=nil;
     [self retireTextDraft];
     [self clearRecovery];
     if (self.lastFramebuffer) { [self rememberViewport]; self.restoreViewportPending = YES; self.image.alpha = .45; }
@@ -643,6 +651,7 @@
     [self loginEdited]; [self refreshAccessEditing];
 }
 - (void)stopViewer {
+    self.deferredTextReviewFailure = nil;
     [self.credentialState invalidate]; [self renderCredentialForm];
     self.status.hidden = YES; [self updateStatusPresentation];
     [self invalidateTextReview:NO]; self.textReviewViewportPending=NO;
@@ -701,12 +710,22 @@
 }
 - (void)showConnectionFailure { [self showConnectionFailureStage:0]; }
 - (void)showConnectionFailureStage:(NSInteger)stage {
+    UIApplication.sharedApplication.idleTimerDisabled = NO;
     [self finishCredentialSession];
-    [self invalidateTextReview:NO]; self.textReviewViewportPending=NO;
     [self retireTextDraft];
     self.starting = NO; self.checkingResume = NO; self.resumeGeneration++; self.statusGeneration++; self.awaitingReplacementLayout = NO; self.pendingRestorationFrame = nil; self.restoreViewportPending = NO;
     if (self.sessionPhaseHandler) self.sessionPhaseHandler(@"ended");
     [self clearCursor]; [self resetModifiers]; self.connect.enabled = YES;
+    if (self.textReview) {
+        self.deferredTextReviewFailure = @(stage);
+        return; // Local image, draft, Copy and Share remain usable.
+    }
+    self.deferredTextReviewFailure = nil;
+    [self showRecoveryStage:stage];
+}
+- (void)revealDeferredTextReviewFailure {
+    if (!self.deferredTextReviewFailure || self.textReview || !self.foreground || self.inputInactive || self.exited) return;
+    NSInteger stage = self.deferredTextReviewFailure.integerValue; self.deferredTextReviewFailure = nil;
     [self showRecoveryStage:stage];
 }
 - (void)showInvalidLogin {
@@ -758,10 +777,11 @@
     if (self.exited) return;
     if (self.foreground) {
         if (self.inputInactive) { self.inputInactive = NO; [self.session resumeInputAfterInterruption]; [self updateCursor]; [self updateTrackpadFeedback]; }
-        return;
+        [self revealDeferredTextReviewFailure]; return;
     }
     self.foreground = YES; self.inputInactive = NO;
     [self.credentialState resumeWithActive:YES allowed:self.credentialState.accessAllowed]; [self renderCredentialForm];
+    if (self.deferredTextReviewFailure) { self.reconnectWhenReady = NO; [self revealDeferredTextReviewFailure]; return; }
     if (!self.reconnectWhenReady) return;
     self.checkingResume = YES;
     self.status.hidden = YES; [self scheduleResumeIndicator:@"Updating desktop…"]; self.image.alpha = 1;
@@ -1783,7 +1803,10 @@
         CompanionVNCViewer *strong=weak;
         if (!strong || strong.session!=owner || strong.textReview!=review || strong.textReviewGeneration!=token
             || !strong.foreground || strong.exited || !owner.established) return;
-        if (strong.view.window) [strong presentViewController:review animated:!UIAccessibilityIsReduceMotionEnabled() completion:nil];
+        if (strong.view.window) {
+            if (strong.navigationController) [strong.navigationController pushViewController:review animated:!UIAccessibilityIsReduceMotionEnabled()];
+            else [strong presentViewController:review animated:!UIAccessibilityIsReduceMotionEnabled() completion:nil];
+        }
     }];
     if (!suspended) [self invalidateTextReview:NO];
 }
@@ -1798,11 +1821,17 @@
     self.canvasFullscreenBottom.constant=0; self.toolbarBottom.constant=-4;
     self.controls.bottomInset=4; [self.controls setNeedsLayout];
     [self.view setNeedsLayout]; [self.view layoutIfNeeded];
+    UINavigationController *navigation = self.navigationController;
+    if ([navigation.viewControllers containsObject:review]) [navigation popToViewController:self animated:NO];
     if (self.presentedViewController==review) [self dismissViewControllerAnimated:NO completion:nil];
     if (resume && self.foreground && !self.exited && self.session.running) {
-        self.textReviewViewportPending=YES;
         [self.session resumeInputAfterReview];
+        self.textReviewViewportPending = !self.session.desktopFrameReady;
+        if (!self.textReviewViewportPending && CGSizeEqualToSize(self.framebufferSize,self.textReviewFramebuffer)
+            && CGRectEqualToRect(self.activeCrop,self.textReviewCrop))
+            [self applyViewportRatio:self.textReviewZoom center:self.textReviewCenter];
     }
+    if (resume) [self revealDeferredTextReviewFailure];
 }
 - (void)showViewMenu {
     NSMutableArray *desktopItems=[@[

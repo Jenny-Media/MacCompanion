@@ -386,14 +386,10 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (void)resumeInputAfterReview {
     [_lock lock];
-    if (_reviewInputSuspended) {
-        _reviewInputSuspended = NO; _reviewReleaseCompletion = nil;
-        if (_running && !_paused && !_stopping) {
-            _inputReady = NO; _resumeRequested = YES; _awaitingResumeFrame = !_inputOnly;
-            if (_inputOnly) _inputReady = YES;
-            _presentationEpoch++;
-        }
-    }
+    // Review never pauses reception. The current baseline already incorporates
+    // live updates; do not discard it or request every unchanged pixel again.
+    // Real resize/replacement/background gates keep their existing readiness.
+    _reviewInputSuspended = NO; _reviewReleaseCompletion = nil;
     [_lock unlock]; dispatch_semaphore_signal(_wake);
 }
 - (void)pauseWithCompletion:(void (^)(void))completion {

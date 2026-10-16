@@ -16,11 +16,14 @@
 - (void)copyText;
 - (void)selectVisible;
 - (void)selectArea;
+- (void)toggleSelectionMode;
 - (void)editText;
+- (void)closeReview;
 - (void)nativeSelectionChanged;
 - (void)scheduleRecognition;
 - (void)returnToDesktop;
 - (void)textViewDidChange:(UITextView *)textView;
+- (void)copyString:(NSString *)text;
 @end
 @interface UIView (ScreenTextDragTests)
 - (void)moveSelection:(UIPanGestureRecognizer *)gesture;
@@ -43,11 +46,13 @@
 @end
 @interface CompanionVNCViewer (ScreenTextTests)
 - (void)frame:(UIImage *)frame;
+- (void)renderFramebuffer:(BOOL)reset;
 - (BOOL)canCopyScreenText;
 - (void)showCopyScreenText;
 - (void)showTextComposer;
 - (void)invalidateTextReview:(BOOL)resume;
 - (void)backgroundWithCompletion:(void (^)(void))completion;
+- (void)showConnectionFailureStage:(NSInteger)stage;
 @end
 @interface TextReviewOwner : CompanionVNCSession
 @property NSInteger suspensions, resumptions;
@@ -105,9 +110,19 @@
     // Let UIKit finish its pasteboard notification before synchronously reading
     // back the synthetic value; reading in the write's turn can deadlock the
     // Simulator pasteboard notification queue against the main thread.
+    // A sheet-backed review created without presentation is not a visible app
+    // surface. Host it while checking the real system pasteboard permission.
+    UIWindowScene *scene=(id)UIApplication.sharedApplication.connectedScenes.anyObject;
+    UIWindow *previous=nil; for (UIWindow *candidate in scene.windows) if (candidate.isKeyWindow) previous=candidate;
+    UIWindow *window=nil;
+    if (!review.view.window) {
+        window=[[UIWindow alloc] initWithWindowScene:scene]; window.rootViewController=[UIViewController new];
+        [window.rootViewController.view addSubview:review.view]; [window makeKeyAndVisible];
+    }
     XCTestExpectation *changed=[self expectationForNotification:UIPasteboardChangedNotification object:UIPasteboard.generalPasteboard handler:nil];
     [review copyText]; [self waitForExpectations:@[changed] timeout:5];
     XCTAssertEqualObjects(UIPasteboard.generalPasteboard.string,text);
+    if (window) { [review.view removeFromSuperview]; window.hidden=YES; window.rootViewController=nil; [previous makeKeyAndVisible]; }
 }
 - (void)assertButtonTitlesFit:(UIView *)view {
     if (view.hidden) return;
@@ -140,10 +155,10 @@
     XCTAssertFalse([[review valueForKey:@"busy"] boolValue]);
     XCTAssertFalse(((UIButton *)[review valueForKey:@"exportButton"]).enabled);
     XCTAssertEqual(UIPasteboard.generalPasteboard.changeCount,clipboardChanges);
-    XCTAssertEqualObjects(((UIButton *)[review valueForKey:@"returnButton"]).configuration.title,@"Done");
+    XCTAssertEqualObjects(((UIButton *)[review valueForKey:@"returnButton"]).accessibilityLabel,@"Back to Screen Sharing");
     [review invalidate]; UIPasteboard.generalPasteboard.items=@[];
 }
-- (void)testAutomaticAreaRecognitionShowsEditableReviewWithoutAnExtraRecognizeStep {
+- (void)testAutomaticAreaRecognitionPreparesTextWithoutOpeningReviewOrKeyboard {
     CompanionVNCTextReview *review=[self review:[self image:CGSizeMake(760,280) scale:2 text:@"mini.local\nError: Connection refused"] rect:CGRectMake(0,0,1520,560)];
     [review viewDidAppear:NO];
     XCTestExpectation *read=[[XCTNSPredicateExpectation alloc] initWithPredicate:[NSPredicate predicateWithBlock:^BOOL(id object,NSDictionary *bindings) {
@@ -151,7 +166,10 @@
     }] object:review];
     [self waitForExpectations:@[read] timeout:20];
     XCTAssertFalse(((UIView *)[review valueForKey:@"crop"]).hidden);
-    XCTAssertTrue([[review valueForKey:@"editorOpen"] boolValue]);
+    XCTAssertFalse([[review valueForKey:@"editorOpen"] boolValue]);
+    XCTAssertNil([review valueForKey:@"drawer"]);
+    [review editText];
+    XCTAssertFalse(((UITextView *)[review valueForKey:@"editor"]).isFirstResponder);
     UITextView *editor=[review valueForKey:@"editor"]; editor.text=@"Reviewed synthetic text";
     [self assertReview:review copiesText:editor.text];
     [review editText]; XCTAssertTrue(editor.hidden); [review editText]; XCTAssertEqualObjects(editor.text,@"Reviewed synthetic text");
@@ -241,6 +259,148 @@
         [review invalidate];
     }
 }
+- (void)testInitialAreaHasConnectedOutlineAndSmallHandlesWithLargeHitTargets {
+    for (NSValue *size in @[[NSValue valueWithCGSize:CGSizeMake(1000,700)],[NSValue valueWithCGSize:CGSizeMake(5120,2134)]]) {
+        CGSize pixels=size.CGSizeValue;
+        CompanionVNCTextReview *review=[self review:[self image:pixels scale:1 text:@"Synthetic"] rect:(CGRect){CGPointZero,pixels}];
+        [self settleLayout:review]; UIView *crop=[review valueForKey:@"crop"];
+        CAShapeLayer *outline=[crop valueForKey:@"outline"];
+        XCTAssertFalse(outline.hidden); XCTAssertNotEqual(outline.path,NULL);
+        CGRect border=CGPathGetBoundingBox(outline.path);
+        XCTAssertTrue(CGRectContainsRect(CGRectInset(crop.bounds,1,1),border),@"All four initial edges must be visible: %@",NSStringFromCGRect(border));
+        XCTAssertTrue(CGRectEqualToRect(outline.bounds,crop.bounds));
+        for (UIButton *handle in [crop valueForKey:@"handles"]) {
+            XCTAssertEqual(handle.bounds.size.width,44); XCTAssertEqual(handle.bounds.size.height,44);
+            XCTAssertTrue(CGRectContainsRect(crop.bounds,handle.frame));
+        }
+        XCTAssertFalse(((CAShapeLayer *)[crop valueForKey:@"shade"]).hidden);
+        [review invalidate]; XCTAssertEqual(outline.path,NULL);
+    }
+}
+- (void)testClosingReviewNeverReturnsToLiveAndInvalidationClearsDrawerDraft {
+    CompanionVNCTextReview *review=[self review:[self image:CGSizeMake(760,280) scale:1 text:@"Synthetic"] rect:CGRectMake(0,0,760,280)];
+    [review recognize]; [self waitForRecognition:review];
+    __block NSUInteger returns=0; review.returnHandler=^{returns++;};
+    [review editText]; UIViewController *drawer=[review valueForKey:@"drawer"];
+    UITextView *editor=[review valueForKey:@"editor"]; editor.text=@"Local correction";
+    [review closeReview]; XCTAssertEqual(returns,0); XCTAssertFalse([[review valueForKey:@"invalidated"] boolValue]);
+    [review editText]; XCTAssertEqualObjects(editor.text,@"Local correction");
+    [review returnToDesktop]; XCTAssertEqual(returns,1); XCTAssertNil([review valueForKey:@"drawer"]);
+    XCTAssertEqualObjects(editor.text,@""); XCTAssertNil([review valueForKey:@"snapshot"]);
+    XCTAssertNil([drawer valueForKey:@"exportHandler"]); XCTAssertNil([drawer valueForKey:@"closeHandler"]);
+}
+- (void)testCanonicalReviewReturnKeepsIndependentReadinessGates {
+    for (NSDictionary *entry in [self profile][@"copyTextReturnCases"]) {
+        CompanionVNCSession *session=[CompanionVNCSession new];
+        [session setValue:@YES forKey:@"reviewInputSuspended"];
+        [session setValue:entry[@"running"] forKey:@"running"]; [session setValue:@YES forKey:@"inputReady"];
+        [session setValue:entry[@"baselinePresented"] forKey:@"baselinePresented"];
+        [session setValue:entry[@"awaitingResumeFrame"] forKey:@"awaitingResumeFrame"];
+        [session setValue:entry[@"paused"] forKey:@"paused"];
+        [session setValue:entry[@"interrupted"] forKey:@"interruptionInputSuspended"];
+        [session resumeInputAfterReview];
+        XCTAssertEqual(session.composedTextReady,[entry[@"allowsInputAfterReturn"] boolValue],@"%@",entry[@"name"]);
+        XCTAssertEqual([[session valueForKey:@"resumeRequested"] boolValue],[entry[@"requestsFullRefresh"] boolValue]);
+        [session setValue:@NO forKey:@"running"];
+    }
+}
+- (void)testRemoteFailureKeepsLocalCopyUntilBackAndThenShowsRecovery {
+    CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded]; [viewer prepareConnection];
+    CompanionVNCSession *owner=viewer.session;
+    for (NSString *key in @[@"running",@"established",@"inputReady",@"baselinePresented"]) [owner setValue:@YES forKey:key];
+    [viewer frame:[self image:CGSizeMake(800,600) scale:1 text:@"Synthetic local copy"]];
+    [viewer showCopyScreenText]; CompanionVNCTextReview *review=[viewer valueForKey:@"textReview"];
+    [review loadViewIfNeeded];
+    __block NSUInteger disconnects=0; viewer.disconnectHandler=^{disconnects++;};
+    [owner setValue:@NO forKey:@"running"]; [owner setValue:@NO forKey:@"established"];
+    owner.stateHandler(@"Connection ended",@{@"failureStage":@102});
+    XCTAssertEqual(disconnects,1); XCTAssertEqual([viewer valueForKey:@"textReview"],review);
+    XCTAssertFalse([[review valueForKey:@"invalidated"] boolValue]); XCTAssertNotNil([review valueForKey:@"snapshot"]);
+    XCTAssertNil([viewer valueForKey:@"recoveryController"]); XCTAssertEqualObjects([viewer valueForKey:@"deferredTextReviewFailure"],@102);
+    [review setValue:@YES forKey:@"areaMode"]; ((UITextView *)[review valueForKey:@"editor"]).text=@"Synthetic retained text";
+    [self assertReview:review copiesText:@"Synthetic retained text"];
+    [review returnToDesktop]; XCTAssertNil([viewer valueForKey:@"textReview"]); XCTAssertNil([review valueForKey:@"snapshot"]);
+    XCTAssertNil([viewer valueForKey:@"deferredTextReviewFailure"]); XCTAssertNotNil([viewer valueForKey:@"recoveryController"]);
+    XCTAssertFalse([viewer canCopyScreenText]); viewer.disconnectHandler=nil; [viewer stopViewer]; UIPasteboard.generalPasteboard.items=@[];
+}
+- (void)testLiveViewerCanReopenCopyImmediatelyWithoutNewPixels {
+    CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded]; [viewer prepareConnection];
+    CompanionVNCSession *owner=viewer.session;
+    for (NSString *key in @[@"running",@"established",@"inputReady",@"baselinePresented"]) [owner setValue:@YES forKey:key];
+    [viewer frame:[self image:CGSizeMake(800,600) scale:1 text:@"Synthetic"]];
+    for (NSUInteger i=0;i<3;i++) {
+        XCTAssertTrue([viewer canCopyScreenText]); [viewer showCopyScreenText];
+        CompanionVNCTextReview *review=[viewer valueForKey:@"textReview"]; XCTAssertNotNil(review);
+        [review returnToDesktop]; XCTAssertTrue([viewer canCopyScreenText]); XCTAssertTrue(owner.composedTextReady);
+        XCTAssertFalse([[owner valueForKey:@"resumeRequested"] boolValue]);
+    }
+    [viewer stopViewer]; [owner setValue:@NO forKey:@"running"];
+}
+- (void)testViewerSeedsAreaFromZoomedPannedVisiblePixelsWithinSelectedDisplay {
+    for (NSNumber *selected in @[@NO,@YES]) {
+        CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
+        viewer.view.frame=CGRectMake(0,0,440,956); [viewer.view layoutIfNeeded];
+        viewer.session=[TextReviewOwner new]; [viewer setValue:@YES forKey:@"foreground"];
+        // Retina points must not scale the original-pixel crop a second time.
+        [viewer frame:[self image:CGSizeMake(960,540) scale:2 text:@"Synthetic viewport"]];
+        if (selected.boolValue) {
+            [viewer setValue:@(1920.0/1080.0) forKey:@"displayAspect"];
+            [viewer setValue:@{@"x":@.5,@"y":@0,@"width":@.5,@"height":@1} forKey:@"selectedDisplay"];
+            [viewer renderFramebuffer:YES];
+        }
+        UIScrollView *canvas=[viewer valueForKey:@"canvas"];
+        for (NSNumber *scale in @[@1,@2]) {
+            // Returning lets UIKit lay out the real viewer again. Establish
+            // this case's independent unobscured viewport before zooming.
+            canvas.frame=CGRectMake(0,0,336,288); canvas.contentInset=UIEdgeInsetsMake(24,8,48,16);
+            [canvas setZoomScale:scale.doubleValue animated:NO]; canvas.contentOffset=CGPointMake(200,192);
+            [viewer showCopyScreenText]; CompanionVNCTextReview *review=[viewer valueForKey:@"textReview"];
+            XCTAssertNotNil(review); [review loadViewIfNeeded]; [review selectArea];
+            // The unobscured 312x216-point viewport starts at scroll offset +
+            // insets; divide once by zoom. Display origin stays outside this
+            // already-cropped snapshot's coordinate system.
+            CGFloat zoom=scale.doubleValue;
+            CGRect expected=CGRectIntegral(CGRectMake(208/zoom,216/zoom,312/zoom,216/zoom));
+            UIView *crop=[review valueForKey:@"crop"];
+            XCTAssertTrue(CGRectEqualToRect([[crop valueForKey:@"selection"] CGRectValue],expected),
+                @"%@",NSStringFromCGRect([[crop valueForKey:@"selection"] CGRectValue]));
+            UIImage *snapshot=[review valueForKey:@"snapshot"];
+            XCTAssertEqual(CGImageGetWidth(snapshot.CGImage),selected.boolValue ? 960 : 1920);
+            XCTAssertEqual(CGImageGetHeight(snapshot.CGImage),1080);
+            [review returnToDesktop];
+        }
+        [viewer stopViewer];
+    }
+}
+- (void)testEnteringAreaUsesCurrentFrozenViewportAfterZoomAndPanWithoutRefitting {
+    UIImage *image=[self image:CGSizeMake(800,600) scale:2 text:@"Synthetic frozen viewport"];
+    CGRect original=CGRectMake(100,150,800,500);
+    CompanionVNCTextReview *review=[[CompanionVNCTextReview alloc] initWithImage:image visibleRect:original];
+    [review loadViewIfNeeded]; review.view.frame=CGRectMake(0,0,440,956); [self settleLayout:review];
+    XCTAssertNotNil([review valueForKey:@"nativeSelection"],@"This Simulator must support the native Text to Area path");
+    UIView *crop=[review valueForKey:@"crop"]; UIScrollView *scroll=[crop valueForKey:@"scroll"];
+    UIImageView *pixels=[crop valueForKey:@"imageView"];
+    for (NSUInteger attempt=0; attempt<2; attempt++) {
+        if (attempt) [review toggleSelectionMode];
+        [scroll setZoomScale:scroll.minimumZoomScale*(attempt ? 3 : 4) animated:NO];
+        scroll.contentOffset=CGPointMake(attempt ? 125 : 200,attempt ? 160 : 180);
+        CGRect expected=CompanionVNCTextPixelRect(pixels.bounds.size,[scroll convertRect:scroll.bounds toView:pixels]);
+        XCTAssertFalse(CGRectEqualToRect(expected,original));
+        CGFloat zoom=scroll.zoomScale; CGPoint offset=scroll.contentOffset;
+        [review selectArea];
+        XCTAssertTrue(CGRectEqualToRect([[crop valueForKey:@"selection"] CGRectValue],expected));
+        [self settleLayout:review];
+        XCTAssertEqualWithAccuracy(scroll.zoomScale,zoom,.001);
+        XCTAssertEqualWithAccuracy(scroll.contentOffset.x,offset.x,.001);
+        XCTAssertEqualWithAccuracy(scroll.contentOffset.y,offset.y,.001);
+        // A second action in Area must not overwrite a custom crop.
+        CGRect adjusted=CGRectInset(expected,5,5);
+        [crop setValue:[NSValue valueWithCGRect:adjusted] forKey:@"selection"];
+        [review selectArea];
+        XCTAssertTrue(CGRectEqualToRect([[crop valueForKey:@"selection"] CGRectValue],adjusted));
+    }
+    [review invalidate];
+}
 - (void)testOriginalRetinaPixelsVisibleCropAndAccessibleZoomControls {
     UIImage *image=[self image:CGSizeMake(800,600) scale:2 text:@"Synthetic only"];
     CGRect visible=CGRectMake(200,120,400,300);
@@ -321,22 +481,13 @@
             [UIImagePNGRepresentation(capture) writeToFile:[folder stringByAppendingPathComponent:[NSString stringWithFormat:@"%lu-%lu.png",(unsigned long)result,(unsigned long)i]] atomically:YES];
         }
     }
-    UITextView *editor=[review valueForKey:@"editor"]; XCTAssertTrue([editor becomeFirstResponder]);
-    XCTestExpectation *keyboard=[[XCTNSPredicateExpectation alloc] initWithPredicate:[NSPredicate predicateWithBlock:^BOOL(id object,NSDictionary *bindings) {
-        return review.view.keyboardLayoutGuide.layoutFrame.size.height>100;
-    }] object:review];
-    [self waitForExpectations:@[keyboard] timeout:5]; [self settleLayout:review];
-    UIScrollView *content=[review valueForKey:@"contentScroll"];
-    UILabel *status=[review valueForKey:@"status"];
-    XCTAssertGreaterThan(content.bounds.size.height,80,@"The keyboard must leave a usable scroll viewport at the largest text size");
-    XCTAssertGreaterThanOrEqual(status.bounds.size.height+1,[status sizeThatFits:CGSizeMake(status.bounds.size.width,CGFLOAT_MAX)].height);
-    UIGraphicsImageRenderer *keyboardRenderer=[[UIGraphicsImageRenderer alloc] initWithSize:review.view.bounds.size];
-    UIImage *keyboardCapture=[keyboardRenderer imageWithActions:^(UIGraphicsImageRendererContext *context){ [review.view.layer renderInContext:context.CGContext]; }];
-    [UIImagePNGRepresentation(keyboardCapture) writeToFile:[folder stringByAppendingPathComponent:@"keyboard-xxxlarge.png"] atomically:YES];
-    UIButton *back=[review valueForKey:@"returnButton"];
-    XCTAssertTrue(CGRectContainsRect(review.view.bounds,back.frame));
-    XCTAssertLessThanOrEqual(CGRectGetMaxY(back.frame),CGRectGetMinY(review.view.keyboardLayoutGuide.layoutFrame)-7);
-    [self assertButtonTitlesFit:review.view]; [editor resignFirstResponder];
+    [review editText];
+    UIViewController *drawer=[review valueForKey:@"drawer"];
+    XCTAssertEqual(drawer.sheetPresentationController.detents.count,2);
+    XCTAssertTrue(drawer.sheetPresentationController.prefersGrabberVisible);
+    XCTAssertFalse(((UITextView *)[review valueForKey:@"editor"]).isFirstResponder);
+    [review closeReview];
+    XCTAssertNil([review valueForKey:@"drawer"]);
     [review invalidate]; window.hidden=YES; window.rootViewController=nil; [previous makeKeyAndVisible];
 }
 - (void)testViewerCapturesCurrentDisplayAndRetiresOnBackgroundReplacementAndReturn {
@@ -415,7 +566,7 @@
     session.frameHandler=nil; [viewer stopViewer]; [session setValue:@NO forKey:@"running"];
     client->frameBuffer=NULL; rfbClientCleanup(client);
 }
-- (void)testSocketOwnerReleasesKeysThenKeepsFramesFlowingAndRequiresFreshResumeFrame {
+- (void)testSocketOwnerKeepsIncrementalStreamAndDoesNotTimeoutAfterLocalReview {
     int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
     struct timeval timeout={.tv_sec=2}; setsockopt(pair[1],SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
     int yes=1; setsockopt(pair[0],SOL_SOCKET,SO_NOSIGPIPE,&yes,sizeof(yes));
@@ -442,11 +593,22 @@
     session.frameHandler=^(UIImage *image){[duringReview fulfill];}; XCTAssertEqual(write(pair[1],frame,sizeof(frame)),sizeof(frame));
     [self waitForExpectations:@[duringReview] timeout:2]; session.frameHandler=nil;
     uint8_t request[10]; XCTAssertEqual(recv(pair[1],request,10,MSG_WAITALL),10); XCTAssertEqual(request[1],1);
-    [session resumeInputAfterReview]; XCTAssertFalse(session.connected); XCTAssertFalse([session tryClickX:1 y:1 mask:1]);
-    XCTAssertEqual(recv(pair[1],request,10,MSG_WAITALL),10); XCTAssertEqual(request[0],rfbFramebufferUpdateRequest); XCTAssertEqual(request[1],0);
-    XCTestExpectation *fresh=[self expectationWithDescription:@"Fresh complete frame reopens input"];
-    session.frameHandler=^(UIImage *image){[fresh fulfill];}; XCTAssertEqual(write(pair[1],frame,sizeof(frame)),sizeof(frame));
-    [self waitForExpectations:@[fresh] timeout:2]; XCTAssertTrue(session.connected);
+    NSUInteger epoch=[[session valueForKey:@"presentationEpoch"] unsignedIntegerValue];
+    [session resumeInputAfterReview]; XCTAssertTrue(session.connected); XCTAssertTrue(session.composedTextReady);
+    XCTAssertFalse([[session valueForKey:@"resumeRequested"] boolValue]);
+    XCTAssertEqual([[session valueForKey:@"presentationEpoch"] unsignedIntegerValue],epoch);
+    // Real servers may only send changed rectangles after review. Keep the
+    // existing complete framebuffer instead of demanding unchanged pixels.
+    XCTestExpectation *partial=[self expectationWithDescription:@"Partial live update is presented without a new baseline"];
+    session.frameHandler=^(UIImage *image){[partial fulfill];};
+    uint8_t changed[]={0,0,0,1,0,0,0,0,0,1,0,1,0,0,0,0, 0,255,0,0};
+    XCTAssertEqual(write(pair[1],changed,sizeof(changed)),sizeof(changed));
+    [self waitForExpectations:@[partial] timeout:2]; session.frameHandler=nil;
+    XCTAssertEqual(recv(pair[1],request,10,MSG_WAITALL),10); XCTAssertEqual(request[0],rfbFramebufferUpdateRequest); XCTAssertEqual(request[1],1);
+    XCTestExpectation *idle=[self expectationWithDescription:@"Local review return survives the old eight-second timeout"];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,8300*NSEC_PER_MSEC),dispatch_get_main_queue(),^{[idle fulfill];});
+    [self waitForExpectations:@[idle] timeout:10]; XCTAssertTrue(session.running); XCTAssertTrue(session.connected);
+    XCTAssertEqual([[session valueForKey:@"fullRefreshRetries"] unsignedIntegerValue],0);
     session.frameHandler=nil; [session stop]; [self waitForExpectations:@[ended] timeout:3]; session.stateHandler=nil; close(pair[1]);
 }
 - (void)testComposerAdmissionWaitsForPresentedReplacementDesktopAndRechecksReset {
@@ -537,13 +699,13 @@
         client->frameBuffer=NULL; rfbClientCleanup(client);
     }
 }
-- (void)testFrameReceivedBeforeOwnerResetsBaselineCannotReopenInput {
+- (void)testFrameReceivedBeforeBackgroundResumeResetsBaselineCannotReopenInput {
     CompanionVNCSession *session=[CompanionVNCSession new]; rfbClient *client=rfbGetClient(8,3,4);
     client->width=2; client->height=2; [session configureClient:client]; XCTAssertTrue([session allocate:client]);
     client->GotFrameBufferUpdate(client,0,0,2,2);
     [session setValue:@YES forKey:@"running"]; [session setValue:@YES forKey:@"inputReady"];
-    [session setValue:@YES forKey:@"baselinePresented"];
-    XCTAssertTrue([session suspendInputForReview:nil]); [session resumeInputAfterReview];
+    [session setValue:@YES forKey:@"baselinePresented"]; [session setValue:@YES forKey:@"established"];
+    [session pauseWithCompletion:nil]; [session resume];
     XCTestExpectation *old=[self expectationWithDescription:@"Old complete coverage does not satisfy resume"]; old.inverted=YES;
     session.frameHandler=^(UIImage *image){ [old fulfill]; }; [session publishFrame:client];
     [self waitForExpectations:@[old] timeout:.05]; XCTAssertFalse(session.connected);
@@ -578,8 +740,8 @@
     session.stateHandler=^(NSString *state,NSDictionary *stats){if(!weak.running)[ended fulfill];};
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{[session processConnectedClient:client];});
     uint8_t pointer[6]; XCTAssertEqual(recv(pair[1],pointer,6,MSG_WAITALL),6); XCTAssertEqual(pointer[0],rfbPointerEvent);
-    [review returnToDesktop]; XCTAssertFalse(session.connected); XCTAssertTrue(session.established);
-    XCTestExpectation *paused=[self expectationWithDescription:@"Background acknowledges release during fresh-frame wait"];
+    [review returnToDesktop]; XCTAssertTrue(session.connected); XCTAssertTrue(session.established);
+    XCTestExpectation *paused=[self expectationWithDescription:@"Background acknowledges release after live review return"];
     [viewer backgroundWithCompletion:^{[paused fulfill];}];
     // A full refresh may have been sent just before background took ownership.
     BOOL released=NO;

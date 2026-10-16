@@ -86,24 +86,12 @@
         XCTAssertEqual([session tryComposedTextEvents:events(policy[@"freshCase"]) completion:^(BOOL written) { XCTFail(@"Review must reject input"); }],
             [reviewPolicy[@"allowsSendDuringReview"] boolValue]);
         XCTAssertEqual([(NSDictionary *)[session valueForKey:@"composedTextReplies"] count],[reviewPolicy[@"repliesAfterReview"] unsignedIntegerValue]);
-        [session resumeInputAfterReview]; XCTAssertFalse(session.connected);
+        [session resumeInputAfterReview]; XCTAssertTrue(session.connected);
+        XCTAssertFalse([[session valueForKey:@"resumeRequested"] boolValue]);
         dispatch_semaphore_signal(session.continueWrite);
-        // Wait for the owner's fresh full request before providing new pixels.
-        BOOL requested=NO;
-        for (NSUInteger packet=0;packet<5 && !requested;packet++) {
-            uint8_t bytes[10]; ssize_t got=recv(pair[1],bytes,1,MSG_WAITALL); XCTAssertEqual(got,1);
-            if(got!=1) break;
-            NSUInteger size=bytes[0]==rfbKeyEvent ? 8 : bytes[0]==rfbPointerEvent ? 6 : bytes[0]==rfbFramebufferUpdateRequest ? 10 : 0;
-            XCTAssertGreaterThan(size,0); if(!size) break;
-            XCTAssertEqual(recv(pair[1],bytes+1,size-1,MSG_WAITALL),size-1); [wire appendBytes:bytes length:size];
-            requested=bytes[0]==rfbFramebufferUpdateRequest; if(requested) XCTAssertEqual(bytes[1],0);
-        }
-        XCTAssertTrue(requested);
-        XCTestExpectation *baseline=[self expectationWithDescription:@"Current complete Desktop frame admits fresh composed text"];
-        session.frameHandler=^(UIImage *image){[baseline fulfill];};
-        uint8_t frame[]={0,0,0,1,0,0,0,0,0,2,0,2,0,0,0,0, 0,0,255,0,0,0,255,0,0,0,255,0,0,0,255,0};
-        XCTAssertEqual(write(pair[1],frame,sizeof(frame)),sizeof(frame));
-        [self waitForExpectations:@[baseline] timeout:2]; session.frameHandler=nil; XCTAssertTrue(session.connected);
+        // The interrupted copied group stays retired; a new deliberate group
+        // may use the unchanged live baseline after the held-input release.
+
     }
     XCTAssertTrue([session tryComposedTextEvents:events(policy[@"freshCase"]) completion:^(BOOL written) {
         freshReplies++; XCTAssertEqual(written, [policy[@"freshCompletionWritten"] boolValue]); [fresh fulfill];
