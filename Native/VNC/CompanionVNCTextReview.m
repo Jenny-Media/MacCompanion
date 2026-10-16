@@ -5,6 +5,7 @@
 
 @interface CompanionVNCTextButton : UIButton
 @property(nonatomic) NSLayoutConstraint *textHeight;
+- (CGFloat)heightForWidth:(CGFloat)width;
 @end
 @implementation CompanionVNCTextButton
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -13,13 +14,15 @@
     }
     return self;
 }
+- (CGFloat)heightForWidth:(CGFloat)width {
+    NSDirectionalEdgeInsets insets = self.configuration.contentInsets;
+    width -= insets.leading + insets.trailing;
+    return width > 0 ? MAX(44,ceil([self.titleLabel sizeThatFits:CGSizeMake(width,CGFLOAT_MAX)].height)+insets.top+insets.bottom) : 44;
+}
 - (void)layoutSubviews {
     [super layoutSubviews];
     // A configured button's intrinsic height can lag its scaled, wrapped title.
-    NSDirectionalEdgeInsets insets = self.configuration.contentInsets;
-    CGFloat width = self.bounds.size.width - insets.leading - insets.trailing;
-    if (width <= 0) return;
-    CGFloat height = MAX(44, ceil([self.titleLabel sizeThatFits:CGSizeMake(width, CGFLOAT_MAX)].height) + insets.top + insets.bottom);
+    CGFloat height = [self heightForWidth:self.bounds.size.width];
     if (fabs(self.textHeight.constant - height) > .5) self.textHeight.constant = height;
 }
 @end
@@ -209,6 +212,7 @@
 @property(nonatomic) UIStackView *header;
 @property(nonatomic) NSArray<NSLayoutConstraint *> *pinnedFooterConstraints;
 @property(nonatomic) NSLayoutConstraint *scrollKeyboardBottom;
+@property(nonatomic) NSLayoutConstraint *statusHeight, *helpHeight, *footerHeight;
 @property(nonatomic) BOOL accessibilityLayout;
 @property(nonatomic) UIButton *areaButton, *editButton, *moreButton;
 @property(nonatomic) CompanionVNCTextSelection *nativeSelection;
@@ -297,6 +301,9 @@
     self.footer = [[UIStackView alloc] initWithArrangedSubviews:@[statusRow,self.help,self.resultActions]];
     self.footer.axis = UILayoutConstraintAxisVertical; self.footer.spacing = 6; self.footer.translatesAutoresizingMaskIntoConstraints = NO;
     [self.view addSubview:self.footer];
+    self.statusHeight = [self.status.heightAnchor constraintEqualToConstant:0];
+    self.helpHeight = [self.help.heightAnchor constraintEqualToConstant:0];
+    self.footerHeight = [self.footer.heightAnchor constraintEqualToConstant:0];
     [NSLayoutConstraint activateConstraints:@[
         [header.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:4],
         [header.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor constant:12],
@@ -368,6 +375,20 @@
     if (fabs(self.help.preferredMaxLayoutWidth-labelWidth)>.5) self.help.preferredMaxLayoutWidth = labelWidth;
     if (large && fabs(self.heading.preferredMaxLayoutWidth-labelWidth)>.5) self.heading.preferredMaxLayoutWidth = labelWidth;
     else if (!large && self.heading.preferredMaxLayoutWidth) self.heading.preferredMaxLayoutWidth = 0;
+    // A nested stack in scroll content has no external height. Measure wrapped
+    // content explicitly at accessibility sizes instead of letting the footer
+    // choose compressed single-line label heights.
+    if (large && labelWidth > 0) {
+        self.statusHeight.constant = ceil([self.status sizeThatFits:CGSizeMake(statusWidth,CGFLOAT_MAX)].height);
+        self.helpHeight.constant = ceil([self.help sizeThatFits:CGSizeMake(labelWidth,CGFLOAT_MAX)].height);
+        CGFloat actionsHeight = 0; NSUInteger count = 0;
+        for (CompanionVNCTextButton *button in self.resultActions.arrangedSubviews) if (!button.hidden) {
+            actionsHeight += [button heightForWidth:labelWidth]; count++;
+        }
+        actionsHeight += MAX(0,(NSInteger)count-1)*self.resultActions.spacing;
+        self.footerHeight.constant = MAX(self.statusHeight.constant,self.spinner.hidden ? 0 : 20)+self.helpHeight.constant+actionsHeight+2*self.footer.spacing;
+    }
+    self.statusHeight.active = large; self.helpHeight.active = large; self.footerHeight.active = large;
     if (self.crop.adjustingSelection) return;
     CGFloat available = self.contentScroll.bounds.size.height - (self.editorOpen ? 148 : 0);
     CGFloat height = large ? MIN(180,MAX(100,available)) : MAX(100,available);
