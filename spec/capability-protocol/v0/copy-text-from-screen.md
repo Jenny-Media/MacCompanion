@@ -19,8 +19,21 @@ Recheck this readiness under the owner lock when suspending input for review.
 Capture one immutable, fully presented framebuffer and its selected-display crop.
 Preselect the unobscured visible viewport, preserving its position and zoom as
 space permits. Selection uses original received pixels, independent of UIKit
-points and Retina scale. The snapshot has a visible input-paused label and local
-pinch, pan, generous crop handles and accessible whole-area/reset selection.
+points and Retina scale. The snapshot has a visible frozen-screen label. Prefer system Live Text selection
+on supported devices: analyze the bounded original image automatically, allow
+native word/range selection, and expose Copy, optional editable review and Done.
+Keep normal one-finger pan and pinch zoom on this local image. Native image
+analysis remains local, bounded and generation-owned; its system text menu only
+exports text through an explicit user action.
+
+Select Area remains an explicit fallback, and is the initial presentation if
+system image analysis is unsupported or the full image exceeds recognition
+bounds. Retain generous crop handles, a transient magnifier while resizing,
+accessible expand/shrink actions and visible/full-image selection in More. Drag
+inside the rectangle to move it; pan outside it or with two fingers. Automatically
+recognize after selection adjustment settles, with only one request in flight
+across the native and area paths. Editing the selection cancels/invalidates old
+results before they can be copied. No separate Recognize step is required.
 Round an admitted selection outward to pixel boundaries and intersect it with
 the frozen image. Reject empty/non-finite selections. Bound a snapshot to
 32 Mi pixels and each recognition to 16 Mi pixels and 8192 pixels per side;
@@ -43,18 +56,21 @@ Cancellation/replacement/background/lock/closure clears the snapshot, local
 editor, share presentation and OCR result, and cancels pending recognition.
 Late release/OCR callbacks cannot present content or resume a replacement session.
 
-Apple Vision recognition runs off the UI thread, at most one request per review,
-with accurate recognition, automatic language detection by default and an
-override chosen only from the request's supported languages. Disable language
-correction. Retain best-effort line order, breaks and indentation; never claim
-lossless code/whitespace recovery from pixels. Show the image alongside editable
-plain text, with autocorrection disabled, Copy Text, Share, Reselect Area,
-loading/cancel, empty-result and retry states. Copy confirms without dismissing
-review. Return to Live Desktop is explicit and interactive swipe dismissal is
-disabled. Recognition failure never prints image contents or recognized text.
+Area fallback uses Apple Vision off the UI thread, at most one request per
+review, with accurate recognition, automatic language detection by default and
+an override chosen only from the request's supported languages. Disable language
+correction in this fallback. System Live Text owns its own recognition heuristics;
+do not promise identical results or whitespace to the configurable Vision path. Retain best-effort line order, breaks and indentation; never claim
+lossless code/whitespace recovery from pixels. Keep the frozen image visible while an optional compact editable review is open.
+Area results appear in that compact review automatically. Disable autocorrection
+and smart substitutions in editable text. Expose Copy and optional Share through
+explicit actions, plus loading, empty-result and retry states. Copy confirms
+without dismissing review. Done returns to the live screen explicitly; interactive
+swipe dismissal is disabled. Recognition failure never prints image contents or recognized text.
 
 No image or recognized text is uploaded, logged, automatically saved, synced or
-placed in ActivityKit. Only explicit Copy or Share exports text. Share/export
+placed in ActivityKit. Only explicit export actions (Copy, Share or a system selection-menu action)
+export text. Analysis and selection never export automatically. Share/export
 copies remain user-controlled after export. VoiceOver, Dynamic Type, landscape,
 keyboard avoidance and Reduce Motion retain reachable controls.
 

@@ -1,6 +1,7 @@
 #import "CompanionVNCTextReview.h"
 #import "CompanionVNCTextGeometry.h"
 #import <Vision/Vision.h>
+#import "Mac_Companion-Swift.h"
 
 @interface CompanionVNCTextButton : UIButton
 @property(nonatomic) NSLayoutConstraint *textHeight;
@@ -29,8 +30,11 @@
 @property(nonatomic) CAShapeLayer *outline;
 @property(nonatomic) NSArray<UIButton *> *handles;
 @property(nonatomic) CGRect selection, initialRect, startRect;
-@property(nonatomic) CGPoint startPoint;
 @property(nonatomic) BOOL fitted;
+@property(nonatomic) BOOL selectionEnabled;
+@property(nonatomic) UIPanGestureRecognizer *moveGesture;
+@property(nonatomic) UIImageView *magnifier;
+@property(nonatomic, copy) void (^selectionChanged)(void);
 - (void)clear;
 - (void)selectVisible;
 - (void)selectAll;
@@ -40,7 +44,7 @@
 - (instancetype)initWithImage:(UIImage *)image visibleRect:(CGRect)visibleRect {
     if ((self = [super initWithFrame:CGRectZero])) {
         _scroll = [UIScrollView new]; _scroll.delegate = self; _scroll.bouncesZoom = NO;
-        _scroll.backgroundColor = UIColor.blackColor; _scroll.panGestureRecognizer.minimumNumberOfTouches = 2;
+        _scroll.backgroundColor = UIColor.secondarySystemBackgroundColor; _scroll.panGestureRecognizer.minimumNumberOfTouches = 1;
         _imageView = [[UIImageView alloc] initWithImage:image];
         CGSize size = CGSizeMake(CGImageGetWidth(image.CGImage), CGImageGetHeight(image.CGImage));
         _imageView.frame = (CGRect){CGPointZero, size}; [_scroll addSubview:_imageView]; [self addSubview:_scroll];
@@ -48,13 +52,13 @@
         if (CGRectIsNull(_initialRect)) _initialRect = (CGRect){CGPointZero, size};
         _selection = _initialRect;
         _outline = [CAShapeLayer layer]; _outline.fillColor = UIColor.clearColor.CGColor;
-        _outline.strokeColor = UIColor.systemYellowColor.CGColor; _outline.lineWidth = 2; [self.layer addSublayer:_outline];
+        _outline.strokeColor = UIColor.systemBlueColor.CGColor; _outline.lineWidth = 2; [self.layer addSublayer:_outline];
         NSMutableArray *handles = [NSMutableArray new];
         NSArray *names = @[@"Top left", @"Top right", @"Bottom right", @"Bottom left"];
         for (NSUInteger i = 0; i < 4; i++) {
             UIButton *handle = [UIButton buttonWithType:UIButtonTypeSystem]; handle.tag = i;
             [handle setImage:[UIImage systemImageNamed:@"circle.fill"] forState:UIControlStateNormal];
-            handle.tintColor = UIColor.systemYellowColor;
+            handle.tintColor = UIColor.systemBlueColor;
             handle.accessibilityLabel = [names[i] stringByAppendingString:@" selection corner"];
             handle.accessibilityHint = @"Drag to resize. Use selection actions to expand or shrink the area.";
             handle.accessibilityCustomActions = @[
@@ -64,8 +68,15 @@
             [self addSubview:handle]; [handles addObject:handle];
         }
         _handles = handles;
-        UIPanGestureRecognizer *draw = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(drawSelection:)];
-        draw.maximumNumberOfTouches = 1; draw.delegate = self; [self addGestureRecognizer:draw];
+        _moveGesture = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(moveSelection:)];
+        _moveGesture.maximumNumberOfTouches = 1; _moveGesture.delegate = self; [self addGestureRecognizer:_moveGesture];
+        [_scroll.panGestureRecognizer requireGestureRecognizerToFail:_moveGesture];
+        _magnifier = [UIImageView new]; _magnifier.contentMode = UIViewContentModeScaleAspectFill;
+        _magnifier.clipsToBounds = YES; _magnifier.layer.cornerRadius = 16;
+        _magnifier.layer.borderWidth = 2; _magnifier.layer.borderColor = UIColor.systemBlueColor.CGColor;
+        _magnifier.userInteractionEnabled = NO; _magnifier.accessibilityElementsHidden = YES;
+        _magnifier.hidden = YES; [self addSubview:_magnifier];
+        self.selectionEnabled = NO;
         self.clipsToBounds = YES; self.accessibilityIdentifier = @"text-copy-selection";
     }
     return self;
@@ -74,7 +85,18 @@
 - (void)scrollViewDidScroll:(UIScrollView *)scrollView { [self updateOutline]; }
 - (void)scrollViewDidZoom:(UIScrollView *)scrollView { [self updateOutline]; }
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldReceiveTouch:(UITouch *)touch {
-    return ![touch.view isKindOfClass:UIButton.class];
+    for (UIView *view = touch.view; view && view != self; view = view.superview)
+        if ([view isKindOfClass:UIControl.class]) return NO;
+    return YES;
+}
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)gesture {
+    return self.selectionEnabled && CGRectContainsPoint(self.selection, [gesture locationInView:self.imageView]);
+}
+- (void)setSelectionEnabled:(BOOL)selectionEnabled {
+    _selectionEnabled = selectionEnabled; self.moveGesture.enabled = selectionEnabled;
+    self.outline.hidden = !selectionEnabled;
+    for (UIButton *handle in self.handles) handle.hidden = !selectionEnabled;
+    self.magnifier.hidden = YES; self.magnifier.image = nil;
 }
 - (void)layoutSubviews {
     [super layoutSubviews]; self.scroll.frame = self.bounds;
@@ -92,7 +114,9 @@
     [self updateOutline];
 }
 - (void)updateOutline {
+    if (!self.fitted || CGRectIsEmpty(self.bounds)) return;
     CGRect rect = [self.imageView convertRect:self.selection toView:self];
+    if (!isfinite(rect.origin.x) || !isfinite(rect.origin.y) || !isfinite(rect.size.width) || !isfinite(rect.size.height)) return;
     [CATransaction begin]; [CATransaction setDisableActions:YES];
     self.outline.path = [UIBezierPath bezierPathWithRect:rect].CGPath; [CATransaction commit];
     CGPoint points[] = {CGPointMake(rect.origin.x, rect.origin.y), CGPointMake(CGRectGetMaxX(rect), rect.origin.y),
@@ -105,7 +129,10 @@
 }
 - (void)setSelection:(CGRect)selection {
     CGRect rect = CompanionVNCTextPixelRect(self.imageView.bounds.size, selection);
-    if (!CGRectIsNull(rect)) { _selection = rect; [self updateOutline]; }
+    if (!CGRectIsNull(rect) && !CGRectEqualToRect(_selection, rect)) {
+        _selection = rect; [self updateOutline];
+        if (self.selectionEnabled && self.selectionChanged) self.selectionChanged();
+    }
 }
 - (void)selectVisible { self.selection = [self.scroll convertRect:self.scroll.bounds toView:self.imageView]; }
 - (void)selectAll { self.selection = self.imageView.bounds; }
@@ -115,12 +142,13 @@
         self.selection = CGRectInset(self.selection, MIN(8, self.selection.size.width*.05), MIN(8, self.selection.size.height*.05));
     return YES;
 }
-- (void)drawSelection:(UIPanGestureRecognizer *)gesture {
-    CGPoint point = [gesture locationInView:self.imageView];
-    if (gesture.state == UIGestureRecognizerStateBegan) self.startPoint = point;
+- (void)moveSelection:(UIPanGestureRecognizer *)gesture {
+    if (gesture.state == UIGestureRecognizerStateBegan) self.startRect = self.selection;
+    CGPoint delta = [gesture translationInView:self.imageView]; CGSize size = self.imageView.bounds.size;
     if (gesture.state == UIGestureRecognizerStateBegan || gesture.state == UIGestureRecognizerStateChanged)
-        self.selection = CGRectMake(MIN(point.x,self.startPoint.x), MIN(point.y,self.startPoint.y),
-                                    MAX(1,fabs(point.x-self.startPoint.x)), MAX(1,fabs(point.y-self.startPoint.y)));
+        self.selection = CGRectMake(MAX(0,MIN(size.width-self.startRect.size.width,self.startRect.origin.x+delta.x)),
+                                    MAX(0,MIN(size.height-self.startRect.size.height,self.startRect.origin.y+delta.y)),
+                                    self.startRect.size.width,self.startRect.size.height);
 }
 - (void)resize:(UIPanGestureRecognizer *)gesture {
     if (gesture.state == UIGestureRecognizerStateBegan) self.startRect = self.selection;
@@ -129,21 +157,32 @@
     if (corner == 0 || corner == 3) left=MIN(right-1, left+delta.x); else right=MAX(left+1,right+delta.x);
     if (corner == 0 || corner == 1) top=MIN(bottom-1, top+delta.y); else bottom=MAX(top+1,bottom+delta.y);
     self.selection = CGRectMake(left,top,right-left,bottom-top);
+    if (gesture.state == UIGestureRecognizerStateBegan || gesture.state == UIGestureRecognizerStateChanged) {
+        CGPoint point = [gesture locationInView:self.imageView]; CGFloat side = 70/MAX(.01,self.scroll.zoomScale);
+        CGRect sample = CompanionVNCTextPixelRect(self.imageView.bounds.size,CGRectMake(point.x-side/2,point.y-side/2,side,side));
+        if (!CGRectIsNull(sample) && self.window) {
+            CGImageRef pixels = CGImageCreateWithImageInRect(self.imageView.image.CGImage,sample);
+            if (pixels) { self.magnifier.image = [UIImage imageWithCGImage:pixels]; CGImageRelease(pixels); }
+            CGPoint local = [gesture locationInView:self];
+            self.magnifier.frame = CGRectMake(MAX(4,MIN(self.bounds.size.width-114,local.x-55)),MAX(4,local.y-110),110,82);
+            self.magnifier.hidden = NO; [self bringSubviewToFront:self.magnifier];
+        }
+    } else { self.magnifier.hidden = YES; self.magnifier.image = nil; }
 }
-- (void)clear { self.imageView.image = nil; self.selection = CGRectZero; self.outline.path = nil; }
+- (void)clear { self.selectionChanged = nil; self.imageView.image = nil; self.magnifier.image = nil; self.magnifier.hidden = YES; self.outline.path = nil; }
 @end
 
-@interface CompanionVNCTextReview ()
+@interface CompanionVNCTextReview () <UITextViewDelegate>
 @property(nonatomic) UIImage *snapshot;
 @property(nonatomic) CGRect initialRect;
 @property(nonatomic) CompanionVNCTextCrop *crop;
 @property(nonatomic) UIImageView *preview;
 @property(nonatomic) UITextView *editor;
 @property(nonatomic) UILabel *status, *help;
-@property(nonatomic) UIStackView *bodyStack, *selectionActions, *resultActions, *resultContent;
+@property(nonatomic) UIStackView *bodyStack, *resultActions, *resultContent;
 @property(nonatomic) UIScrollView *contentScroll;
-@property(nonatomic) NSLayoutConstraint *cropHeight, *previewWidth;
-@property(nonatomic) UIButton *recognizeButton, *cancelButton, *exportButton, *shareButton, *returnButton;
+@property(nonatomic) NSLayoutConstraint *cropHeight;
+@property(nonatomic) UIButton *exportButton, *returnButton;
 @property(nonatomic) UIActivityIndicatorView *spinner;
 @property(nonatomic) VNRecognizeTextRequest *request;
 @property(nonatomic) NSOperationQueue *recognitionQueue;
@@ -151,10 +190,17 @@
 @property(nonatomic) NSString *language;
 @property(nonatomic) NSUInteger generation;
 @property(nonatomic) BOOL invalidated, busy;
-@property(nonatomic) NSLayoutConstraint *previewHeight;
+@property(nonatomic) UIStackView *footer;
+@property(nonatomic) UIButton *areaButton, *editButton, *moreButton;
+@property(nonatomic) CompanionVNCTextSelection *nativeSelection;
+@property(nonatomic) BOOL areaMode, editorOpen, started;
+@property(nonatomic) NSUInteger automaticGeneration;
 @end
 
 @implementation CompanionVNCTextReview
++ (BOOL)prefersNativeSelectionForSize:(CGSize)size supported:(BOOL)supported {
+    return supported && CompanionVNCTextAreaFits(size);
+}
 - (instancetype)initWithImage:(UIImage *)image visibleRect:(CGRect)visibleRect {
     if ((self = [super initWithNibName:nil bundle:nil])) {
         _snapshot = image; _initialRect = visibleRect;
@@ -175,205 +221,304 @@
 - (void)viewDidLoad {
     [super viewDidLoad]; self.view.backgroundColor = UIColor.systemBackgroundColor;
     self.view.accessibilityViewIsModal = YES;
-    self.bodyStack = [[UIStackView alloc] init]; self.bodyStack.axis = UILayoutConstraintAxisVertical;
+    UILabel *title = [UILabel new]; title.text = @"Copy Text";
+    title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
+    title.adjustsFontForContentSizeCategory = YES; title.numberOfLines = 0;
+    self.returnButton = [self button:@"Done" action:@selector(returnToDesktop)];
+    self.returnButton.accessibilityIdentifier = @"text-copy-return";
+    self.moreButton = [self button:@"More" action:NULL]; self.moreButton.showsMenuAsPrimaryAction = YES;
+    self.moreButton.accessibilityIdentifier = @"text-copy-more";
+    UIStackView *header = [[UIStackView alloc] initWithArrangedSubviews:@[title,self.moreButton,self.returnButton]];
+    header.spacing = 8; header.alignment = UIStackViewAlignmentCenter; header.translatesAutoresizingMaskIntoConstraints = NO;
+    [title setContentHuggingPriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
+    [self.view addSubview:header];
+    UILabel *badge = [UILabel new]; badge.text = @"Frozen screen"; badge.textColor = UIColor.secondaryLabelColor;
+    badge.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1]; badge.adjustsFontForContentSizeCategory = YES;
+    badge.translatesAutoresizingMaskIntoConstraints = NO; [self.view addSubview:badge];
+    self.contentScroll = [UIScrollView new]; self.contentScroll.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:self.contentScroll];
+    self.bodyStack = [UIStackView new]; self.bodyStack.axis = UILayoutConstraintAxisVertical;
     self.bodyStack.spacing = 8; self.bodyStack.translatesAutoresizingMaskIntoConstraints = NO;
-    self.contentScroll=[UIScrollView new]; self.contentScroll.translatesAutoresizingMaskIntoConstraints=NO;
-    [self.view addSubview:self.contentScroll]; [self.contentScroll addSubview:self.bodyStack];
-    self.returnButton=[self button:@"Return to Mac Screen" action:@selector(returnToDesktop)];
-    self.returnButton.accessibilityIdentifier=@"text-copy-return"; self.returnButton.translatesAutoresizingMaskIntoConstraints=NO;
-    [self.view addSubview:self.returnButton];
+    [self.contentScroll addSubview:self.bodyStack];
+    self.crop = [[CompanionVNCTextCrop alloc] initWithImage:self.snapshot visibleRect:self.initialRect];
+    self.crop.layer.cornerRadius = 12; [self.bodyStack addArrangedSubview:self.crop];
+    self.cropHeight = [self.crop.heightAnchor constraintEqualToConstant:300]; self.cropHeight.active = YES;
+    self.resultContent = [UIStackView new]; self.resultContent.axis = UILayoutConstraintAxisVertical;
+    self.resultContent.hidden = YES; [self.bodyStack addArrangedSubview:self.resultContent];
+    // The original image remains visible above the editable review; don't repeat it.
+    self.preview = [UIImageView new]; self.preview.hidden = YES;
+    self.editor = [UITextView new]; self.editor.hidden = YES; self.editor.delegate = self;
+    self.editor.font = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleBody] scaledFontForFont:[UIFont monospacedSystemFontOfSize:17 weight:UIFontWeightRegular]];
+    self.editor.adjustsFontForContentSizeCategory = YES;
+    self.editor.backgroundColor = UIColor.secondarySystemBackgroundColor; self.editor.layer.cornerRadius = 10;
+    self.editor.autocorrectionType = UITextAutocorrectionTypeNo; self.editor.autocapitalizationType = UITextAutocapitalizationTypeNone;
+    self.editor.spellCheckingType = UITextSpellCheckingTypeNo; self.editor.smartQuotesType = UITextSmartQuotesTypeNo;
+    self.editor.smartDashesType = UITextSmartDashesTypeNo;
+    self.editor.accessibilityLabel = @"Recognized text, editable"; self.editor.accessibilityIdentifier = @"text-copy-result";
+    [self.resultContent addArrangedSubview:self.editor]; [self.editor.heightAnchor constraintEqualToConstant:140].active = YES;
+    self.status = [UILabel new]; self.status.text = @"Finding text…"; self.status.numberOfLines = 0;
+    self.status.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline]; self.status.adjustsFontForContentSizeCategory = YES;
+    self.status.accessibilityIdentifier = @"text-copy-status";
+    self.help = [UILabel new]; self.help.numberOfLines = 0; self.help.textColor = UIColor.secondaryLabelColor;
+    self.help.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1]; self.help.adjustsFontForContentSizeCategory = YES;
+    self.areaButton = [self button:@"Select Area" action:@selector(toggleSelectionMode)];
+    self.areaButton.accessibilityIdentifier = @"text-copy-area";
+    self.editButton = [self button:@"Edit…" action:@selector(editText)]; self.editButton.accessibilityIdentifier = @"text-copy-edit";
+    self.exportButton = [self button:@"Copy" action:@selector(copyText)]; self.exportButton.accessibilityIdentifier = @"text-copy-copy";
+    self.resultActions = [[UIStackView alloc] initWithArrangedSubviews:@[self.areaButton,self.editButton,self.exportButton]];
+    self.resultActions.spacing = 8; self.resultActions.distribution = UIStackViewDistributionFillEqually;
+    self.spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
+    self.spinner.hidesWhenStopped = YES;
+    UIStackView *statusRow = [[UIStackView alloc] initWithArrangedSubviews:@[self.spinner,self.status]]; statusRow.spacing = 8;
+    self.footer = [[UIStackView alloc] initWithArrangedSubviews:@[statusRow,self.help,self.resultActions]];
+    self.footer.axis = UILayoutConstraintAxisVertical; self.footer.spacing = 6; self.footer.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.view addSubview:self.footer];
     [NSLayoutConstraint activateConstraints:@[
-        [self.contentScroll.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor],
-        [self.contentScroll.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor],
-        [self.contentScroll.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor],
-        [self.contentScroll.bottomAnchor constraintEqualToAnchor:self.returnButton.topAnchor constant:-8],
-        [self.returnButton.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor constant:12],
-        [self.returnButton.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-12],
-        [self.returnButton.bottomAnchor constraintEqualToAnchor:self.view.keyboardLayoutGuide.topAnchor constant:-8],
-        [self.bodyStack.widthAnchor constraintEqualToAnchor:self.contentScroll.frameLayoutGuide.widthAnchor constant:-24]]];
-    [NSLayoutConstraint activateConstraints:@[
-        [self.bodyStack.leadingAnchor constraintEqualToAnchor:self.contentScroll.contentLayoutGuide.leadingAnchor constant:12],
-        [self.bodyStack.trailingAnchor constraintEqualToAnchor:self.contentScroll.contentLayoutGuide.trailingAnchor constant:-12],
-        [self.bodyStack.topAnchor constraintEqualToAnchor:self.contentScroll.contentLayoutGuide.topAnchor constant:8],
-        [self.bodyStack.bottomAnchor constraintEqualToAnchor:self.contentScroll.contentLayoutGuide.bottomAnchor constant:-8]]];
-    UILabel *title=[UILabel new]; title.text=@"Text from Screen"; title.font=[UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
-    title.adjustsFontForContentSizeCategory=YES; title.numberOfLines=0; [self.bodyStack addArrangedSubview:title];
-    UILabel *badge=[UILabel new]; badge.text=@"Snapshot · Remote input paused";
-    badge.font=[UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline]; badge.numberOfLines=0;
-    badge.adjustsFontForContentSizeCategory=YES; [self.bodyStack addArrangedSubview:badge];
-    self.status=[UILabel new]; self.status.text=@"Select an area to recognize";
-    self.status.font=[UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline]; self.status.numberOfLines=0;
-    self.status.adjustsFontForContentSizeCategory=YES; self.status.accessibilityIdentifier=@"text-copy-status";
-    [self.bodyStack addArrangedSubview:self.status];
-    self.help=[UILabel new]; self.help.text=@"Drag corners to adjust. Pinch to zoom; two fingers to pan.";
-    self.help.font=[UIFont preferredFontForTextStyle:UIFontTextStyleCaption1]; self.help.textColor=UIColor.secondaryLabelColor;
-    self.help.numberOfLines=0; self.help.adjustsFontForContentSizeCategory=YES; [self.bodyStack addArrangedSubview:self.help];
-    self.crop=[[CompanionVNCTextCrop alloc] initWithImage:self.snapshot visibleRect:self.initialRect];
-    [self.bodyStack addArrangedSubview:self.crop];
-    self.cropHeight=[self.crop.heightAnchor constraintEqualToConstant:300]; self.cropHeight.active=YES;
-    self.preview=[UIImageView new]; self.preview.contentMode=UIViewContentModeScaleAspectFit; self.preview.hidden=YES;
-    self.preview.accessibilityLabel=@"Selected snapshot"; self.preview.isAccessibilityElement=YES;
-    self.resultContent=[UIStackView new]; self.resultContent.axis=UILayoutConstraintAxisVertical; self.resultContent.spacing=8;
-    self.resultContent.hidden=YES; [self.bodyStack addArrangedSubview:self.resultContent];
-    [self.resultContent addArrangedSubview:self.preview];
-    self.previewHeight=[self.preview.heightAnchor constraintEqualToConstant:140]; self.previewHeight.active=YES;
-    self.editor=[UITextView new]; self.editor.hidden=YES; self.editor.font=[[UIFontMetrics metricsForTextStyle:UIFontTextStyleBody] scaledFontForFont:[UIFont monospacedSystemFontOfSize:17 weight:UIFontWeightRegular]];
-    self.editor.adjustsFontForContentSizeCategory=YES; self.editor.autocorrectionType=UITextAutocorrectionTypeNo;
-    self.editor.autocapitalizationType=UITextAutocapitalizationTypeNone; self.editor.spellCheckingType=UITextSpellCheckingTypeNo;
-    self.editor.smartQuotesType=UITextSmartQuotesTypeNo; self.editor.smartDashesType=UITextSmartDashesTypeNo;
-    self.editor.accessibilityLabel=@"Recognized text, editable"; self.editor.accessibilityIdentifier=@"text-copy-result";
-    [self.resultContent addArrangedSubview:self.editor];
-    [self.editor.heightAnchor constraintEqualToConstant:220].active=YES;
-    self.previewWidth=[self.preview.widthAnchor constraintEqualToAnchor:self.resultContent.widthAnchor multiplier:.45];
-    UIButton *visible=[self button:@"Visible Area" action:@selector(selectVisible)];
-    UIButton *all=[self button:@"Full Image" action:@selector(selectAll)];
-    UIButton *languages=[self button:@"Language: Auto" action:NULL]; languages.showsMenuAsPrimaryAction=YES;
-    VNRecognizeTextRequest *configuration=[VNRecognizeTextRequest new]; configuration.recognitionLevel=VNRequestTextRecognitionLevelAccurate;
-    self.supportedLanguages=[configuration supportedRecognitionLanguagesAndReturnError:NULL] ?: @[];
-    NSMutableArray *choices=[NSMutableArray new]; __weak CompanionVNCTextReview *weak=self; __weak UIButton *languageButton=languages;
-    [choices addObject:[UIAction actionWithTitle:@"Automatic" image:nil identifier:nil handler:^(__unused UIAction *action) {
-        weak.language=nil; UIButtonConfiguration *c=languageButton.configuration; c.title=@"Language: Auto"; languageButton.configuration=c;
-    }]];
-    NSLocale *locale=NSLocale.currentLocale;
-    for (NSString *language in self.supportedLanguages) {
-        NSString *name=[locale displayNameForKey:NSLocaleIdentifier value:language] ?: language;
-        [choices addObject:[UIAction actionWithTitle:name image:nil identifier:nil handler:^(__unused UIAction *action) {
-            weak.language=language; UIButtonConfiguration *c=languageButton.configuration; c.title=name; languageButton.configuration=c;
-        }]];
-    }
-    languages.menu=[UIMenu menuWithTitle:@"Recognition Language" children:choices];
-    self.selectionActions=[[UIStackView alloc] initWithArrangedSubviews:@[visible,all,languages]];
-    self.selectionActions.spacing=8; self.selectionActions.distribution=UIStackViewDistributionFillEqually;
-    [self.bodyStack addArrangedSubview:self.selectionActions];
-    self.recognizeButton=[self button:@"Recognize Text" action:@selector(recognize)];
-    self.recognizeButton.accessibilityIdentifier=@"text-copy-recognize"; [self.bodyStack addArrangedSubview:self.recognizeButton];
-    self.spinner=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
-    self.spinner.hidesWhenStopped=YES; [self.bodyStack addArrangedSubview:self.spinner];
-    self.cancelButton=[self button:@"Cancel Recognition" action:@selector(cancelRecognition)]; self.cancelButton.hidden=YES;
-    [self.bodyStack addArrangedSubview:self.cancelButton];
-    self.exportButton=[self button:@"Copy Text" action:@selector(copyText)]; self.exportButton.accessibilityIdentifier=@"text-copy-copy";
-    self.shareButton=[self button:@"Share" action:@selector(shareText)];
-    UIButton *reselect=[self button:@"Reselect Area" action:@selector(reselect)];
-    self.resultActions=[[UIStackView alloc] initWithArrangedSubviews:@[self.exportButton,self.shareButton,reselect]];
-    self.resultActions.spacing=8; self.resultActions.distribution=UIStackViewDistributionFillEqually; self.resultActions.hidden=YES;
-    [self.bodyStack addArrangedSubview:self.resultActions];
+        [header.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:4],
+        [header.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor constant:12],
+        [header.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-12],
+        [badge.topAnchor constraintEqualToAnchor:header.bottomAnchor constant:2],
+        [badge.leadingAnchor constraintEqualToAnchor:header.leadingAnchor],
+        [badge.trailingAnchor constraintEqualToAnchor:header.trailingAnchor],
+        [self.contentScroll.topAnchor constraintEqualToAnchor:badge.bottomAnchor constant:8],
+        [self.contentScroll.leadingAnchor constraintEqualToAnchor:header.leadingAnchor],
+        [self.contentScroll.trailingAnchor constraintEqualToAnchor:header.trailingAnchor],
+        [self.contentScroll.bottomAnchor constraintEqualToAnchor:self.footer.topAnchor constant:-8],
+        [self.footer.leadingAnchor constraintEqualToAnchor:header.leadingAnchor],
+        [self.footer.trailingAnchor constraintEqualToAnchor:header.trailingAnchor],
+        [self.footer.bottomAnchor constraintEqualToAnchor:self.view.keyboardLayoutGuide.topAnchor constant:-8],
+        [self.bodyStack.widthAnchor constraintEqualToAnchor:self.contentScroll.frameLayoutGuide.widthAnchor],
+        [self.bodyStack.leadingAnchor constraintEqualToAnchor:self.contentScroll.contentLayoutGuide.leadingAnchor],
+        [self.bodyStack.trailingAnchor constraintEqualToAnchor:self.contentScroll.contentLayoutGuide.trailingAnchor],
+        [self.bodyStack.topAnchor constraintEqualToAnchor:self.contentScroll.contentLayoutGuide.topAnchor],
+        [self.bodyStack.bottomAnchor constraintEqualToAnchor:self.contentScroll.contentLayoutGuide.bottomAnchor]]];
+    VNRecognizeTextRequest *configuration = [VNRecognizeTextRequest new]; configuration.recognitionLevel = VNRequestTextRecognitionLevelAccurate;
+    self.supportedLanguages = [configuration supportedRecognitionLanguagesAndReturnError:NULL] ?: @[];
+    CGSize size = self.crop.imageView.bounds.size;
+    if ([self.class prefersNativeSelectionForSize:size supported:CompanionVNCTextSelection.supported])
+        self.nativeSelection = [[CompanionVNCTextSelection alloc] initWithImageView:self.crop.imageView];
+    self.areaMode = self.nativeSelection == nil; self.crop.selectionEnabled = self.areaMode;
+    __weak CompanionVNCTextReview *weak = self;
+    self.nativeSelection.selectionChanged = ^{ [weak updateActions]; };
+    self.crop.selectionChanged = ^{ [weak scheduleRecognition]; };
+    [self updateActions];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(retireForBackground:) name:UIApplicationDidEnterBackgroundNotification object:nil];
+}
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    if (self.started || self.invalidated) return;
+    self.started = YES;
+    if (self.areaMode) [self scheduleRecognition]; else [self startNativeAnalysis];
 }
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
-    BOOL large=UIContentSizeCategoryIsAccessibilityCategory(self.traitCollection.preferredContentSizeCategory);
-    BOOL wide=self.view.bounds.size.width>700 && !large;
-    self.resultContent.axis=wide ? UILayoutConstraintAxisHorizontal : UILayoutConstraintAxisVertical;
-    self.previewHeight.active=!wide; self.previewWidth.active=wide;
-    self.cropHeight.constant=MAX(180,MIN(600,self.view.bounds.size.height*.48));
-    self.selectionActions.axis=large ? UILayoutConstraintAxisVertical : UILayoutConstraintAxisHorizontal;
-    self.resultActions.axis=large ? UILayoutConstraintAxisVertical : UILayoutConstraintAxisHorizontal;
-    self.previewHeight.constant=MIN(160, self.view.bounds.size.height*.22);
+    BOOL large = UIContentSizeCategoryIsAccessibilityCategory(self.traitCollection.preferredContentSizeCategory);
+    self.resultActions.axis = large ? UILayoutConstraintAxisVertical : UILayoutConstraintAxisHorizontal;
+    CGFloat available = self.contentScroll.bounds.size.height - (self.editorOpen ? 148 : 0);
+    CGFloat height = MAX(100,available);
+    if (fabs(self.cropHeight.constant-height)>.5) self.cropHeight.constant = height;
 }
-- (void)selectVisible { [self.crop selectVisible]; }
-- (void)selectAll { [self.crop selectAll]; }
+- (NSString *)exportText {
+    return self.areaMode || self.editorOpen ? self.editor.text : self.nativeSelection.selectedText;
+}
+- (void)updateActions {
+    if (self.invalidated) return;
+    NSString *text = [self exportText];
+    self.exportButton.enabled = !self.busy && text.length > 0 && text.length <= 65536;
+    self.editButton.enabled = !self.busy && (self.editorOpen || (self.areaMode ? self.editor.text.length : self.nativeSelection.text.length));
+    UIButtonConfiguration *edit = self.editButton.configuration; edit.title = self.editorOpen ? @"Hide Review" : @"Edit…"; self.editButton.configuration = edit;
+    UIButtonConfiguration *area = self.areaButton.configuration; area.title = self.areaMode ? @"Select Text" : @"Select Area"; self.areaButton.configuration = area;
+    self.areaButton.hidden = self.nativeSelection == nil;
+    self.nativeSelection.enabled = !self.areaMode && !self.editorOpen;
+    self.help.text = self.areaMode ? @"Drag corners to resize; drag inside to move. Pinch to zoom." : @"Touch and hold text to select. Pinch to zoom.";
+    NSMutableArray *items = [NSMutableArray new]; __weak CompanionVNCTextReview *weak = self;
+    [items addObject:[UIAction actionWithTitle:@"Copy All Text" image:[UIImage systemImageNamed:@"doc.on.doc"] identifier:nil handler:^(__unused UIAction *action) { [weak copyAllText]; }]];
+    UIAction *share = [UIAction actionWithTitle:@"Share Selected Text" image:[UIImage systemImageNamed:@"square.and.arrow.up"] identifier:nil handler:^(__unused UIAction *action) { [weak shareText]; }];
+    share.attributes = text.length && !self.busy ? 0 : UIMenuElementAttributesDisabled; [items addObject:share];
+    UIAction *copyAll = items.firstObject;
+    copyAll.attributes = !self.busy && (self.areaMode || self.editorOpen ? self.editor.text.length : self.nativeSelection.text.length) ? 0 : UIMenuElementAttributesDisabled;
+    if (self.areaMode) {
+        [items addObject:[UIAction actionWithTitle:@"Select Visible Area" image:nil identifier:nil handler:^(__unused UIAction *action) { [weak selectVisible]; }]];
+        [items addObject:[UIAction actionWithTitle:@"Select Full Image" image:nil identifier:nil handler:^(__unused UIAction *action) { [weak selectAll]; }]];
+        NSMutableArray *languages = [NSMutableArray new];
+        UIAction *automatic = [UIAction actionWithTitle:@"Automatic" image:nil identifier:nil handler:^(__unused UIAction *action) { weak.language = nil; [weak scheduleRecognition]; }];
+        automatic.state = self.language == nil ? UIMenuElementStateOn : UIMenuElementStateOff; [languages addObject:automatic];
+        for (NSString *language in self.supportedLanguages) {
+            UIAction *choice = [UIAction actionWithTitle:[NSLocale.currentLocale displayNameForKey:NSLocaleIdentifier value:language] ?: language image:nil identifier:nil handler:^(__unused UIAction *action) { weak.language = language; [weak scheduleRecognition]; }];
+            choice.state = [self.language isEqual:language] ? UIMenuElementStateOn : UIMenuElementStateOff; [languages addObject:choice];
+        }
+        [items addObject:[UIMenu menuWithTitle:@"Recognition Language" children:languages]];
+    }
+    [items addObject:[UIAction actionWithTitle:@"Read Text Again" image:[UIImage systemImageNamed:@"arrow.clockwise"] identifier:nil handler:^(__unused UIAction *action) {
+        if (weak.areaMode) [weak scheduleRecognition]; else [weak startNativeAnalysis];
+    }]];
+    self.moreButton.menu = [UIMenu menuWithTitle:@"" children:items];
+}
+- (void)startNativeAnalysis {
+    if (self.invalidated || self.areaMode || !self.nativeSelection) return;
+    [self cancelRecognition]; self.automaticGeneration++; NSUInteger automatic = self.automaticGeneration;
+    self.editorOpen = NO; self.editor.text = @""; self.resultContent.hidden = YES; self.editor.hidden = YES;
+    [self.editor resignFirstResponder]; self.preview.image = nil;
+    self.busy = YES; self.status.text = @"Finding text…"; [self.spinner startAnimating]; [self updateActions];
+    [self runNativeAnalysis:automatic];
+}
+- (void)runNativeAnalysis:(NSUInteger)automatic {
+    if (self.invalidated || self.areaMode || self.automaticGeneration != automatic) return;
+    __weak CompanionVNCTextReview *weak = self;
+    if (self.nativeSelection.busy || self.recognitionQueue.operationCount) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,.1*NSEC_PER_SEC),dispatch_get_main_queue(), ^{ [weak runNativeAnalysis:automatic]; }); return;
+    }
+    NSUInteger token = ++self.generation;
+    [self.nativeSelection analyzeImage:self.snapshot completion:^(BOOL found) {
+        if (!weak || weak.invalidated || weak.generation != token || weak.areaMode) return;
+        weak.busy = NO; [weak.spinner stopAnimating];
+        weak.status.text = found ? @"Select the text you want to copy" : @"No selectable text found. Try Select Area.";
+        [weak updateActions];
+    }];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,15*NSEC_PER_SEC),dispatch_get_main_queue(), ^{
+        if (!weak.invalidated && weak.generation == token && weak.busy) {
+            [weak.nativeSelection cancel]; [weak cancelRecognition]; weak.status.text = @"Reading took too long. Try Select Area.";
+        }
+    });
+}
+- (void)toggleSelectionMode {
+    if (self.areaMode && self.nativeSelection) {
+        self.areaMode = NO; self.crop.selectionEnabled = NO; [self startNativeAnalysis];
+    } else [self selectArea];
+}
+- (void)selectArea {
+    if (self.invalidated) return;
+    [self.nativeSelection cancel]; [self cancelRecognition]; self.areaMode = YES; self.crop.selectionEnabled = YES;
+    self.crop.hidden = NO; [self updateActions];
+    if (self.started) [self scheduleRecognition];
+}
+- (void)selectVisible { [self.crop selectVisible]; [self scheduleRecognition]; }
+- (void)selectAll { [self.crop selectAll]; [self scheduleRecognition]; }
+- (void)scheduleRecognition {
+    if (self.invalidated || !self.areaMode) return;
+    [self cancelRecognition]; NSUInteger automatic = ++self.automaticGeneration;
+    [self.editor resignFirstResponder]; self.editor.text = @""; self.preview.image = nil;
+    self.editorOpen = NO; self.resultContent.hidden = YES; self.editor.hidden = YES;
+    self.status.text = @"Reading selected area…"; [self updateActions];
+    if (!self.started) return;
+    __weak CompanionVNCTextReview *weak = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,.35*NSEC_PER_SEC),dispatch_get_main_queue(), ^{ [weak runAutomaticRecognition:automatic]; });
+}
+- (void)runAutomaticRecognition:(NSUInteger)automatic {
+    if (self.invalidated || !self.areaMode || self.automaticGeneration != automatic) return;
+    if (self.nativeSelection.busy || self.recognitionQueue.operationCount) {
+        __weak CompanionVNCTextReview *weak = self;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,.1*NSEC_PER_SEC),dispatch_get_main_queue(), ^{ [weak runAutomaticRecognition:automatic]; }); return;
+    }
+    [self recognize];
+}
 - (void)cancelRecognition {
-    self.generation++; [self.request cancel]; self.request=nil; [self.recognitionQueue cancelAllOperations];
-    self.busy=NO; [self.spinner stopAnimating]; self.cancelButton.hidden=YES;
-    self.recognizeButton.enabled=YES; self.crop.userInteractionEnabled=YES; self.selectionActions.userInteractionEnabled=YES;
-    self.status.text=@"Select an area to recognize";
+    self.generation++; [self.request cancel]; self.request = nil; [self.recognitionQueue cancelAllOperations];
+    self.busy = NO; [self.spinner stopAnimating];
+    self.status.text = self.areaMode ? @"Adjust the area to read text" : @"Select the text you want to copy";
+    [self updateActions];
 }
 - (void)recognize {
     if (self.invalidated || self.busy || !self.snapshot) return;
-    if (self.recognitionQueue.operationCount) { self.status.text=@"Finishing cancellation. Try again in a moment."; return; }
-    CGRect rect=CompanionVNCTextPixelRect(self.crop.imageView.bounds.size,self.crop.selection);
-    if (CGRectIsNull(rect) || !CompanionVNCTextAreaFits(rect.size)) {
-        self.status.text=@"Select a smaller area (up to 16 megapixels) to recognize text."; return;
-    }
-    CGImageRef cropped=CGImageCreateWithImageInRect(self.snapshot.CGImage,rect);
-    if (!cropped) { self.status.text=@"Couldn’t read this area. Select another area and retry."; return; }
-    UIImage *image=[UIImage imageWithCGImage:cropped]; CGImageRelease(cropped);
-    self.preview.image=image;
-    self.busy=YES; self.recognizeButton.enabled=NO; self.cancelButton.hidden=NO;
-    self.crop.userInteractionEnabled=NO; self.selectionActions.userInteractionEnabled=NO;
-    self.status.text=@"Recognizing on this device…"; [self.spinner startAnimating];
-    NSUInteger token=++self.generation;
-    VNRecognizeTextRequest *request=[VNRecognizeTextRequest new];
-    request.recognitionLevel=VNRequestTextRecognitionLevelAccurate; request.usesLanguageCorrection=NO;
-    request.automaticallyDetectsLanguage=self.language==nil;
-    if (self.language) request.recognitionLanguages=@[self.language];
-    self.request=request; __weak CompanionVNCTextReview *weak=self;
+    if (!self.areaMode) { self.areaMode = YES; self.crop.selectionEnabled = YES; [self.nativeSelection cancel]; }
+    if (self.nativeSelection.busy || self.recognitionQueue.operationCount) { self.status.text = @"Finishing the previous request…"; return; }
+    self.automaticGeneration++;
+    CGRect rect = CompanionVNCTextPixelRect(self.crop.imageView.bounds.size,self.crop.selection);
+    if (CGRectIsNull(rect) || !CompanionVNCTextAreaFits(rect.size)) { self.status.text = @"Select a smaller area (up to 16 megapixels) to recognize text."; return; }
+    CGImageRef cropped = CGImageCreateWithImageInRect(self.snapshot.CGImage,rect);
+    if (!cropped) { self.status.text = @"Couldn’t read this area. Adjust the selection and retry."; return; }
+    UIImage *image = [UIImage imageWithCGImage:cropped]; CGImageRelease(cropped); self.preview.image = image;
+    self.busy = YES; self.status.text = @"Reading selected area…"; [self.spinner startAnimating]; [self updateActions];
+    NSUInteger token = ++self.generation;
+    VNRecognizeTextRequest *request = [VNRecognizeTextRequest new]; request.recognitionLevel = VNRequestTextRecognitionLevelAccurate;
+    request.usesLanguageCorrection = NO; request.automaticallyDetectsLanguage = self.language == nil;
+    if (self.language) request.recognitionLanguages = @[self.language]; self.request = request;
+    __weak CompanionVNCTextReview *weak = self;
     [self.recognitionQueue addOperationWithBlock:^{
-        NSError *error=nil;
-        VNImageRequestHandler *handler=[[VNImageRequestHandler alloc] initWithCGImage:image.CGImage options:@{}];
-        BOOL success=[handler performRequests:@[request] error:&error];
-        NSArray *results=success ? request.results : nil;
+        NSError *error = nil; VNImageRequestHandler *handler = [[VNImageRequestHandler alloc] initWithCGImage:image.CGImage options:@{}];
+        BOOL success = [handler performRequests:@[request] error:&error]; NSArray *results = success ? request.results : nil;
         dispatch_async(dispatch_get_main_queue(), ^{
-            CompanionVNCTextReview *strong=weak;
-            if (!strong || strong.invalidated || strong.generation!=token) return;
-            [strong finishRecognition:results success:success];
+            if (!weak || weak.invalidated || weak.generation != token || !weak.areaMode) return;
+            [weak finishRecognition:results success:success];
         });
     }];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,15*NSEC_PER_SEC),dispatch_get_main_queue(), ^{
-        if (!weak.invalidated && weak.generation==token && weak.busy) {
-            [weak cancelRecognition]; weak.status.text=@"Recognition took too long. Select a smaller area and retry.";
+        if (!weak.invalidated && weak.generation == token && weak.busy) {
+            [weak cancelRecognition]; weak.status.text = @"Reading took too long. Adjust the area and retry.";
         }
     });
 }
 - (void)finishRecognition:(NSArray<VNRecognizedTextObservation *> *)observations success:(BOOL)success {
-    if (self.invalidated) return;
-    [self cancelRecognition];
-    if (!success) { self.preview.image=nil; self.status.text=@"Recognition failed. Retry or select another area."; return; }
-    if (observations.count>4096) { self.preview.image=nil; self.status.text=@"Too much text. Select a smaller area and retry."; return; }
-    NSArray *ordered=[observations sortedArrayUsingComparator:^NSComparisonResult(VNRecognizedTextObservation *a,VNRecognizedTextObservation *b) {
-        CGFloat ay=CGRectGetMidY(a.boundingBox), by=CGRectGetMidY(b.boundingBox);
-        if (ay != by) return ay>by ? NSOrderedAscending : NSOrderedDescending;
-        CGFloat ax=a.boundingBox.origin.x, bx=b.boundingBox.origin.x;
-        return ax<bx ? NSOrderedAscending : ax>bx ? NSOrderedDescending : NSOrderedSame;
+    if (self.invalidated || !self.areaMode) return; [self cancelRecognition];
+    if (!success) { self.preview.image = nil; self.status.text = @"Couldn’t read text. Adjust the area or try again."; return; }
+    if (observations.count > 4096) { self.preview.image = nil; self.status.text = @"Too much text. Select a smaller area."; return; }
+    NSArray *ordered = [observations sortedArrayUsingComparator:^NSComparisonResult(VNRecognizedTextObservation *a,VNRecognizedTextObservation *b) {
+        CGFloat ay = CGRectGetMidY(a.boundingBox), by = CGRectGetMidY(b.boundingBox);
+        if (ay != by) return ay > by ? NSOrderedAscending : NSOrderedDescending;
+        CGFloat ax = a.boundingBox.origin.x, bx = b.boundingBox.origin.x; return ax < bx ? NSOrderedAscending : ax > bx ? NSOrderedDescending : NSOrderedSame;
     }];
-    NSMutableArray<NSString *> *lines=[NSMutableArray new]; CGFloat minX=1, totalWidth=0; NSUInteger characters=0, outputLength=0;
+    NSMutableArray<NSString *> *lines = [NSMutableArray new]; CGFloat minX = 1,totalWidth = 0; NSUInteger characters = 0,outputLength = 0;
     for (VNRecognizedTextObservation *row in ordered) {
-        NSString *text=[row topCandidates:1].firstObject.string;
-        if (text.length) { minX=MIN(minX,row.boundingBox.origin.x); totalWidth+=row.boundingBox.size.width; characters+=text.length; }
+        NSString *text = [row topCandidates:1].firstObject.string;
+        if (text.length) { minX = MIN(minX,row.boundingBox.origin.x); totalWidth += row.boundingBox.size.width; characters += text.length; }
     }
-    CGFloat characterWidth=characters ? totalWidth/characters : 1;
+    CGFloat characterWidth = characters ? totalWidth/characters : 1;
     for (VNRecognizedTextObservation *row in ordered) {
-        NSString *text=[row topCandidates:1].firstObject.string; if (!text.length) continue;
-        NSUInteger indent=(NSUInteger)MAX(0,MIN(80,round((row.boundingBox.origin.x-minX)/MAX(.001,characterWidth))));
-        [lines addObject:[[ @"" stringByPaddingToLength:indent withString:@" " startingAtIndex:0] stringByAppendingString:text]];
-        outputLength+=text.length+indent+1;
-        if (outputLength>65536) { self.preview.image=nil; self.status.text=@"Too much text. Select a smaller area and retry."; return; }
+        NSString *text = [row topCandidates:1].firstObject.string; if (!text.length) continue;
+        NSUInteger indent = (NSUInteger)MAX(0,MIN(80,round((row.boundingBox.origin.x-minX)/MAX(.001,characterWidth))));
+        [lines addObject:[[@"" stringByPaddingToLength:indent withString:@" " startingAtIndex:0] stringByAppendingString:text]];
+        outputLength += text.length + indent + 1;
+        if (outputLength > 65536) { self.preview.image = nil; self.status.text = @"Too much text. Select a smaller area."; return; }
     }
-    NSString *text=[lines componentsJoinedByString:@"\n"];
-    if (!text.length) { self.preview.image=nil; self.status.text=@"No text found. Try a closer or clearer area."; return; }
-    self.editor.text=text; self.resultContent.hidden=NO; self.editor.hidden=NO; self.preview.hidden=NO; self.crop.hidden=YES;
-    self.selectionActions.hidden=YES; self.recognizeButton.hidden=YES; self.resultActions.hidden=NO;
-    self.status.text=@"Snapshot · Review text before copying";
-    self.help.text=@"Recognition can misread characters and spacing. Edit the result as needed.";
+    NSString *text = [lines componentsJoinedByString:@"\n"];
+    if (!text.length) { self.preview.image = nil; self.status.text = @"No text found. Try a closer or clearer area."; return; }
+    self.editor.text = text; self.editorOpen = YES; self.editor.hidden = NO; self.resultContent.hidden = NO;
+    self.status.text = @"Review text before copying"; [self updateActions]; [self.view setNeedsLayout];
     UIAccessibilityPostNotification(UIAccessibilityLayoutChangedNotification,self.editor);
 }
-- (void)reselect {
-    [self cancelRecognition]; [self.editor resignFirstResponder]; self.editor.text=@""; self.preview.image=nil;
-    self.resultContent.hidden=YES; self.editor.hidden=YES; self.preview.hidden=YES; self.crop.hidden=NO; self.selectionActions.hidden=NO;
-    self.recognizeButton.hidden=NO; self.resultActions.hidden=YES;
-    self.help.text=@"Drag corners to adjust. Pinch to zoom; two fingers to pan.";
+- (void)editText {
+    if (self.invalidated || self.busy) return;
+    if (self.editorOpen) { [self.editor resignFirstResponder]; self.editorOpen = NO; self.editor.hidden = YES; self.resultContent.hidden = YES; }
+    else {
+        NSString *text = self.areaMode ? self.editor.text : (self.nativeSelection.selectedText.length ? self.nativeSelection.selectedText : self.nativeSelection.text);
+        if (!text.length || text.length > 65536) return;
+        self.editor.text = text; self.editorOpen = YES; self.editor.hidden = NO; self.resultContent.hidden = NO;
+        self.status.text = @"Review text before copying";
+    }
+    [self updateActions]; [self.view setNeedsLayout];
 }
-- (void)copyText {
-    if (self.invalidated || !self.editor.text.length) return;
-    UIPasteboard.generalPasteboard.string=self.editor.text; self.status.text=@"Copied · Snapshot remains open";
+- (void)reselect { [self selectArea]; [self scheduleRecognition]; }
+- (void)copyAllText {
+    if (self.invalidated || self.busy) return;
+    NSString *text = self.areaMode || self.editorOpen ? self.editor.text : self.nativeSelection.text;
+    [self copyString:text];
+}
+- (void)copyString:(NSString *)text {
+    if (self.invalidated || self.busy || !text.length || text.length > 65536) return;
+    UIPasteboard.generalPasteboard.string = text; self.status.text = @"Copied";
     UIAccessibilityPostNotification(UIAccessibilityAnnouncementNotification,@"Text copied");
 }
+- (void)textViewDidChange:(UITextView *)textView {
+    if (self.invalidated) return;
+    if (textView.text.length > 65536) self.status.text = @"Text is too long to copy. Shorten it first.";
+    else self.status.text = @"Review text before copying";
+    [self updateActions];
+}
+- (void)copyText { [self copyString:[self exportText]]; }
 - (void)shareText {
-    if (self.invalidated || !self.editor.text.length || self.presentedViewController) return;
-    UIActivityViewController *share=[[UIActivityViewController alloc] initWithActivityItems:@[self.editor.text] applicationActivities:nil];
-    share.popoverPresentationController.sourceView=self.shareButton;
-    share.popoverPresentationController.sourceRect=self.shareButton.bounds;
+    NSString *text = [self exportText];
+    if (self.invalidated || self.busy || !text.length || text.length > 65536 || self.presentedViewController) return;
+    UIActivityViewController *share = [[UIActivityViewController alloc] initWithActivityItems:@[text] applicationActivities:nil];
+    share.popoverPresentationController.sourceView = self.moreButton; share.popoverPresentationController.sourceRect = self.moreButton.bounds;
     [self presentViewController:share animated:YES completion:nil];
 }
-- (void)returnToDesktop {
-    void (^completion)(void)=self.returnHandler; [self invalidate]; if (completion) completion();
-}
+- (void)returnToDesktop { void (^completion)(void) = self.returnHandler; [self invalidate]; if (completion) completion(); }
 - (void)retireForBackground:(NSNotification *)notification { [self returnToDesktop]; }
 - (void)invalidate {
-    if (self.invalidated) return; self.invalidated=YES;
-    [self cancelRecognition]; [self.view endEditing:YES];
-    self.snapshot=nil; [self.crop clear]; self.preview.image=nil; self.editor.text=@"";
-    self.status.text=@""; self.returnHandler=nil;
+    if (self.invalidated) return; self.invalidated = YES; self.automaticGeneration++;
+    [self.nativeSelection invalidate]; [self cancelRecognition]; [self.view endEditing:YES];
+    self.snapshot = nil; [self.crop clear]; self.preview.image = nil; self.editor.text = @"";
+    self.status.text = @""; self.returnHandler = nil;
     if (self.presentedViewController) [self dismissViewControllerAnimated:NO completion:nil];
     [[NSNotificationCenter defaultCenter] removeObserver:self];
 }

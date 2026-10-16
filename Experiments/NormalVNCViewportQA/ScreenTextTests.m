@@ -9,11 +9,15 @@
 #import <unistd.h>
 
 @interface CompanionVNCTextReview (ScreenTextTests)
++ (BOOL)prefersNativeSelectionForSize:(CGSize)size supported:(BOOL)supported;
 - (void)recognize;
 - (void)cancelRecognition;
 - (void)reselect;
 - (void)copyText;
 - (void)selectVisible;
+- (void)selectArea;
+- (void)editText;
+- (void)scheduleRecognition;
 - (void)returnToDesktop;
 @end
 @interface CompanionVNCSession (ScreenTextTests)
@@ -71,7 +75,7 @@
 }
 - (CompanionVNCTextReview *)review:(UIImage *)image rect:(CGRect)rect {
     CompanionVNCTextReview *review=[[CompanionVNCTextReview alloc] initWithImage:image visibleRect:rect];
-    [review loadViewIfNeeded]; review.view.frame=CGRectMake(0,0,440,956); [review.view layoutIfNeeded]; return review;
+    [review loadViewIfNeeded]; [review selectArea]; review.view.frame=CGRectMake(0,0,440,956); [review.view layoutIfNeeded]; return review;
 }
 - (void)waitForRecognition:(CompanionVNCTextReview *)review {
     XCTestExpectation *done=[[XCTNSPredicateExpectation alloc] initWithPredicate:[NSPredicate predicateWithBlock:^BOOL(id object,NSDictionary *bindings) {
@@ -96,6 +100,54 @@
         }
     }
     for (UIView *child in view.subviews) [self assertButtonTitlesFit:child];
+}
+- (void)testManifestIndexedSelectionAvailabilityAndPixelBounds {
+    for (NSDictionary *entry in [self profile][@"copyTextInteractionCases"]) {
+        NSArray *size=entry[@"size"];
+        BOOL native=[CompanionVNCTextReview prefersNativeSelectionForSize:CGSizeMake([size[0] doubleValue],[size[1] doubleValue]) supported:[entry[@"nativeSupported"] boolValue]];
+        XCTAssertEqual(native,[entry[@"initialMode"] isEqual:@"text"],@"%@",entry[@"name"]);
+    }
+}
+- (void)testDefaultSelectionUsesNativeInteractionWhenAvailableAndNeverExportsAutomatically {
+    NSInteger clipboardChanges=UIPasteboard.generalPasteboard.changeCount;
+    CompanionVNCTextReview *review=[[CompanionVNCTextReview alloc] initWithImage:[self image:CGSizeMake(760,280) scale:1 text:@"mini.local"] visibleRect:CGRectMake(0,0,760,280)];
+    [review loadViewIfNeeded];
+    id native=[review valueForKey:@"nativeSelection"]; UIView *crop=[review valueForKey:@"crop"];
+    XCTAssertEqual([[review valueForKey:@"areaMode"] boolValue],native==nil);
+    XCTAssertEqual([[crop valueForKey:@"selectionEnabled"] boolValue],native==nil);
+    XCTAssertEqual(((UIScrollView *)[crop valueForKey:@"scroll"]).panGestureRecognizer.minimumNumberOfTouches,1);
+    XCTAssertFalse([[review valueForKey:@"busy"] boolValue]);
+    XCTAssertFalse(((UIButton *)[review valueForKey:@"exportButton"]).enabled);
+    XCTAssertEqual(UIPasteboard.generalPasteboard.changeCount,clipboardChanges);
+    XCTAssertEqualObjects(((UIButton *)[review valueForKey:@"returnButton"]).configuration.title,@"Done");
+    [review invalidate]; UIPasteboard.generalPasteboard.items=@[];
+}
+- (void)testAutomaticAreaRecognitionShowsEditableReviewWithoutAnExtraRecognizeStep {
+    CompanionVNCTextReview *review=[self review:[self image:CGSizeMake(760,280) scale:2 text:@"mini.local\nError: Connection refused"] rect:CGRectMake(0,0,1520,560)];
+    [review viewDidAppear:NO];
+    XCTestExpectation *read=[[XCTNSPredicateExpectation alloc] initWithPredicate:[NSPredicate predicateWithBlock:^BOOL(id object,NSDictionary *bindings) {
+        return [((UITextView *)[review valueForKey:@"editor"]).text containsString:@"mini.local"];
+    }] object:review];
+    [self waitForExpectations:@[read] timeout:20];
+    XCTAssertFalse(((UIView *)[review valueForKey:@"crop"]).hidden);
+    XCTAssertTrue([[review valueForKey:@"editorOpen"] boolValue]);
+    UITextView *editor=[review valueForKey:@"editor"]; editor.text=@"Reviewed synthetic text"; [review copyText];
+    XCTAssertEqualObjects(UIPasteboard.generalPasteboard.string,editor.text);
+    [review editText]; XCTAssertTrue(editor.hidden); [review editText]; XCTAssertEqualObjects(editor.text,@"Reviewed synthetic text");
+    [review invalidate]; UIPasteboard.generalPasteboard.items=@[];
+}
+- (void)testChangingAreaImmediatelyRetiresItsOldCopyAndPendingAnalysis {
+    CompanionVNCTextReview *review=[self review:[self image:CGSizeMake(760,280) scale:1 text:@"Old synthetic result"] rect:CGRectMake(0,0,760,280)];
+    [review recognize]; [self waitForRecognition:review];
+    XCTAssertGreaterThan(((UITextView *)[review valueForKey:@"editor"]).text.length,0);
+    [review setValue:@YES forKey:@"started"];
+    id crop=[review valueForKey:@"crop"]; [crop setValue:[NSValue valueWithCGRect:CGRectMake(0,0,100,100)] forKey:@"selection"];
+    XCTAssertEqualObjects(((UITextView *)[review valueForKey:@"editor"]).text,@"");
+    XCTAssertFalse(((UIButton *)[review valueForKey:@"exportButton"]).enabled);
+    [review invalidate];
+    [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.5]];
+    XCTAssertNil([review valueForKey:@"snapshot"]); XCTAssertNil(((UIImageView *)[crop valueForKey:@"magnifier"]).image);
+    XCTAssertEqualObjects(((UITextView *)[review valueForKey:@"editor"]).text,@"");
 }
 - (void)testOriginalRetinaPixelsVisibleCropAndAccessibleZoomControls {
     UIImage *image=[self image:CGSizeMake(800,600) scale:2 text:@"Synthetic only"];

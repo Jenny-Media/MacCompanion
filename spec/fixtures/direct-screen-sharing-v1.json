@@ -3452,5 +3452,43 @@
         ]
       }
     ]
-  }
+  },
+  "copyTextInteractionCases": [
+    {
+      "name": "native-supported-bounded",
+      "nativeSupported": true,
+      "size": [
+        1920,
+        1080
+      ],
+      "initialMode": "text"
+    },
+    {
+      "name": "native-unsupported",
+      "nativeSupported": false,
+      "size": [
+        1920,
+        1080
+      ],
+      "initialMode": "area"
+    },
+    {
+      "name": "full-image-over-recognition-budget",
+      "nativeSupported": true,
+      "size": [
+        8192,
+        4096
+      ],
+      "initialMode": "area"
+    },
+    {
+      "name": "full-image-too-wide",
+      "nativeSupported": true,
+      "size": [
+        8200,
+        2
+      ],
+      "initialMode": "area"
+    }
+  ]
 }

@@ -167,9 +167,12 @@ profile scope, Pro gating and the 15-total/12-custom limits are preserved.
 On iOS Desktop, the default first quick-action row is Mouse Mode and Copy Text;
 Fit to Window and Right Click follow. Existing saved profiles keep their choices
 and order; Add Action offers Copy Text. View & Display also contains Copy Text
-from Screen. This free tool freezes original received pixels with the visible
-area selected. Adjust the crop locally, recognize with on-device Vision, then
-review and edit text beside the image before Copy or Share. Return to Live
+from Screen. This free tool freezes original received pixels and automatically enables native
+Live Text selection on supported devices. Touch and hold text to select and copy;
+open the compact editable review when needed. Select Area provides a crop-based
+fallback with a resize magnifier and automatic on-device recognition after
+adjustment settles. The original image stays visible beside editable results.
+More contains language, whole-area, retry and explicit Share actions. Return to Live
 Desktop restores the viewport when its geometry still matches and waits for a
 fresh complete frame before reopening remote input. Background, app lock and
 session closure clear the temporary review. Terminal and video-free Trackpad &
