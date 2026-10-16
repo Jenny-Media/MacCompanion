@@ -462,6 +462,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         view.addSubview(keyboardBar)
         terminal.keyboardBar = keyboardBar
         terminal.inputAccessoryView = nil
+        textComposer.shortcutBar = keyboardBar
         NSLayoutConstraint.activate([
             keyboardBar.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
             keyboardBar.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),

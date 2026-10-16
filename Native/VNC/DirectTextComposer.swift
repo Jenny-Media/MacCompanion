@@ -116,6 +116,7 @@ struct DirectComposedText: Equatable {
 @MainActor @objc(DirectTextComposer) final class DirectTextComposer: NSObject {
     let draft: DirectTextComposerDraft
     @objc var interruptionHandler: (() -> Void)?
+    @objc weak var shortcutBar: UIView?
     private weak var host: UIViewController?
     private var invalidating = false
     private var observers: [NSObjectProtocol] = []
@@ -161,6 +162,7 @@ struct DirectComposedText: Equatable {
         guard !draft.sending, DirectAppLockV1.shared.canAccess, available(), controller.presentedViewController == nil else { return }
         draft.configure(available: { DirectAppLockV1.shared.canAccess && DirectClientPlatformV1.sessionAvailable && available() }, send: send)
         let host = DirectTextComposerPanel(draft: draft)
+        host.shortcutBar = shortcutBar
         controller.definesPresentationContext = true
         host.modalPresentationStyle = .overCurrentContext
         host.modalTransitionStyle = .crossDissolve
@@ -182,8 +184,11 @@ struct DirectComposerPlacement {
         let top = safe.minY + (room < 284 ? 8 : 48)
         return CGRect(x: safe.minX + 8, y: top, width: max(0, safe.width - 16), height: max(0, keyboardTop - 8 - top))
     }
-    static func area(safe: CGRect, keyboard: CGRect) -> CGRect {
-        let visible = keyboard.intersection(safe)
+    static func area(safe: CGRect, keyboard: CGRect, shortcutBar: CGRect = .null) -> CGRect {
+        // The app's shortcut row is separate from UIKit's keyboard. Reserve both
+        // in the same coordinate space, including hardware/undocked keyboards.
+        let visible = [keyboard, shortcutBar].map { $0.intersection(safe) }
+            .filter { !$0.isNull && !$0.isEmpty }.reduce(CGRect.null) { $0.union($1) }
         guard !visible.isNull, !visible.isEmpty else { return area(safe: safe, keyboardTop: safe.maxY) }
         let above = area(safe: safe, keyboardTop: visible.minY)
         if above.height >= 180 { return above }
@@ -263,8 +268,13 @@ struct DirectComposerPlacement {
         #endif
         return view.keyboardLayoutGuide.layoutFrame
     }
+    weak var shortcutBar: UIView?
     var placementArea: CGRect {
-        DirectComposerPlacement.area(safe: view.safeAreaLayoutGuide.layoutFrame, keyboard: keyboardFrame)
+        let bar: CGRect
+        if let shortcutBar, shortcutBar.window === view.window, !shortcutBar.isHidden, shortcutBar.alpha > 0 {
+            bar = view.convert(shortcutBar.bounds, from: shortcutBar)
+        } else { bar = .null }
+        return DirectComposerPlacement.area(safe: view.safeAreaLayoutGuide.layoutFrame, keyboard: keyboardFrame, shortcutBar: bar)
     }
     init(draft: DirectTextComposerDraft) { self.draft = draft; presentationEpoch = draft.presentationEpoch; super.init(nibName: nil, bundle: nil) }
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }

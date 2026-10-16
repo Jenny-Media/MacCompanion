@@ -503,6 +503,14 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
             try TerminalSecretStore.write(Data(String(openSSHPublicKey: key.publicKey).utf8), id: mac.id, kind: "host-key")
             session.connect(username: "synthetic", password: "synthetic-only", remember: false)
             try await wait(name + " connected") { session.connected }
+            if vector["resizeWriteFailed"] as? Bool == true {
+                var attempts = 0
+                session.resizeForTesting = { _, _ in attempts += 1; throw ChannelError.ioOnClosedChannel }
+                session.resize(columns: 91, rows: 29)
+                try await wait(name + " failed resize") { attempts == 1 }
+                XCTAssertTrue(session.connected, "An advisory failure must leave the reader alive for the peer's result")
+                XCTAssertNil(session.recovery, "Do not blame layout for an unclassified shell ending")
+            }
             var tail: [UInt8] = []
             session.received = { tail += $0 }
             try await record.emit("final-synthetic-output")
@@ -533,6 +541,11 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         window.makeKeyAndVisible()
         defer { session.stop(); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible(); try? TerminalSecretStore.remove(mac.id) }
         try await wait("hosted shell connected") { session.connected }
+        var attempts = 0
+        session.resizeForTesting = { _, _ in attempts += 1; throw ChannelError.ioOnClosedChannel }
+        session.resize(columns: 93, rows: 31)
+        try await wait("size notification rejected before shell exit") { attempts == 1 }
+        XCTAssertTrue(session.connected); XCTAssertNil(session.recovery)
         try await record.finish(status: 0)
         try await wait("normal shell navigates to My Macs") { exits == 1 }
         XCTAssertNil(session.recovery); XCTAssertFalse(session.connected)

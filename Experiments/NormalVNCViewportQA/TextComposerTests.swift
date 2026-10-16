@@ -8,6 +8,7 @@ import UIKit
     var available: (() -> Bool)?
     var send: ((String, @escaping (String?) -> Void) -> Void)?
     @objc func invalidate() { available = nil; send = nil }
+    @objc weak var shortcutBar: UIView?
     @objc func present(from controller: UIViewController, available: @escaping () -> Bool,
                        send: @escaping (String, @escaping (String?) -> Void) -> Void) {
         self.available = available; self.send = send
@@ -23,6 +24,53 @@ import UIKit
 }
 
 @MainActor final class TextComposerTests: XCTestCase {
+    func testTerminalComposerUsesItsNumberAndModifierBar() throws {
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic", address: "synthetic.invalid")
+        let session = DirectTerminalSession(mac: mac); defer { session.stop() }
+        let controller = TerminalController(session: session, customize: {})
+        controller.loadViewIfNeeded()
+        XCTAssertTrue(controller.textComposer.shortcutBar === controller.keyboardBar)
+    }
+
+    func testComposerReservesTheShortcutBarAcrossKeyboardLayouts() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        let root = UIViewController(); window.rootViewController = root; window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        let bar = UIView(); root.view.addSubview(bar)
+        let draft = DirectTextComposerDraft(macName: "Synthetic", mode: .desktop)
+        draft.configure(available: { true }, send: { _, _ in XCTFail("Layout must not send") })
+        let panel = DirectTextComposerPanel(draft: draft); panel.shortcutBar = bar
+        root.addChild(panel); root.view.addSubview(panel.view); panel.didMove(toParent: root)
+        try await Task.sleep(for: .milliseconds(300)); panel.view.endEditing(true)
+        // Docked phone, rotated phone, tablet hardware keyboard and moved tablet keyboard.
+        let layouts: [(CGSize, CGRect, CGRect)] = [
+            (.init(width: 440, height: 956), .init(x: 0, y: 640, width: 440, height: 316), .init(x: 8, y: 588, width: 364, height: 48)),
+            (.init(width: 440, height: 956), .init(x: 0, y: 640, width: 440, height: 316), .init(x: 0, y: 532, width: 440, height: 108)),
+            (.init(width: 956, height: 440), .init(x: 0, y: 246, width: 956, height: 194), .init(x: 0, y: 194, width: 956, height: 52)),
+            (.init(width: 1024, height: 1280), .zero, .init(x: 0, y: 1190, width: 1024, height: 52)),
+            (.init(width: 1024, height: 1280), .init(x: 352, y: 100, width: 320, height: 260), .init(x: 0, y: 48, width: 1024, height: 52))
+        ]
+        draft.edit("retained layout draft")
+        for (size, keyboard, shortcut) in layouts {
+            root.view.frame.size = size; panel.view.frame = root.view.bounds
+            bar.frame = shortcut; panel.simulatedKeyboardFrame = keyboard
+            panel.view.setNeedsLayout(); panel.view.layoutIfNeeded()
+            let frame = panel.panelFrame
+            XCTAssertFalse(frame.intersects(shortcut), "Bubble must leave the shortcut row visible")
+            XCTAssertFalse(frame.intersects(keyboard), "Bubble must also avoid a moved keyboard")
+            XCTAssertTrue(panel.view.bounds.contains(frame)); XCTAssertGreaterThan(frame.height, 88)
+            XCTAssertTrue(frame.contains(panel.closeActionFrame)); XCTAssertTrue(frame.contains(panel.deliveryActionFrame))
+            if keyboard.isEmpty || keyboard.maxY >= size.height {
+                XCTAssertEqual(frame.maxY, shortcut.minY - 8, accuracy: 1, "Bottom snap follows the bar, not the keyboard")
+            }
+            XCTAssertEqual(draft.text, "retained layout draft")
+        }
+        bar.isHidden = true; panel.simulatedKeyboardFrame = .zero
+        panel.view.setNeedsLayout(); panel.view.layoutIfNeeded()
+        XCTAssertEqual(panel.placementArea.maxY, panel.view.safeAreaLayoutGuide.layoutFrame.maxY - 8, accuracy: 1)
+    }
+
 
     func testInlineFooterNativeEditorGrowsAndUsesFullWidthWithSafeActions() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
@@ -517,6 +565,7 @@ import UIKit
         let probe = ComposerAdmissionProbe(); viewer.setValue(probe, forKey: "textComposer")
         defer { viewer.perform(NSSelectorFromString("stopViewer")); owner.setValue(false, forKey: "running") }
         viewer.perform(NSSelectorFromString("showTextComposer"))
+        XCTAssertTrue(probe.shortcutBar === viewer.value(forKey: "toolbar") as? UIView)
         let availability = try XCTUnwrap(probe.available), delivery = try XCTUnwrap(probe.send)
         XCTAssertTrue(availability())
         viewer.setValue(true, forKey: "restoreViewportPending")

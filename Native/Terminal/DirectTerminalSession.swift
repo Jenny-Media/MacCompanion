@@ -101,6 +101,10 @@ private enum TerminalPTY {
     var reloadKeyboard: (@MainActor () -> Void)?
     var toggleKeyboard: (@MainActor () -> Void)?
     var keyboardVisible = false
+    #if DEBUG
+    // Hosted SSH tests can fail an advisory write before the peer's exit arrives.
+    var resizeForTesting: ((Int, Int) async throws -> Void)?
+    #endif
     struct TrustRequest: Identifiable { let id = UUID(); let fingerprint: String }
     private(set) var mac: DirectMacRecordV1
     private(set) var macRemoved = false
@@ -519,9 +523,17 @@ private enum TerminalPTY {
             #endif
             guard !inputInactive, inputAvailable(), generation == id, writeGeneration == writeID, !suspended, !Task.isCancelled,
                 DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { return }
-            do { try await writer.resize(columns: cols, rows: rows) }
-            catch { if generation == id && writeGeneration == writeID { stop(); present(.terminalEnded, message: "The connection ended while resizing the Terminal. Open a new shell to continue.") } }
+            // A closing PTY may reject window-change before the reader drains
+            // its exit status. This advisory write must not cancel that reader;
+            // it owns normal exit versus transport-loss classification.
+            try? await writeSize(writer, columns: cols, rows: rows)
         }
+    }
+    private func writeSize(_ writer: TerminalWriter, columns: Int, rows: Int) async throws {
+        #if DEBUG
+        if let resizeForTesting { try await resizeForTesting(columns, rows); return }
+        #endif
+        try await writer.resize(columns: columns, rows: rows)
     }
     func stop() {
         inputInactive = false; readPauseCompleted = false

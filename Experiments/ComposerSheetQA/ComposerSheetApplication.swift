@@ -30,6 +30,15 @@ final class ComposerSheetRoot: UIViewController {
             desktop.frame = view.bounds; desktop.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             view.addSubview(desktop)
         }
+        if ProcessInfo.processInfo.arguments.contains("--qa-shortcut-bar") {
+            let bar = UIView(); bar.backgroundColor = .secondarySystemBackground
+            bar.accessibilityIdentifier = "qa-shortcut-bar"; bar.isAccessibilityElement = true
+            bar.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(bar)
+            NSLayoutConstraint.activate([bar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                bar.trailingAnchor.constraint(equalTo: view.trailingAnchor), bar.heightAnchor.constraint(equalToConstant: 52),
+                bar.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor)])
+            composer.shortcutBar = bar
+        }
         let button = UIButton(type: .system); button.setTitle("Compose", for: .normal)
         button.accessibilityIdentifier = "qa-compose"
         button.addTarget(self, action: #selector(openComposer), for: .touchUpInside)
