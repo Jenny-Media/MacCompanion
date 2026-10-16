@@ -54,8 +54,6 @@ void CompanionVNCPlayInterfaceFeedback(NSString *kind) {
 @property NSArray<NSDictionary *> *items;
 @property UIButton *highlighted;
 @property UILongPressGestureRecognizer *slide;
-@property UISelectionFeedbackGenerator *feedback;
-@property UIImpactFeedbackGenerator *impact;
 @property NSUInteger fadeGeneration;
 @property NSUInteger quickCount;
 @property NSString *renderedPreviewID;
@@ -84,7 +82,6 @@ void CompanionVNCPlayInterfaceFeedback(NSString *kind) {
         _slide = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(slide:)];
         _slide.minimumPressDuration = 0.12; _slide.allowableMovement = CGFLOAT_MAX;
         [_button addGestureRecognizer:_slide];
-        _feedback = [UISelectionFeedbackGenerator new]; _impact = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
     }
     return self;
 }
@@ -97,7 +94,6 @@ void CompanionVNCPlayInterfaceFeedback(NSString *kind) {
 - (BOOL)reduceMotion { return UIAccessibilityIsReduceMotionEnabled(); }
 - (void)pressDown {
     self.fadeGeneration++; self.button.alpha = 1;
-    if (self.hapticsEnabled) { [self.impact prepare]; [self.feedback prepare]; }
     if (self.reduceMotion) return;
     [UIView animateWithDuration:.1 delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction animations:^{ self.button.transform = CGAffineTransformMakeScale(.94,.94); } completion:nil];
 }
