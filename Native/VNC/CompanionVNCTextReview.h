@@ -6,4 +6,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy, nullable) void (^returnHandler)(void);
 - (void)invalidate;
 @end
+/// Owns only local page navigation; transport remains with the root viewer.
+@interface CompanionVNCTextNavigation : UINavigationController
+@end
 NS_ASSUME_NONNULL_END

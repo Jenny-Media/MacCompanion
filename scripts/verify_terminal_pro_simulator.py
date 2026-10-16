@@ -69,6 +69,7 @@ def main():
     parser.add_argument('--composer-ui', action='store_true', help='Generate the simulator-only Maps-style composer app and native drag test scheme')
     parser.add_argument('--cold-start-ui', action='store_true', help='Generate native cold-start admission interaction tests')
     parser.add_argument('--settings-ui', action='store_true', help='Also test gear navigation and live sheet appearance using native UI interactions')
+    parser.add_argument('--screen-text-ui', action='store_true', help='Generate the simulator-only native/area text selection UI journey')
     args = parser.parse_args()
     with compiler_workspace(args.build, ROOT) as compiler:
         execute(args, parser, compiler)
@@ -168,6 +169,26 @@ def execute(args, parser, compiler):
             'test': {'config': 'Debug', 'macroExpansion': 'ColdStartApp', 'targets': [{'name': 'ColdStartUITests', 'parallelizable': False}]}}
         for action in ['run', 'profile', 'analyze', 'archive']:
             spec['schemes']['ColdStartQA'][action] = {'config': 'Debug'}
+    if args.screen_text_ui:
+        import copy
+        screen = copy.deepcopy(app)
+        screen['sources'] = [row for row in screen['sources'] if not row['path'].startswith(str(ROOT / 'Apps/MacCompanionIOS'))]
+        screen['sources'].append({'path': str(ROOT / 'Experiments/ScreenTextQA/ScreenTextQAApplication.swift')})
+        screen['settings']['base'].update({'PRODUCT_BUNDLE_IDENTIFIER': 'dev.maccompanion.screentextqa.ios',
+                                          'PRODUCT_NAME': 'ScreenTextQA', 'PRODUCT_MODULE_NAME': 'Mac_Companion'})
+        screen['dependencies'] = [row for row in screen['dependencies'] if row.get('target') != 'MacCompanionSessionActivity']
+        spec['targets']['ScreenTextApp'] = screen
+        spec['targets']['ScreenTextUITests'] = {
+            'type': 'bundle.ui-testing', 'platform': 'iOS',
+            'sources': [{'path': str(ROOT / 'Experiments/ScreenTextQA/ScreenTextUITests.swift')}],
+            'dependencies': [{'target': 'ScreenTextApp'}],
+            'settings': {'base': {'GENERATE_INFOPLIST_FILE': 'YES', 'PRODUCT_BUNDLE_IDENTIFIER': 'dev.maccompanion.screentextqa.ios.tests',
+                'SWIFT_VERSION': '6.0', 'IPHONEOS_DEPLOYMENT_TARGET': '26.0', 'ARCHS': 'arm64', 'ONLY_ACTIVE_ARCH': 'YES',
+                'CODE_SIGN_IDENTITY': '-', 'CODE_SIGNING_ALLOWED': 'YES', 'TEST_TARGET_NAME': 'ScreenTextApp'}}}
+        spec['schemes']['ScreenTextQA'] = {'build': {'targets': {'ScreenTextApp': 'all', 'ScreenTextUITests': 'all'}},
+            'test': {'config': 'Debug', 'macroExpansion': 'ScreenTextApp', 'targets': [{'name': 'ScreenTextUITests', 'parallelizable': False}]}}
+        for action in ['run', 'profile', 'analyze', 'archive']:
+            spec['schemes']['ScreenTextQA'][action] = {'config': 'Debug'}
     spec_path = qa / 'project.json'; spec_path.write_text(json.dumps(spec, indent=2))
     run('/opt/homebrew/bin/xcodegen', 'generate', '--spec', spec_path, '--project', qa)
     lock = qa / 'DirectClientQA.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'

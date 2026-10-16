@@ -167,11 +167,11 @@ profile scope, Pro gating and the 15-total/12-custom limits are preserved.
 On iOS Desktop, the default first quick-action row is Mouse Mode and Copy Text;
 Fit to Window and Right Click follow. Existing saved profiles keep their choices
 and order; Add Action offers Copy Text. View & Display also contains Copy Text
-from Screen. This free tool freezes original received pixels with the visible
-area selected. Adjust the crop locally, recognize with on-device Vision, then
-review and edit text beside the image before Copy or Share. Return to Live
-Desktop restores the viewport when its geometry still matches and waits for a
-fresh complete frame before reopening remote input. Background, app lock and
+from Screen. This free tool freezes original received pixels and automatically enables native
+Live Text selection on supported devices. Touch and hold text to select and copy;
+use Review to open a resizable drawer without opening the keyboard. Text and Area share a compact bottom selector beside Review and Copy. Area provides a connected crop outline, small handles with large hit targets, a resize magnifier and automatic on-device recognition after adjustment settles. Results become ready without opening Review. The frozen image stays behind the drawer; closing Review preserves corrections. Native Back and a leading-edge swipe return to Screen Sharing.
+More contains language, whole-area, retry and explicit Share actions. Return to Live
+Desktop restores the viewport when its geometry still matches and retains the healthy live baseline; it does not request a new full image for a local tool return. Real connection or display changes retain their baseline gates. Remote failures leave local Copy Text available and show recovery after Back. Background, app lock and
 session closure clear the temporary review. Terminal and video-free Trackpad &
 Keyboard do not offer extraction. macOS clipboard integration remains separate.
 

@@ -42,7 +42,7 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
     let showMacs: @MainActor () -> Void
     var chromeChanged: @MainActor (Bool) -> Void = { _ in }
     func makeCoordinator() -> Coordinator { Coordinator(mac: mac, files: files, showMacs: showMacs) }
-    func makeUIViewController(context: Context) -> CompanionVNCViewer {
+    func makeUIViewController(context: Context) -> CompanionVNCTextNavigation {
         let viewer = CompanionVNCViewer()
         viewer.macName = mac.name
         viewer.connectionMacNames = connectionMacNames.isEmpty ? [mac.name] : connectionMacNames
@@ -108,15 +108,15 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
             MainActor.assumeIsolated { coordinator?.endSession() }
         }
         context.coordinator.observeActivity()
-        return viewer
+        return CompanionVNCTextNavigation(rootViewController: viewer)
     }
-    func updateUIViewController(_ controller: CompanionVNCViewer, context: Context) {}
-    static func dismantleUIViewController(_ controller: CompanionVNCViewer, coordinator: Coordinator) {
+    func updateUIViewController(_ controller: CompanionVNCTextNavigation, context: Context) {}
+    static func dismantleUIViewController(_ controller: CompanionVNCTextNavigation, coordinator: Coordinator) {
         // Removal tears down the remote controller while its SwiftUI parent
         // owns the download-only recovery presentation.
         if !coordinator.files.macRemoved { coordinator.files.disconnectBorrowed(coordinator.authenticatedGeneration) }
         coordinator.disconnect(); coordinator.stopObserving(); coordinator.activity.finish()
-        controller.stop()
+        coordinator.viewer?.stop()
     }
 
     @MainActor final class Coordinator {

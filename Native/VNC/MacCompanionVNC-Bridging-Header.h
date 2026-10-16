@@ -6,3 +6,5 @@
 #import "CompanionVNCAdaptiveLayout.h"
 
 #import "CompanionVNCDirectConnection.h"
+
+#import "CompanionVNCTextReview.h"

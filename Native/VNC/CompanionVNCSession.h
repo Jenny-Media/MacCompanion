@@ -39,6 +39,7 @@ typedef UIImage CompanionVNCImage;
 - (void)resume;
 /// Local snapshot review closes input while the socket continues receiving.
 - (BOOL)suspendInputForReview:(void (^)(void))completion;
+/// End local input suspension without resetting the still-live Desktop baseline.
 - (void)resumeInputAfterReview;
 /// Brief inactivity releases held input without resetting an established baseline.
 - (void)suspendInputForInterruption;
