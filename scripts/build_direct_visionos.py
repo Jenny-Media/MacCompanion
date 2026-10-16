@@ -186,6 +186,8 @@ def build(args, parser, session):
         raise SystemExit('Application inputs changed during build. Rebuild the final source.')
     verify_checkouts(args.output / 'DerivedData/SourcePackages', expected, previous=package_sources, transforms=transforms)
     app = args.output / ('DerivedData/Build/Products/Debug-' + args.sdk) / (name + '.app')
+    if not args.probe and plistlib.loads((app / 'Info.plist').read_bytes()).get('ITSAppUsesNonExemptEncryption') is not False:
+        raise SystemExit('Built app is missing the approved export compliance metadata.')
     report = {'profile': 'maccompanion.native-visionos-development.v1',
         'sdk': args.sdk, 'toolchain': version, 'app': str(app), 'binarySHA256': digest(app / name),
         'applicationCode': {str(p.relative_to(app)): digest(p) for p in sorted(app.rglob('*'))
@@ -205,6 +207,8 @@ def configure_client(spec, name, args):
         'TerminalKeyInstallation', 'TerminalKeyboard', 'TerminalLoginSelection', 'TerminalIdentityGuide',
         'TerminalKeySettings', 'TerminalKeyInstallView', 'TerminalKeyboardSettings']
     target = spec['targets'][name]
+    # Only the shipping client carries the approved outside-France declaration.
+    target['info']['properties']['ITSAppUsesNonExemptEncryption'] = False
     target['sources'] += [{'path': str(ROOT / 'Native/VNC' / (p + '.swift'))} for p in shared_vnc]
     target['sources'] += [{'path': str(ROOT / 'Native/Terminal' / (p + '.swift'))} for p in shared_terminal]
     target['sources'].append({'path': str(ROOT / 'Native/Terminal/Files/DirectFilesLoginDraft.swift')})
