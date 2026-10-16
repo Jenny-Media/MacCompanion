@@ -25,6 +25,7 @@ def main():
     parser.add_argument('--team', help='Existing team for the signing identity; no new permanent identity is created')
     parser.add_argument('--profile', type=Path, help='Existing installed Mac development provisioning profile')
     parser.add_argument('--ui', action='store_true', help='Also launch the native app for window and keyboard UI acceptance')
+    parser.add_argument('--only-testing', action='append', default=[], help='Select an existing native test target/class/method without running unrelated tests')
     parser.add_argument('--only-ui', action='store_true', help='Run only native UI acceptance, including its macOS automation permission prompt')
     parser.add_argument('--live-vm', action='store_true', help='Run only opt-in disposable VM GUI acceptance and screenshot attachments; requires MC_LIVE_VM_HOST/ACCOUNT/PASSWORD/FINGERPRINT')
     args = parser.parse_args()
@@ -135,7 +136,9 @@ def execute(args, parser, compiler):
             '-clonedSourcePackagesDirPath', str(compiler / 'DerivedData/SourcePackages'),
             '-onlyUsePackageVersionsFromResolvedFile', '-skipPackagePluginValidation',
             '-parallel-testing-enabled', 'NO', '-resultBundlePath', str(result)]
-        if args.live_vm:
+        if args.only_testing:
+            command += ['-only-testing:' + value for value in args.only_testing]
+        elif args.live_vm:
             command.append('-only-testing:NativeWindowUITests/LiveVMUITests')
         elif args.only_ui:
             command.append('-only-testing:NativeWindowUITests')

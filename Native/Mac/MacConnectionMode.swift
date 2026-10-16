@@ -29,6 +29,6 @@ struct MacSessionRequest: Codable, Hashable, Identifiable {
     let id: UUID
     let macID: UUID
     let mode: MacConnectionMode
-    init(macID: UUID, mode: MacConnectionMode) { id = UUID(); self.macID = macID; self.mode = mode }
+    init(id: UUID = UUID(), macID: UUID, mode: MacConnectionMode) { self.id = id; self.macID = macID; self.mode = mode }
 }
 #endif

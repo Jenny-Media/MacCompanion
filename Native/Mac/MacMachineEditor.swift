@@ -68,7 +68,7 @@ struct MacMachineEditor: View {
                     TextField("Name", text: $name).accessibilityIdentifier("mac-machine-name")
                     Toggle("Use detected Mac name", isOn: $automatic)
                         .accessibilityLabel("Use detected Mac name").accessibilityIdentifier("mac-machine-automatic-name")
-                    Picker("Default connection", selection: $preferred.mode) { ForEach(MacConnectionMode.allCases) { Text($0.title).tag($0) } }
+                    Picker("Double-click opens", selection: $preferred.mode) { ForEach(MacConnectionMode.allCases) { Text($0.title).tag($0) } }
                         .accessibilityIdentifier("mac-machine-default-connection")
                 }
                 if let mac {
@@ -99,7 +99,8 @@ struct MacMachineEditor: View {
                     }
                     Section {
                         DisclosureGroup("Reset Login & Trust") {
-                            Button("Forget Screen Sharing Login", role: .destructive) { forgetting = .desktop }
+                            Button("Forget Previous Screen Sharing Login", role: .destructive) { forgetting = .desktop }
+                            Text("Apple Screen Sharing manages its own login. This removes only credentials saved by the previous built-in viewer.").font(.caption).foregroundStyle(.secondary)
                             Button("Forget Terminal Login", role: .destructive) { forgetting = .terminal }
                             Button("Forget SSH Key Selection", role: .destructive) { forgetting = .keySelection }
                             Button("Forget SSH Server Key", role: .destructive) { forgetting = .serverKey }

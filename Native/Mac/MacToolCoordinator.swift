@@ -1,0 +1,179 @@
+#if os(macOS) && MACCOMPANION_VNC_DEVELOPMENT
+import Darwin
+import Foundation
+import Observation
+
+struct MacToolMachine: Equatable, Sendable {
+    let id: UUID
+    let name: String
+    let addresses: [String]
+    let desktopPort: Int
+    let sshPort: Int
+}
+
+enum MacScreenSharingFailure: Error, Equatable {
+    case invalidAddress, unavailableAddress, missingApplication, launchFailed, timedOut
+    var message: String {
+        switch self {
+        case .invalidAddress: "Use a local or private VPN address and a port from 1 to 65535."
+        case .unavailableAddress: "No local or private VPN address could be resolved. Check the addresses and VPN connection, then retry."
+        case .missingApplication: "Apple Screen Sharing could not be found on this Mac. Terminal is still available."
+        case .launchFailed: "Screen Sharing could not be opened. Terminal is still available; you can retry Screen Sharing."
+        case .timedOut: "Opening Screen Sharing took too long. Terminal is still available; retry when ready."
+        }
+    }
+}
+
+enum MacScreenSharingState: Equatable {
+    case idle, opening, openedExternally, failed(MacScreenSharingFailure)
+    var title: String {
+        switch self {
+        case .idle: "Opens Apple Screen Sharing"
+        case .opening: "Opening Screen Sharing…"
+        case .openedExternally: "Opened in Screen Sharing"
+        case .failed: "Screen Sharing could not be opened"
+        }
+    }
+}
+
+enum MacScreenSharingEndpoint {
+    private static func numericCandidates(_ host: String, numericOnly: Bool) -> [String] {
+        let permitted = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._:%")
+        guard !host.isEmpty, host.utf8.count <= 255, host.unicodeScalars.allSatisfy(permitted.contains) else { return [] }
+        var hints = addrinfo()
+        hints.ai_family = AF_UNSPEC; hints.ai_socktype = SOCK_STREAM; hints.ai_protocol = IPPROTO_TCP
+        if numericOnly { hints.ai_flags = AI_NUMERICHOST }
+        var result: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(host, nil, &hints, &result) == 0, let first = result else { return [] }
+        defer { freeaddrinfo(first) }
+        var output: [String] = [], cursor: UnsafeMutablePointer<addrinfo>? = first
+        while let current = cursor {
+            let address = current.pointee
+            if CompanionVNCLocalEndpoint(address.ai_addr, Int(address.ai_addrlen)) {
+                var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                let code = buffer.withUnsafeMutableBufferPointer {
+                    getnameinfo(address.ai_addr, address.ai_addrlen, $0.baseAddress, socklen_t($0.count), nil, 0, NI_NUMERICHOST)
+                }
+                if code == 0 { output.append(String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)) }
+            }
+            cursor = address.ai_next
+        }
+        return output
+    }
+    static func resolve(_ addresses: [String]) async throws -> String {
+        guard (1...8).contains(addresses.count) else { throw MacScreenSharingFailure.invalidAddress }
+        // DNS never blocks the UI actor. The coordinator owns the bounded wait
+        // and retires late output; the resolver owns its independent lifetime.
+        return try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                for host in addresses {
+                    if let numeric = numericCandidates(host, numericOnly: false).first {
+                        continuation.resume(returning: numeric); return
+                    }
+                }
+                continuation.resume(throwing: MacScreenSharingFailure.unavailableAddress)
+            }
+        }
+    }
+    static func url(host: String, port: Int) throws -> URL {
+        guard CompanionVNCPortValid(Int32(clamping: port)), let numeric = numericCandidates(host, numericOnly: true).first else {
+            throw MacScreenSharingFailure.invalidAddress
+        }
+        var components = URLComponents()
+        components.scheme = "vnc"
+        components.host = numeric.contains(":") ? "[\(numeric)]" : numeric
+        components.port = port
+        guard let url = components.url, components.user == nil, components.password == nil,
+              components.query == nil, components.fragment == nil, components.path.isEmpty else { throw MacScreenSharingFailure.invalidAddress }
+        return url
+    }
+}
+
+/// Native external-app handoff owner. Opening an external app is never proof of a
+/// remote connection; no credentials or per-session control cross this boundary.
+@MainActor @Observable final class MacToolCoordinator {
+    enum Action { case desktop, terminal, newTerminal }
+    private(set) var states: [UUID: MacScreenSharingState] = [:]
+    private var terminalWindows: [UUID: [UUID]] = [:]
+    private var pending: (token: UUID, machine: MacToolMachine)?
+    private var work: Task<Void, Never>?
+    private var deadline: Task<Void, Never>?
+    private let timeout: Duration
+    private let resolve: @Sendable ([String]) async throws -> String
+    private let openDesktop: @MainActor (URL) async throws -> Void
+    private let openTerminal: @MainActor (UUID, UUID) -> Void
+    private let canAccess: @MainActor () -> Bool
+    private let isCurrent: @MainActor (MacToolMachine) -> Bool
+    init(timeout: Duration = .seconds(10),
+         resolve: @escaping @Sendable ([String]) async throws -> String = MacScreenSharingEndpoint.resolve,
+         openDesktop: @escaping @MainActor (URL) async throws -> Void,
+         openTerminal: @escaping @MainActor (UUID, UUID) -> Void,
+         canAccess: @escaping @MainActor () -> Bool,
+         isCurrent: @escaping @MainActor (MacToolMachine) -> Bool) {
+        self.timeout = timeout; self.resolve = resolve; self.openDesktop = openDesktop
+        self.openTerminal = openTerminal; self.canAccess = canAccess; self.isCurrent = isCurrent
+    }
+    func open(_ machine: MacToolMachine, action: Action) {
+        guard canAccess(), isCurrent(machine) else { return }
+        if action == .terminal || action == .newTerminal {
+            let window = action == .newTerminal ? UUID() : (terminalWindows[machine.id]?.first ?? UUID())
+            terminalOpened(macID: machine.id, windowID: window)
+            openTerminal(machine.id, window)
+            return
+        }
+        if pending?.machine == machine { return }
+        invalidate()
+        let token = UUID(); pending = (token, machine); states[machine.id] = .opening
+        let resolver = resolve, opener = openDesktop
+        work = Task { [weak self] in
+            do {
+                let numeric = try await resolver(machine.addresses)
+                guard self?.admit(token, machine) == true, !Task.isCancelled else { return }
+                let url = try MacScreenSharingEndpoint.url(host: numeric, port: machine.desktopPort)
+                try await opener(url)
+                guard self?.admit(token, machine) == true, !Task.isCancelled else { return }
+                self?.finish(token, machine.id, .openedExternally)
+            } catch {
+                guard self?.admit(token, machine) == true, !Task.isCancelled else { return }
+                self?.finish(token, machine.id, .failed(error as? MacScreenSharingFailure ?? .launchFailed))
+            }
+        }
+        deadline = Task { [weak self] in
+            do { try await Task.sleep(for: self?.timeout ?? .seconds(10)) } catch { return }
+            guard !Task.isCancelled, self?.admit(token, machine) == true else { return }
+            self?.finish(token, machine.id, .failed(.timedOut))
+        }
+    }
+    private func admit(_ token: UUID, _ machine: MacToolMachine) -> Bool {
+        guard pending?.token == token else { return false }
+        guard canAccess(), isCurrent(machine) else { invalidate(); return false }
+        return true
+    }
+    private func finish(_ token: UUID, _ machineID: UUID, _ state: MacScreenSharingState) {
+        guard pending?.token == token else { return }
+        pending = nil; work?.cancel(); work = nil; deadline?.cancel(); deadline = nil
+        states[machineID] = state
+    }
+    func invalidate() {
+        if let pending { states[pending.machine.id] = .idle }
+        pending = nil; work?.cancel(); work = nil; deadline?.cancel(); deadline = nil
+    }
+    func recordsChanged(validIDs: Set<UUID>) {
+        if let pending, !isCurrent(pending.machine) { invalidate() }
+        states = states.filter { validIDs.contains($0.key) }
+        terminalWindows = terminalWindows.filter { validIDs.contains($0.key) }
+    }
+    func terminalOpened(macID: UUID, windowID: UUID) {
+        // Register restoration without launching or connecting anything. Keep
+        // other restored windows available if the preferred one closes.
+        if terminalWindows[macID]?.contains(windowID) != true {
+            terminalWindows[macID, default: []].append(windowID)
+        }
+    }
+    func terminalClosed(macID: UUID, windowID: UUID) {
+        terminalWindows[macID]?.removeAll { $0 == windowID }
+        if terminalWindows[macID]?.isEmpty == true { terminalWindows[macID] = nil }
+    }
+    isolated deinit { work?.cancel(); deadline?.cancel() }
+}
+#endif

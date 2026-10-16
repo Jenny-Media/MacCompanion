@@ -807,7 +807,7 @@
       "path": "native-macos-client-v1.json",
       "kind": "client.nativeMac.v1",
       "expect": "valid",
-      "canonicalSHA256": "683b7324cbb525a763ecf2dfc750cc6204d0b51ef7ebdc37b802858d7b667f81"
+      "canonicalSHA256": "b69cbb31d99a3dc747a48cfb6a16854564815950e5f170a8ec51cec6e32b2e40"
     },
     {
       "path": "native-visionos-client-v1.json",

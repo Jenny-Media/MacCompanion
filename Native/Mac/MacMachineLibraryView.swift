@@ -4,6 +4,10 @@ import SwiftUI
 
 struct MacMachineLibraryView: View {
     let library: DirectMacLibraryV1
+    let tools: MacToolApplicationModel
+    init(library: DirectMacLibraryV1, tools: MacToolApplicationModel? = nil) {
+        self.library = library; self.tools = tools ?? MacToolApplicationModel(library: library)
+    }
     @Environment(\.openWindow) private var openWindow
     @State private var selected: UUID?
     @State private var search = ""
@@ -22,7 +26,6 @@ struct MacMachineLibraryView: View {
                 ForEach(library.macs.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) || $0.addresses.contains(where: { $0.localizedCaseInsensitiveContains(search) }) }) { mac in
                     Label { VStack(alignment: .leading) {
                         Text(mac.name)
-                        Text("Default: " + MacConnectionMode(mac.preferredConnection).title).font(.caption).foregroundStyle(.secondary)
                         let count = connections.connections(for: mac.id).filter { $0.phase == .connected }.count
                         if count > 0 { Text("\(count) connected \(count == 1 ? "session" : "sessions")").font(.caption).foregroundStyle(.secondary) }
                     } }
@@ -32,6 +35,7 @@ struct MacMachineLibraryView: View {
                         .accessibilityAction(named: "Connect") { open(mac, mode: MacConnectionMode(mac.preferredConnection)) }
                         .contextMenu {
                             ForEach(MacConnectionMode.allCases) { mode in Button(mode.actionTitle) { open(mac, mode: mode) } }
+                            Button("New Terminal Window", systemImage: "plus.rectangle") { open(mac, mode: .terminal, another: true) }
                             Button("Browse Files", systemImage: "folder") { openWindow(id: "direct-files", value: DirectFilesWindowRequest(macID: mac.id)) }
                             Divider()
                             Button("Connection Settings") { sheet = .edit(mac) }
@@ -52,20 +56,26 @@ struct MacMachineLibraryView: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 20) {
                             Label(mac.name, systemImage: mac.family.symbol).font(.largeTitle)
-                            Text(mac.addresses.joined(separator: "\n")).foregroundStyle(.secondary).textSelection(.enabled)
-                            let preferred = MacConnectionMode(mac.preferredConnection)
-                            HStack(spacing: 12) {
-                                Button { open(mac, mode: preferred) } label: { Label(preferred.actionTitle, systemImage: preferred.symbol) }
-                                    .buttonStyle(.borderedProminent).controlSize(.large).accessibilityIdentifier("mac-open-" + preferred.rawValue)
-                                ForEach(MacConnectionMode.allCases.filter { $0 != preferred }) { mode in
-                                    Button { open(mac, mode: mode) } label: { Label(mode.actionTitle, systemImage: mode.symbol) }
-                                        .buttonStyle(.bordered).controlSize(.large).accessibilityIdentifier("mac-open-" + mode.rawValue)
+                            HStack(alignment: .top, spacing: 20) {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Button { open(mac, mode: .desktop) } label: {
+                                        HStack(spacing: 8) {
+                                            Label("Screen Sharing", systemImage: "desktopcomputer")
+                                            Image(systemName: "arrow.up.right").font(.caption).accessibilityHidden(true)
+                                        }
+                                    }.accessibilityIdentifier("mac-open-desktop")
+                                        .accessibilityHint("Opens Apple Screen Sharing")
+                                        .disabled(tools.coordinator?.states[mac.id] == .opening)
+                                    Text("Opens Apple Screen Sharing").font(.caption).foregroundStyle(.secondary)
                                 }
-                            }
-                            Button("Browse Files", systemImage: "folder") { openWindow(id: "direct-files", value: DirectFilesWindowRequest(macID: mac.id)) }
-                                .help("Browse and transfer files using Remote Login (SSH)")
+                                Button("Terminal", systemImage: "terminal") { open(mac, mode: .terminal) }
+                                    .accessibilityIdentifier("mac-open-terminal")
+                            }.buttonStyle(.bordered).controlSize(.large)
+                            MacScreenSharingHandoffStatus(macID: mac.id, tools: tools)
                             Button("Connection Settings", systemImage: "gearshape") { sheet = .edit(mac) }
-                                .accessibilityIdentifier("mac-connection-settings")
+                                .accessibilityIdentifier("mac-connection-settings").buttonStyle(.link).font(.callout)
+                            Button("Browse Files", systemImage: "folder") { openWindow(id: "direct-files", value: DirectFilesWindowRequest(macID: mac.id)) }
+                                .buttonStyle(.link).font(.callout).help("Browse and transfer files using Remote Login")
                             let open = connections.connections(for: mac.id)
                             if !open.isEmpty {
                                 Divider()
@@ -119,10 +129,21 @@ struct MacMachineLibraryView: View {
         .confirmationDialog("Remove this Mac and its local saved login?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), titleVisibility: .visible) {
             Button("Remove Mac", role: .destructive) { if DirectAppLockV1.shared.canAccess, let removing { library.remove(removing) }; removing = nil }
         } message: {
-            Text("Related sessions will close and transfers will stop. Unsaved downloads stay available until you save or discard them.")
+            Text("Terminal and Files connections will close and transfers will stop. Unsaved downloads stay available until you save or discard them. Apple Screen Sharing stays independent.")
+        }
+        .onAppear {
+            tools.install { [openWindow] macID, windowID in
+                openWindow(id: "direct-session", value: MacSessionRequest(id: windowID, macID: macID, mode: .terminal))
+            }
+            tools.coordinator?.recordsChanged(validIDs: Set(library.macs.map(\.id)))
+            if selected == nil { selected = library.macs.first?.id }
+        }
+        .onChange(of: library.macs) { _, records in
+            tools.coordinator?.recordsChanged(validIDs: Set(records.map(\.id)))
+            if selected == nil || !records.contains(where: { $0.id == selected }) { selected = records.first?.id }
         }
         .onChange(of: DirectAppLockV1.shared.canAccess) { _, allowed in
-            if !allowed { sheet = nil; removing = nil }
+            if !allowed { tools.coordinator?.invalidate(); sheet = nil; removing = nil }
         }
     }
     private func move(_ mac: DirectMacRecordV1, down: Bool) {
@@ -136,13 +157,13 @@ struct MacMachineLibraryView: View {
             sheet = DirectProAccess.shared.canAddMac(count: library.macs.count) ? .add : .pro
         }
     }
-    private func open(_ mac: DirectMacRecordV1, mode: MacConnectionMode) {
+    private func open(_ mac: DirectMacRecordV1, mode: MacConnectionMode, another: Bool = false) {
         Task {
             if !DirectProAccess.shared.ready { await DirectProAccess.shared.refresh() }
             guard DirectAppLockV1.shared.canAccess else { return }
             guard library.macs.contains(where: { $0.id == mac.id }) else { return }
             guard DirectProAccess.shared.canUseMac(mac.id, among: library.macs.map(\.id)) else { sheet = .pro; return }
-            openWindow(id: "direct-session", value: MacSessionRequest(macID: mac.id, mode: mode))
+            tools.coordinator?.open(MacToolApplicationModel.snapshot(mac), action: mode == .terminal ? (another ? .newTerminal : .terminal) : .desktop)
         }
     }
 }
@@ -150,12 +171,14 @@ struct MacMachineLibraryView: View {
 struct MacSessionWindow: View {
     let request: MacSessionRequest
     let library: DirectMacLibraryV1
+    let tools: MacToolApplicationModel?
+    @Environment(\.openWindow) private var openWindow
     @State private var mac: DirectMacRecordV1?
     @State private var admitted = false
     @State private var pro = false
     @State private var window = MacWindowHandle()
-    init(request: MacSessionRequest, library: DirectMacLibraryV1) {
-        self.request = request; self.library = library
+    init(request: MacSessionRequest, library: DirectMacLibraryV1, tools: MacToolApplicationModel? = nil) {
+        self.request = request; self.library = library; self.tools = tools
         _mac = State(initialValue: library.macs.first { $0.id == request.macID })
     }
     var body: some View {
@@ -173,6 +196,16 @@ struct MacSessionWindow: View {
                     .frame(minWidth: 520, minHeight: 360)
             }
         }.id(request.id).directAppearance().modifier(MacPrivacyCover())
+            .onAppear {
+                guard request.mode == .terminal, let tools else { return }
+                tools.install { [openWindow] macID, windowID in
+                    openWindow(id: "direct-session", value: MacSessionRequest(id: windowID, macID: macID, mode: .terminal))
+                }
+                tools.coordinator?.terminalOpened(macID: request.macID, windowID: request.id)
+            }
+            .background(MacWindowLifetime {
+                if request.mode == .terminal { tools?.coordinator?.terminalClosed(macID: request.macID, windowID: request.id) }
+            }.frame(width: 0, height: 0))
             .task { await admit() }
             .sheet(isPresented: $pro, onDismiss: { Task { await admit() } }) {
                 DirectProView().frame(minWidth: 480, minHeight: 460).modifier(MacSheetPrivacyCover())

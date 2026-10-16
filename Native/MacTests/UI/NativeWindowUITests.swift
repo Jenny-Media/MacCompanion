@@ -61,7 +61,7 @@ private final class UIConnections: @unchecked Sendable {
         }
         XCTAssertTrue(window.buttons["Disconnect"].waitForExistence(timeout: 5))
     }
-    func testAddressRowsDefaultDoubleClickAndNativeLoginControls() {
+    func testAddressRowsDefaultDoubleClickAndNativeTerminalControls() {
         continueAfterFailure = false
         let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.macqa")
         let directory = URL.temporaryDirectory.appending(path: "maccompanion-polish-ui-" + UUID().uuidString)
@@ -79,30 +79,21 @@ private final class UIConnections: @unchecked Sendable {
         let row = library(app).outlines.staticTexts["Synthetic Polish"].firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 5)); row.click()
         XCTAssertTrue(library(app).buttons["mac-open-desktop"].waitForExistence(timeout: 5))
-        row.doubleClick()
-        let desktop = windows("Screen Sharing", app: app).firstMatch
-        XCTAssertTrue(desktop.waitForExistence(timeout: 5))
-        let account = desktop.textFields["mac-vnc-account"], password = desktop.secureTextFields["mac-vnc-password"]
-        replace(account, with: "synthetic-account")
-        account.typeKey(XCUIKeyboardKey.return, modifierFlags: [])
-        password.typeText("synthetic-only")
-        XCTAssertTrue(desktop.buttons["mac-vnc-connect"].isEnabled)
-        let login = XCTAttachment(screenshot: app.screenshot()); login.name = "Native Desktop sign-in"; login.lifetime = .keepAlways; add(login)
-        desktop.buttons["Controls"].click()
-        expandDisclosure("Pointer, zoom & pan", app: app)
-        XCTAssertTrue(app.staticTexts["Direct control"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.sliders["Pointer Speed"].exists); XCTAssertFalse(app.checkBoxes["Follow Cursor"].exists)
-        XCTAssertFalse(app.staticTexts["Mouse Mode"].exists)
-        let controls = XCTAttachment(screenshot: app.screenshot()); controls.name = "Native Desktop controls"; controls.lifetime = .keepAlways; add(controls)
-        app.buttons["Cancel"].click()
-        desktop.click(); app.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(library(app).staticTexts["Opens Apple Screen Sharing"].exists)
+        open("terminal", app: app)
+        let terminal = windows("Terminal", app: app).firstMatch
+        XCTAssertTrue(terminal.waitForExistence(timeout: 5))
+        replace(terminal.textFields["mac-terminal-account"], with: "synthetic-account")
+        replace(terminal.secureTextFields["mac-terminal-password"], with: "synthetic-only")
+        XCTAssertTrue(terminal.buttons["mac-terminal-connect"].isEnabled)
+        terminal.click(); app.typeKey("w", modifierFlags: .command)
         showLibrary(app); row.click(); library(app).buttons["mac-connection-settings"].click()
         app.popUpButtons["mac-machine-default-connection"].click(); app.menuItems["Terminal"].click()
         app.buttons["mac-save-machine"].click()
         row.doubleClick()
         XCTAssertTrue(windows("Terminal", app: app).firstMatch.waitForExistence(timeout: 5))
     }
-    func testDesktopAndTerminalWithIndependentTerminalKeyboardAndClose() async throws {
+    func testTerminalReuseAndExplicitNewWindowWithIndependentKeyboardAndClose() async throws {
         continueAfterFailure = false
         let records = UIConnections(), hostKey = NIOSSHPrivateKey(ed25519Key: .init())
         let server = try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton).childChannelInitializer { channel in
@@ -130,8 +121,7 @@ private final class UIConnections: @unchecked Sendable {
         app.buttons["mac-save-machine"].click()
         let row = library(app).outlines.staticTexts["Synthetic GUI"].firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 5)); row.click()
-        open("desktop", app: app)
-        XCTAssertTrue(windows("Screen Sharing", app: app).firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(library(app).staticTexts["Opens Apple Screen Sharing"].exists)
         XCTAssertFalse(library(app).buttons["mac-open-trackpad"].exists)
         open("terminal", app: app)
         let openedFirst = windows("Terminal", app: app).firstMatch
@@ -144,6 +134,8 @@ private final class UIConnections: @unchecked Sendable {
         XCTAssertTrue(surfaceA.waitForExistence(timeout: 5)); surfaceA.click(); app.typeText("A")
         try await wait("first native keyboard input") { records.connections.first?.received == [65] }
         open("terminal", app: app)
+        XCTAssertEqual(windows("Terminal", app: app).count, 1, "The primary action must focus the existing Terminal")
+        showLibrary(app); row.rightClick(); app.menuItems["New Terminal Window"].click()
         XCTAssertEqual(windows("Terminal", app: app).count, 2)
         let second = windows("Terminal", app: app).allElementsBoundByIndex.first { $0.buttons["mac-terminal-connect"].exists }
         let ownSecond = app.windows[try XCTUnwrap(second).identifier]
@@ -161,7 +153,7 @@ private final class UIConnections: @unchecked Sendable {
         XCTAssertEqual(records.connections[1].received, [66])
         app.typeKey("w", modifierFlags: .command)
         try await wait("own terminal window closes") { windows("Terminal", app: app).count == 1 }
-        XCTAssertTrue(windows("Screen Sharing", app: app).firstMatch.exists)
+        XCTAssertTrue(library(app).exists)
         surfaceB.click(); app.typeText("D")
         try await wait("surviving terminal keyboard input") { records.connections[1].received == [66, 68] }
         ownSecond.buttons["Disconnect"].click()

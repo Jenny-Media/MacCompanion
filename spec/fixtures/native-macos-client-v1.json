@@ -1052,5 +1052,18 @@
     },
     "filesLibrary": "samePrototypeLibraryURL",
     "buildAdmission": "exactNativeSourceManifestBeforeAndAfter"
+  },
+  "screenSharingHandoff": {
+    "source": "Native/Mac",
+    "screenSharingApplication": "com.apple.ScreenSharing",
+    "launch": "explicitUserActionOnly",
+    "restoredDesktop": "showExternalHandoffWithoutOpening",
+    "terminalWindows": "registerRestoredAndReuseUntilClosed",
+    "dataLibrary": "existingDirectMacLibrary",
+    "credentialIdentity": "unchanged",
+    "filesLibrary": "sameExplicitLibraryURL",
+    "externalSessionOwnedByApple": true,
+    "lockAndQuitAffectExternalSession": false,
+    "endpointCases": "workspacePrototype.urlCases"
   }
 }

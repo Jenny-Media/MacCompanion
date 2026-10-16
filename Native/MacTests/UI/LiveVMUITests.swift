@@ -29,7 +29,7 @@ import XCTest
         let attachment = XCTAttachment(screenshot: window.screenshot())
         attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
     }
-    func testLiveModesAndConnectionWindowCaptures() throws {
+    func testLiveTerminalAndExternalScreenSharingEntry() throws {
         let environment = ProcessInfo.processInfo.environment
         guard let host = environment["MC_LIVE_VM_HOST"], !host.isEmpty,
               let account = environment["MC_LIVE_VM_ACCOUNT"], !account.isEmpty,
@@ -64,13 +64,6 @@ import XCTest
             show("Sample macOS VM · " + title, app: app)
             return window
         }
-        func connectVNC(_ window: XCUIElement) {
-            replace(window.textFields["mac-vnc-account"], with: account)
-            replace(window.secureTextFields["mac-vnc-password"], with: password)
-            window.buttons["mac-vnc-connect"].click()
-            XCTAssertTrue(window.buttons["Disconnect"].waitForExistence(timeout: 20))
-            XCTAssertTrue(window.descendants(matching: .any)["mac-vnc-surface"].waitForExistence(timeout: 5))
-        }
         XCTAssertFalse(library.buttons["mac-open-trackpad"].exists)
 
         let terminal = open("terminal", title: "Terminal")
@@ -90,27 +83,16 @@ import XCTest
         shell.typeKey(.return, modifierFlags: [])
         capture(terminal, name: "02-connected-terminal")
 
-        let desktop = open("desktop", title: "Screen Sharing")
-        connectVNC(desktop)
-        capture(desktop, name: "03-connected-desktop")
-        // These are distinct live owning windows, not successive replacements.
-        XCTAssertTrue(terminal.buttons["Disconnect"].exists)
-        show("Sample macOS VM · Terminal", app: app)
         showLibrary(app)
-        XCTAssertEqual(library.buttons.matching(NSPredicate(format: "label == %@", "Show Window")).count, 2)
-        capture(library, name: "04-concurrent-connection-library")
-        // Raise the registered Terminal owner through the new library control;
-        // this must preserve its existing shell and both window entries.
-        library.buttons.matching(NSPredicate(format: "label == %@", "Show Window")).element(boundBy: 0).click()
-        XCTAssertTrue(terminal.buttons["Disconnect"].isHittable)
-        showLibrary(app)
-        XCTAssertEqual(library.buttons.matching(NSPredicate(format: "label == %@", "Show Window")).count, 2)
-
-        show("Sample macOS VM · Screen Sharing", app: app)
-        app.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(library.buttons["mac-open-desktop"].exists)
+        XCTAssertTrue(library.staticTexts["Opens Apple Screen Sharing"].exists)
+        library.buttons["mac-open-terminal"].click()
+        XCTAssertTrue(terminal.buttons["Disconnect"].isHittable, "Reopening Terminal must retain its existing shell")
         showLibrary(app)
         XCTAssertEqual(library.buttons.matching(NSPredicate(format: "label == %@", "Show Window")).count, 1)
-        XCTAssertTrue(terminal.buttons["Disconnect"].exists)
+        capture(library, name: "03-terminal-and-external-screen-sharing-entry")
+        // Apple's authentication/window lifetime is manual final acceptance.
+        // Native UI automation must not type credentials into an external app.
         // Remove only this fixture's QA-local accepted server key.
         library.buttons["mac-connection-settings"].click()
         app.buttons["Forget SSH Server Key"].click(); app.buttons["Forget"].click()

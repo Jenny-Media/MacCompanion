@@ -28,6 +28,8 @@ struct MacSettingsView: View {
                 Text(category.title).font(.title2.bold()).padding(.horizontal, 24).padding(.top, 22)
                 if category == .sync {
                     DirectSyncSecurityForm()
+                    Text("Unlock protects Mac Companion and its Terminal and Files windows. Apple Screen Sharing stays independent.")
+                        .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 24).padding(.bottom, 16)
                 } else {
                     Form {
                         switch category {
@@ -39,10 +41,9 @@ struct MacSettingsView: View {
                             Section("Pro") { destination(DirectProAccess.shared.accessTitle, symbol: "sparkles", sheet: .pro) }
                         case .controls:
                             Section("Quick Actions") {
-                                destination("Screen Sharing", symbol: "display", sheet: .desktop)
                                 destination("Terminal", symbol: "terminal", sheet: .terminal)
                             }
-                            Section {} footer: { Text("Each editor shows whether a preference applies to one Mac or all connections on this device.") }
+                            Section {} footer: { Text("Screen Sharing controls and windows are managed in Apple Screen Sharing. Terminal actions apply to Mac Companion.") }
                         case .keys:
                             Section { destination("Manage SSH Keys", symbol: "key", sheet: .keys) }
                             Section {} footer: { Text("Use an existing key file, import a copy into Keychain, or create a new key.") }

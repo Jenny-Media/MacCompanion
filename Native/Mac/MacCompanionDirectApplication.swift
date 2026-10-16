@@ -2,10 +2,11 @@
 import SwiftUI
 
 @main struct MacCompanionDirectApplication: App {
-    @State private var library = DirectMacLibraryV1()
+    @State private var tools = MacToolApplicationModel()
+    private var library: DirectMacLibraryV1 { tools.library }
     var body: some Scene {
         Window("My Macs", id: "machine-library") {
-            MacMachineLibraryView(library: library).directAppearance().modifier(MacPrivacyCover())
+            MacMachineLibraryView(library: library, tools: tools).directAppearance().modifier(MacPrivacyCover())
                 .task {
                     DirectProAccess.shared.start()
                     DirectCloudSyncV1.shared.attach(library)
@@ -14,7 +15,11 @@ import SwiftUI
         }.defaultSize(width: 900, height: 600)
         WindowGroup("Connection", id: "direct-session", for: MacSessionRequest.self) { $request in
             if let request {
-                MacSessionWindow(request: request, library: library)
+                if request.mode == .terminal {
+                    MacSessionWindow(request: request, library: library, tools: tools)
+                } else {
+                    MacExternalScreenSharingWindow(macID: request.macID, tools: tools)
+                }
             } else {
                 ContentUnavailableView("Mac unavailable", systemImage: "desktopcomputer",
                     description: Text("This Mac was removed from your library. Add it again in My Macs."))
@@ -24,7 +29,8 @@ import SwiftUI
             .commands { MacClientCommands() }
         WindowGroup("Files", id: "direct-files", for: DirectFilesWindowRequest.self) { $request in
             if let request {
-                MacFilesWindow(mac: library.macs.first { $0.id == request.macID })
+                MacFilesWindow(mac: library.macs.first { $0.id == request.macID },
+                    makeSession: { DirectFilesSession(mac: $0, libraryURL: library.storageURL) })
                     .directAppearance().modifier(MacPrivacyCover())
             } else {
                 ContentUnavailableView("Mac unavailable", systemImage: "folder")

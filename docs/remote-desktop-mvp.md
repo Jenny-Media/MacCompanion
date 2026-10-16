@@ -1,5 +1,27 @@
 # Remote-desktop MVP decision
 
+## Shipping macOS Screen Sharing and Terminal workflow
+
+macOS now offers Screen Sharing and Terminal as independent actions. Screen
+Sharing opens Apple's `com.apple.ScreenSharing` app with a credential-free URL
+containing only an admitted numeric private/local endpoint and its saved port.
+Apple owns authentication, connection status, input and the external window.
+An accepted handoff says Opened in Screen Sharing, never Connected. This app's
+lock, removal and quit do not lock or close that external session.
+
+Terminal stays in Mac Companion with existing saved Macs, SSH credentials,
+server trust, key selection and Files. Restored Terminal windows register for
+reuse. Restored requests for the previous embedded screen view show an explicit
+Open in Screen Sharing action and never launch externally during restoration.
+Files receives the existing library's explicit URL. The macOS settings omit
+embedded screen controls. Shared raw modes, window IDs, Keychain groups and the
+Mac library are preserved; no prototype data is silently imported.
+
+The shipping implementation is in Native/Mac; no Experiments sources are linked.
+The older embedded VNC code below remains compiled for compatibility/testing,
+while iOS and visionOS retain their existing in-app screen clients.
+
+
 Decision: 2026-10-04, explicitly requested by the product owner. This supersedes
 the paired Mac-host product decision of 2026-10-03.
 
