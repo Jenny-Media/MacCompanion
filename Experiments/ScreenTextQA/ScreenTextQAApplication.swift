@@ -26,6 +26,9 @@ private struct ScreenTextQAHost: UIViewControllerRepresentable {
                 withAttributes: [.font: UIFont.monospacedSystemFont(ofSize: 48, weight: .regular), .foregroundColor: UIColor.black])
         }
         let review = CompanionVNCTextReview(image: image, visibleRect: CGRect(x: 0, y: 0, width: 1000, height: 700))
+        if ProcessInfo.processInfo.environment["MACCOMPANION_SCREEN_TEXT_AXXXL"] == "1" {
+            review.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
+        }
         review.returnHandler = returned
         return review
     }

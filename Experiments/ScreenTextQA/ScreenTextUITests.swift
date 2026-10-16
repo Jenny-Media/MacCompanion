@@ -76,4 +76,29 @@ final class ScreenTextUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["screen-text-returned"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.textViews["text-copy-result"].exists)
     }
+
+    func testLargestTextCanScrollToEditAndCopyWithKeyboardOpen() {
+        let app = XCUIApplication()
+        app.launchEnvironment["MACCOMPANION_SCREEN_TEXT_AXXXL"] = "1"
+        app.launch()
+        let done = app.buttons["text-copy-return"]
+        XCTAssertTrue(done.waitForExistence(timeout: 10))
+        for _ in 0..<6 where !app.buttons["text-copy-area"].isHittable { app.swipeUp() }
+        let area = app.buttons["text-copy-area"]
+        if area.exists { area.tap() }
+        let editor = app.textViews["text-copy-result"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 20))
+        for _ in 0..<6 where !editor.isHittable { app.swipeDown() }
+        XCTAssertTrue(editor.isHittable)
+        editor.tap()
+        editor.typeText(" edited")
+        let copy = app.buttons["text-copy-copy"]
+        for _ in 0..<8 where !copy.isHittable { app.swipeUp() }
+        XCTAssertTrue(copy.isHittable)
+        copy.tap()
+        XCTAssertEqual(app.staticTexts["text-copy-status"].label, "Copied")
+        XCTAssertTrue(done.isHittable)
+        done.tap()
+        XCTAssertTrue(app.staticTexts["screen-text-returned"].waitForExistence(timeout: 5))
+    }
 }

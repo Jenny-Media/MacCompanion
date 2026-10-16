@@ -316,6 +316,13 @@
         return review.view.keyboardLayoutGuide.layoutFrame.size.height>100;
     }] object:review];
     [self waitForExpectations:@[keyboard] timeout:5]; [self settleLayout:review];
+    UIScrollView *content=[review valueForKey:@"contentScroll"];
+    UILabel *status=[review valueForKey:@"status"];
+    XCTAssertGreaterThan(content.bounds.size.height,80,@"The keyboard must leave a usable scroll viewport at the largest text size");
+    XCTAssertGreaterThanOrEqual(status.bounds.size.height+1,[status sizeThatFits:CGSizeMake(status.bounds.size.width,CGFLOAT_MAX)].height);
+    UIGraphicsImageRenderer *keyboardRenderer=[[UIGraphicsImageRenderer alloc] initWithSize:review.view.bounds.size];
+    UIImage *keyboardCapture=[keyboardRenderer imageWithActions:^(UIGraphicsImageRendererContext *context){ [review.view.layer renderInContext:context.CGContext]; }];
+    [UIImagePNGRepresentation(keyboardCapture) writeToFile:[folder stringByAppendingPathComponent:@"keyboard-xxxlarge.png"] atomically:YES];
     UIButton *back=[review valueForKey:@"returnButton"];
     XCTAssertTrue(CGRectContainsRect(review.view.bounds,back.frame));
     XCTAssertLessThanOrEqual(CGRectGetMaxY(back.frame),CGRectGetMinY(review.view.keyboardLayoutGuide.layoutFrame)-7);

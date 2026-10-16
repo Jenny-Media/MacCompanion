@@ -205,6 +205,11 @@
 @property(nonatomic) NSUInteger generation;
 @property(nonatomic) BOOL invalidated, busy;
 @property(nonatomic) UIStackView *footer;
+@property(nonatomic) UILabel *heading;
+@property(nonatomic) UIStackView *header;
+@property(nonatomic) NSArray<NSLayoutConstraint *> *pinnedFooterConstraints;
+@property(nonatomic) NSLayoutConstraint *scrollKeyboardBottom;
+@property(nonatomic) BOOL accessibilityLayout;
 @property(nonatomic) UIButton *areaButton, *editButton, *moreButton;
 @property(nonatomic) CompanionVNCTextSelection *nativeSelection;
 @property(nonatomic) BOOL areaMode, editorOpen, started;
@@ -237,6 +242,7 @@
     [super viewDidLoad]; self.view.backgroundColor = UIColor.systemBackgroundColor;
     self.view.accessibilityViewIsModal = YES;
     UILabel *title = [UILabel new]; title.text = @"Copy Text";
+    self.heading = title;
     title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
     title.adjustsFontForContentSizeCategory = YES; title.numberOfLines = 0;
     self.returnButton = [self button:@"Done" action:@selector(returnToDesktop)];
@@ -244,6 +250,7 @@
     self.moreButton = [self button:@"More" action:NULL]; self.moreButton.showsMenuAsPrimaryAction = YES;
     self.moreButton.accessibilityIdentifier = @"text-copy-more";
     UIStackView *header = [[UIStackView alloc] initWithArrangedSubviews:@[title,self.moreButton,self.returnButton]];
+    self.header = header;
     header.spacing = 8; header.alignment = UIStackViewAlignmentCenter; header.translatesAutoresizingMaskIntoConstraints = NO;
     [title setContentHuggingPriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
     [self.view addSubview:header];
@@ -251,6 +258,7 @@
     badge.font = [UIFont preferredFontForTextStyle:UIFontTextStyleCaption1]; badge.adjustsFontForContentSizeCategory = YES;
     badge.translatesAutoresizingMaskIntoConstraints = NO; [self.view addSubview:badge];
     self.contentScroll = [UIScrollView new]; self.contentScroll.translatesAutoresizingMaskIntoConstraints = NO;
+    self.contentScroll.accessibilityIdentifier = @"text-copy-content";
     [self.view addSubview:self.contentScroll];
     self.bodyStack = [UIStackView new]; self.bodyStack.axis = UILayoutConstraintAxisVertical;
     self.bodyStack.spacing = 8; self.bodyStack.translatesAutoresizingMaskIntoConstraints = NO;
@@ -298,15 +306,18 @@
         [self.contentScroll.topAnchor constraintEqualToAnchor:badge.bottomAnchor constant:8],
         [self.contentScroll.leadingAnchor constraintEqualToAnchor:header.leadingAnchor],
         [self.contentScroll.trailingAnchor constraintEqualToAnchor:header.trailingAnchor],
-        [self.contentScroll.bottomAnchor constraintEqualToAnchor:self.footer.topAnchor constant:-8],
-        [self.footer.leadingAnchor constraintEqualToAnchor:header.leadingAnchor],
-        [self.footer.trailingAnchor constraintEqualToAnchor:header.trailingAnchor],
-        [self.footer.bottomAnchor constraintEqualToAnchor:self.view.keyboardLayoutGuide.topAnchor constant:-8],
         [self.bodyStack.widthAnchor constraintEqualToAnchor:self.contentScroll.frameLayoutGuide.widthAnchor],
         [self.bodyStack.leadingAnchor constraintEqualToAnchor:self.contentScroll.contentLayoutGuide.leadingAnchor],
         [self.bodyStack.trailingAnchor constraintEqualToAnchor:self.contentScroll.contentLayoutGuide.trailingAnchor],
         [self.bodyStack.topAnchor constraintEqualToAnchor:self.contentScroll.contentLayoutGuide.topAnchor],
         [self.bodyStack.bottomAnchor constraintEqualToAnchor:self.contentScroll.contentLayoutGuide.bottomAnchor]]];
+    self.pinnedFooterConstraints = @[
+        [self.contentScroll.bottomAnchor constraintEqualToAnchor:self.footer.topAnchor constant:-8],
+        [self.footer.leadingAnchor constraintEqualToAnchor:header.leadingAnchor],
+        [self.footer.trailingAnchor constraintEqualToAnchor:header.trailingAnchor],
+        [self.footer.bottomAnchor constraintEqualToAnchor:self.view.keyboardLayoutGuide.topAnchor constant:-8]];
+    self.scrollKeyboardBottom = [self.contentScroll.bottomAnchor constraintEqualToAnchor:self.view.keyboardLayoutGuide.topAnchor constant:-8];
+    [NSLayoutConstraint activateConstraints:self.pinnedFooterConstraints];
     VNRecognizeTextRequest *configuration = [VNRecognizeTextRequest new]; configuration.recognitionLevel = VNRequestTextRecognitionLevelAccurate;
     self.supportedLanguages = [configuration supportedRecognitionLanguagesAndReturnError:NULL] ?: @[];
     CGSize size = self.crop.imageView.bounds.size;
@@ -328,10 +339,29 @@
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
     BOOL large = UIContentSizeCategoryIsAccessibilityCategory(self.traitCollection.preferredContentSizeCategory);
+    if (self.accessibilityLayout != large) {
+        self.accessibilityLayout = large;
+        [NSLayoutConstraint deactivateConstraints:self.pinnedFooterConstraints];
+        self.scrollKeyboardBottom.active = NO;
+        if (large) {
+            // Keep Done/More fixed, but let the title, status, editor and actions
+            // scroll rather than compress each other above the keyboard.
+            [self.header removeArrangedSubview:self.heading]; [self.heading removeFromSuperview];
+            [self.bodyStack insertArrangedSubview:self.heading atIndex:0];
+            [self.footer removeFromSuperview]; [self.bodyStack addArrangedSubview:self.footer];
+            self.scrollKeyboardBottom.active = YES;
+        } else {
+            [self.bodyStack removeArrangedSubview:self.heading]; [self.heading removeFromSuperview];
+            [self.header insertArrangedSubview:self.heading atIndex:0];
+            [self.bodyStack removeArrangedSubview:self.footer]; [self.footer removeFromSuperview];
+            [self.view addSubview:self.footer];
+            [NSLayoutConstraint activateConstraints:self.pinnedFooterConstraints];
+        }
+    }
     self.resultActions.axis = large ? UILayoutConstraintAxisVertical : UILayoutConstraintAxisHorizontal;
     if (self.crop.adjustingSelection) return;
     CGFloat available = self.contentScroll.bounds.size.height - (self.editorOpen ? 148 : 0);
-    CGFloat height = MAX(100,available);
+    CGFloat height = large ? MIN(180,MAX(100,available)) : MAX(100,available);
     if (fabs(self.cropHeight.constant-height)>.5) self.cropHeight.constant = height;
 }
 - (NSString *)exportText {
