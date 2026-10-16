@@ -11,7 +11,9 @@ a transient magnifier, drag-to-move, local pan/zoom and visible/full-image actio
 in More. Recognition starts after adjustment settles and the drag ends; old results become
 uncopyable immediately when the area changes. Language, retry, Copy All and
 explicit Share actions live in More. Hiding and reopening a native review keeps
-corrections until the native selection changes, and Copy uses the retained review.
+corrections until the selection changes, including an empty draft, and Copy uses
+the retained review. At accessibility text sizes the heading, editor, status and
+actions scroll above the keyboard while Done and More stay fixed.
 
 Native and area analysis are bounded and serialized. Native interaction types
 must be applied after assigning the completed analysis; configuring them only

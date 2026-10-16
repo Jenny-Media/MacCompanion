@@ -62,9 +62,10 @@ an override chosen only from the request's supported languages. Disable language
 correction in this fallback. System Live Text owns its own recognition heuristics;
 do not promise identical results or whitespace to the configurable Vision path. Retain best-effort line order, breaks and indentation; never claim
 lossless code/whitespace recovery from pixels. Keep the frozen image visible while an optional compact editable review is open.
-Area results appear in that compact review automatically. Hiding and reopening a
-native review preserves corrections until the native selection changes; Copy
-continues to use that reviewed text while it is hidden. Disable autocorrection
+Area results appear in that compact review automatically. Hiding and reopening an
+editable review preserves corrections, including an empty draft. A new native
+selection or area adjustment retires the previous review. Copy continues to use
+reviewed text while it is hidden. Disable autocorrection
 and smart substitutions in editable text. Expose Copy and optional Share through
 explicit actions, plus loading, empty-result and retry states. Copy confirms
 without dismissing review. Done returns to the live screen explicitly; interactive
@@ -74,7 +75,9 @@ No image or recognized text is uploaded, logged, automatically saved, synced or
 placed in ActivityKit. Only explicit export actions (Copy, Share or a system selection-menu action)
 export text. Analysis and selection never export automatically. Share/export
 copies remain user-controlled after export. VoiceOver, Dynamic Type, landscape,
-keyboard avoidance and Reduce Motion retain reachable controls.
+keyboard avoidance and Reduce Motion retain reachable controls. At accessibility
+text sizes, scroll the heading, editor, status and actions above the keyboard;
+keep Done and More fixed.
 
 Geometry vectors live only in the manifest-indexed direct-screen-sharing-v1.json
 fixture. Synthetic hosted tests exercise selection, input isolation, callback

@@ -9,7 +9,7 @@
 @implementation CompanionVNCTextButton
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self = [super initWithFrame:frame])) {
-        _textHeight = [self.heightAnchor constraintGreaterThanOrEqualToConstant:44]; _textHeight.active = YES;
+        _textHeight = [self.heightAnchor constraintEqualToConstant:44]; _textHeight.active = YES;
     }
     return self;
 }
@@ -360,6 +360,14 @@
         }
     }
     self.resultActions.axis = large ? UILayoutConstraintAxisVertical : UILayoutConstraintAxisHorizontal;
+    self.resultActions.distribution = large ? UIStackViewDistributionFill : UIStackViewDistributionFillEqually;
+    self.resultActions.alignment = large ? UIStackViewAlignmentFill : UIStackViewAlignmentCenter;
+    CGFloat labelWidth = self.contentScroll.bounds.size.width;
+    CGFloat statusWidth = MAX(0,labelWidth-(self.spinner.hidden ? 0 : 28));
+    if (fabs(self.status.preferredMaxLayoutWidth-statusWidth)>.5) self.status.preferredMaxLayoutWidth = statusWidth;
+    if (fabs(self.help.preferredMaxLayoutWidth-labelWidth)>.5) self.help.preferredMaxLayoutWidth = labelWidth;
+    if (large && fabs(self.heading.preferredMaxLayoutWidth-labelWidth)>.5) self.heading.preferredMaxLayoutWidth = labelWidth;
+    else if (!large && self.heading.preferredMaxLayoutWidth) self.heading.preferredMaxLayoutWidth = 0;
     if (self.crop.adjustingSelection) return;
     CGFloat available = self.contentScroll.bounds.size.height - (self.editorOpen ? 148 : 0);
     CGFloat height = large ? MIN(180,MAX(100,available)) : MAX(100,available);
