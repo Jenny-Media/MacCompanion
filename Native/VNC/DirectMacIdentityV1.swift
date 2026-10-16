@@ -16,6 +16,19 @@ enum DirectMacConnection: String, Codable, CaseIterable, Identifiable, Sendable 
     var terminalMode: Bool { self == .terminal }
 }
 
+/// A disabled swipe is explicit data, distinct from a missing legacy preference.
+enum DirectMacSwipeAction: String, Codable, CaseIterable, Identifiable, Sendable {
+    case desktop, terminal, trackpad
+    case disabled = "none"
+    init(connection: DirectMacConnection) {
+        switch connection { case .desktop: self = .desktop; case .terminal: self = .terminal; case .trackpad: self = .trackpad }
+    }
+    var id: String { rawValue }
+    var connection: DirectMacConnection? { DirectMacConnection(rawValue: rawValue) }
+    var title: String { connection?.title ?? "None" }
+    var symbol: String { connection?.symbol ?? "minus" }
+}
+
 enum DirectMacFamily: String {
     case unknown, macBook, macBookAir, macBookPro, iMac, macMini, macStudio, macPro
     var title: String {

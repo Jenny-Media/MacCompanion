@@ -639,6 +639,7 @@
 - (void)loginEdited { [self.credentialState editWithUsername:self.username.text ?: @"" password:self.password.text ?: @"" remember:self.remember.on]; [self clearRecovery]; self.progressLabel.text = @""; [self updateConnectionChrome]; }
 - (void)showMacs {
     if (self.requestExitHandler && self.requestExitHandler()) return;
+    if (self.session.connected) CompanionVNCPlayInterfaceFeedback(@"end");
     [self stopViewer]; if (self.macsHandler) self.macsHandler();
 }
 - (void)showAccessSettings { if (self.accessHandler) self.accessHandler(); }

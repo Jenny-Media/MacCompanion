@@ -1,6 +1,17 @@
 #import <UIKit/UIKit.h>
 NS_ASSUME_NONNULL_BEGIN
 FOUNDATION_EXPORT NSString *const CompanionVNCControlsHapticsPreference;
+/// Interface feedback is local action acknowledgement, never a transport ACK.
+/// UIKit gracefully omits unsupported haptics; trackpad feedback stays separate.
+FOUNDATION_EXPORT void CompanionVNCPlayInterfaceFeedback(NSString *kind);
+NS_SWIFT_UI_ACTOR
+@interface CompanionVNCInterfaceFeedback : NSObject
+- (instancetype)initWithDefaults:(NSUserDefaults *)defaults;
+@property(nonatomic, readonly) BOOL foreground;
+- (void)feedback:(NSString *)kind;
+/// Output boundary overridden by native tests without vibrating hardware.
+- (void)emitFeedback:(NSString *)kind;
+@end
 /// Locally captured tap/press-and-slide chrome, independent of remote gestures.
 @interface CompanionVNCControls : UIView
 @property(nonatomic, copy) NSString *macName;

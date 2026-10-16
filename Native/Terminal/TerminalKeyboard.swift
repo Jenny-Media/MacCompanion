@@ -301,7 +301,7 @@ struct TerminalKeyboardPreferences: Codable {
     @objc private func lockModifier(_ gesture: UILongPressGestureRecognizer) {
         guard gesture.state == .began, let button = gesture.view as? UIButton,
               let modifier = modifierButtons.first(where: { $0.0 === button })?.1 else { return }
-        terminal?.keyboardState.toggle(modifier, lock: true); UIImpactFeedbackGenerator(style: .light).impactOccurred(); refresh()
+        terminal?.keyboardState.toggle(modifier, lock: true); CompanionVNCPlayInterfaceFeedback("selection"); refresh()
     }
     func refresh() {
         guard let terminal else { return }

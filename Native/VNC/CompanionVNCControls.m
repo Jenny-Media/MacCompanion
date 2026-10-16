@@ -1,6 +1,49 @@
 #import "CompanionVNCControls.h"
 #import "CompanionVNCAdaptiveLayout.h"
 NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptics";
+@interface CompanionVNCInterfaceFeedback ()
+@property NSUserDefaults *defaults;
+@property UISelectionFeedbackGenerator *selection;
+@property UIImpactFeedbackGenerator *light;
+@property UIImpactFeedbackGenerator *medium;
+@property UINotificationFeedbackGenerator *notification;
+@end
+@implementation CompanionVNCInterfaceFeedback
+- (instancetype)init { return [self initWithDefaults:NSUserDefaults.standardUserDefaults]; }
+- (instancetype)initWithDefaults:(NSUserDefaults *)defaults {
+    if ((self = [super init])) { _defaults = defaults; }
+    return self;
+}
+- (BOOL)foreground { return UIApplication.sharedApplication.applicationState == UIApplicationStateActive; }
+- (void)feedback:(NSString *)kind {
+    if (!NSThread.isMainThread || !self.foreground) return;
+    if ([self.defaults objectForKey:CompanionVNCControlsHapticsPreference] != nil
+        && ![self.defaults boolForKey:CompanionVNCControlsHapticsPreference]) return;
+    if (![@[@"selection", @"open", @"commit", @"end", @"success", @"error"] containsObject:kind]) return;
+    [self emitFeedback:kind];
+}
+- (void)emitFeedback:(NSString *)kind {
+    if ([kind isEqual:@"selection"]) {
+        if (!self.selection) self.selection = [UISelectionFeedbackGenerator new];
+        [self.selection selectionChanged];
+    } else if ([kind isEqual:@"success"] || [kind isEqual:@"error"]) {
+        if (!self.notification) self.notification = [UINotificationFeedbackGenerator new];
+        [self.notification notificationOccurred:[kind isEqual:@"success"] ? UINotificationFeedbackTypeSuccess : UINotificationFeedbackTypeError];
+    } else if ([kind isEqual:@"end"]) {
+        if (!self.medium) self.medium = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
+        [self.medium impactOccurredWithIntensity:.55];
+    } else {
+        if (!self.light) self.light = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
+        [self.light impactOccurredWithIntensity:[kind isEqual:@"commit"] ? .35 : .55];
+    }
+}
+@end
+void CompanionVNCPlayInterfaceFeedback(NSString *kind) {
+    static CompanionVNCInterfaceFeedback *feedback;
+    if (!NSThread.isMainThread) return;
+    if (!feedback) feedback = [CompanionVNCInterfaceFeedback new];
+    [feedback feedback:kind];
+}
 @interface CompanionVNCControls () <UIDragInteractionDelegate, UIDropInteractionDelegate>
 @property UIButton *button;
 @property UIVisualEffectView *panel;
@@ -48,8 +91,7 @@ NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptic
 - (BOOL)hapticsEnabled { return [NSUserDefaults.standardUserDefaults objectForKey:CompanionVNCControlsHapticsPreference] == nil || [NSUserDefaults.standardUserDefaults boolForKey:CompanionVNCControlsHapticsPreference]; }
 - (void)setHapticsEnabled:(BOOL)value { [NSUserDefaults.standardUserDefaults setBool:value forKey:CompanionVNCControlsHapticsPreference]; }
 - (void)emitFeedback:(NSString *)kind {
-    if ([kind isEqualToString:@"selection"]) [self.feedback selectionChanged];
-    else [self.impact impactOccurredWithIntensity:[kind isEqualToString:@"open"] ? .55 : .35];
+    CompanionVNCPlayInterfaceFeedback(kind);
 }
 - (void)feedback:(NSString *)kind { if (self.hapticsEnabled) [self emitFeedback:kind]; }
 - (BOOL)reduceMotion { return UIAccessibilityIsReduceMotionEnabled(); }
@@ -281,7 +323,7 @@ NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptic
         if ((NSUInteger)button.tag < self.quickCount && self.previewSelectionHandler && item[@"id"]) self.previewSelectionHandler(item[@"id"]);
         return;
     }
-    [self feedback:@"commit"]; [self close];
+    if (![item[@"kind"] isEqual:@"exit"]) [self feedback:@"commit"]; [self close];
     if (self.actionHandler) self.actionHandler(item);
 }
 - (void)slide:(UILongPressGestureRecognizer *)gesture {
