@@ -11,6 +11,27 @@ Run workflow. Automatic pull-request and `main` push triggers are disabled.
 Its full validation steps remain available; `bash scripts/validate.sh` remains
 the local validation command required before handing off changes.
 
+## Encryption submission metadata
+
+The normal direct iOS, macOS and visionOS builders include the Boolean
+`ITSAppUsesNonExemptEncryption = false` in the generated application Info.plist,
+matching the saved standard-encryption declaration for distribution outside
+France. Each builder checks the finished app before publishing a successful
+build report. This declares the existing exemption from documentation; it does
+not disable or remove SSH, OpenSSL or other encryption. No Apple-issued
+`ITSEncryptionExportComplianceCode` is required for this declaration.
+
+France remains excluded in App Store Connect for the app and both in-app
+purchases. This is a standing distribution decision, not a question to repeat
+for each upload. Reassess the declaration if the cryptography, applicable
+requirements or distribution scope changes. The metadata applies to future
+builds; it cannot modify an archive already uploaded. TestFlight public links
+still have no country filter. Disposable visionOS probes and gated legacy
+application targets do not inherit this direct-client declaration.
+
+See [Apple's key reference](https://developer.apple.com/documentation/bundleresources/information-property-list/itsappusesnonexemptencryption)
+and [the saved France exclusion](execution-status.md#2026-10-06--france-excluded-from-app-store-distribution).
+
 ## Normal usage
 
 Keep using the existing builder arguments, including `--output`. For example:

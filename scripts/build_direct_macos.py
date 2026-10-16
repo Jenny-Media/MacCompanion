@@ -135,6 +135,8 @@ def build(args, parser, session):
     info = args.output / 'Info.plist'
     write_if_changed(info, plistlib.dumps({'CFBundleIdentifier': '$(PRODUCT_BUNDLE_IDENTIFIER)', 'CFBundleExecutable': '$(EXECUTABLE_NAME)',
         'CFBundleName': 'Mac Companion', 'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': '1.0', 'CFBundleVersion': '1',
+        # Approved standard-encryption declaration; France remains excluded from distribution.
+        'ITSAppUsesNonExemptEncryption': False,
         'LSMinimumSystemVersion': '26.0', 'NSHighResolutionCapable': True, 'LSApplicationCategoryType': 'public.app-category.utilities',
         'NSLocalNetworkUsageDescription': 'Connect to your Macs using Screen Sharing and Remote Login.',
         'NSBonjourServices': ['_rfb._tcp', '_ssh._tcp', '_device-info._tcp'],
@@ -196,6 +198,8 @@ def build(args, parser, session):
         raise SystemExit('Application sources changed during the build. Rerun against a stable source snapshot.')
     app = args.output / 'DerivedData/Build/Products/Debug/MacCompanion.app'
     executable = app / 'Contents/MacOS/MacCompanion'
+    if plistlib.loads((app / 'Contents/Info.plist').read_bytes()).get('ITSAppUsesNonExemptEncryption') is not False:
+        raise SystemExit('Built app is missing the approved export compliance metadata.')
     if signing:
         from direct_mac_development_signing import verify
         verify(app, signing, args.output)
