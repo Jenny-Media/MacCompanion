@@ -13,14 +13,14 @@ import SwiftUI
         do { value = try DirectMacAccessStore.load(macID); original = value; message = nil }
         catch { message = "Saved access settings could not be read. They have been kept. Retry before editing." }
     }
-    func save() -> Bool {
+    func save(onSaved: () -> Void = {}) -> Bool {
         guard let original else { return false }
         do {
             if value.sshMethod == .key, value.keyID != original.keyID || original.sshMethod != .key {
                 guard let keyID = value.keyID, let selected = try TerminalKeyLibraryStore.load().keys.first(where: { $0.id == keyID }),
                       try TerminalKeyLibraryStore.canUse(selected) else { message = "Choose an available SSH key. Check Pro access if this key is outside the free allowance."; return false }
             }
-            try DirectMacAccessStore.save(value, id: macID, replacing: original); self.original = value; message = nil; return true }
+            try DirectMacAccessStore.save(value, id: macID, replacing: original); self.original = value; message = nil; onSaved(); return true }
         catch DirectMacAccessStore.Failure.busy { message = "Disconnect this Mac before changing its login." }
         catch DirectMacAccessStore.Failure.changed { message = "Access settings changed elsewhere. Close and reopen this editor to review them." }
         catch { message = "The login could not be saved. Check the account, password and SSH selection. Existing settings are kept." }
@@ -30,6 +30,7 @@ import SwiftUI
 }
 
 struct DirectMacAccessView: View {
+    private let saved: () -> Void
     let mac: DirectMacRecordV1
     @State private var draft: DirectMacAccessDraft
     @State private var connections = DirectMacConnections.shared
@@ -39,7 +40,7 @@ struct DirectMacAccessView: View {
     @State private var keyLibrary = false
     @State private var forgetConfirmation = false
     @Environment(\.dismiss) private var dismiss
-    init(mac: DirectMacRecordV1) { self.mac = mac; _draft = State(initialValue: DirectMacAccessDraft(macID: mac.id)) }
+    init(mac: DirectMacRecordV1, saved: @escaping () -> Void = {}) { self.saved = saved; self.mac = mac; _draft = State(initialValue: DirectMacAccessDraft(macID: mac.id)) }
     private var busy: Bool { connections.isActive(mac.id) }
     private var username: Binding<String> { .init(get: { draft.value.login?.username ?? "" }, set: { draft.value.login = .init(username: $0, password: draft.value.login?.password ?? "") }) }
     private var password: Binding<String> { .init(get: { draft.value.login?.password ?? "" }, set: { draft.value.login = .init(username: draft.value.login?.username ?? "", password: $0) }) }
@@ -111,7 +112,7 @@ struct DirectMacAccessView: View {
             .navigationTitle("Login & Access").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) { Button("Save") { if draft.save() { dismiss() } }.disabled(!draft.editable).accessibilityIdentifier("access-save") }
+                ToolbarItem(placement: .confirmationAction) { Button("Save") { if draft.save(onSaved: saved) { dismiss() } }.disabled(!draft.editable).accessibilityIdentifier("access-save") }
             }
             .onAppear(perform: load)
             .task { if !DirectProAccess.shared.ready { await DirectProAccess.shared.refresh() } }
@@ -132,7 +133,7 @@ struct DirectMacAccessView: View {
             .confirmationDialog("Forget this Mac’s saved login?", isPresented: $forgetConfirmation, titleVisibility: .visible) {
                 Button("Forget Saved Login", role: .destructive) {
                     guard draft.editable else { return }; draft.value = .init()
-                    if draft.save() { dismiss() }
+                    if draft.save(onSaved: saved) { dismiss() }
                 }
             } message: { Text("Saved passwords and this Mac’s key selection are removed. Keys in the library and the verified SSH server identity are kept.") }
             .onDisappear { draft.clear() }

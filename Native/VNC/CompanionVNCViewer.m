@@ -26,6 +26,7 @@
 @interface CompanionVNCViewer () <UIScrollViewDelegate, UITextViewDelegate, UIGestureRecognizerDelegate>
 
 @property UITextField *host, *username, *password;
+@property DirectDesktopLoginState *credentialState;
 @property UIViewController *recoveryController;
 @property(nonatomic, copy) NSString *loginIssueDetails;
 @property UIViewController *loginBackdrop;
@@ -476,9 +477,9 @@
     [center addObserver:self selector:@selector(keyboardFrame:) name:UIKeyboardWillChangeFrameNotification object:nil];
     self.displayViews = self.displayLayout[@"views"] ?: @[];
     self.displayAspect = [self.displayLayout[@"aspectRatio"] doubleValue];
-    self.username.text = self.savedUsername ?: @"";
-    self.password.text = self.savedPassword ?: @"";
-    self.remember.on = self.password.text.length > 0;
+    self.credentialState = [[DirectDesktopLoginState alloc] initWithMacID:self.preferenceID username:self.savedUsername ?: @"" password:self.savedPassword ?: @""];
+    [self renderCredentialForm];
+    [self.remember addTarget:self action:@selector(loginEdited) forControlEvents:UIControlEventValueChanged];
     self.savedPassword = nil;
     [self refreshAccessEditing];
     self.trackpadHelp = [UILabel new]; self.trackpadHelp.text = @"Trackpad & Keyboard\nSlide to move · Tap to click\nHold to drag · Two fingers to scroll\nTwo-finger tap to right-click";
@@ -546,6 +547,7 @@
             [strong updateCursor];
             if (strong.sessionPhaseHandler) strong.sessionPhaseHandler(@"connected");
             if (strong.connectedHandler) strong.connectedHandler();
+            [strong.credentialState authenticated]; [strong renderCredentialForm];
         }
         if (connected || !running) { strong.connect.enabled = YES; strong.starting = NO; }
         strong.login.hidden = connected || (running && strong.login.hidden);
@@ -557,7 +559,7 @@
             [strong clearCursor]; [strong resetModifiers];
             if (strong.disconnectHandler) strong.disconnectHandler();
             if (strong.checkingResume) [strong reconnectAfterFailedResume];
-            else { [strong showRecoveryStage:[stats[@"failureStage"] integerValue]]; if (strong.sessionPhaseHandler) strong.sessionPhaseHandler(@"ended"); }
+            else { [strong finishCredentialSession]; [strong showRecoveryStage:[stats[@"failureStage"] integerValue]]; if (strong.sessionPhaseHandler) strong.sessionPhaseHandler(@"ended"); }
         }
         [strong updateConnectionChrome];
         [strong reportDiagnostics:stats];
@@ -578,7 +580,26 @@
         @"canvasHidden": @(self.canvas.hidden), @"imageHidden": @(self.image.hidden), @"hasImage": @(self.image.image != nil)};
     self.diagnosticHandler(diagnostics);
 }
-- (void)start {
+- (void)renderCredentialForm {
+    self.username.text = self.credentialState.username;
+    self.password.text = self.credentialState.password;
+    self.remember.on = self.credentialState.remember;
+}
+- (void)finishCredentialSession {
+    [self.credentialState endedWithActive:self.foreground allowed:self.credentialState.accessAllowed];
+    [self renderCredentialForm];
+}
+- (void)start { [self startResuming:NO]; }
+- (void)startResuming:(BOOL)resuming {
+    NSDictionary *login;
+    if (resuming) login = [self.credentialState loginForResume];
+    else {
+        [self.credentialState editWithUsername:self.username.text ?: @"" password:self.password.text ?: @"" remember:self.remember.on];
+        login = [self.credentialState beginLogin];
+    }
+    if (!login || ![login[@"username"] length] || ![login[@"password"] length]) {
+        [self finishCredentialSession]; self.login.hidden = NO; self.starting = NO; [self updateConnectionChrome]; return;
+    }
     [self invalidateTextReview:NO]; self.textReviewViewportPending=NO;
     [self retireTextDraft];
     [self clearRecovery];
@@ -588,7 +609,7 @@
     if (self.sessionPhaseHandler) self.sessionPhaseHandler(@"reconnecting");
     [self.view endEditing:YES]; self.status.text = [self connectionProgressMessage];
     self.connect.enabled = NO; self.progressLabel.text = @"Contacting Mac…"; self.status.hidden = YES; [self updateConnectionChrome];
-    if (self.connectHandler) self.connectHandler(self.username.text ?: @"", self.password.text ?: @"", self.remember.on);
+    if (self.connectHandler) self.connectHandler(login[@"username"], login[@"password"], self.credentialState.remember);
 }
 - (void)connectionAction {
     if (!self.session.running && !self.starting) [self start];
@@ -607,7 +628,7 @@
     [lines addObject:@"Server identity is verified before login."];
     return [lines componentsJoinedByString:@"\n"];
 }
-- (void)loginEdited { [self clearRecovery]; self.progressLabel.text = @""; [self updateConnectionChrome]; }
+- (void)loginEdited { [self.credentialState editWithUsername:self.username.text ?: @"" password:self.password.text ?: @"" remember:self.remember.on]; [self clearRecovery]; self.progressLabel.text = @""; [self updateConnectionChrome]; }
 - (void)showMacs {
     if (self.requestExitHandler && self.requestExitHandler()) return;
     [self stopViewer]; if (self.macsHandler) self.macsHandler();
@@ -618,10 +639,11 @@
     self.username.enabled = allowed; self.password.enabled = allowed; self.remember.enabled = allowed;
 }
 - (void)reloadAccessUsername:(NSString *)username password:(NSString *)password {
-    self.username.text = username; self.password.text = password; self.remember.on = password.length > 0;
+    [self.credentialState replaceWithUsername:username password:password]; [self renderCredentialForm];
     [self loginEdited]; [self refreshAccessEditing];
 }
 - (void)stopViewer {
+    [self.credentialState invalidate]; [self renderCredentialForm];
     self.status.hidden = YES; [self updateStatusPresentation];
     [self invalidateTextReview:NO]; self.textReviewViewportPending=NO;
     [self retireTextDraft];
@@ -665,7 +687,7 @@
     [controller didMoveToParentViewController:self]; self.progressLabel.text = @""; self.status.hidden = YES;
     [self updateConnectionChrome];
 }
-- (void)editRecoveryLogin { [self clearRecovery]; self.login.hidden = NO; self.starting = NO; [self updateConnectionChrome]; [self.username becomeFirstResponder]; }
+- (void)editRecoveryLogin { [self finishCredentialSession]; [self clearRecovery]; self.login.hidden = NO; self.starting = NO; [self updateConnectionChrome]; [self.username becomeFirstResponder]; }
 - (void)showRecoveryStage:(NSInteger)stage {
     __weak CompanionVNCViewer *weak = self;
     UIViewController *card = [DirectRecoveryBridgeV1 desktopWithStage:stage hadFrame:self.lastFramebuffer != nil port:((stage == 10 || stage == 11 || (stage >= 110 && stage <= 115)) ? self.sshPort ?: 22 : self.servicePort ?: 5900) textInterrupted:self.textSendInterrupted retry:^{ [weak start]; } edit:^{ [weak editRecoveryLogin]; }];
@@ -679,6 +701,7 @@
 }
 - (void)showConnectionFailure { [self showConnectionFailureStage:0]; }
 - (void)showConnectionFailureStage:(NSInteger)stage {
+    [self finishCredentialSession];
     [self invalidateTextReview:NO]; self.textReviewViewportPending=NO;
     [self retireTextDraft];
     self.starting = NO; self.checkingResume = NO; self.resumeGeneration++; self.statusGeneration++; self.awaitingReplacementLayout = NO; self.pendingRestorationFrame = nil; self.restoreViewportPending = NO;
@@ -714,6 +737,7 @@
     [self retireTextDraft];
     if (!self.foreground || self.exited) { if (completion) completion(); return; }
     self.reconnectWhenReady = self.session.running || self.starting;
+    [self.credentialState suspend]; [self renderCredentialForm];
     self.foreground = NO; self.inputInactive = YES; self.statusGeneration++; self.image.alpha = 1; self.resumeGeneration++; self.checkingResume = NO;
     self.pendingRestorationFrame = nil;
     self.status.hidden = YES; [self updateStatusPresentation];
@@ -737,6 +761,7 @@
         return;
     }
     self.foreground = YES; self.inputInactive = NO;
+    [self.credentialState resumeWithActive:YES allowed:self.credentialState.accessAllowed]; [self renderCredentialForm];
     if (!self.reconnectWhenReady) return;
     self.checkingResume = YES;
     self.status.hidden = YES; [self scheduleResumeIndicator:@"Updating desktop…"]; self.image.alpha = 1;
@@ -755,7 +780,7 @@
     if (!self.foreground || self.exited || !self.checkingResume) return;
     self.checkingResume = NO; self.resumeGeneration++;
     // One replacement attempt. The Swift connection owner awaits retirement first.
-    self.restoreViewportPending = YES; [self start];
+    self.restoreViewportPending = YES; [self startResuming:YES];
 }
 - (void)restoreViewport {
     if (!self.restoreViewportPending || self.awaitingReplacementLayout || !self.lastFramebuffer) return;

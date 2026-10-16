@@ -6,6 +6,23 @@ import NIO
 @testable import Mac_Companion
 
 @MainActor final class DirectMacAccessTests: XCTestCase {
+    func testOnlySuccessfulManagementSaveNotifiesTheSessionForm() throws {
+        let mac = UUID()
+        defer { try? TerminalSecretStore.remove(mac) }
+        let first = DirectMacAccessDraft(macID: mac); first.load()
+        var updates = 0
+        first.value.login = .init(username: "synthetic", password: "synthetic-only")
+        first.clear() // Cancel/privacy cleanup must not request a form reload.
+        XCTAssertEqual(updates, 0)
+        XCTAssertFalse(first.save(onSaved: { updates += 1 }))
+        XCTAssertEqual(updates, 0)
+        first.load(); first.value.login = .init(username: "synthetic", password: "synthetic-only")
+        XCTAssertTrue(first.save(onSaved: { updates += 1 })); XCTAssertEqual(updates, 1)
+        let stale = DirectMacAccessDraft(macID: mac); stale.load()
+        first.value.login = nil; XCTAssertTrue(first.save())
+        stale.value.login = .init(username: "synthetic-other", password: "synthetic-only")
+        XCTAssertFalse(stale.save(onSaved: { updates += 1 })); XCTAssertEqual(updates, 1)
+    }
     func testIndexedMigrationPreservesSharedAndDifferentCredentials() throws {
         struct Row: Decodable { let id: String; let desktop: [String]?; let ssh: [String]?; let key: Bool; let `default`: [String]?; let override: String }
         struct Cases: Decodable { let migrationCases: [Row] }

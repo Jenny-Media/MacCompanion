@@ -12,7 +12,7 @@ struct TerminalLoginSelection {
         if self.method == .sshKey { keyUsername = username } else { passwordUsername = username }
         self.method = method
         let account = method == .sshKey ? keyUsername : passwordUsername
-        if !account.isEmpty { username = account }
+        username = account
     }
     mutating func loadPasswordAccount(_ account: String) {
         passwordUsername = account
@@ -25,7 +25,7 @@ struct TerminalLoginSelection {
             if method == .password { passwordUsername = username }
             method = .sshKey
         }
-        if method == .sshKey, !keyUsername.isEmpty { username = keyUsername }
+        if method == .sshKey { username = keyUsername }
     }
 }
 

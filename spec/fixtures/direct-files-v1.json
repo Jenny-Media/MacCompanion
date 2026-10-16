@@ -1094,5 +1094,294 @@
       "pending-sftp-open-holds-teardown-registration",
       "removed-mac-downloads-stay-discoverable-without-remote-authority"
     ]
-  }
+  },
+  "macTerminalReuse": {
+    "routingCases": [
+      {
+        "id": "same-window",
+        "source": "same",
+        "accepted": true
+      },
+      {
+        "id": "different-window",
+        "source": "other-window",
+        "accepted": false
+      },
+      {
+        "id": "different-mac",
+        "source": "other-mac",
+        "accepted": false
+      },
+      {
+        "id": "different-library",
+        "source": "other-library",
+        "accepted": false
+      },
+      {
+        "id": "replaced-connection",
+        "source": "old-generation",
+        "accepted": false
+      },
+      {
+        "id": "edited-endpoint",
+        "source": "edited-endpoint",
+        "accepted": false
+      },
+      {
+        "id": "restored-request-without-owner",
+        "source": "missing-owner",
+        "accepted": false
+      }
+    ],
+    "rules": [
+      "one-authentication",
+      "password-and-key",
+      "no-credential-form",
+      "close-files-keeps-shell",
+      "parent-close-interrupts-files",
+      "stale-open-cannot-admit",
+      "downloads-retain-account",
+      "legacy-standalone-request-decodes"
+    ]
+  },
+  "macTerminalPasswordReturnCases": [
+    {
+      "id": "remembered-disconnect",
+      "events": [
+        "initialize",
+        "connect-saved",
+        "end",
+        "restore"
+      ],
+      "account": "saved",
+      "password": "saved",
+      "remember": true,
+      "reads": 1
+    },
+    {
+      "id": "unsaved-disconnect",
+      "events": [
+        "initialize",
+        "save-off",
+        "connect-unsaved",
+        "end",
+        "restore"
+      ],
+      "account": "empty",
+      "password": "empty",
+      "remember": false,
+      "reads": 0
+    },
+    {
+      "id": "repeated-remembered-disconnect",
+      "events": [
+        "initialize",
+        "connect-saved",
+        "end",
+        "restore",
+        "connect-saved",
+        "end",
+        "restore"
+      ],
+      "account": "saved",
+      "password": "saved",
+      "remember": true,
+      "reads": 2
+    },
+    {
+      "id": "locked-return-defers-read",
+      "events": [
+        "initialize",
+        "connect-saved",
+        "suspend",
+        "end",
+        "locked-restore",
+        "restore"
+      ],
+      "account": "saved",
+      "password": "saved",
+      "remember": true,
+      "reads": 1
+    },
+    {
+      "id": "manual-clear-stays-empty",
+      "events": [
+        "initialize",
+        "connect-saved",
+        "end",
+        "restore",
+        "clear",
+        "restore"
+      ],
+      "account": "saved",
+      "password": "empty",
+      "remember": true,
+      "reads": 1
+    },
+    {
+      "id": "edited-account-not-overwritten",
+      "events": [
+        "initialize",
+        "connect-saved",
+        "edit-account",
+        "end",
+        "restore"
+      ],
+      "account": "edited",
+      "password": "empty",
+      "remember": true,
+      "reads": 0
+    },
+    {
+      "id": "unchecking-preserves-entry-draft",
+      "events": [
+        "initialize",
+        "save-off"
+      ],
+      "account": "saved",
+      "password": "saved",
+      "remember": false,
+      "reads": 0
+    },
+    {
+      "id": "key-account-preserved",
+      "events": [
+        "initialize",
+        "key",
+        "connect-key",
+        "end",
+        "restore"
+      ],
+      "account": "key",
+      "password": "empty",
+      "remember": true,
+      "reads": 0
+    }
+  ],
+  "credentialFormReturnCases": [
+    {
+      "id": "key-roundtrip-saved",
+      "events": [
+        "initialize",
+        "key",
+        "connect-key",
+        "password",
+        "restore"
+      ],
+      "account": "saved",
+      "password": "saved",
+      "remember": true
+    },
+    {
+      "id": "key-roundtrip-cleared",
+      "events": [
+        "initialize",
+        "clear",
+        "key",
+        "connect-key",
+        "password",
+        "restore"
+      ],
+      "account": "saved",
+      "password": "empty",
+      "remember": true
+    },
+    {
+      "id": "empty-key-account",
+      "events": [
+        "initialize",
+        "empty-key"
+      ],
+      "account": "empty",
+      "password": "saved",
+      "remember": true
+    },
+    {
+      "id": "key-account-removed",
+      "events": [
+        "initialize",
+        "key",
+        "remove-key"
+      ],
+      "account": "empty",
+      "password": "saved",
+      "remember": true
+    },
+    {
+      "id": "unsaved-return",
+      "events": [
+        "initialize",
+        "save-off",
+        "connect-password",
+        "end",
+        "restore"
+      ],
+      "account": "empty",
+      "password": "empty",
+      "remember": false
+    },
+    {
+      "id": "cancelled-unsaved",
+      "events": [
+        "initialize",
+        "save-off",
+        "begin-only",
+        "restore"
+      ],
+      "account": "saved",
+      "password": "saved",
+      "remember": false
+    },
+    {
+      "id": "saved-unexpected-end",
+      "events": [
+        "initialize",
+        "connect-password",
+        "end",
+        "restore"
+      ],
+      "account": "saved",
+      "password": "saved",
+      "remember": true
+    },
+    {
+      "id": "saved-locked-end",
+      "events": [
+        "initialize",
+        "connect-password",
+        "suspend",
+        "end",
+        "locked-restore"
+      ],
+      "account": "saved",
+      "password": "empty",
+      "remember": true
+    },
+    {
+      "id": "unsaved-key-roundtrip",
+      "events": [
+        "initialize",
+        "save-off",
+        "key",
+        "connect-key",
+        "end",
+        "password",
+        "restore"
+      ],
+      "account": "empty",
+      "password": "empty",
+      "remember": false
+    },
+    {
+      "id": "cancelled-editor-keeps-cleared-password",
+      "events": [
+        "initialize",
+        "clear",
+        "initialize"
+      ],
+      "account": "saved",
+      "password": "empty",
+      "remember": true
+    }
+  ]
 }

@@ -207,6 +207,7 @@ def configure_client(spec, name, args):
     target = spec['targets'][name]
     target['sources'] += [{'path': str(ROOT / 'Native/VNC' / (p + '.swift'))} for p in shared_vnc]
     target['sources'] += [{'path': str(ROOT / 'Native/Terminal' / (p + '.swift'))} for p in shared_terminal]
+    target['sources'].append({'path': str(ROOT / 'Native/Terminal/Files/DirectFilesLoginDraft.swift')})
     target['sources'] += [{'path': str(ROOT / 'Native/Mac' / (p + '.swift'))} for p in ['MacSessionStatus', 'MacTerminalHeldInput', 'MacTerminalMouseReport']]
     target['sources'].append({'path': str(ROOT / 'spec/privacy-manifest/v0/targets/ios-app/PrivacyInfo.xcprivacy'), 'buildPhase': 'resources'})
     test_settings = {'PRODUCT_BUNDLE_IDENTIFIER': 'dev.maccompanion.visionos.client.tests',
@@ -217,6 +218,8 @@ def configure_client(spec, name, args):
     test_settings['HEADER_SEARCH_PATHS'] = target['settings']['base']['HEADER_SEARCH_PATHS']
     spec['targets']['VisionClientTests'] = {'type': 'bundle.unit-test', 'platform': 'visionOS',
         'sources': [{'path': str(ROOT / 'Native/VisionTests/Hosted')},
+            {'path': str(ROOT / 'Native/ClientTests/CredentialFormLifecycleTests.swift')},
+            {'path': str(ROOT / 'spec/fixtures/direct-files-v1.json'), 'buildPhase': 'resources'},
             {'path': str(ROOT / 'Native/MacTests/Hosted/SSHTestServer.swift')},
             {'path': str(ROOT / 'spec/fixtures/native-visionos-client-v1.json'), 'buildPhase': 'resources'}],
         'dependencies': [{'target': name}],

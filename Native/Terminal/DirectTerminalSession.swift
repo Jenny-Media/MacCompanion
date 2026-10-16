@@ -191,13 +191,21 @@ private enum TerminalPTY {
     private var writeTail: Task<Void, Never>?
     private var queuedBytes = 0
     #if os(iOS)
-    private let accessOwnerID = UUID()
     private var accessLease: UUID?
+    #endif
+    #if os(iOS) || os(macOS)
+    private let accessOwnerID = UUID()
     private var authenticatedAccount = ""
     private var authenticatedKeyID: UUID?
     var filesContext: DirectFilesConnectionContext? {
         guard connected, let client, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { return nil }
-        return .init(client: client, macID: mac.id, ownerID: accessOwnerID, account: authenticatedAccount, keyID: authenticatedKeyID, generation: generation)
+        let token = generation
+        return .init(client: client, macID: mac.id, ownerID: accessOwnerID, account: authenticatedAccount, keyID: authenticatedKeyID, generation: token,
+                     isCurrent: { [weak self] in
+                         guard let self else { return false }
+                         return self.connected && self.generation == token && !self.macRemoved &&
+                             DirectAppLockV1.shared.canAccess && DirectClientPlatformV1.sessionAvailable
+                     })
     }
     #endif
     private var client: SSHClient?
@@ -248,8 +256,10 @@ private enum TerminalPTY {
         } catch { present(.savedDataUnavailable, message: "Disconnect this Mac before changing its saved login."); return }
         #endif
         stop()
-        #if os(iOS)
+        #if os(iOS) || os(macOS)
         authenticatedAccount = username
+        #endif
+        #if os(iOS)
         authenticatedKeyID = installation?.id ?? (key == nil ? nil : (try? DirectMacAccessStore.load(mac.id).keyID))
         accessLease = DirectMacConnections.shared.begin(macID: mac.id, kind: "terminal", keyID: authenticatedKeyID, ownerID: accessOwnerID,
             pendingAccessChange: installation != nil || DirectMacAccessStore.willRetainChange(macID: mac.id, username: username, password: password, key: loginKey, ssh: true, remember: remember), disconnect: { [weak self] in self?.stop() })
@@ -529,6 +539,8 @@ private enum TerminalPTY {
         connected = false; connecting = false; completedNormally = false; queuedBytes = 0
         #if os(iOS)
         let lease = accessLease; accessLease = nil
+        #endif
+        #if os(iOS) || os(macOS)
         authenticatedAccount = ""; authenticatedKeyID = nil
         #endif
         Task {

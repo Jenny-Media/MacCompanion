@@ -39,6 +39,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     let mac: DirectMacRecordV1
     let libraryURL: URL
     var loginDraft = DirectFilesLoginDraft()
+    private var establishedIndependentLogin = false
     private(set) var account = ""
     private(set) var phase: Phase = .signIn
     @ObservationIgnored var activityChanged: (@MainActor (String) -> Void)?
@@ -55,12 +56,13 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     #if os(iOS)
     private let accessOwnerID = UUID()
     private var connectionLease: UUID?
+    #endif
+    private var borrowedIsCurrent: (@MainActor () -> Bool)?
     private var borrowedGeneration: UUID?
     var isBorrowed: Bool { borrowedGeneration != nil }
     func disconnectBorrowed(_ owner: UUID) {
         if borrowedGeneration == owner { disconnect(message: "The parent session ended. Completed downloads are kept; reconnect before retrying interrupted transfers.") }
     }
-    #endif
     private var generation = UUID()
     private var operation = UUID()
     private var work: Task<Void, Never>?
@@ -127,7 +129,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         return status
     }
     private func check(_ token: UUID, _ job: UUID? = nil) throws {
-        guard !closed, !macRemoved, generation == token, job == nil || operation == job, canAccess(), !Task.isCancelled else { throw CancellationError() }
+        guard !closed, !macRemoved, generation == token, job == nil || operation == job, canAccess(), borrowedIsCurrent?() != false, !Task.isCancelled else { throw CancellationError() }
     }
     private func armDeadline(after delay: Duration? = nil) {
         deadline?.cancel(); let token = generation, job = operation
@@ -143,9 +145,8 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         guard generation == token, !closed, busy, canAccess(), conflict == nil else { return }
         armDeadline()
     }
-    #if os(iOS)
     func connectBorrowed(_ context: DirectFilesConnectionContext) {
-        guard context.macID == mac.id, !closed, !macRemoved, canAccess(), DirectClientPlatformV1.sessionAvailable, !busy else { return }
+        guard context.macID == mac.id, context.isCurrent(), !closed, !macRemoved, canAccess(), DirectClientPlatformV1.sessionAvailable, !busy else { return }
         if phase == .ready, borrowedGeneration == context.generation, account == context.account { return }
         guard !transferActive else { message = "A transfer is still running for " + account + ". Finish or cancel it first."; return }
         guard !hasPendingResults || resultsAccount.isEmpty || resultsAccount == context.account else {
@@ -153,9 +154,11 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         }
         let previousPath = account == context.account ? directory?.path : nil
         observeLifecycle(); retire(); let token = generation
-        account = context.account; borrowedGeneration = context.generation
+        account = context.account; borrowedGeneration = context.generation; borrowedIsCurrent = context.isCurrent
+        #if os(iOS)
         connectionLease = DirectMacConnections.shared.begin(macID: mac.id, kind: "files", keyID: context.keyID, ownerID: context.ownerID,
             transferActive: { [weak self] in self?.transferActive == true }, disconnect: { [weak self] in self?.disconnect() })
+        #endif
         phase = .connecting; busy = true; message = nil; status = "Opening Files…"; armDeadline()
         work = Task { [weak self] in
             guard let self else { return }
@@ -185,7 +188,6 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
             }
         }
     }
-    #endif
     func connect(username: String, password: String, key: TerminalSSHKey?, remember: Bool, keyFileID: UUID? = nil, useMacLogin: Bool = false) {
         guard !closed, !macRemoved, canAccess(), !busy, phase != .ready else { return }
         guard !username.isEmpty, username.utf8.count <= 255, !username.contains("\0"),
@@ -315,6 +317,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                 }
                 } catch { self.message = "Connected. The SSH login could not be saved on this device." }
                 loginDraft.authenticationSucceeded(attempt, retention: retention)
+                establishedIndependentLogin = true
                 self.directory = directory; self.home = directory.path
                 self.deadline?.cancel(); self.busy = false; self.phase = .ready; self.status = "Ready"
                 channel.closeFuture.whenComplete { [weak self] _ in
@@ -527,12 +530,14 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         return false
     }
     func disconnect(message: String? = nil) {
+        if establishedIndependentLogin { loginDraft.passwordSessionEnded() }
         retire(); phase = .interrupted; status = "Sign In Required"; self.message = message
         for index in results.indices where results[index].outcome == .waiting || results[index].outcome == .transferring {
             results[index].outcome = .interrupted; results[index].message = "Interrupted · Reconnect, then Retry. A temporary upload file may remain on the Mac."
         }
     }
     private func retire() {
+        establishedIndependentLogin = false
         #if os(iOS)
         let pendingWork = work
         #endif
@@ -543,20 +548,16 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         let conflict = conflictReply; conflictReply = nil; self.conflict = nil; conflict?.resume(returning: .cancel)
         socket?.cancel(); socket = nil
         #if os(iOS)
+        let lease = connectionLease; connectionLease = nil
+        #endif
+        borrowedGeneration = nil; borrowedIsCurrent = nil
         let sftp = (store as? DirectFilesSFTPStore)?.client
-        let lease = connectionLease; connectionLease = nil; borrowedGeneration = nil
-        #endif
-        #if os(iOS)
         if sftp == nil { store?.close() }
-        #else
-        store?.close()
-        #endif
         store = nil
         let old = ssh, channel = channel; ssh = nil; self.channel = nil
         Task {
-            #if os(iOS)
+            sftp?.setResponseActivityHandler(nil)
             try? await sftp?.close()
-            #endif
             try? await old?.close(); try? await channel?.close()
             #if os(iOS)
             await pendingWork?.value

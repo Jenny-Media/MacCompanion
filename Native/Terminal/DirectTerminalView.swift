@@ -2,6 +2,13 @@
 import SwiftUI
 import SwiftTerm
 import UIKit
+import Observation
+
+/// One ephemeral form owner; never used as the live SSH recovery owner.
+@MainActor @Observable final class DirectTerminalLoginForm {
+    var draft: DirectFilesLoginDraft
+    init(draft: DirectFilesLoginDraft = DirectFilesLoginDraft()) { self.draft = draft }
+}
 
 struct DirectTerminalView: View {
     private var mac: DirectMacRecordV1 { session.mac }
@@ -9,16 +16,21 @@ struct DirectTerminalView: View {
     let exit: @MainActor () -> Void
     @State private var files: DirectFilesSession
     @State private var session: DirectTerminalSession
-    @State private var login = TerminalLoginSelection()
-    private var username: String { get { login.username } nonmutating set { login.username = newValue } }
-    @State private var password = ""
-    @State private var remember = false
+    @State private var form: DirectTerminalLoginForm
+    private var draft: DirectFilesLoginDraft {
+        get { form.draft }
+        nonmutating set { form.draft = newValue }
+    }
+    @State private var loginAttempt: DirectFilesLoginDraft.AuthenticationAttempt?
+    private var username: String { get { draft.username } nonmutating set { draft.username = newValue } }
+    private var password: String { get { draft.password } nonmutating set { draft.password = newValue } }
+    private var remember: Bool { get { draft.remember } nonmutating set { draft.remember = newValue } }
     @State private var passwordVisible = false
     @State private var detailsExpanded = false
     @State private var loginIssue: DirectRecoveryNotice?
     @State private var key: TerminalSSHKey?
     @State private var keyName = ""
-    private var useKey: Bool { login.method == .sshKey }
+    private var useKey: Bool { draft.method == .sshKey }
     @State private var loadedLogin = false
     private let autoConnect: Bool
     private enum Sheet: Identifiable {
@@ -44,8 +56,9 @@ struct DirectTerminalView: View {
         !username.isEmpty && username.utf8.count <= 255 && !username.contains("\0") &&
         (useKey ? key != nil : !password.isEmpty && password.utf8.count <= 4096 && !password.contains("\0"))
     }
-    init(mac: DirectMacRecordV1, macLibrary: DirectMacLibraryV1? = nil, session: DirectTerminalSession? = nil, files: DirectFilesSession? = nil, autoConnect: Bool = true, exit: @escaping @MainActor () -> Void) {
+    init(mac: DirectMacRecordV1, macLibrary: DirectMacLibraryV1? = nil, session: DirectTerminalSession? = nil, files: DirectFilesSession? = nil, autoConnect: Bool = true, loginForm: DirectTerminalLoginForm = DirectTerminalLoginForm(), exit: @escaping @MainActor () -> Void) {
         self.macLibrary = macLibrary; self.exit = exit
+        _form = State(initialValue: loginForm)
         let libraryURL = macLibrary?.storageURL ?? DirectMacLibraryV1.defaultURL
         _session = State(initialValue: session ?? DirectTerminalSession(mac: mac, libraryURL: libraryURL))
         _files = State(initialValue: files ?? DirectFilesWorkspace.session(mac, libraryURL: libraryURL))
@@ -60,27 +73,36 @@ struct DirectTerminalView: View {
             } catch { loginIssue = .make(.savedDataUnavailable, message: "The SSH key library couldn’t be read. Existing keys are kept."); return }
         }
         loginIssue = nil
+        loginAttempt = draft.authenticationAttempt(account: username, password: useKey ? nil : password, remember: remember)
         session.connect(username: username, password: useKey ? "" : password, remember: !useKey && remember, key: useKey ? key : nil)
     }
     private func loadKey(preferSelected: Bool = false) {
         do {
             let selected = try TerminalKeyLibraryStore.selected(mac.id)
             key = selected?.key; keyName = selected?.name ?? ""
-            login.loadKeyAccount(selected?.key.username, preferSelected: preferSelected)
+            let identity = selected.map { DirectFilesLoginDraft.NamedKeyIdentity(id: $0.id, fingerprint: $0.key.fingerprint) }
+            if draft.updateNamedKey(identity) || preferSelected { draft.loadKeyAccount(selected?.key.username, preferSelected: preferSelected) }
         } catch { loginIssue = .make(.savedDataUnavailable, message: "The selected SSH key couldn’t be read. Existing keys are kept.") }
     }
-    private func loadLogin() {
+    private func loadLogin(reload: Bool = false) {
+        guard !session.connected, !session.connecting, !session.macRemoved,
+              DirectAppLockV1.shared.canAccess, UIApplication.shared.applicationState == .active else { return }
         loginIssue = nil
-        do { if let saved = try TerminalSecretStore.login(mac.id) { login.loadPasswordAccount(saved.username); password = saved.password; remember = true } }
-        catch { loginIssue = .make(.savedDataUnavailable, message: "The saved Terminal login couldn’t be read. Existing data is kept.") }
-        loadKey(preferSelected: !loadedLogin)
-        if let profile = try? DirectMacAccessStore.load(mac.id) {
-            login.select(profile.sshMethod == .key ? .sshKey : .password)
+        if reload { draft = DirectFilesLoginDraft() }
+        do {
+            if draft.needsInitialLoad(active: true, allowed: true, signIn: true) {
+                draft.initialize(saved: try TerminalSecretStore.login(mac.id))
+            }
+            try draft.restorePassword(active: true, allowed: true, signIn: true) { try TerminalSecretStore.login(mac.id) }
+        } catch { loginIssue = .make(.savedDataUnavailable, message: "The saved Terminal login couldn’t be read. Existing data is kept.") }
+        loadKey(preferSelected: !loadedLogin || reload)
+        if (!loadedLogin || reload), let profile = try? DirectMacAccessStore.load(mac.id) {
+            draft.selectMethod(profile.sshMethod == .key ? .sshKey : .password)
         }
     }
     private func selectLoginMethod(_ method: TerminalLoginMethod) {
-        login.select(method)
-        session.clearRecovery()
+        draft.selectMethod(method)
+        loadLogin(); session.clearRecovery()
     }
     private func returnAfterNormalExit() {
         guard session.completedNormally, DirectAppLockV1.shared.canAccess, UIApplication.shared.applicationState == .active else { return }
@@ -135,7 +157,7 @@ struct DirectTerminalView: View {
             .sheet(item: $sheet, onDismiss: { if let updated = macLibrary?.macs.first(where: { $0.id == mac.id }) { session.updateMac(updated) } }) { destination in
                 switch destination {
                 case .files: DirectFilesView(mac: mac, session: files, retainWhenDismissed: true).usingConnection { session.filesContext }
-                case .keys, .access: DirectMacAccessView(mac: mac).onDisappear { loadLogin() }
+                case .keys, .access: DirectMacAccessView(mac: mac, saved: { loadLogin(reload: true) }).onDisappear { loadLogin() }
                 case .install: TerminalKeyInstallView(mac: mac, initialUsername: username, changed: { loadKey(preferSelected: true); session.clearRecovery() })
                 case .manual: TerminalManualKeySetupView(mac: mac)
                 case .macSettings:
@@ -168,16 +190,22 @@ struct DirectTerminalView: View {
             Button("Keep Session", role: .cancel) {}
         } message: { Text("The active file transfer will be interrupted. Completed downloads are kept in Files.") }
         .onDisappear { if let context = session.filesContext { files.disconnectBorrowed(context.generation) }; session.stop() }
+        .onChange(of: session.connected) { _, connected in
+            if connected {
+                draft.authenticationSucceeded(loginAttempt, retention: remember && !useKey ? .saved : .notRequested)
+                loginAttempt = nil
+            } else { draft.passwordSessionEnded(); loadLogin() }
+        }
         .onChange(of: session.completedNormally) { _, _ in returnAfterNormalExit() }
         .onChange(of: session.macRemoved) { _, removed in
-            if removed { sheet = nil; password = ""; key = nil; if !files.hasUnsavedDownloads { exit() } }
+            if removed { sheet = nil; draft.invalidate(); key = nil; if !files.hasUnsavedDownloads { exit() } }
         }
         .onChange(of: files.shouldCloseAfterRemoval) { _, close in if close { exit() } }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in session.becameInactive() }
-        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in session.background() }
-        .onReceive(NotificationCenter.default.publisher(for: DirectAppLockV1.locked)) { _ in session.background() }
-        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in returnAfterNormalExit(); session.foreground() }
-        .onReceive(NotificationCenter.default.publisher(for: DirectAppLockV1.unlocked)) { _ in returnAfterNormalExit(); session.foreground() }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in draft.suspend(); session.background() }
+        .onReceive(NotificationCenter.default.publisher(for: DirectAppLockV1.locked)) { _ in draft.suspend(); session.background() }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in draft.resume(); returnAfterNormalExit(); session.foreground(); loadLogin() }
+        .onReceive(NotificationCenter.default.publisher(for: DirectAppLockV1.unlocked)) { _ in draft.resume(); returnAfterNormalExit(); session.foreground(); loadLogin() }
         .onReceive(NotificationCenter.default.publisher(for: VNCSessionPreferences.actionsChanged)) { _ in session.reloadKeyboard?() }
         .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in session.activity?.preferenceChanged() }
         .onReceive(NotificationCenter.default.publisher(for: RemoteSessionActivityActions.endRequested)) { notification in
@@ -264,9 +292,9 @@ struct DirectTerminalView: View {
                     .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color(uiColor: .separator).opacity(0.25)))
                 if useKey {
                     selectedKeyView
-                } else { Toggle("Save login", isOn: $remember).font(.subheadline).padding(.horizontal, 2).disabled(DirectMacConnections.shared.isActive(mac.id)) }
+                } else { Toggle("Save login", isOn: Binding(get: { remember }, set: { remember = $0 })).font(.subheadline).padding(.horizontal, 2).disabled(DirectMacConnections.shared.isActive(mac.id)) }
                 if let notice {
-                    let action = loginIssue != nil ? DirectRecoveryAction(title: "Retry", perform: loadLogin) : recoveryAction(notice)
+                    let action = loginIssue != nil ? DirectRecoveryAction(title: "Retry", perform: { loadLogin() }) : recoveryAction(notice)
                     connectionButton(action.title, symbol: action.symbol, enabled: ![.loginRejected, .terminalEnded, .inputPaused].contains(notice.reason) || canConnect, perform: action.perform)
                     if let secondary = secondaryAction(notice) {
                         Button(secondary.title, action: secondary.perform).font(.subheadline).foregroundStyle(.secondary).frame(maxWidth: .infinity, minHeight: 44)

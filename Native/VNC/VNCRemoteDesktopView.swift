@@ -314,11 +314,11 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         }
         func showAccess() {
             guard let viewer, viewer.presentedViewController == nil else { return }
-            let root = DirectMacAccessView(mac: mac).onDisappear { [weak self, weak viewer] in
+            let root = DirectMacAccessView(mac: mac, saved: { [weak self, weak viewer] in
                 guard let self, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { return }
                 let login = DesktopCredentialStoreV1.read(self.mac.id)
                 viewer?.reloadAccessUsername(login?.username ?? "", password: login?.password ?? "")
-            }
+            })
             let controller = UIHostingController(rootView: root); controller.modalPresentationStyle = .pageSheet
             viewer.present(controller, animated: true)
         }

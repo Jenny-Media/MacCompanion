@@ -6,18 +6,21 @@ struct MacDirectDesktopView: View {
     let mac: DirectMacRecordV1
     let sessionID: UUID
     @State private var session: MacVNCSession
-    @State private var username = ""
-    @State private var password = ""
-    @State private var remember = false
+    @State private var draft = DirectFilesLoginDraft()
+    @State private var loginAttempt: DirectFilesLoginDraft.AuthenticationAttempt?
+    private var username: String { draft.username }
+    private var password: String { draft.password }
+    private var remember: Bool { draft.remember }
     @State private var issue: DirectRecoveryNotice?
     @State private var window = MacWindowHandle()
     @State private var controls = false
     @State private var actions: [VNCQuickAction] = []
     @State private var closed = false
     @State private var initialLogin = MacVNCInitialLogin()
-    init(mac: DirectMacRecordV1, sessionID: UUID = UUID(), libraryURL: URL = DirectMacLibraryV1.defaultURL) {
+    init(mac: DirectMacRecordV1, sessionID: UUID = UUID(), libraryURL: URL = DirectMacLibraryV1.defaultURL, session: MacVNCSession? = nil, loginDraft: DirectFilesLoginDraft = DirectFilesLoginDraft()) {
         self.mac = mac; self.sessionID = sessionID
-        _session = State(initialValue: MacVNCSession(mac: mac, libraryURL: libraryURL))
+        _session = State(initialValue: session ?? MacVNCSession(mac: mac, libraryURL: libraryURL))
+        _draft = State(initialValue: loginDraft)
     }
     private var phase: MacConnectionPhase {
         session.connected ? .connected : session.connecting ? .connecting : session.recovery != nil || session.status == "Disconnected" ? .disconnected : .signIn
@@ -27,9 +30,9 @@ struct MacDirectDesktopView: View {
             MacVNCSurface(session: session)
             if !session.connected {
                 MacSignInPanel(mac: mac, mode: .desktop) {
-                    MacCredentialFields(username: $username, password: $password, enabled: !session.connecting && DirectAppLockV1.shared.canAccess, prefix: "mac-vnc", submit: connect)
+                    MacCredentialFields(username: $draft.username, password: $draft.password, enabled: !session.connecting && DirectAppLockV1.shared.canAccess, prefix: "mac-vnc", submit: connect)
                         .frame(height: 104)
-                    Toggle("Save login on this Mac", isOn: $remember).disabled(session.connecting)
+                    Toggle("Save login on this Mac", isOn: $draft.remember).disabled(session.connecting)
                         .help("Store this Mac’s Screen Sharing credentials in Keychain.")
                     DisclosureGroup("Connection Details") { DirectConnectionDetailsRows(mac: mac, desktop: true) }
                         .font(.subheadline).disabled(session.connecting)
@@ -43,7 +46,7 @@ struct MacDirectDesktopView: View {
                         ProgressView().controlSize(.small)
                         Text(session.status).font(.subheadline).foregroundStyle(.secondary)
                         Spacer()
-                        Button("Cancel") { session.disconnect(); password = "" }
+                        Button("Cancel") { session.disconnect(); loginAttempt = nil }
                     } else {
                         Button("Cancel") { window.window?.performClose(nil) }.keyboardShortcut(.cancelAction)
                             .accessibilityIdentifier("mac-vnc-login-cancel")
@@ -95,24 +98,32 @@ struct MacDirectDesktopView: View {
         .sheet(isPresented: $controls) {
             MacDesktopSettings(macID: mac.id) { loadActions() }.modifier(MacSheetPrivacyCover())
         }
-        .background(MacWindowLifetime { closed = true; password = ""; session.close(); MacConnectionRegistry.shared.remove(sessionID) }.frame(width: 0, height: 0))
+        .background(MacWindowLifetime { closed = true; draft.invalidate(); session.close(); MacConnectionRegistry.shared.remove(sessionID) }.frame(width: 0, height: 0))
         .background(MacWindowReader(handle: window, initiallyFullScreen: VNCSessionPreferences.fullscreen(mac.id)) {
             VNCSessionPreferences.setFullscreen($0, mac: mac.id)
         }.frame(width: 0, height: 0))
         .onAppear { loadInitialLogin(); loadActions(); publishStatus() }
         .onChange(of: phase) { _, _ in publishStatus() }
         .onChange(of: session.macRemoved) { _, removed in
-            if removed { controls = false; password = ""; window.window?.close() }
+            if removed { controls = false; draft.invalidate(); window.window?.close() }
         }
         .onReceive(NotificationCenter.default.publisher(for: VNCSessionPreferences.actionsChanged)) { _ in loadActions() }
-        .onChange(of: session.connected) { _, value in if value { password = "" } }
+        .onChange(of: session.connected) { _, value in
+            if value {
+                draft.authenticationSucceeded(loginAttempt, retention: remember ? (session.recovery?.reason == .saveFailed ? .failed : .saved) : .notRequested)
+                loginAttempt = nil
+            } else { draft.passwordSessionEnded(); loadLogin() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: DirectClientPlatformV1.didEnterBackground)) { _ in
-            password = ""; session.pauseInput()
+            draft.suspend(); session.pauseInput()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: DirectClientPlatformV1.didBecomeActive)) { _ in
+            if DirectAppLockV1.shared.canAccess { draft.resume(); if initialLogin.loaded { loadLogin() } else { loadInitialLogin() } }
         }
         .onChange(of: DirectAppLockV1.shared.canAccess) { _, value in
-            if !value { controls = false; password = ""; session.pauseInput() }
-            else if initialLogin.loaded { restoreRememberedPassword() }
-            else { loadInitialLogin() }
+            if !value { controls = false; draft.suspend(); session.pauseInput() }
+            else if initialLogin.loaded { draft.resume(); loadLogin() }
+            else { draft.resume(); loadInitialLogin() }
         }
     }
     private func publishStatus() {
@@ -133,27 +144,25 @@ struct MacDirectDesktopView: View {
                 },
                 read: { try DesktopCredentialStoreV1.readChecked(mac.id) }) else { return }
             issue = nil
-            username = saved.login.username; password = saved.login.password; remember = true
+            draft.initialize(saved: .init(username: saved.login.username, password: saved.login.password))
             if saved.shouldConnect { connect() }
         } catch { issue = .make(.savedDataUnavailable) }
     }
-    private func restoreRememberedPassword() {
-        guard DirectAppLockV1.shared.canAccess, !closed, !session.connected, !session.connecting,
-              remember, password.isEmpty, !username.isEmpty else { return }
+    private func loadLogin() {
+        guard DirectAppLockV1.shared.canAccess, !closed, !session.connected, !session.connecting else { return }
+        issue = nil
         do {
-            if let saved = try DesktopCredentialStoreV1.readChecked(mac.id), saved.username == username {
-                password = saved.password
+            if draft.needsInitialLoad(active: true, allowed: true, signIn: true) {
+                draft.initialize(saved: try DesktopCredentialStoreV1.readChecked(mac.id).map { .init(username: $0.username, password: $0.password) })
+            }
+            try draft.restorePassword(active: true, allowed: true, signIn: true) {
+                try DesktopCredentialStoreV1.readChecked(mac.id).map { .init(username: $0.username, password: $0.password) }
             }
         } catch { issue = .make(.savedDataUnavailable) }
     }
-    private func loadLogin() {
-        guard DirectAppLockV1.shared.canAccess, !session.connected, !session.connecting else { return }
-        issue = nil
-        do { if let saved = try DesktopCredentialStoreV1.readChecked(mac.id) { username = saved.username; password = saved.password; remember = true } }
-        catch { issue = .make(.savedDataUnavailable) }
-    }
     private func connect() {
         guard !closed, !session.connecting, !session.connected, DirectAppLockV1.shared.canAccess else { return }
+        loginAttempt = draft.authenticationAttempt(account: username, password: password, remember: remember)
         issue = nil; session.connect(username: username, password: password, remember: remember)
     }
 }

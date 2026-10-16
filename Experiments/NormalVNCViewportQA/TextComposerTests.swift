@@ -545,6 +545,9 @@ import UIKit
             let viewer = CompanionVNCViewer()
             viewer.inputOnly = mode == "trackpad"; viewer.macName = "Synthetic Mac"
             window.rootViewController = viewer; window.makeKeyAndVisible(); viewer.loadViewIfNeeded()
+            viewer.reloadAccessUsername("synthetic", password: "synthetic-only")
+            viewer.perform(NSSelectorFromString("start"))
+            (viewer.value(forKey: "credentialState") as? DirectDesktopLoginState)?.authenticated()
             viewer.session.inputOnly = mode == "trackpad"
             viewer.session.setValue(true, forKey: "running"); viewer.session.setValue(true, forKey: "inputReady")
             viewer.session.setValue(true, forKey: "established"); viewer.session.setValue(true, forKey: "baselinePresented")

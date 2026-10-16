@@ -1,7 +1,7 @@
-#if (os(iOS) || os(macOS)) && MACCOMPANION_VNC_DEVELOPMENT
+#if (os(iOS) || os(macOS) || os(visionOS)) && MACCOMPANION_VNC_DEVELOPMENT
 import Foundation
 
-/// Value state owned by one Files session, surviving its sheet presentations.
+/// Credential form state shared by direct clients; independent of live transports.
 /// Storage and other windows never replace its user choices implicitly.
 @MainActor struct DirectFilesLoginDraft {
     private enum Initialization { case pending, complete }
@@ -91,6 +91,7 @@ import Foundation
         initialization = .complete
     }
     mutating func selectMethod(_ method: TerminalLoginMethod) {
+        guard selection.method != method else { return }
         initialization = .complete
         revision = UUID()
         selection.select(method)
@@ -143,9 +144,28 @@ import Foundation
         // Successful authentication does not prove a write succeeded. A failed
         // redundant write preserves the provenance of an already saved login;
         // an edited secret requires successful retention by this exact attempt.
+        if attempt.source == .key {
+            // A key connection must not erase an unedited remembered password's
+            // provenance. Retain its account only, never its secret.
+            let account: String?
+            switch secret {
+            case .saved(let saved, _), .clearedSaved(let saved): account = savesLogin ? saved : nil
+            case .empty, .edited: account = nil
+            }
+            clearSecrets(restoring: account)
+            return
+        }
         let restorable = attempt.source != .key && savesLogin && selection.method == .password &&
             (retention == .saved || (retention == .failed && attempt.source == .savedPassword))
         clearSecrets(restoring: restorable ? attempt.account : nil)
+    }
+    /// Call only after an established password session ends, not on a failed
+    /// attempt or when toggling Save Login while editing the sign-in form.
+    mutating func passwordSessionEnded() {
+        guard !savesLogin else { return }
+        revision = UUID()
+        selection.loadPasswordAccount("")
+        clearSecrets(restoring: nil)
     }
     mutating func invalidate() {
         self = Self()
