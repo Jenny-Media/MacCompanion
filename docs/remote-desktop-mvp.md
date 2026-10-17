@@ -472,3 +472,27 @@ View and control this Mac. The isolated Mac prototype opens Apple Screen Sharing
 in a separate application, with an external-app arrow and Opens Apple Screen
 Sharing subtitle. Terminal remains an independent action. No combined launch
 or workspace terminology is required in the interface.
+
+## iOS landscape desktop size
+
+View & Display → Advanced contains the optional desktop size choices: Larger
+Text, Balanced (recommended), and More Space. These request a landscape virtual
+desktop; phone rotation and keyboard/composer presentation only alter the local
+viewport. New entries recommend Balanced; Edit Mac can instead select mirroring.
+The app remembers an exact accepted size per Mac on this device and restores it
+once on a replacement connection. Failed requests retain the previous choice.
+Input reopens after matching metadata and complete new pixels, not after a socket
+write. See [the desktop-size contract](../spec/capability-protocol/v0/ios-desktop-size.md)
+for wire vectors, bounds and physical-acceptance limits. No experiment code or
+host helper is linked into the direct app.
+
+### Per-Mac Screen Sharing display choice
+
+Edit Mac saves Virtual Display (Balanced recommended) or Mirror Mac Screen locally
+for this viewer. Mirror preserves physical resolution; Virtual stays landscape and
+may blank the Mac's physical screens. Advanced retains three sizes; rotation and
+keyboard use do not resize. View & Display can switch modes; restoring the physical
+desktop uses one authenticated replacement session with the active transient login.
+Choose Display requests a host-selected stream using validated IDs. It retains the
+monitor catalogue, requires fresh matching layout/pixels, and never saves a failed
+selection. UDP/video transport and codec negotiation are unchanged and deferred.

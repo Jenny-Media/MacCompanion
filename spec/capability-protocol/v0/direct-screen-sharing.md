@@ -139,8 +139,11 @@ length. Consume unsupported/malformed bodies without applying geometry; never
 resize or reconnect based on this private metadata. Only use normalized crops
 when metadata aspect agrees with the actual framebuffer. A layout replacement
 updates selected IDs or returns to All Displays if no longer valid. Selection
-confines local presentation/input; the complete framebuffer is still received.
-No remote resolution/layout-setting messages are sent. Without verified bounds,
+confines local presentation/input in the original path; the complete framebuffer is still received.
+The direct iOS extension in [ios-desktop-size.md](ios-desktop-size.md) separately
+specifies explicit per-Mac virtual-display and host monitor-selection messages,
+including catalogue-bearing selected-monitor replies. Other paths send no remote
+resolution/layout-setting messages. Without verified bounds,
 show an explanatory display menu and retain All Displays. Valid rows show a
 geometry-only arrangement diagram, dimensions and the current selection;
 All Displays highlights every rectangle. Menu choices resolve against the latest
@@ -922,6 +925,11 @@ capability refresh from requesting pixels in input-only mode. Input-only mode
 never enables automatic desktop delivery.
 The existing baseline/input/presentation epochs remain authoritative, and the
 paused owner sleeps after its bounded release/disable work.
+During explicit physical monitor selection, retain an already active subscription
+until matching layout arrives, as specified in `ios-desktop-size.md`. Do not renew
+or start old bounds while waiting. This preserves metadata delivery without
+relaxing input or complete-pixel readiness; virtual sizing and pause still stop
+automatic delivery as before.
 
 This is a compatibility extension based on the host implementation, not an
 Apple-published API. The current server reader interprets bytes 4–7 as the period

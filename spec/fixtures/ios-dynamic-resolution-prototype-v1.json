@@ -1,0 +1,645 @@
+{
+  "schema": "maccompanion.ios-dynamic-resolution-prototype.v1",
+  "releaseAdmitted": false,
+  "packetCases": [
+    {
+      "points": [
+        1132,
+        600
+      ],
+      "hex": "1d0000c0000100010000000000b800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001000000044359d30242e6e8ba000008d8000004b000000000000000070001000008d8000004b00000046c00000258403e00000000000000000000"
+    },
+    {
+      "points": [
+        600,
+        1300
+      ],
+      "hex": "1d0000c0000100010000000000b8000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000442e6e8ba437a26ca000004b000000a2800000000000000070001000004b000000a280000025800000514403e00000000000000000000"
+    },
+    {
+      "points": [
+        1664,
+        880
+      ],
+      "hex": "1d0000c0000100010000000000b8000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000443a018d34329555500000d00000006e00000000000000007000100000d00000006e00000068000000370403e00000000000000000000"
+    },
+    {
+      "points": [
+        800,
+        800
+      ],
+      "hex": "1d0000c0000100010000000000b800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001000000044319f07c4319f07c00000640000006400000000000000007000100000640000006400000032000000320403e00000000000000000000"
+    }
+  ],
+  "invalidPacketSizes": [
+    [
+      0,
+      600
+    ],
+    [
+      -1,
+      600
+    ],
+    [
+      599,
+      800
+    ],
+    [
+      800,
+      599
+    ],
+    [
+      833,
+      600
+    ],
+    [
+      1664,
+      1664
+    ],
+    [
+      1668,
+      600
+    ],
+    [
+      600,
+      600
+    ]
+  ],
+  "viewportCases": [
+    {
+      "viewport": [
+        832,
+        440
+      ],
+      "points": [
+        1132,
+        600
+      ]
+    },
+    {
+      "viewport": [
+        440,
+        956
+      ],
+      "points": [
+        600,
+        1300
+      ]
+    },
+    {
+      "viewport": [
+        956,
+        440
+      ],
+      "points": [
+        1300,
+        600
+      ]
+    },
+    {
+      "viewport": [
+        320,
+        320
+      ],
+      "points": [
+        800,
+        800
+      ]
+    },
+    {
+      "viewport": [
+        1920,
+        1080
+      ],
+      "points": [
+        1632,
+        916
+      ]
+    },
+    {
+      "viewport": [
+        0,
+        440
+      ],
+      "points": null
+    },
+    {
+      "viewport": [
+        4000,
+        100
+      ],
+      "points": null
+    }
+  ],
+  "journal": {
+    "schema": 1,
+    "intervalSeconds": 1,
+    "maximumBytes": 4194304,
+    "maximumFiles": 1,
+    "requiredFields": [
+      "schema",
+      "uptime",
+      "owner",
+      "sequence"
+    ],
+    "allowedCounters": [
+      "framebufferWidth",
+      "framebufferHeight",
+      "presentedFrames",
+      "serverMessages",
+      "updateRects",
+      "decoderFailures",
+      "sessionPaused",
+      "sessionInputReady",
+      "backgroundPauses",
+      "retainedResumes",
+      "connectionStarts",
+      "cursorShapeUpdates",
+      "cursorPositionUpdates",
+      "cursorPublications",
+      "framebufferAllocations",
+      "probeRequests",
+      "probeAccepted",
+      "probeTimedOut",
+      "probeAwaiting",
+      "probeWidth",
+      "probeHeight",
+      "sampleUptime",
+      "probeOutcome",
+      "sessionRunning",
+      "sessionEstablished",
+      "failureStage",
+      "baselineReceivedPixels",
+      "baselineExpectedPixels",
+      "layoutWidth",
+      "layoutHeight",
+      "layoutCount",
+      "layoutVirtual",
+      "probeLayoutResizes"
+    ],
+    "forbiddenFields": [
+      "username",
+      "password",
+      "host",
+      "hostname",
+      "clipboard",
+      "text",
+      "pixels"
+    ],
+    "pipelineKeys": [
+      "workerCPUTotalMS",
+      "frameCopyTotalMS",
+      "frameCopyMaxMS",
+      "frameMainQueueMaxMS",
+      "frameCallbackMaxMS",
+      "unreadBytesLatest",
+      "unreadBytesMax"
+    ],
+    "transportKeys": [
+      "inboundBytes",
+      "outboundBytes",
+      "inboundQueuedBytes",
+      "inboundPeakQueuedBytes",
+      "inboundWriteMaxMS",
+      "outboundWriteMaxMS"
+    ]
+  },
+  "selectionPackets": [
+    {
+      "id": 0,
+      "hex": "0d01000000000000"
+    },
+    {
+      "id": 5,
+      "hex": "0d00000000000005"
+    }
+  ],
+  "layoutCases": [
+    {
+      "virtual": false,
+      "pixelWidth": 1600,
+      "pixelHeight": 1600,
+      "bodyHex": "00050320032006400640000000000000000400010000000000000000000000000000000000000009000000000320032000000000064006400000000000000000000000000000000000000000"
+    },
+    {
+      "virtual": true,
+      "pixelWidth": 1600,
+      "pixelHeight": 1600,
+      "bodyHex": "00050320032006400640000000000000000100010000000000000000000000000000000000000009000000000320032000000000064006400000000000000000000000000000000000000000"
+    },
+    {
+      "virtual": true,
+      "pixelWidth": 1600,
+      "pixelHeight": 1200,
+      "bodyHex": "000503200258064004b000000000000000010001000000000000000000000000000000000000000900000000025803200000000004b006400000000000000000000000000000000000000000"
+    },
+    {
+      "virtual": true,
+      "pixelWidth": 1200,
+      "pixelHeight": 2600,
+      "bodyHex": "00050258051404b00a280000000000000001000100000000000000000000000000000000000000090000000005140258000000000a2804b00000000000000000000000000000000000000000"
+    }
+  ],
+  "analysisCases": [
+    {
+      "rows": [
+        {
+          "schema": 1,
+          "owner": "synthetic-first",
+          "sequence": 1,
+          "uptime": 10.0,
+          "counters": {
+            "framebufferWidth": 640,
+            "framebufferHeight": 640,
+            "framebufferAllocations": 1,
+            "presentedFrames": 0,
+            "sessionPaused": false,
+            "sessionInputReady": true,
+            "desktopSSH": {
+              "inboundBytes": 0
+            }
+          }
+        },
+        {
+          "schema": 1,
+          "owner": "synthetic-first",
+          "sequence": 2,
+          "uptime": 11.0,
+          "counters": {
+            "framebufferWidth": 640,
+            "framebufferHeight": 640,
+            "framebufferAllocations": 1,
+            "presentedFrames": 10,
+            "sessionPaused": false,
+            "sessionInputReady": true,
+            "desktopSSH": {
+              "inboundBytes": 1000
+            }
+          }
+        },
+        {
+          "schema": 1,
+          "owner": "synthetic-first",
+          "sequence": 3,
+          "uptime": 12.0,
+          "counters": {
+            "framebufferWidth": 640,
+            "framebufferHeight": 640,
+            "framebufferAllocations": 1,
+            "presentedFrames": 20,
+            "sessionPaused": false,
+            "sessionInputReady": true,
+            "desktopSSH": {
+              "inboundBytes": 2000
+            }
+          }
+        },
+        {
+          "schema": 1,
+          "owner": "synthetic-second",
+          "sequence": 1,
+          "uptime": 13.0,
+          "counters": {
+            "framebufferWidth": 640,
+            "framebufferHeight": 640,
+            "framebufferAllocations": 1,
+            "presentedFrames": 0,
+            "sessionPaused": false,
+            "sessionInputReady": true
+          }
+        }
+      ],
+      "acceptedIntervals": 2,
+      "rejectedIntervals": 1,
+      "seconds": 2.0,
+      "uiCallbackFramesPerSecond": 10.0,
+      "incomingRFBPayloadMbitPerSecond": 0.008
+    }
+  ],
+  "landscapePresets": [
+    {
+      "id": 1,
+      "title": "Larger Text",
+      "points": [
+        1024,
+        640
+      ],
+      "pixels": [
+        2048,
+        1280
+      ],
+      "recommended": false,
+      "hex": "1d0000c0000100010000000000b8000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000443450adc42f64d9300000800000005000000000000000007000100000800000005000000040000000280403e00000000000000000000"
+    },
+    {
+      "id": 2,
+      "title": "Balanced",
+      "points": [
+        1280,
+        800
+      ],
+      "pixels": [
+        2560,
+        1600
+      ],
+      "recommended": true,
+      "hex": "1d0000c0000100010000000000b8000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000443764d934319f07c00000a00000006400000000000000007000100000a00000006400000050000000320403e00000000000000000000"
+    },
+    {
+      "id": 3,
+      "title": "More Space",
+      "points": [
+        1440,
+        900
+      ],
+      "pixels": [
+        2880,
+        1800
+      ],
+      "recommended": false,
+      "hex": "1d0000c0000100010000000000b80000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000004438a8ba3432d2e8c00000b40000007080000000000000007000100000b4000000708000005a000000384403e00000000000000000000"
+    }
+  ],
+  "monitorLayouts": {
+    "all": {
+      "virtual": false,
+      "pixelWidth": 3200,
+      "pixelHeight": 1200,
+      "bodyHex": "0005064002580c8004b000000000000000040002000000000000000000000000000000000000000500000000025803200000000004b006400000000000000000000000000000000000000000000000000000000000000000000000000000000900000320025806400000064004b00c800000000000000000000000000000000000000000"
+    },
+    "first": {
+      "virtual": false,
+      "pixelWidth": 1600,
+      "pixelHeight": 1200,
+      "bodyHex": "000503200258064004b000000005000000040001000000000000000000000000000000000000000500000000025803200000000004b006400000000000000000000000000000000000000000"
+    },
+    "second": {
+      "virtual": false,
+      "pixelWidth": 1600,
+      "pixelHeight": 1200,
+      "bodyHex": "000503200258064004b000000009000000040001000000000000000000000000000000000000000900000000025803200000000004b006400000000000000000000000000000000000000000"
+    }
+  },
+  "displayChoices": {
+    "default": 2,
+    "mirror": 0,
+    "valid": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "invalid": [
+      -1,
+      4,
+      2147483647
+    ]
+  },
+  "selectedCatalogueLayouts": {
+    "catalogueHex": "00050fe8042b1fd00856ffffffff000000040002000000000000000000000000000000000000000500000000042b0a0000000bd008561fd0000000000000000000000000000000000000000000000000000000000000000000000000000000090055fa18042b00000055000008010bd00000000000000000000000000000000000000000",
+    "cases": [
+      {
+        "name": "external-retains-full-catalogue",
+        "bodyHex": "00050fe8042b1400085600000005000000040002000000000000000000000000000000000000000500000000042b0a0000000bd008561fd0000000000000000000000000000000000000000000000000000000000000000000000000000000090055fa18042b00000055000008010bd00000000000000000000000000000000000000000",
+        "requestedID": 5,
+        "accepted": true
+      },
+      {
+        "name": "internal-retains-full-catalogue",
+        "bodyHex": "00050fe8042b0bd007ac00000009000000040002000000000000000000000000000000000000000500000000042b0a0000000bd008561fd0000000000000000000000000000000000000000000000000000000000000000000000000000000090055fa18042b00000055000008010bd00000000000000000000000000000000000000000",
+        "requestedID": 9,
+        "accepted": true
+      },
+      {
+        "name": "stale-current-id",
+        "bodyHex": "00050fe8042b1400085600000005000000040002000000000000000000000000000000000000000500000000042b0a0000000bd008561fd0000000000000000000000000000000000000000000000000000000000000000000000000000000090055fa18042b00000055000008010bd00000000000000000000000000000000000000000",
+        "requestedID": 9,
+        "accepted": false
+      },
+      {
+        "name": "unknown-version",
+        "bodyHex": "00060fe8042b1400085600000005000000040002000000000000000000000000000000000000000500000000042b0a0000000bd008561fd0000000000000000000000000000000000000000000000000000000000000000000000000000000090055fa18042b00000055000008010bd00000000000000000000000000000000000000000",
+        "requestedID": 5,
+        "accepted": false
+      },
+      {
+        "name": "unknown-current-id",
+        "bodyHex": "00050fe8042b14000856000003e7000000040002000000000000000000000000000000000000000500000000042b0a0000000bd008561fd0000000000000000000000000000000000000000000000000000000000000000000000000000000090055fa18042b00000055000008010bd00000000000000000000000000000000000000000",
+        "requestedID": 5,
+        "accepted": false
+      },
+      {
+        "name": "wrong-stream-width",
+        "bodyHex": "00050fe8042b13fe085600000005000000040002000000000000000000000000000000000000000500000000042b0a0000000bd008561fd0000000000000000000000000000000000000000000000000000000000000000000000000000000090055fa18042b00000055000008010bd00000000000000000000000000000000000000000",
+        "requestedID": 5,
+        "accepted": false
+      },
+      {
+        "name": "truncated-record-count",
+        "bodyHex": "00050fe8042b1400085600000005000000040003000000000000000000000000000000000000000500000000042b0a0000000bd008561fd0000000000000000000000000000000000000000000000000000000000000000000000000000000090055fa18042b00000055000008010bd00000000000000000000000000000000000000000",
+        "requestedID": 5,
+        "accepted": false
+      },
+      {
+        "name": "changed-companion-bounds",
+        "bodyHex": "00050fe8042b1400085600000005000000040002000000000000000000000000000000000000000500000000042b0a0000000bd008561fd0000000000000000000000000000000000000000000000000000000000000000000000000000000090055fa18042b00000055000008010bce0000000000000000000000000000000000000000",
+        "requestedID": 5,
+        "accepted": false
+      },
+      {
+        "name": "duplicate-id",
+        "bodyHex": "00050fe8042b1400085600000005000000040002000000000000000000000000000000000000000500000000042b0a0000000bd008561fd0000000000000000000000000000000000000000000000000000000000000000000000000000000050055fa18042b00000055000008010bd00000000000000000000000000000000000000000",
+        "requestedID": 5,
+        "accepted": false
+      },
+      {
+        "name": "oversize-global-bounds",
+        "bodyHex": "00050fe8042b1400085600000005000000040002000000000000000000000000000000000000000500000000042b0a0000000bd008564e20000000000000000000000000000000000000000000000000000000000000000000000000000000090055fa18042b00000055000008010bd00000000000000000000000000000000000000000",
+        "requestedID": 5,
+        "accepted": false
+      }
+    ],
+    "externalStreamPixels": [
+      5120,
+      2134
+    ],
+    "internalStreamPixels": [
+      3024,
+      1964
+    ]
+  },
+  "selectionHandoffOrder": [
+    "release-held-input",
+    "retain-established-physical-delivery",
+    "select-display",
+    "request-one-pixel-metadata",
+    "await-matching-layout",
+    "retire-old-subscription-if-bounds-change",
+    "start-matching-updates",
+    "request-full-stream",
+    "present-fresh-baseline"
+  ],
+  "layoutProbePacketHex": "03000000000000010001",
+  "baselineRefreshPolicy": {
+    "stallSeconds": 1,
+    "deadlineSeconds": 8,
+    "maximumRetries": 2,
+    "coalesceSameBaseline": true,
+    "suppressRoutinePullsDuringSwitchBaseline": true,
+    "resumeRoutinePullOnce": true,
+    "cases": [
+      {
+        "name": "progressing-image",
+        "elapsed": 1.5,
+        "lastRequestAge": 1.5,
+        "lastProgressAge": 0.2,
+        "retries": 0,
+        "retry": false,
+        "expired": false
+      },
+      {
+        "name": "stalled-image",
+        "elapsed": 2,
+        "lastRequestAge": 2,
+        "lastProgressAge": 1.1,
+        "retries": 0,
+        "retry": true,
+        "expired": false
+      },
+      {
+        "name": "rate-limited-retry",
+        "elapsed": 2.5,
+        "lastRequestAge": 0.5,
+        "lastProgressAge": 1.5,
+        "retries": 1,
+        "retry": false,
+        "expired": false
+      },
+      {
+        "name": "retry-limit",
+        "elapsed": 5,
+        "lastRequestAge": 2,
+        "lastProgressAge": 2,
+        "retries": 2,
+        "retry": false,
+        "expired": false
+      },
+      {
+        "name": "absolute-deadline-despite-progress",
+        "elapsed": 8,
+        "lastRequestAge": 1.2,
+        "lastProgressAge": 0.1,
+        "retries": 1,
+        "retry": false,
+        "expired": true
+      }
+    ]
+  },
+  "displayLayoutDeadlineCases": [
+    {
+      "name": "waiting-for-layout",
+      "elapsed": 5.9,
+      "exactLayout": false,
+      "timedOut": false
+    },
+    {
+      "name": "layout-timeout",
+      "elapsed": 6,
+      "exactLayout": false,
+      "timedOut": true
+    },
+    {
+      "name": "matching-layout-fresh-image-in-progress",
+      "elapsed": 6.5,
+      "exactLayout": true,
+      "timedOut": false
+    },
+    {
+      "name": "matching-layout-baseline-deadline-is-separate",
+      "elapsed": 10,
+      "exactLayout": true,
+      "timedOut": false
+    }
+  ],
+  "switchTimingDiagnostics": {
+    "version": 1,
+    "afterAuthenticationOnly": true,
+    "rfbPlaintextBytesNotSSHCiphertext": true,
+    "countSocketReadAheadSeparately": true,
+    "processingCPUIncludesParsingDecodingCoverageAndInputService": true,
+    "explicitSocketWaitsNotHostCaptureOrNetworkLatency": true,
+    "historyCapacity": 12,
+    "bufferedRead": {
+      "sentBytes": 10,
+      "requests": [
+        3,
+        2,
+        5
+      ],
+      "deliveredTotals": [
+        3,
+        5,
+        10
+      ],
+      "socketReadTotals": [
+        10,
+        10,
+        10
+      ]
+    },
+    "largeReadBytes": 32768,
+    "phasedRead": {
+      "firstBytes": 4,
+      "lastBytes": 8,
+      "delayMicroseconds": 60000
+    }
+  },
+  "displayMenuHandoff": {
+    "openingRetiresRemoteGestures": true,
+    "latePointerCallbacksWhileMenuOpenAreIgnored": true,
+    "explicitPickerChoiceRetiresPreviousPointerInteraction": true,
+    "sessionStillRejectsActivePointerRequests": true,
+    "rejectedChoiceNoticeSeconds": 4,
+    "recordsNumericRejectionReason": true,
+    "unchangedCataloguePreservesTouchedRows": true,
+    "selectionUpdatesCheckmarksWithoutReload": true,
+    "retainOneNumericFailureAcrossReconnect": true
+  },
+  "physicalCatalogueRecovery": {
+    "all": {
+      "bodyHex": "0005064002580c8004b0ffffffff000000040002000000000000000000000000000000000000000500000000025803200000000004b006400000000000000000000000000000000000000000000000000000000000000000000000000000000900000320025806400000064004b00c800000000000000000000000000000000000000000"
+    },
+    "one": {
+      "bodyHex": "000503200258064004b0ffffffff000000040001000000000000000000000000000000000000000500000000025803200000000004b006400000000000000000000000000000000000000000"
+    },
+    "requiresEstablishedPhysicalAllDisplays": true,
+    "requiresFreshCompletePixels": true,
+    "noSelectionRequestOrPreferenceSave": true,
+    "rejectVirtualOrSelectedHeader": true,
+    "oversized": {
+      "bodyHex": "0005032002583e803e80ffffffff00000004000100000000000000000000000000000000000000050000000002580320000000003e803e800000000000000000000000000000000000000000",
+      "framebufferLimitRejected": true
+    }
+  },
+  "layoutProbeRetryPolicy": {
+    "agesSeconds": [
+      0,
+      0.5,
+      1.5
+    ],
+    "maximumRequests": 3,
+    "deadlineSeconds": 6,
+    "packetHex": "03000000000000010001",
+    "requiresMissingMatchingLayout": true,
+    "neverRequestsOldCanvas": true
+  },
+  "physicalSelectionDelivery": {
+    "keepExistingSubscriptionUntilMatchingLayout": true,
+    "neverStartOldBoundsWhileAwaiting": true,
+    "routinePullsRemainSuppressed": true,
+    "pauseAndInputOnlyStillDisable": true,
+    "virtualSizeStillStopsBeforeRequest": true,
+    "inputNeedsFreshCompletePixels": true,
+    "requiresValidOldGeometry": true
+  }
+}

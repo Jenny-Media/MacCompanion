@@ -19,12 +19,24 @@
 - (void)done { [self dismissViewControllerAnimated:YES completion:nil]; }
 - (UIModalPresentationStyle)adaptivePresentationStyleForPresentationController:(UIPresentationController *)controller { return UIModalPresentationNone; }
 - (void)setDisplays:(NSArray<NSDictionary *> *)displays {
+    if ([_displays isEqualToArray:displays]) return;
     _displays = [displays copy];
     if (self.isViewLoaded) [self.tableView reloadData];
 }
 - (void)setSelectedID:(NSNumber *)selectedID {
+    if (_selectedID == selectedID || (selectedID && [_selectedID isEqualToNumber:selectedID])) return;
     _selectedID = [selectedID copy];
-    if (self.isViewLoaded) [self.tableView reloadData];
+    // A live checkmark update must not replace the row under a finger.
+    if (self.isViewLoaded) for (UITableViewCell *cell in self.tableView.visibleCells) {
+        NSIndexPath *path = [self.tableView indexPathForCell:cell];
+        if (path && path.row <= self.displays.count) [self updateSelectionForCell:cell row:path.row];
+    }
+}
+- (void)updateSelectionForCell:(UITableViewCell *)cell row:(NSInteger)row {
+    NSDictionary *display = row < self.displays.count ? self.displays[row] : nil;
+    BOOL selected = display ? [display[@"id"] isEqual:self.selectedID] : self.selectedID == nil;
+    cell.accessoryType = selected ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
+    cell.accessibilityTraits = UIAccessibilityTraitButton | (selected ? UIAccessibilityTraitSelected : 0);
 }
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section { return self.displays.count + 1; }
 - (UIImage *)arrangementForID:(NSNumber *)selectedID {
@@ -70,14 +82,12 @@
     content.imageToTextPadding = 16;
     content.textProperties.numberOfLines = 0;
     cell.contentConfiguration = content;
-    BOOL selected = display ? [display[@"id"] isEqual:self.selectedID] : self.selectedID == nil;
-    cell.accessoryType = selected ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone;
+    [self updateSelectionForCell:cell row:indexPath.row];
     cell.accessibilityLabel = display ? [NSString stringWithFormat:@"%@, %@ × %@", display[@"title"], display[@"pixelWidth"], display[@"pixelHeight"]] : @"All Displays";
-    cell.accessibilityTraits = UIAccessibilityTraitButton | (selected ? UIAccessibilityTraitSelected : 0);
     return cell;
 }
 - (NSString *)tableView:(UITableView *)tableView titleForFooterInSection:(NSInteger)section {
-    return self.displays.count ? @"Choose a display to keep it in view. All Displays shows the full desktop." : @"The Mac has not supplied individual display positions yet.";
+    return self.displays.count ? @"Stream one display to reduce data use, or choose All Displays for the full desktop." : @"The Mac has not supplied individual display positions yet.";
 }
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
     NSNumber *displayID = indexPath.row < self.displays.count ? self.displays[indexPath.row][@"id"] : nil;

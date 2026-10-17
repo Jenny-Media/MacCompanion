@@ -1,0 +1,1081 @@
+#import <XCTest/XCTest.h>
+#import "CompanionVNCViewer.h"
+#import "CompanionVNCDesktopSize.h"
+#import "CompanionVNCControls.h"
+#import "CompanionVNCDisplayPicker.h"
+#import <rfb/rfbclient.h>
+#import <sys/socket.h>
+#import <unistd.h>
+#import <fcntl.h>
+static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE; }
+@protocol DesktopLoginRecoveryTesting <NSObject>
+- (void)editWithUsername:(NSString *)username password:(NSString *)password remember:(BOOL)remember;
+- (NSDictionary *)beginLogin;
+- (NSDictionary *)loginForResume;
+- (void)authenticated;
+@end
+@interface CompanionVNCSession (PrototypeTesting)
+- (BOOL)requestDesktopSizeWidth:(double)width height:(double)height;
+- (BOOL)requestDesktopDisplayID:(uint32_t)identifier;
+- (void)configureClient:(rfbClient *)client;
+- (BOOL)allocate:(rfbClient *)client;
+- (BOOL)installDesktopReadService:(rfbClient *)client;
+- (BOOL)processDesktopSizeChange:(rfbClient *)client;
+- (BOOL)configureDesktopUpdates:(rfbClient *)client;
+- (BOOL)requestFullDesktop:(rfbClient *)client;
+- (BOOL)maintainDesktopBaseline:(rfbClient *)client now:(double)now;
+- (BOOL)resumeDesktopPull:(rfbClient *)client;
+- (void)recordDesktopSwitchLocked:(double)now;
+- (BOOL)requestPendingDesktopLayout:(rfbClient *)client;
+- (rfbBool)displayLayout:(rfbClient *)client encoding:(int)encoding;
+- (void)updatedX:(int)x y:(int)y width:(int)width height:(int)height;
+- (void)publishFrame:(rfbClient *)client;
+- (void)finish:(NSString *)state;
+@end
+@interface CompanionVNCControls (DesktopMenuTesting)
+- (void)open;
+@end
+@interface DesktopMenuPan : UIPanGestureRecognizer
+@property UIGestureRecognizerState sampleState;
+@end
+@implementation DesktopMenuPan
+- (UIGestureRecognizerState)state { return self.sampleState; }
+- (CGPoint)translationInView:(UIView *)view { return CGPointZero; }
+- (CGPoint)velocityInView:(UIView *)view { return CGPointZero; }
+@end
+@interface CompanionVNCViewer (DesktopSizeTesting)
+- (void)showViewMenu;
+- (void)frame:(UIImage *)frame;
+- (void)chooseView;
+- (void)updateDisplayPicker;
+- (void)prepareConnection;
+- (void)reportDiagnostics:(NSDictionary *)stats;
+- (void)updateConnectionChrome;
+- (BOOL)pointerForGesture:(UIGestureRecognizer *)gesture point:(CGPoint *)point;
+- (NSDictionary *)cursorDiagnosticFlags;
+- (void)showAdvancedDisplayMenu;
+- (void)presentMenu:(NSString *)title sections:(NSArray *)sections;
+- (BOOL)applyDesktopSizePreset:(NSInteger)preset;
+- (void)updateDesktopSizeState;
+- (void)keyboardFrame:(NSNotification *)notification;
+- (BOOL)applyStreamDisplay:(NSNumber *)identifier;
+- (BOOL)applyMirrorDisplay;
+- (void)startResuming:(BOOL)resuming;
+- (void)restoreSavedDisplay;
+@end
+@interface DesktopSizeSession : CompanionVNCSession
+@property BOOL usable, available;
+@property NSInteger requests, lastPreset;
+@property NSDictionary *snapshot;
+@property NSDictionary *catalogue;
+@property NSNumber *requestedDisplay;
+@end
+@implementation DesktopSizeSession
+- (BOOL)running { return YES; }
+- (BOOL)connected { return self.usable; }
+- (BOOL)desktopFrameReady { return self.usable; }
+- (BOOL)desktopSizeAvailable { return self.available; }
+- (NSDictionary *)diagnosticCounters { return self.snapshot ?: @{}; }
+- (BOOL)requestDesktopSizePreset:(NSInteger)preset { self.requests++; self.lastPreset=preset; return self.available; }
+- (NSDictionary *)desktopDisplayLayout { return self.catalogue ?: @{}; }
+- (BOOL)requestDesktopDisplayID:(uint32_t)identifier { self.requestedDisplay=@(identifier); return self.available; }
+@end
+@interface DesktopSizeViewer : CompanionVNCViewer
+@property NSString *menuTitle;
+@property NSArray *menuSections;
+@property BOOL requestedResume;
+@end
+@implementation DesktopSizeViewer
+- (void)presentMenu:(NSString *)title sections:(NSArray *)sections { self.menuTitle=title; self.menuSections=sections; }
+- (void)startResuming:(BOOL)resuming { self.requestedResume=resuming; [self setValue:@YES forKey:@"starting"]; }
+@end
+@interface DesktopSizeTests : XCTestCase
+@end
+@implementation DesktopSizeTests
+- (DesktopSizeViewer *)viewerWithSession:(DesktopSizeSession *)session {
+    DesktopSizeViewer *viewer=[DesktopSizeViewer new]; [viewer loadViewIfNeeded];
+    [viewer setValue:session forKey:@"session"]; session.available=YES; session.usable=YES;
+    return viewer;
+}
+- (NSDictionary *)acceptedSnapshot {
+    return @{@"probeOutcome":@2,@"layoutVirtual":@YES,@"layoutCount":@1,@"framebufferWidth":@2560,
+        @"framebufferHeight":@1600,@"layoutWidth":@2560,@"layoutHeight":@1600};
+}
+- (void)testOnlyAdvancedOffersTheThreeLandscapeSizes {
+    DesktopSizeSession *session=[DesktopSizeSession new]; DesktopSizeViewer *viewer=[self viewerWithSession:session];
+    [viewer showViewMenu];
+    NSArray *items=viewer.menuSections[0][@"items"];
+    XCTAssertEqualObjects([items valueForKey:@"kind"],(@[@"virtualDisplay",@"mirrorDisplay",@"displays",@"fit",@"copyText",@"advancedDisplay"]));
+    [viewer showAdvancedDisplayMenu]; XCTAssertEqualObjects(viewer.menuTitle,@"Advanced");
+    items=viewer.menuSections[0][@"items"]; XCTAssertEqual(items.count,3);
+    XCTAssertEqualObjects([items valueForKey:@"title"],(@[@"Larger Text",@"Balanced",@"More Space"]));
+    XCTAssertTrue([items[1][@"subtitle"] containsString:@"Recommended"]);
+    for (NSDictionary *row in items) XCTAssertFalse([row[@"disabled"] boolValue]);
+    session.available=NO; [viewer showAdvancedDisplayMenu];
+    for (NSDictionary *row in viewer.menuSections[0][@"items"]) XCTAssertTrue([row[@"disabled"] boolValue]);
+    [viewer stopViewer];
+}
+- (void)testPublicPresetsMatchGoldenPacketsAndRejectUnknownValues {
+    for (NSDictionary *row in self.fixture[@"landscapePresets"]) {
+        NSInteger preset=[row[@"id"] integerValue]; CompanionVNCDesktopSize size;
+        XCTAssertTrue(CompanionVNCDesktopSizeForPreset((int)preset,&size)); XCTAssertGreaterThan(size.width,size.height);
+        XCTAssertEqual(size.width,[row[@"points"][0] intValue]); XCTAssertEqual(size.height,[row[@"points"][1] intValue]);
+        uint8_t packet[196]; XCTAssertTrue(CompanionVNCDesktopDisplayPacket(size,packet,sizeof(packet)));
+        NSMutableString *hex=[NSMutableString new]; for (NSUInteger i=0;i<sizeof(packet);i++) [hex appendFormat:@"%02x",packet[i]];
+        XCTAssertEqualObjects(hex,row[@"hex"]);
+        CompanionVNCSession *session=[CompanionVNCSession new];
+        for (NSString *key in @[@"running",@"established",@"inputReady",@"appleGestureServer",@"coverageLayoutValid"]) [session setValue:@YES forKey:key];
+        XCTAssertFalse([session requestDesktopSizePreset:0]); XCTAssertFalse([session requestDesktopSizePreset:4]);
+        XCTAssertFalse([session requestDesktopSizePreset:NSIntegerMax]);
+        [session setValue:@YES forKey:@"inputOnly"]; XCTAssertFalse([session requestDesktopSizePreset:preset]);
+        [session setValue:@NO forKey:@"inputOnly"]; [session setValue:@YES forKey:@"reviewInputSuspended"]; XCTAssertFalse([session requestDesktopSizePreset:preset]);
+        [session setValue:@NO forKey:@"reviewInputSuspended"]; [session setValue:@YES forKey:@"inputReady"];
+        XCTAssertTrue([session requestDesktopSizePreset:preset]);
+        XCTAssertFalse([session requestDesktopSizePreset:preset]); [session setValue:@NO forKey:@"running"]; [session stop];
+    }
+}
+- (void)testRememberOnlyExactAcceptedUsableDesktopAndKeepPreviousChoiceOnFailure {
+    DesktopSizeSession *session=[DesktopSizeSession new]; DesktopSizeViewer *viewer=[self viewerWithSession:session];
+    __block NSInteger saved=0, saves=0; viewer.desktopSizeSelectionHandler=^(NSInteger value){saved=value;saves++;};
+    XCTAssertTrue([viewer applyDesktopSizePreset:2]); XCTAssertEqual(saves,0);
+    session.snapshot=self.acceptedSnapshot; session.usable=NO; [viewer updateDesktopSizeState]; XCTAssertEqual(saves,0);
+    NSMutableDictionary *different=[self.acceptedSnapshot mutableCopy]; different[@"layoutWidth"]=@2048; different[@"probeOutcome"]=@1;
+    session.usable=YES; session.snapshot=different; [viewer updateDesktopSizeState]; XCTAssertEqual(saves,0);
+    session.snapshot=self.acceptedSnapshot; [viewer updateDesktopSizeState]; XCTAssertEqual(saved,2); XCTAssertEqual(saves,1);
+    [viewer updateDesktopSizeState]; XCTAssertEqual(saves,1);
+    XCTAssertTrue([viewer applyDesktopSizePreset:3]); session.snapshot=@{@"probeOutcome":@4};
+    [viewer updateDesktopSizeState]; XCTAssertEqual(saved,2); XCTAssertEqual(saves,1); XCTAssertEqual(viewer.restoredDesktopSizePreset,2);
+    [viewer stopViewer];
+}
+- (void)testAlreadyMatchingChoiceSavesOnceAndExternalGeometryChangeDoesNotLeaveSpinner {
+    DesktopSizeSession *session=[DesktopSizeSession new]; DesktopSizeViewer *viewer=[self viewerWithSession:session];
+    __block NSInteger saves=0; viewer.desktopSizeSelectionHandler=^(NSInteger preset){saves++;};
+    session.snapshot=self.acceptedSnapshot;
+    XCTAssertTrue([viewer applyDesktopSizePreset:2]); [viewer updateDesktopSizeState];
+    XCTAssertEqual(session.requests,0); XCTAssertEqual(saves,1);
+    XCTAssertTrue([viewer applyDesktopSizePreset:3]); [viewer updateDesktopSizeState];
+    XCTAssertEqualObjects([viewer valueForKey:@"pendingDesktopSizePreset"],@0);
+    XCTAssertEqual(saves,1); XCTAssertEqual(viewer.restoredDesktopSizePreset,2);
+    [viewer stopViewer];
+}
+- (void)testSavedSizeRestoresOnceButNewMacAndLocalLayoutNeverRequestResize {
+    DesktopSizeSession *session=[DesktopSizeSession new]; DesktopSizeViewer *viewer=[self viewerWithSession:session];
+    [viewer updateDesktopSizeState]; XCTAssertEqual(session.requests,0);
+    viewer.restoredDesktopSizePreset=2; [viewer setValue:@NO forKey:@"desktopSizeRestored"];
+    session.usable=NO; [viewer updateDesktopSizeState]; XCTAssertEqual(session.requests,0);
+    session.usable=YES; [viewer updateDesktopSizeState]; XCTAssertEqual(session.requests,1); XCTAssertEqual(session.lastPreset,2);
+    for (NSValue *value in @[[NSValue valueWithCGSize:CGSizeMake(440,956)],[NSValue valueWithCGSize:CGSizeMake(956,440)],[NSValue valueWithCGSize:CGSizeMake(1024,1366)]]) {
+        viewer.view.frame=(CGRect){CGPointZero,value.CGSizeValue}; [viewer.view setNeedsLayout]; [viewer.view layoutIfNeeded];
+        [viewer keyboardFrame:[NSNotification notificationWithName:UIKeyboardWillChangeFrameNotification object:nil userInfo:@{
+            UIKeyboardFrameEndUserInfoKey:[NSValue valueWithCGRect:CGRectMake(0,value.CGSizeValue.height-300,value.CGSizeValue.width,300)],
+            UIKeyboardAnimationDurationUserInfoKey:@0,UIKeyboardAnimationCurveUserInfoKey:@0}]];
+        [viewer updateDesktopSizeState]; XCTAssertEqual(session.requests,1);
+    }
+    [viewer stopViewer];
+}
+- (NSDictionary *)fixture {
+    NSURL *url = [[NSBundle bundleForClass:self.class] URLForResource:@"ios-dynamic-resolution-prototype-v1" withExtension:@"json"];
+    return [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:url] options:0 error:NULL];
+}
+- (void)deliverLayout:(NSDictionary *)row session:(CompanionVNCSession *)session client:(rfbClient *)client peer:(int)peer {
+    NSString *hex = row[@"bodyHex"]; NSMutableData *body = [NSMutableData new];
+    for (NSUInteger i=0; i<hex.length; i+=2) { unsigned int value=0; [[NSScanner scannerWithString:[hex substringWithRange:NSMakeRange(i,2)]] scanHexInt:&value]; uint8_t byte=value; [body appendBytes:&byte length:1]; }
+    uint8_t prefix[2]={(uint8_t)(body.length>>8),(uint8_t)body.length};
+    XCTAssertEqual(write(peer,prefix,2),2); XCTAssertEqual(write(peer,body.bytes,body.length),body.length);
+    XCTAssertTrue([session displayLayout:client encoding:1105]);
+    [session updatedX:0 y:0 width:0 height:0]; // Metadata contributes no pixel coverage.
+}
+- (void)testViewportBoundsAndPacketUseAuthoritativeVectors {
+    NSURL *url = [[NSBundle bundleForClass:self.class] URLForResource:@"ios-dynamic-resolution-prototype-v1" withExtension:@"json"];
+    NSDictionary *fixture = [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:url] options:0 error:NULL];
+    XCTAssertNotNil(fixture);
+    for (NSDictionary *row in fixture[@"packetCases"]) {
+        CompanionVNCDesktopSize size = {[row[@"points"][0] intValue], [row[@"points"][1] intValue]};
+        uint8_t packet[196]; XCTAssertTrue(CompanionVNCDesktopDisplayPacket(size, packet, sizeof(packet)));
+        NSMutableString *hex = [NSMutableString new]; for (NSUInteger i = 0; i < sizeof(packet); i++) [hex appendFormat:@"%02x", packet[i]];
+        XCTAssertEqualObjects(hex, row[@"hex"]);
+    }
+    CompanionVNCDesktopSize size;
+    XCTAssertFalse(CompanionVNCDesktopSizeForViewport(NAN, 400, &size));
+    XCTAssertFalse(CompanionVNCDesktopSizeForViewport(INFINITY, 400, &size));
+    XCTAssertTrue(CompanionVNCDesktopSizeForViewport(1920, 1080, &size));
+    XCTAssertEqual(size.width, 1632); XCTAssertEqual(size.height, 916);
+}
+- (void)testRequestIsOwnedByLiveForegroundDesktopAndRetiresQueuedInput {
+    CompanionVNCSession *session = [CompanionVNCSession new];
+    XCTAssertFalse([session requestDesktopSizeWidth:832 height:440]);
+    for (NSString *key in @[@"running", @"established", @"inputReady", @"appleGestureServer"]) [session setValue:@YES forKey:key];
+    [session setValue:@YES forKey:@"paused"];
+    XCTAssertFalse([session requestDesktopSizeWidth:832 height:440]);
+    [session setValue:@NO forKey:@"paused"];
+    XCTAssertTrue([session tryClickX:1 y:1 mask:1]);
+    XCTAssertTrue([session requestDesktopSizeWidth:832 height:440]);
+    XCTAssertEqual([[session valueForKey:@"events"] count], 0);
+    XCTAssertFalse([session tryClickX:1 y:1 mask:1]);
+    XCTAssertFalse([session requestDesktopSizeWidth:440 height:832]);
+    [session setValue:@NO forKey:@"running"]; [session stop];
+}
+- (void)testSoleOwnerWritesOneRequestAndTimeoutRequiresFreshBaseline {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, pair), 0);
+    CompanionVNCSession *session = [CompanionVNCSession new];
+    rfbClient *client = rfbGetClient(8,3,4); client->sock = pair[0]; client->width = 2; client->height = 2;
+    [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    for (NSString *key in @[@"running", @"established", @"inputReady", @"appleGestureServer", @"coverageLayoutValid"]) [session setValue:@YES forKey:key];
+    XCTAssertTrue([session requestDesktopSizeWidth:832 height:440]);
+    XCTAssertTrue([session processDesktopSizeChange:client]);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"probeRequests"], @0);
+    [session setValue:@NO forKey:@"releaseInputRequested"]; // The socket owner consumed and completed release.
+    XCTAssertTrue([session processDesktopSizeChange:client]);
+    uint8_t bytes[196], expected[196]; XCTAssertEqual(recv(pair[1], bytes, sizeof(bytes), MSG_WAITALL), 196);
+    XCTAssertTrue(CompanionVNCDesktopDisplayPacket((CompanionVNCDesktopSize){1132,600}, expected, sizeof(expected)));
+    XCTAssertEqual(memcmp(bytes, expected, 196), 0);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"probeRequests"], @1);
+    [session setValue:@(NSProcessInfo.processInfo.systemUptime - 7) forKey:@"desktopResizeStarted"];
+    XCTAssertTrue([session processDesktopSizeChange:client]);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"probeTimedOut"], @1);
+    XCTAssertFalse([session tryClickX:1 y:1 mask:1]);
+    [session setValue:@NO forKey:@"running"]; [session stop]; rfbClientCleanup(client); close(pair[1]);
+}
+- (void)testResizeDoesNotAcceptOldPhysicalPixelsAndRequiresVirtualLayoutAndFreshFrame {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, pair), 0);
+    CompanionVNCSession *session = [CompanionVNCSession new];
+    rfbClient *client = rfbGetClient(8,3,4); client->sock=pair[0]; client->width=1600; client->height=1600;
+    [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    NSURL *url = [[NSBundle bundleForClass:self.class] URLForResource:@"ios-dynamic-resolution-prototype-v1" withExtension:@"json"];
+    NSDictionary *fixture = [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:url] options:0 error:NULL];
+    int peer = pair[1];
+    void (^layout)(NSDictionary *) = ^(NSDictionary *row) {
+        NSString *hex = row[@"bodyHex"]; NSMutableData *body = [NSMutableData new];
+        for (NSUInteger i=0; i<hex.length; i+=2) { unsigned int value=0; [[NSScanner scannerWithString:[hex substringWithRange:NSMakeRange(i,2)]] scanHexInt:&value]; uint8_t byte=value; [body appendBytes:&byte length:1]; }
+        uint8_t prefix[2]={(uint8_t)(body.length>>8),(uint8_t)body.length};
+        XCTAssertEqual(write(peer,prefix,2),2); XCTAssertEqual(write(peer,body.bytes,body.length),body.length);
+        XCTAssertTrue([session displayLayout:client encoding:1105]);
+        [session updatedX:0 y:0 width:0 height:0]; // End the metadata callback, as the decoder does.
+    };
+    layout(fixture[@"layoutCases"][0]);
+    for (NSString *key in @[@"running",@"established",@"inputReady",@"appleGestureServer"]) [session setValue:@YES forKey:key];
+    XCTAssertTrue([session requestDesktopSizeWidth:320 height:320]);
+    [session setValue:@NO forKey:@"releaseInputRequested"];
+    XCTAssertTrue([session processDesktopSizeChange:client]);
+    uint8_t bytes[196]; XCTAssertEqual(recv(pair[1],bytes,196,MSG_WAITALL),196);
+    XCTAssertTrue([session configureDesktopUpdates:client]); XCTAssertTrue([session requestFullDesktop:client]);
+    XCTAssertEqual(recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT),-1, @"Virtual sizing also waits for the new layout before requesting pixels");
+    [session updatedX:0 y:0 width:1600 height:1600]; [session publishFrame:client];
+    XCTAssertEqualObjects(session.diagnosticCounters[@"presentedFrames"],@0); XCTAssertFalse([session tryClickX:20 y:20 mask:1]);
+    layout(fixture[@"layoutCases"][1]);
+    [session publishFrame:client];
+    XCTAssertEqualObjects(session.diagnosticCounters[@"presentedFrames"],@0);
+    XCTAssertFalse(session.connected); // A same-size physical-to-virtual handoff retires old pixels too.
+    XCTestExpectation *fresh = [self expectationWithDescription:@"Fresh virtual pixels"];
+    session.frameHandler = ^(UIImage *image) { XCTAssertEqual(CGImageGetWidth(image.CGImage),1600); [fresh fulfill]; };
+    [session updatedX:0 y:0 width:1600 height:1600];
+    [session publishFrame:client]; [self waitForExpectations:@[fresh] timeout:2];
+    XCTAssertEqualObjects(session.diagnosticCounters[@"probeAccepted"],@1); XCTAssertTrue(session.connected);
+    [session setValue:@NO forKey:@"running"]; [session stop]; session.frameHandler=nil; rfbClientCleanup(client); close(pair[1]);
+}
+- (void)testDisplayMetadataAloneResizesTheCanvasAndFreshPixelsReopenInput {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+    CompanionVNCSession *session = [CompanionVNCSession new];
+    rfbClient *client = rfbGetClient(8,3,4); client->sock=pair[0]; client->width=1600; client->height=1600;
+    [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    [self deliverLayout:self.fixture[@"layoutCases"][0] session:session client:client peer:pair[1]];
+    for (NSString *key in @[@"running",@"established",@"inputReady",@"appleGestureServer"]) [session setValue:@YES forKey:key];
+    XCTAssertTrue([session requestDesktopSizeWidth:440 height:956]);
+    [session setValue:@NO forKey:@"releaseInputRequested"]; XCTAssertTrue([session processDesktopSizeChange:client]);
+    uint8_t bytes[196]; XCTAssertEqual(recv(pair[1],bytes,196,MSG_WAITALL),196);
+    [self deliverLayout:self.fixture[@"layoutCases"][3] session:session client:client peer:pair[1]];
+    XCTAssertEqual(client->width,1200); XCTAssertEqual(client->height,2600);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"probeLayoutResizes"],@1);
+    XCTAssertFalse(session.connected); XCTAssertEqualObjects(session.diagnosticCounters[@"probeAccepted"],@0);
+    XCTestExpectation *fresh=[self expectationWithDescription:@"Complete new canvas"];
+    session.frameHandler=^(UIImage *image){ XCTAssertEqual(CGImageGetHeight(image.CGImage),2600); [fresh fulfill]; };
+    [session updatedX:0 y:0 width:1200 height:2600]; [session publishFrame:client]; [self waitForExpectations:@[fresh] timeout:2];
+    XCTAssertTrue(session.connected); XCTAssertEqualObjects(session.diagnosticCounters[@"probeAccepted"],@1);
+    [session setValue:@NO forKey:@"running"]; [session stop]; session.frameHandler=nil; rfbClientCleanup(client); close(pair[1]);
+}
+- (void)testDifferentHostSizeRecoversFreshPixelsWithoutClaimingAcceptance {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+    CompanionVNCSession *session=[CompanionVNCSession new];
+    rfbClient *client=rfbGetClient(8,3,4); client->sock=pair[0]; client->width=1600; client->height=1600;
+    [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    [self deliverLayout:self.fixture[@"layoutCases"][0] session:session client:client peer:pair[1]];
+    for (NSString *key in @[@"running",@"established",@"inputReady",@"appleGestureServer"]) [session setValue:@YES forKey:key];
+    XCTAssertTrue([session requestDesktopSizeWidth:440 height:956]);
+    [session setValue:@NO forKey:@"releaseInputRequested"]; XCTAssertTrue([session processDesktopSizeChange:client]);
+    uint8_t bytes[196]; XCTAssertEqual(recv(pair[1],bytes,196,MSG_WAITALL),196);
+    [self deliverLayout:self.fixture[@"layoutCases"][2] session:session client:client peer:pair[1]];
+    XCTAssertEqual(client->width,1600); XCTAssertEqual(client->height,1200); XCTAssertFalse(session.connected);
+    [session setValue:@(NSProcessInfo.processInfo.systemUptime-7) forKey:@"desktopResizeStarted"];
+    XCTAssertTrue([session processDesktopSizeChange:client]);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"probeOutcome"],@4);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"probeAccepted"],@0); XCTAssertEqualObjects(session.diagnosticCounters[@"probeRequests"],@1);
+    XCTestExpectation *fresh=[self expectationWithDescription:@"Usable host fallback"];
+    session.frameHandler=^(UIImage *image){ XCTAssertEqual(CGImageGetHeight(image.CGImage),1200); [fresh fulfill]; };
+    [session updatedX:0 y:0 width:1600 height:1200]; [session publishFrame:client]; [self waitForExpectations:@[fresh] timeout:2];
+    XCTAssertTrue(session.connected); XCTAssertTrue(session.running);
+    [session setValue:@NO forKey:@"running"]; [session stop]; session.frameHandler=nil; rfbClientCleanup(client); close(pair[1]);
+}
+- (void)testFramebufferResizeStillRequiresMatchingDisplayMetadata {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+    CompanionVNCSession *session=[CompanionVNCSession new];
+    rfbClient *client=rfbGetClient(8,3,4); client->sock=pair[0]; client->width=1600; client->height=1600;
+    [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    [self deliverLayout:self.fixture[@"layoutCases"][1] session:session client:client peer:pair[1]];
+    for (NSString *key in @[@"running",@"established",@"inputReady",@"appleGestureServer"]) [session setValue:@YES forKey:key];
+    XCTAssertTrue([session requestDesktopSizeWidth:440 height:956]);
+    [session setValue:@NO forKey:@"releaseInputRequested"]; XCTAssertTrue([session processDesktopSizeChange:client]);
+    uint8_t bytes[196]; XCTAssertEqual(recv(pair[1],bytes,196,MSG_WAITALL),196);
+    // Standard DesktopSize arrived first; the retained virtual layout still has the old dimensions.
+    client->width=1200; client->height=2600; XCTAssertTrue([session allocate:client]);
+    [session updatedX:0 y:0 width:1200 height:2600]; [session publishFrame:client];
+    XCTAssertFalse(session.connected); XCTAssertEqualObjects(session.diagnosticCounters[@"presentedFrames"],@0);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"probeAccepted"],@0);
+    [session setValue:@NO forKey:@"running"]; [session stop]; rfbClientCleanup(client); close(pair[1]);
+}
+- (void)testUnsolicitedLayoutCannotResizeCanvasAndDisplaySelectionSurvivesUICallback {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+    CompanionVNCSession *session=[CompanionVNCSession new];
+    rfbClient *client=rfbGetClient(8,3,4); client->sock=pair[0]; client->width=1600; client->height=1600;
+    [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    [self deliverLayout:self.fixture[@"layoutCases"][3] session:session client:client peer:pair[1]];
+    XCTAssertEqual(client->width,1600); XCTAssertEqual(client->height,1600);
+    XCTestExpectation *callback=[self expectationWithDescription:@"Pending layout consumed"];
+    dispatch_async(dispatch_get_main_queue(),^{[callback fulfill];}); [self waitForExpectations:@[callback] timeout:2];
+    XCTAssertNil([session valueForKey:@"latestLayout"]);
+    for (NSString *key in @[@"running",@"established",@"inputReady",@"appleGestureServer"]) [session setValue:@YES forKey:key];
+    XCTAssertFalse([session requestDesktopDisplayID:999]); XCTAssertTrue([session requestDesktopDisplayID:9]);
+    [session setValue:@NO forKey:@"running"]; [session stop]; rfbClientCleanup(client); close(pair[1]);
+}
+- (void)testPhysicalAllCatalogueChangesAdoptCanvasAndRequireFreshPixelsWithoutSelection {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+    CompanionVNCSession *session=[CompanionVNCSession new]; rfbClient *client=rfbGetClient(8,3,4);
+    client->sock=pair[0]; client->width=3200; client->height=1200;
+    [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    NSDictionary *vectors=self.fixture[@"physicalCatalogueRecovery"];
+    [self deliverLayout:vectors[@"all"] session:session client:client peer:pair[1]];
+    for (NSString *key in @[@"running",@"established",@"inputReady",@"appleGestureServer"]) [session setValue:@YES forKey:key];
+    [session setValue:@YES forKey:@"desktopResizeSelection"]; [session setValue:@0 forKey:@"desktopResizeDisplayID"];
+    uint8_t bytes[64];
+    for (NSString *name in @[@"one",@"all",@"one"]) {
+        XCTAssertTrue([session configureDesktopUpdates:client]); XCTAssertEqual(recv(pair[1],bytes,16,MSG_DONTWAIT),16);
+        [self deliverLayout:vectors[name] session:session client:client peer:pair[1]];
+        XCTAssertEqual(recv(pair[1],bytes,16,MSG_DONTWAIT),16); // Retire old subscription, no selection packet.
+        XCTAssertEqual(bytes[0],9); XCTAssertEqual(CompanionVNCBE32(bytes+4),UINT32_MAX);
+        int width=[name isEqualToString:@"all"]?3200:1600;
+        XCTAssertEqual(client->width,width); XCTAssertEqual(client->height,1200);
+        XCTAssertEqual([session.desktopDisplayLayout[@"views"] count],[name isEqualToString:@"all"]?2:1);
+        XCTAssertFalse(session.connected); XCTAssertFalse([session tryClickX:5 y:5 mask:1]);
+        XCTAssertEqualObjects(session.diagnosticCounters[@"baselineExpectedPixels"],@(width*1200));
+        XCTAssertTrue([session configureDesktopUpdates:client]); XCTAssertEqual(recv(pair[1],bytes,16,MSG_DONTWAIT),16);
+        XCTAssertEqual(CompanionVNCBE16(bytes+12),width); XCTAssertEqual(CompanionVNCBE16(bytes+14),1200);
+        XCTAssertTrue([session requestFullDesktop:client]); XCTAssertEqual(recv(pair[1],bytes,10,MSG_DONTWAIT),10);
+        XCTAssertEqual(CompanionVNCBE16(bytes+6),width);
+        [session updatedX:0 y:0 width:width height:600]; [session publishFrame:client]; XCTAssertFalse(session.connected);
+        XCTestExpectation *fresh=[self expectationWithDescription:@"Fresh resized physical catalogue baseline"];
+        session.frameHandler=^(UIImage *image){[fresh fulfill];}; [session setValue:@0 forKey:@"lastFrame"];
+        [session updatedX:0 y:600 width:width height:600]; [session publishFrame:client];
+        [self waitForExpectations:@[fresh] timeout:2]; session.frameHandler=nil; XCTAssertTrue(session.connected);
+        // Repeated metadata cannot restart an already proven baseline.
+        [self deliverLayout:vectors[name] session:session client:client peer:pair[1]]; XCTAssertTrue(session.connected);
+    }
+    XCTAssertEqualObjects(session.diagnosticCounters[@"physicalLayoutAdoptions"],@3);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"probeRequests"],@0); XCTAssertEqualObjects(session.diagnosticCounters[@"probeAccepted"],@0);
+    [session setValue:@NO forKey:@"running"]; [session stop]; rfbClientCleanup(client); close(pair[1]);
+}
+- (void)testUnsolicitedPhysicalRecoveryRejectsUnprovenAndSelectedOrVirtualSessions {
+    for (NSString *blocked in @[@"established",@"appleGestureServer",@"priorVirtual",@"selected",@"headerSelected",@"headerVirtual",@"pending",@"paused",@"oversized"]) {
+        int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+        CompanionVNCSession *session=[CompanionVNCSession new]; rfbClient *client=rfbGetClient(8,3,4);
+        client->sock=pair[0]; client->width=3200; client->height=1200; [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+        [self deliverLayout:self.fixture[@"physicalCatalogueRecovery"][@"all"] session:session client:client peer:pair[1]];
+        for (NSString *key in @[@"running",@"established",@"inputReady",@"appleGestureServer"]) [session setValue:@YES forKey:key];
+        NSDictionary *row=self.fixture[@"physicalCatalogueRecovery"][@"one"];
+        if ([blocked isEqualToString:@"established"] || [blocked isEqualToString:@"appleGestureServer"]) [session setValue:@NO forKey:blocked];
+        if ([blocked isEqualToString:@"priorVirtual"]) [session setValue:@YES forKey:@"desktopResizeVirtualLayout"];
+        if ([blocked isEqualToString:@"selected"]) { [session setValue:@YES forKey:@"desktopResizeSelection"]; [session setValue:@5 forKey:@"desktopResizeDisplayID"]; }
+        if ([blocked isEqualToString:@"headerSelected"]) row=self.fixture[@"monitorLayouts"][@"first"];
+        if ([blocked isEqualToString:@"headerVirtual"]) row=self.fixture[@"layoutCases"][3];
+        if ([blocked isEqualToString:@"pending"]) [session setValue:@YES forKey:@"desktopResizePending"];
+        if ([blocked isEqualToString:@"paused"]) [session setValue:@YES forKey:@"paused"];
+        if ([blocked isEqualToString:@"oversized"]) row=self.fixture[@"physicalCatalogueRecovery"][@"oversized"];
+        [self deliverLayout:row session:session client:client peer:pair[1]];
+        XCTAssertEqual(client->width,3200,@"%@",blocked); XCTAssertEqual(client->height,1200,@"%@",blocked);
+        [session setValue:@NO forKey:@"running"]; [session stop]; rfbClientCleanup(client); close(pair[1]);
+    }
+}
+- (void)testMissingSelectionMetadataRetriesOnlyTinyProbeAtBoundedAges {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+    CompanionVNCSession *session=[CompanionVNCSession new]; rfbClient *client=rfbGetClient(8,3,4);
+    client->sock=pair[0]; client->width=3200; client->height=1200; [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    [self deliverLayout:self.fixture[@"monitorLayouts"][@"all"] session:session client:client peer:pair[1]];
+    for (NSString *key in @[@"running",@"established",@"inputReady",@"appleGestureServer"]) [session setValue:@YES forKey:key];
+    XCTAssertTrue([session requestDesktopDisplayID:5]); [session setValue:@NO forKey:@"releaseInputRequested"];
+    XCTAssertTrue([session processDesktopSizeChange:client]); uint8_t bytes[32]; XCTAssertEqual(recv(pair[1],bytes,8,MSG_WAITALL),8);
+    for (NSNumber *age in @[@0,@0.1,@0.6,@0.7,@1.6,@2,@5.9]) {
+        [session setValue:@(NSProcessInfo.processInfo.systemUptime-age.doubleValue) forKey:@"desktopResizeStarted"];
+        XCTAssertTrue([session requestPendingDesktopLayout:client]);
+        BOOL expected=age.doubleValue==0 || age.doubleValue==0.6 || age.doubleValue==1.6;
+        ssize_t count=recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT); XCTAssertEqual(count,expected?10:-1);
+        if (count==10) { XCTAssertEqual(bytes[0],3); XCTAssertEqual(CompanionVNCBE16(bytes+6),1); XCTAssertEqual(CompanionVNCBE16(bytes+8),1); }
+        XCTAssertFalse(session.connected);
+    }
+    XCTAssertEqualObjects(session.diagnosticCounters[@"probeMetadataRequests"],@3);
+    [self deliverLayout:self.fixture[@"monitorLayouts"][@"first"] session:session client:client peer:pair[1]];
+    XCTAssertTrue([session requestPendingDesktopLayout:client]); XCTAssertEqual(recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT),-1);
+    [session setValue:@NO forKey:@"running"]; [session stop]; rfbClientCleanup(client); close(pair[1]);
+}
+- (void)testMirrorRestartsVirtualSessionOnceUsingExistingTransientLoginAndNeverReappliesSize {
+    DesktopSizeSession *session=[DesktopSizeSession new]; DesktopSizeViewer *viewer=[self viewerWithSession:session];
+    session.snapshot=self.acceptedSnapshot; viewer.restoredDesktopSizePreset=2;
+    __block NSInteger choice=-1; viewer.desktopSizeSelectionHandler=^(NSInteger value){choice=value;};
+    XCTAssertTrue([viewer applyMirrorDisplay]); XCTAssertTrue(viewer.requestedResume);
+    XCTAssertEqual(choice,0); XCTAssertEqual(viewer.restoredDesktopSizePreset,0);
+    [viewer setValue:@NO forKey:@"starting"]; session.snapshot=@{@"layoutVirtual":@NO};
+    [viewer updateDesktopSizeState]; XCTAssertEqual(session.requests,0);
+    viewer.requestedResume=NO; XCTAssertTrue([viewer applyMirrorDisplay]); XCTAssertFalse(viewer.requestedResume);
+    [viewer setValue:@YES forKey:@"inputInactive"]; XCTAssertFalse([viewer applyMirrorDisplay]);
+    [viewer stopViewer];
+}
+- (void)testSelectedMonitorAndAllDisplaysUseSocketAndFreshPixelsAndRetainCatalogue {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+    CompanionVNCSession *session=[CompanionVNCSession new];
+    rfbClient *client=rfbGetClient(8,3,4); client->sock=pair[0]; client->width=3200; client->height=1200;
+    [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    NSDictionary *layouts=self.fixture[@"monitorLayouts"];
+    [self deliverLayout:layouts[@"all"] session:session client:client peer:pair[1]];
+    for (NSString *key in @[@"running",@"established",@"inputReady",@"appleGestureServer"]) [session setValue:@YES forKey:key];
+    XCTAssertFalse([session requestDesktopDisplayID:999]);
+    __block NSUInteger frameCount=0;
+    for (NSNumber *identifier in @[@5,@9,@0]) {
+        XCTAssertTrue([session requestDesktopDisplayID:identifier.unsignedIntValue]);
+        XCTAssertFalse([session tryClickX:5 y:5 mask:1]);
+        [session setValue:@NO forKey:@"releaseInputRequested"]; XCTAssertTrue([session processDesktopSizeChange:client]);
+        uint8_t packet[8], expected[8]; XCTAssertEqual(recv(pair[1],packet,8,MSG_WAITALL),8);
+        CompanionVNCDesktopSelectionPacket(identifier.unsignedIntValue,expected); XCTAssertEqual(memcmp(packet,expected,8),0);
+        // Before the fresh matching layout, old pixels never accept the operation.
+        [session updatedX:0 y:0 width:client->width height:client->height]; [session publishFrame:client];
+        XCTAssertFalse(session.connected);
+        NSString *name=identifier.unsignedIntValue==5 ? @"first" : identifier.unsignedIntValue==9 ? @"second" : @"all";
+        [self deliverLayout:layouts[name] session:session client:client peer:pair[1]];
+        XCTAssertEqual(client->width,identifier.unsignedIntValue ? 1600 : 3200);
+        XCTAssertEqual([session.desktopDisplayLayout[@"views"] count],2);
+        XCTAssertFalse(session.connected);
+        XCTestExpectation *fresh=[self expectationWithDescription:@"Fresh selected display pixels"];
+        session.frameHandler=^(UIImage *image){ frameCount++; [fresh fulfill]; };
+        [session setValue:@0 forKey:@"lastFrame"];
+        [session updatedX:0 y:0 width:client->width height:client->height]; [session publishFrame:client];
+        [self waitForExpectations:@[fresh] timeout:2];
+        XCTAssertTrue(session.connected); XCTAssertEqualObjects(session.diagnosticCounters[@"probeOutcome"],@2);
+    }
+    XCTAssertEqual(frameCount,3);
+    [session setValue:@NO forKey:@"running"]; [session stop]; session.frameHandler=nil; rfbClientCleanup(client); close(pair[1]);
+}
+- (void)testSelectedStreamRetainsGlobalCatalogueWithoutWaitingForUnsentPixels {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+    CompanionVNCSession *session=[CompanionVNCSession new];
+    rfbClient *client=rfbGetClient(8,3,4); client->sock=pair[0]; client->width=8144; client->height=2134;
+    [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    NSDictionary *vectors=self.fixture[@"selectedCatalogueLayouts"];
+    NSDictionary *all=@{@"bodyHex":vectors[@"catalogueHex"]};
+    [self deliverLayout:all session:session client:client peer:pair[1]];
+    for (NSString *key in @[@"running",@"established",@"inputReady",@"appleGestureServer"]) [session setValue:@YES forKey:key];
+    for (NSNumber *identifier in @[@5,@9,@0]) {
+        XCTAssertTrue([session requestDesktopDisplayID:identifier.unsignedIntValue]);
+        [session setValue:@NO forKey:@"releaseInputRequested"]; XCTAssertTrue([session processDesktopSizeChange:client]);
+        uint8_t packet[8]; XCTAssertEqual(recv(pair[1],packet,8,MSG_WAITALL),8);
+        NSDictionary *row=identifier.intValue==5 ? vectors[@"cases"][0] : identifier.intValue==9 ? vectors[@"cases"][1] : all;
+        if (identifier.intValue==9) {
+            // An old external-monitor reply cannot complete the newer internal request.
+            [self deliverLayout:vectors[@"cases"][0] session:session client:client peer:pair[1]];
+            XCTAssertEqual(client->width,5120); XCTAssertFalse(session.connected);
+            XCTAssertEqualObjects(session.diagnosticCounters[@"probeOutcome"],@1);
+        }
+        [self deliverLayout:row session:session client:client peer:pair[1]];
+        int width=identifier.intValue==5 ? 5120 : identifier.intValue==9 ? 3024 : 8144;
+        int height=identifier.intValue==9 ? 1964 : 2134;
+        XCTAssertEqual(client->width,width); XCTAssertEqual(client->height,height);
+        XCTAssertEqual([session.desktopDisplayLayout[@"views"] count],2);
+        XCTAssertFalse(session.connected);
+        if (client->width!=width || client->height!=height) break; // Keep a failed regression bounded.
+        uint64_t expectedPixels=identifier.intValue ? (uint64_t)width*height : (uint64_t)5120*2134+(uint64_t)3024*1964;
+        XCTAssertEqualObjects(session.diagnosticCounters[@"baselineExpectedPixels"],@(expectedPixels));
+        if (identifier.intValue) XCTAssertEqualObjects([[session valueForKey:@"latestLayout"] objectForKey:@"backingScale"],@2);
+        XCTAssertFalse([session tryClickX:1 y:1 mask:1]);
+        XCTestExpectation *fresh=[self expectationWithDescription:@"Fresh selected stream"];
+        session.frameHandler=^(UIImage *image){ XCTAssertEqual(CGImageGetWidth(image.CGImage),width); [fresh fulfill]; };
+        [session setValue:@0 forKey:@"lastFrame"];
+        [session updatedX:0 y:0 width:width height:height]; [session publishFrame:client];
+        [self waitForExpectations:@[fresh] timeout:3]; session.frameHandler=nil;
+        XCTAssertTrue(session.connected); XCTAssertEqualObjects(session.diagnosticCounters[@"probeOutcome"],@2);
+        // Repeated selected-stream metadata must not discard a usable baseline.
+        [self deliverLayout:row session:session client:client peer:pair[1]];
+        XCTAssertTrue(session.connected);
+    }
+    XCTAssertTrue([session requestDesktopDisplayID:0]); XCTAssertTrue(session.connected);
+    XCTAssertTrue([session processDesktopSizeChange:client]);
+    uint8_t noRequest[32]; XCTAssertEqual(recv(pair[1],noRequest,sizeof(noRequest),MSG_DONTWAIT),-1);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"probeRequests"],@3);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"probeAccepted"],@3);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"probeNoops"],@1);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"probeTimedOut"],@0);
+    [session setValue:@NO forKey:@"running"]; [session stop]; session.frameHandler=nil; rfbClientCleanup(client); close(pair[1]);
+}
+- (void)testMonitorSwitchDoesNotRearmOrRefreshTheOldCanvasBeforeMatchingLayout {
+    XCTAssertEqualObjects(self.fixture[@"selectionHandoffOrder"],(@[@"release-held-input",@"retain-established-physical-delivery",@"select-display",@"request-one-pixel-metadata",@"await-matching-layout",@"retire-old-subscription-if-bounds-change",@"start-matching-updates",@"request-full-stream",@"present-fresh-baseline"]));
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+    CompanionVNCSession *session=[CompanionVNCSession new];
+    rfbClient *client=rfbGetClient(8,3,4); client->sock=pair[0]; client->width=3200; client->height=1200;
+    [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    [self deliverLayout:self.fixture[@"monitorLayouts"][@"all"] session:session client:client peer:pair[1]];
+    for (NSString *key in @[@"running",@"established",@"inputReady",@"appleGestureServer"]) [session setValue:@YES forKey:key];
+    uint8_t bytes[64]; XCTAssertTrue([session configureDesktopUpdates:client]); XCTAssertEqual(recv(pair[1],bytes,16,MSG_WAITALL),16);
+    XCTAssertTrue([session requestDesktopDisplayID:5]); [session setValue:@NO forKey:@"releaseInputRequested"];
+    XCTAssertTrue([session processDesktopSizeChange:client]); XCTAssertEqual(recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT),8);
+    XCTAssertEqual(bytes[0],13); // Preserve the established metadata-delivery path.
+    XCTAssertEqualObjects(session.diagnosticCounters[@"automaticDesktopUpdates"],@YES);
+    XCTAssertTrue([session configureDesktopUpdates:client]);
+    XCTAssertEqual(recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT),-1, @"Never rearm the old combined desktop after selecting a monitor");
+    XCTAssertTrue([session requestPendingDesktopLayout:client]); XCTAssertEqual(recv(pair[1],bytes,10,MSG_WAITALL),10);
+    NSMutableString *hex=[NSMutableString new]; for (NSUInteger i=0;i<10;i++) [hex appendFormat:@"%02x",bytes[i]];
+    XCTAssertEqualObjects(hex,self.fixture[@"layoutProbePacketHex"]);
+    XCTAssertTrue([session requestPendingDesktopLayout:client]);
+    XCTAssertEqual(recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT),-1, @"Solicit metadata once, without polling");
+    XCTAssertEqualObjects(session.diagnosticCounters[@"probeMetadataRequests"],@1);
+    XCTAssertTrue([session requestFullDesktop:client]);
+    XCTAssertEqual(recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT),-1, @"Never request old canvas pixels while waiting for layout");
+    [self deliverLayout:self.fixture[@"monitorLayouts"][@"first"] session:session client:client peer:pair[1]];
+    XCTAssertEqual(recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT),16); // Retire the old bounds only after metadata.
+    XCTAssertEqual(bytes[0],9); XCTAssertEqual(CompanionVNCBE32(bytes+4),UINT32_MAX);
+    XCTAssertTrue([session configureDesktopUpdates:client]); XCTAssertEqual(recv(pair[1],bytes,16,MSG_WAITALL),16);
+    XCTAssertEqual(CompanionVNCBE16(bytes+12),1600); XCTAssertEqual(CompanionVNCBE16(bytes+14),1200);
+    XCTAssertTrue([session requestFullDesktop:client]); XCTAssertEqual(recv(pair[1],bytes,10,MSG_WAITALL),10);
+    XCTAssertEqual(CompanionVNCBE16(bytes+6),1600); XCTAssertEqual(CompanionVNCBE16(bytes+8),1200);
+    [session setValue:@NO forKey:@"running"]; [session stop]; rfbClientCleanup(client); close(pair[1]);
+}
+- (void)testPhysicalSelectionsKeepEstablishedMetadataDeliveryAcrossTwoCompleteCycles {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+    CompanionVNCSession *session=[CompanionVNCSession new]; rfbClient *client=rfbGetClient(8,3,4);
+    client->sock=pair[0]; client->width=3200; client->height=1200; [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    NSDictionary *layouts=self.fixture[@"monitorLayouts"];
+    [self deliverLayout:layouts[@"all"] session:session client:client peer:pair[1]];
+    for (NSString *key in @[@"running",@"established",@"inputReady",@"appleGestureServer"]) [session setValue:@YES forKey:key];
+    uint8_t bytes[64]; XCTAssertTrue([session configureDesktopUpdates:client]); XCTAssertEqual(recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT),16);
+    for (NSNumber *identifier in @[@5,@9,@0,@5,@9,@0]) {
+        int oldWidth=client->width;
+        XCTAssertTrue([session requestDesktopDisplayID:identifier.unsignedIntValue]); [session setValue:@NO forKey:@"releaseInputRequested"];
+        XCTAssertTrue([session processDesktopSizeChange:client]); XCTAssertEqual(recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT),8);
+        XCTAssertEqual(bytes[0],13); XCTAssertEqualObjects(session.diagnosticCounters[@"automaticDesktopUpdates"],@YES);
+        XCTAssertTrue([session configureDesktopUpdates:client]); XCTAssertEqual(recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT),-1);
+        // The peer can send its new layout on the established automatic stream.
+        // Do not restart old bounds, admit input, or present pre-layout pixels.
+        [session updatedX:0 y:0 width:oldWidth height:1200]; [session publishFrame:client]; XCTAssertFalse(session.connected);
+        NSString *name=identifier.intValue==5?@"first":identifier.intValue==9?@"second":@"all";
+        [self deliverLayout:layouts[name] session:session client:client peer:pair[1]];
+        int width=identifier.intValue?1600:3200;
+        ssize_t stop=recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT); XCTAssertEqual(stop,oldWidth!=width?16:-1);
+        if (stop==16) { XCTAssertEqual(bytes[0],9); XCTAssertEqual(CompanionVNCBE32(bytes+4),UINT32_MAX); }
+        XCTAssertTrue([session configureDesktopUpdates:client]); XCTAssertEqual(recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT),16);
+        XCTAssertEqual(CompanionVNCBE16(bytes+12),width); XCTAssertEqual(CompanionVNCBE16(bytes+14),1200);
+        XCTAssertTrue([session requestFullDesktop:client]); XCTAssertEqual(recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT),10);
+        XCTAssertEqual(CompanionVNCBE16(bytes+6),width); XCTAssertFalse(session.connected);
+        XCTestExpectation *fresh=[self expectationWithDescription:@"Fresh selected-stream baseline while metadata delivery stays live"];
+        session.frameHandler=^(UIImage *image){[fresh fulfill];}; [session setValue:@0 forKey:@"lastFrame"];
+        [session updatedX:0 y:0 width:width height:1200]; [session publishFrame:client]; [self waitForExpectations:@[fresh] timeout:2]; session.frameHandler=nil;
+        XCTAssertTrue(session.connected);
+    }
+    XCTAssertEqualObjects(session.diagnosticCounters[@"probeAccepted"],@6); XCTAssertEqualObjects(session.diagnosticCounters[@"probeTimedOut"],@0);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"selectionDeliveryPreserved"],@6);
+    [session setValue:@NO forKey:@"running"]; [session stop]; rfbClientCleanup(client); close(pair[1]);
+}
+- (void)testKeepingPhysicalMetadataDeliveryDoesNotBypassPauseOrVirtualSizeRetirement {
+    for (NSString *mode in @[@"pause",@"virtual",@"inputOnly",@"invalidLayout"]) {
+        BOOL virtualSize=[mode isEqualToString:@"virtual"];
+        int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+        CompanionVNCSession *session=[CompanionVNCSession new]; rfbClient *client=rfbGetClient(8,3,4);
+        client->sock=pair[0]; client->width=3200; client->height=1200; [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+        [self deliverLayout:self.fixture[@"monitorLayouts"][@"all"] session:session client:client peer:pair[1]];
+        for (NSString *key in @[@"running",@"established",@"inputReady",@"appleGestureServer"]) [session setValue:@YES forKey:key];
+        uint8_t bytes[256]; XCTAssertTrue([session configureDesktopUpdates:client]); XCTAssertEqual(recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT),16);
+        XCTAssertTrue(virtualSize?[session requestDesktopSizePreset:2]:[session requestDesktopDisplayID:5]);
+        [session setValue:@NO forKey:@"releaseInputRequested"]; XCTAssertTrue([session processDesktopSizeChange:client]);
+        ssize_t count=recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT);
+        if (virtualSize) { XCTAssertEqual(count,212); XCTAssertEqual(bytes[0],9); XCTAssertEqual(bytes[16],29); }
+        else {
+            XCTAssertEqual(count,8);
+            if ([mode isEqualToString:@"pause"]) [session setValue:@YES forKey:@"paused"];
+            else if ([mode isEqualToString:@"inputOnly"]) session.inputOnly=YES;
+            else [session setValue:@NO forKey:@"coverageLayoutValid"];
+            XCTAssertTrue([session configureDesktopUpdates:client]); XCTAssertEqual(recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT),16);
+            XCTAssertEqual(bytes[0],9); XCTAssertEqual(CompanionVNCBE32(bytes+4),UINT32_MAX);
+            XCTAssertFalse(session.connected); XCTAssertFalse([session tryClickX:5 y:5 mask:1]);
+        }
+        XCTAssertEqualObjects(session.diagnosticCounters[@"automaticDesktopUpdates"],@NO);
+        [session setValue:@NO forKey:@"running"]; [session stop]; rfbClientCleanup(client); close(pair[1]);
+    }
+}
+- (void)testChoosingAnAlreadyPresentedMonitorIsImmediateAndDoesNotRetireInput {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+    CompanionVNCSession *session=[CompanionVNCSession new];
+    rfbClient *client=rfbGetClient(8,3,4); client->sock=pair[0]; client->width=1600; client->height=1200;
+    [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    [self deliverLayout:self.fixture[@"monitorLayouts"][@"first"] session:session client:client peer:pair[1]];
+    for (NSString *key in @[@"running",@"established",@"inputReady",@"appleGestureServer"]) [session setValue:@YES forKey:key];
+    XCTestExpectation *fresh=[self expectationWithDescription:@"Initially usable monitor"];
+    session.frameHandler=^(UIImage *image){[fresh fulfill];};
+    [session updatedX:0 y:0 width:1600 height:1200]; [session publishFrame:client]; [self waitForExpectations:@[fresh] timeout:2]; session.frameHandler=nil;
+    for (NSUInteger i=0;i<3;i++) {
+        XCTAssertTrue([session requestDesktopDisplayID:5]); XCTAssertTrue(session.connected);
+        XCTAssertTrue([session processDesktopSizeChange:client]);
+        uint8_t bytes[32]; XCTAssertEqual(recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT),-1);
+        XCTAssertEqualObjects(session.diagnosticCounters[@"probeRequests"],@0);
+        XCTAssertEqualObjects(session.diagnosticCounters[@"probeOutcome"],@2);
+        XCTAssertEqualObjects(session.diagnosticCounters[@"probeAwaiting"],@NO);
+    }
+    [session setValue:@NO forKey:@"running"]; [session stop]; rfbClientCleanup(client); close(pair[1]);
+}
+- (void)testAlreadyActiveDisplayFinishesViewerSelectionImmediately {
+    DesktopSizeSession *session=[DesktopSizeSession new]; DesktopSizeViewer *viewer=[self viewerWithSession:session];
+    session.snapshot=@{@"probeOutcome":@2};
+    NSDictionary *display=@{@"id":@5,@"title":@"Display 1",@"x":@0,@"y":@0,@"width":@1,@"height":@1};
+    [viewer setValue:@[display] forKey:@"displayViews"];
+    __block NSUInteger saves=0; viewer.displaySelectionHandler=^(NSNumber *identifier){ XCTAssertEqualObjects(identifier,@5); saves++; };
+    XCTAssertTrue([viewer applyStreamDisplay:@5]);
+    XCTAssertNil([viewer valueForKey:@"pendingStreamDisplayID"]); XCTAssertEqual(saves,1);
+    [viewer stopViewer];
+}
+- (void)testProgressingBaselineDoesNotQueueAnotherFullImage {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+    CompanionVNCSession *session=[CompanionVNCSession new]; rfbClient *client=rfbGetClient(8,3,4);
+    client->sock=pair[0]; client->width=client->height=100; [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    for (NSString *key in @[@"running",@"established"]) [session setValue:@YES forKey:key];
+    [session setValue:@NO forKey:@"desktopRefreshPending"];
+    [session updatedX:0 y:0 width:100 height:50]; double now=NSProcessInfo.processInfo.systemUptime;
+    [session setValue:@(now-1.5) forKey:@"baselineStarted"]; [session setValue:@(now-1.5) forKey:@"lastFullRefresh"];
+    XCTAssertTrue([session maintainDesktopBaseline:client now:now]);
+    uint8_t bytes[32]; XCTAssertEqual(recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT),-1, @"The first image is making progress; do not queue another full copy");
+    XCTAssertEqualObjects(session.diagnosticCounters[@"fullRefreshRetries"],@0);
+    [session setValue:@NO forKey:@"running"]; [session stop]; rfbClientCleanup(client); close(pair[1]);
+}
+- (void)testSwitchBaselineDoesNotCreateRoutinePullsAndRestartsTheChainOnceReady {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+    struct timeval timeout={.tv_sec=1}; setsockopt(pair[1],SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
+    CompanionVNCSession *session=[CompanionVNCSession new]; rfbClient *client=rfbGetClient(8,3,4);
+    client->sock=pair[0]; client->width=3200; client->height=1200; [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    [self deliverLayout:self.fixture[@"monitorLayouts"][@"all"] session:session client:client peer:pair[1]];
+    for (NSString *key in @[@"running",@"established",@"inputReady",@"appleGestureServer"]) [session setValue:@YES forKey:key];
+    XCTAssertTrue([session requestDesktopDisplayID:5]); [session setValue:@NO forKey:@"releaseInputRequested"];
+    XCTAssertTrue([session processDesktopSizeChange:client]); uint8_t bytes[32]; XCTAssertEqual(recv(pair[1],bytes,8,MSG_WAITALL),8);
+    [self deliverLayout:self.fixture[@"monitorLayouts"][@"first"] session:session client:client peer:pair[1]];
+    XCTAssertTrue([session configureDesktopUpdates:client]); XCTAssertEqual(recv(pair[1],bytes,16,MSG_WAITALL),16);
+    XCTAssertFalse(SupportsClient2Server(client,rfbFramebufferUpdateRequest));
+    const uint8_t empty[]={0,0,0,0}; XCTAssertEqual(send(pair[1],empty,4,0),4); XCTAssertTrue(HandleRFBServerMessage(client));
+    XCTAssertEqual(recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT),-1);
+    XCTAssertTrue([session requestFullDesktop:client]); XCTAssertEqual(recv(pair[1],bytes,10,MSG_WAITALL),10);
+    XCTestExpectation *fresh=[self expectationWithDescription:@"New target ready"];
+    session.frameHandler=^(UIImage *image){[fresh fulfill];}; [session updatedX:0 y:0 width:1600 height:1200]; [session publishFrame:client];
+    [self waitForExpectations:@[fresh] timeout:2]; session.frameHandler=nil;
+    XCTAssertTrue(session.connected); XCTAssertTrue([session configureDesktopUpdates:client]);
+    XCTAssertTrue(SupportsClient2Server(client,rfbFramebufferUpdateRequest)); XCTAssertTrue([session resumeDesktopPull:client]);
+    XCTAssertEqual(recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT),10);
+    XCTAssertEqual(bytes[0],3); XCTAssertEqual(bytes[1],1);
+    XCTAssertTrue([session resumeDesktopPull:client]); XCTAssertEqual(recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT),-1);
+    [session setValue:@NO forKey:@"running"]; [session stop]; rfbClientCleanup(client); close(pair[1]);
+}
+- (void)testStallRetriesAndAbsoluteDeadlineFollowIndexedPolicy {
+    for (NSDictionary *row in self.fixture[@"baselineRefreshPolicy"][@"cases"]) {
+        int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+        CompanionVNCSession *session=[CompanionVNCSession new]; rfbClient *client=rfbGetClient(8,3,4);
+        client->sock=pair[0]; client->width=client->height=100; [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+        for (NSString *key in @[@"running",@"established"]) [session setValue:@YES forKey:key];
+        double now=NSProcessInfo.processInfo.systemUptime;
+        [session setValue:@(now-[row[@"elapsed"] doubleValue]) forKey:@"baselineStarted"];
+        [session setValue:@(now-[row[@"lastRequestAge"] doubleValue]) forKey:@"lastFullRefresh"];
+        [session setValue:@(now-[row[@"lastProgressAge"] doubleValue]) forKey:@"baselineLastProgress"];
+        [session setValue:row[@"retries"] forKey:@"fullRefreshRetries"];
+        // A pending flag cannot request more pixels beyond the hard deadline.
+        [session setValue:row[@"expired"] forKey:@"desktopRefreshPending"];
+        XCTAssertEqual([session maintainDesktopBaseline:client now:now],![row[@"expired"] boolValue],@"%@",row[@"name"]);
+        uint8_t bytes[32]; ssize_t count=recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT);
+        XCTAssertEqual(count,[row[@"retry"] boolValue]?10:-1,@"%@",row[@"name"]);
+        if ([row[@"expired"] boolValue]) XCTAssertEqualObjects(session.diagnosticCounters[@"failureStage"],@102);
+        XCTAssertFalse(session.connected);
+        [session setValue:@NO forKey:@"running"]; [session stop]; rfbClientCleanup(client); close(pair[1]);
+    }
+}
+- (void)testDuplicatePixelsDoNotPostponeAStallRetry {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+    CompanionVNCSession *session=[CompanionVNCSession new]; rfbClient *client=rfbGetClient(8,3,4);
+    client->sock=pair[0]; client->width=client->height=100; [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    for (NSString *key in @[@"running",@"established"]) [session setValue:@YES forKey:key];
+    [session updatedX:0 y:0 width:100 height:50]; double now=NSProcessInfo.processInfo.systemUptime;
+    [session setValue:@(now-2) forKey:@"baselineStarted"]; [session setValue:@(now-2) forKey:@"lastFullRefresh"]; [session setValue:@(now-2) forKey:@"baselineLastProgress"];
+    [session updatedX:0 y:0 width:100 height:50]; [session updatedX:100 y:0 width:1 height:1];
+    XCTAssertEqualWithAccuracy([[session valueForKey:@"baselineLastProgress"] doubleValue],now-2,0.001);
+    XCTAssertTrue([session maintainDesktopBaseline:client now:now]); uint8_t bytes[32]; XCTAssertEqual(recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT),10);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"fullRefreshRetries"],@1);
+    XCTAssertFalse(session.connected);
+    [session setValue:@NO forKey:@"running"]; [session stop]; rfbClientCleanup(client); close(pair[1]);
+}
+- (void)testSubscriptionRefreshFlagsCoalesceOnlyWithinTheSameIncompleteBaseline {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+    CompanionVNCSession *session=[CompanionVNCSession new]; rfbClient *client=rfbGetClient(8,3,4);
+    client->sock=pair[0]; client->width=client->height=100; [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    for (NSString *key in @[@"running",@"established"]) [session setValue:@YES forKey:key];
+    double now=NSProcessInfo.processInfo.systemUptime; uint8_t bytes[32];
+    [session setValue:@YES forKey:@"desktopRefreshPending"]; XCTAssertTrue([session maintainDesktopBaseline:client now:now]);
+    XCTAssertEqual(recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT),10);
+    [session setValue:@YES forKey:@"desktopRefreshPending"]; XCTAssertTrue([session maintainDesktopBaseline:client now:now+0.1]);
+    XCTAssertEqual(recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT),-1);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"coalescedFullRefreshes"],@1);
+    client->width=101; XCTAssertTrue([session allocate:client]);
+    XCTAssertTrue([session maintainDesktopBaseline:client now:NSProcessInfo.processInfo.systemUptime]);
+    XCTAssertEqual(recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT),10); XCTAssertEqual(CompanionVNCBE16(bytes+6),101);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"fullRefreshRequests"],@2);
+    [session setValue:@NO forKey:@"running"]; [session stop]; rfbClientCleanup(client); close(pair[1]);
+}
+- (void)testRoutinePullRestartWaitsThroughPauseInputOnlyAndRetirement {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+    CompanionVNCSession *session=[CompanionVNCSession new]; rfbClient *client=rfbGetClient(8,3,4);
+    client->sock=pair[0]; client->width=client->height=100; [session configureClient:client];
+    for (NSString *key in @[@"running",@"established",@"inputReady",@"baselinePresented",@"routinePullPausedForSwitch"]) [session setValue:@YES forKey:key];
+    uint8_t bytes[32];
+    for (NSString *key in @[@"paused",@"inputOnly",@"stopping",@"overflow"]) {
+        [session setValue:@YES forKey:key]; XCTAssertTrue([session resumeDesktopPull:client]); XCTAssertEqual(recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT),-1);
+        [session setValue:@NO forKey:key];
+    }
+    // Leaving input-only mode retires readiness until its replacement baseline.
+    XCTAssertFalse(session.connected); XCTAssertTrue([session resumeDesktopPull:client]);
+    XCTAssertEqual(recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT),-1);
+    [session setValue:@YES forKey:@"inputReady"]; [session setValue:@YES forKey:@"baselinePresented"];
+    [session setValue:@NO forKey:@"modeChanged"]; // The socket owner consumed the mode transition and presented fresh pixels.
+    XCTAssertTrue([session resumeDesktopPull:client]); XCTAssertEqual(recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT),10);
+    XCTAssertTrue([session resumeDesktopPull:client]); XCTAssertEqual(recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT),-1);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"routinePullRestarts"],@1);
+    [session setValue:@NO forKey:@"running"]; [session stop]; rfbClientCleanup(client); close(pair[1]);
+}
+- (void)testSwitchHistoryIsBoundedNumericAndDoesNotSurviveOwnerReplacement {
+    CompanionVNCSession *session=[CompanionVNCSession new]; NSLock *lock=[session valueForKey:@"lock"];
+    double now=NSProcessInfo.processInfo.systemUptime;
+    for (NSUInteger i=1;i<=15;i++) {
+        [session setValue:@(now-1) forKey:@"desktopResizeAdmitted"]; [session setValue:@(now-0.9) forKey:@"desktopResizeStarted"];
+        [session setValue:@(i) forKey:@"desktopResizeRequests"]; [session setValue:@NO forKey:@"desktopResizeSampleRecorded"];
+        [session setValue:@2 forKey:@"desktopResizeOutcome"]; [session setValue:@900 forKey:@"desktopResizeCompleteMS"];
+        [lock lock]; [session recordDesktopSwitchLocked:now]; [lock unlock];
+    }
+    NSArray *samples=session.diagnosticCounters[@"switches"]; XCTAssertEqual(samples.count,12); XCTAssertEqualObjects(samples[0][@"sequence"],@4);
+    for (NSDictionary *sample in samples) for (id value in sample.allValues) XCTAssertTrue([value isKindOfClass:NSNumber.class]);
+    [session connectAddresses:@[] port:5900 username:@"synthetic" password:@"synthetic"];
+    XCTAssertEqual([session.diagnosticCounters[@"switches"] count],0); [session stop];
+}
+- (void)testReadMetricsSeparateBufferedParserBytesFromSocketReadAhead {
+    NSDictionary *row=self.fixture[@"switchTimingDiagnostics"][@"bufferedRead"];
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+    rfbClient *client=rfbGetClient(8,3,4); client->sock=pair[0]; XCTAssertTrue(SetNonBlocking(client->sock));
+    CompanionVNCReadMetrics metrics={0}; CompanionVNCReadService service={.metrics=&metrics};
+    CompanionVNCSetReadService(client,&service);
+    NSData *payload=[NSMutableData dataWithLength:[row[@"sentBytes"] unsignedIntegerValue]];
+    XCTAssertEqual(write(pair[1],payload.bytes,payload.length),payload.length);
+    for (NSUInteger i=0;i<[row[@"requests"] count];i++) {
+        uint8_t bytes[32]; XCTAssertTrue(ReadFromRFBServer(client,(char *)bytes,[row[@"requests"][i] unsignedIntValue]));
+        XCTAssertEqual(metrics.deliveredBytes,[row[@"deliveredTotals"][i] unsignedLongLongValue]);
+        XCTAssertEqual(metrics.socketBytes,[row[@"socketReadTotals"][i] unsignedLongLongValue]);
+    }
+    XCTAssertEqual(client->buffered,0); XCTAssertEqual(metrics.waitCalls,0);
+    CompanionVNCSetReadService(client,NULL); rfbClientCleanup(client); close(pair[1]);
+}
+- (void)testReadMetricsCountLargeAndPhasedReadsWithoutChangingBytes {
+    NSDictionary *policy=self.fixture[@"switchTimingDiagnostics"], *phased=policy[@"phasedRead"];
+    for (NSNumber *large in @[@NO,@YES]) {
+        int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+        rfbClient *client=rfbGetClient(8,3,4); client->sock=pair[0]; XCTAssertTrue(SetNonBlocking(client->sock));
+        CompanionVNCReadMetrics metrics={0}; CompanionVNCReadService service={.metrics=&metrics}; CompanionVNCSetReadService(client,&service);
+        NSUInteger first=large.boolValue?0:[phased[@"firstBytes"] unsignedIntegerValue];
+        NSUInteger length=large.boolValue?[policy[@"largeReadBytes"] unsignedIntegerValue]:first+[phased[@"lastBytes"] unsignedIntegerValue];
+        NSMutableData *payload=[NSMutableData dataWithLength:length], *received=[NSMutableData dataWithLength:length];
+        uint8_t *pattern=payload.mutableBytes; for(NSUInteger i=0;i<length;i++) pattern[i]=(uint8_t)(i%251);
+        if(first) XCTAssertEqual(write(pair[1],payload.bytes,first),first);
+        XCTestExpectation *sent=[self expectationWithDescription:@"Synthetic remaining bytes sent"]; int peer=pair[1];
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+            usleep([phased[@"delayMicroseconds"] unsignedIntValue]);
+            NSUInteger offset=first;
+            while(offset<length) { ssize_t count=write(peer,(const uint8_t *)payload.bytes+offset,length-offset); if(count<=0) break; offset+=(NSUInteger)count; }
+            XCTAssertEqual(offset,length); [sent fulfill];
+        });
+        XCTAssertTrue(ReadFromRFBServer(client,received.mutableBytes,(unsigned int)length));
+        [self waitForExpectations:@[sent] timeout:2];
+        XCTAssertEqualObjects(received,payload); XCTAssertEqual(metrics.socketBytes,length); XCTAssertEqual(metrics.deliveredBytes,length);
+        XCTAssertGreaterThan(metrics.waitCalls,0); XCTAssertGreaterThan(metrics.waitMS,0);
+        CompanionVNCSetReadService(client,NULL); rfbClientCleanup(client); close(pair[1]);
+    }
+}
+- (void)testReadMetricsDisabledOrRejectedDoNotConsumeOrChangeTheStream {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+    rfbClient *client=rfbGetClient(8,3,4); client->sock=pair[0]; XCTAssertTrue(SetNonBlocking(client->sock));
+    CompanionVNCReadMetrics metrics={0}; CompanionVNCReadService reject={.service=RejectMetricRead,.metrics=&metrics};
+    CompanionVNCSetReadService(client,&reject);
+    uint8_t payload[]={1,2,3,4}, received[4]={0}; XCTAssertEqual(write(pair[1],payload,sizeof(payload)),sizeof(payload));
+    XCTAssertFalse(ReadFromRFBServer(client,(char *)received,sizeof(received)));
+    XCTAssertEqual(metrics.socketBytes,0); XCTAssertEqual(metrics.deliveredBytes,0); XCTAssertEqual(metrics.waitCalls,0);
+    XCTAssertEqual(recv(client->sock,received,sizeof(received),MSG_PEEK|MSG_DONTWAIT),sizeof(payload));
+    CompanionVNCSetReadService(client,NULL); XCTAssertTrue(ReadFromRFBServer(client,(char *)received,sizeof(received)));
+    XCTAssertEqual(memcmp(received,payload,sizeof(payload)),0); XCTAssertEqual(metrics.socketBytes,0); XCTAssertEqual(metrics.deliveredBytes,0);
+    rfbClientCleanup(client); close(pair[1]);
+}
+- (void)testSwitchMetricsCapturePhaseBytesAndNeverReuseAFailedOrReplacementOwnersSample {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+    CompanionVNCSession *session=[CompanionVNCSession new]; rfbClient *client=rfbGetClient(8,3,4);
+    client->sock=pair[0]; client->width=3200; client->height=1200; [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    XCTAssertTrue([session installDesktopReadService:client]);
+    [self deliverLayout:self.fixture[@"monitorLayouts"][@"all"] session:session client:client peer:pair[1]];
+    for (NSString *key in @[@"running",@"established",@"inputReady",@"appleGestureServer"]) [session setValue:@YES forKey:key];
+    XCTAssertTrue([session requestDesktopDisplayID:5]); [session setValue:@NO forKey:@"releaseInputRequested"];
+    XCTAssertTrue([session processDesktopSizeChange:client]); uint8_t bytes[32]; XCTAssertEqual(recv(pair[1],bytes,8,MSG_WAITALL),8);
+    [self deliverLayout:self.fixture[@"monitorLayouts"][@"first"] session:session client:client peer:pair[1]];
+    NSUInteger fresh=[self.fixture[@"switchTimingDiagnostics"][@"bufferedRead"][@"sentBytes"] unsignedIntegerValue];
+    NSData *payload=[NSMutableData dataWithLength:fresh]; XCTAssertEqual(write(pair[1],payload.bytes,payload.length),payload.length);
+    XCTAssertTrue(ReadFromRFBServer(client,(char *)bytes,(unsigned int)fresh));
+    XCTAssertFalse(session.connected);
+    XCTestExpectation *ready=[self expectationWithDescription:@"Measured fresh image becomes usable"];
+    ready.expectedFulfillmentCount=2; __block NSUInteger frames=0; int peer=pair[1];
+    session.frameHandler=^(UIImage *image){
+        if (++frames==1) {
+            // Another complete frame can be queued while the first callback is
+            // presenting. The accepted switch must retain its first-frame sample.
+            XCTAssertEqual(write(peer,payload.bytes,payload.length),payload.length);
+            uint8_t later[32]; XCTAssertTrue(ReadFromRFBServer(client,(char *)later,(unsigned int)fresh));
+            [session updatedX:0 y:0 width:1 height:1]; [session setValue:@0 forKey:@"lastFrame"]; [session publishFrame:client];
+        }
+        [ready fulfill];
+    };
+    [session updatedX:0 y:0 width:1600 height:1200]; [session publishFrame:client];
+    [self waitForExpectations:@[ready] timeout:2]; session.frameHandler=nil;
+    NSDictionary *sample=[session.diagnosticCounters[@"switches"] lastObject];
+    XCTAssertEqualObjects(sample[@"readMeasurementsAvailable"],@YES); XCTAssertEqualObjects(sample[@"processingClockAvailable"],@YES);
+    XCTAssertEqualObjects(sample[@"freshRfbBytes"],@(fresh)); XCTAssertGreaterThan([sample[@"rfbBytes"] unsignedIntegerValue],fresh);
+    for (NSString *key in @[@"processingCPUMS",@"freshProcessingCPUMS",@"socketWaitMS",@"freshSocketWaitMS",@"frameCopyMS",@"presentationQueueMS",@"frameCallbackMS"]) {
+        XCTAssertNotNil(sample[key]); XCTAssertTrue(isfinite([sample[key] doubleValue])); XCTAssertGreaterThanOrEqual([sample[key] doubleValue],0);
+    }
+    XCTAssertTrue(session.connected); XCTAssertEqualObjects(sample[@"outcome"],@2);
+    XCTAssertTrue([session requestDesktopDisplayID:0]); [session setValue:@NO forKey:@"releaseInputRequested"];
+    XCTAssertTrue([session processDesktopSizeChange:client]);
+    [session finish:@"Synthetic incomplete switch"];
+    sample=[session.diagnosticCounters[@"switches"] lastObject];
+    XCTAssertEqualObjects(sample[@"readMeasurementsAvailable"],@NO); XCTAssertEqualObjects(sample[@"rfbBytes"],@0);
+    XCTAssertEqualObjects(sample[@"freshRfbBytes"],@0); XCTAssertEqualObjects(sample[@"processingCPUMS"],@0);
+    CompanionVNCSetReadService(client,NULL); rfbClientCleanup(client); close(pair[1]);
+    [session connectAddresses:@[] port:5900 username:@"synthetic" password:@"synthetic"];
+    XCTAssertEqual([session.diagnosticCounters[@"switches"] count],0); [session stop];
+}
+- (void)withDisplayMenuViewer:(void (^)(CompanionVNCViewer *, CompanionVNCSession *))body {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+    CompanionVNCSession *session=[CompanionVNCSession new]; rfbClient *client=rfbGetClient(8,3,4);
+    client->sock=pair[0]; client->width=3200; client->height=1200; [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    [self deliverLayout:self.fixture[@"monitorLayouts"][@"all"] session:session client:client peer:pair[1]];
+    for (NSString *key in @[@"running",@"established",@"inputReady",@"appleGestureServer",@"baselinePresented"]) [session setValue:@YES forKey:key];
+    CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded]; viewer.session=session;
+    viewer.view.frame=CGRectMake(0,0,440,956); [viewer setValue:@YES forKey:@"trackpadMode"]; [viewer setValue:@YES forKey:@"foreground"];
+    [viewer frame:[[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(640,240)] imageWithActions:^(UIGraphicsImageRendererContext *ctx){}]];
+    [(UIView *)[viewer valueForKey:@"login"] setHidden:YES]; [viewer updateConnectionChrome];
+    UIWindowScene *scene=(UIWindowScene *)UIApplication.sharedApplication.connectedScenes.allObjects.firstObject;
+    UIWindow *previous=scene.keyWindow, *window=[[UIWindow alloc] initWithWindowScene:scene];
+    window.frame=viewer.view.frame; window.rootViewController=viewer; [window makeKeyAndVisible]; [viewer.view layoutIfNeeded];
+    body(viewer,session);
+    if (viewer.presentedViewController) {
+        XCTestExpectation *closed=[self expectationWithDescription:@"Native display picker closes"];
+        [viewer dismissViewControllerAnimated:NO completion:^{[closed fulfill];}]; [self waitForExpectations:@[closed] timeout:2];
+    }
+    window.hidden=YES; [previous makeKeyAndVisible]; [session setValue:@NO forKey:@"running"]; [viewer stopViewer]; rfbClientCleanup(client); close(pair[1]);
+}
+- (void)testDisplayFailureNumericSummarySurvivesReconnectAndCleanExitDoesNotReplaceIt {
+    CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded]; [viewer setValue:@YES forKey:@"foreground"];
+    [viewer prepareConnection]; CompanionVNCSession *failed=viewer.session;
+    [failed setValue:@102 forKey:@"failureStage"]; [failed setValue:@3200 forKey:@"framebufferWidth"];
+    [failed setValue:@1200 forKey:@"framebufferHeight"]; [failed setValue:@3840000 forKey:@"expectedPixels"];
+    [failed setValue:@1920000 forKey:@"receivedPixels"];
+    __block NSDictionary *last; viewer.diagnosticHandler=^(NSDictionary *snapshot){last=snapshot;};
+    failed.stateHandler(@"Desktop did not finish loading — reconnect",@{@"handshakeStage":@5,@"failureStage":@102});
+    NSDictionary *retained=last[@"lastConnectionFailure"]; XCTAssertNotNil(retained);
+    XCTAssertEqualObjects(retained[@"failureStage"],@102); XCTAssertEqualObjects(retained[@"baselineExpectedPixels"],@3840000);
+    XCTAssertEqualObjects(retained[@"baselineReceivedPixels"],@1920000);
+    [viewer prepareConnection]; [viewer reportDiagnostics:viewer.session.diagnosticCounters];
+    XCTAssertEqualObjects(last[@"lastConnectionFailure"],retained);
+    viewer.session.stateHandler(@"Disconnected",@{@"handshakeStage":@5,@"failureStage":@0});
+    XCTAssertEqualObjects(last[@"lastConnectionFailure"],retained,@"An intentional clean exit must not erase the last failure");
+    [viewer stopViewer];
+}
+- (void)testDisplayPickerKeepsTheTouchedRowStableAcrossRepeatedServerRefreshes {
+    [self withDisplayMenuViewer:^(CompanionVNCViewer *viewer,CompanionVNCSession *session){
+        BOOL animations=UIView.areAnimationsEnabled; [UIView setAnimationsEnabled:NO];
+        [viewer chooseView];
+        UINavigationController *navigation=(id)viewer.presentedViewController;
+        [navigation.view layoutIfNeeded];
+        CompanionVNCDisplayPicker *picker=[viewer valueForKey:@"displayPicker"];
+        XCTestExpectation *shown=[self expectationForPredicate:[NSPredicate predicateWithBlock:^BOOL(id object,NSDictionary *bindings){
+            return picker.view.window != nil && !navigation.isBeingPresented;
+        }] evaluatedWithObject:picker handler:nil];
+        [self waitForExpectations:@[shown] timeout:2];
+        [navigation.view layoutIfNeeded]; [picker.view layoutIfNeeded]; [picker.tableView layoutIfNeeded];
+        NSIndexPath *first=[NSIndexPath indexPathForRow:0 inSection:0];
+        UITableViewCell *touched=[picker.tableView cellForRowAtIndexPath:first]; XCTAssertNotNil(touched);
+        touched.highlighted=YES;
+        CGRect before=[touched convertRect:touched.bounds toView:viewer.view.window];
+        CGFloat barBottom=CGRectGetMaxY([navigation.navigationBar convertRect:navigation.navigationBar.bounds toView:viewer.view.window]);
+        XCTAssertGreaterThanOrEqual(CGRectGetMinY(before),barBottom-1,@"The first display must be below the navigation bar");
+        for (NSUInteger i=0;i<20;i++) { [viewer updateDisplayPicker]; [picker.tableView layoutIfNeeded]; }
+        UITableViewCell *after=[picker.tableView cellForRowAtIndexPath:first];
+        XCTAssertEqual(touched,after,@"An unchanged catalogue must not replace a row under the user's finger");
+        XCTAssertTrue(after.highlighted); XCTAssertTrue(CGRectEqualToRect(before,[after convertRect:after.bounds toView:viewer.view.window]));
+        picker.selectedID=@9; [picker.tableView layoutIfNeeded];
+        XCTAssertEqual(touched,[picker.tableView cellForRowAtIndexPath:first]);
+        XCTAssertEqual([picker.tableView cellForRowAtIndexPath:[NSIndexPath indexPathForRow:1 inSection:0]].accessoryType,UITableViewCellAccessoryCheckmark);
+        picker.selectedID=nil; [picker.tableView layoutIfNeeded];
+        XCTAssertEqual(touched,[picker.tableView cellForRowAtIndexPath:first]);
+        XCTAssertEqual([picker.tableView cellForRowAtIndexPath:[NSIndexPath indexPathForRow:2 inSection:0]].accessoryType,UITableViewCellAccessoryCheckmark);
+        [UIView setAnimationsEnabled:animations];
+    }];
+}
+- (void)testNativeDisplayMenuRetiresPointerAndLateCallbacksCannotBlockItsChoice {
+    XCTAssertEqualObjects(self.fixture[@"displayMenuHandoff"][@"sessionStillRejectsActivePointerRequests"],@YES);
+    [self withDisplayMenuViewer:^(CompanionVNCViewer *viewer,CompanionVNCSession *session){
+        session.localPointerInteractionActive=YES; XCTAssertFalse([session requestDesktopDisplayID:5]);
+        CompanionVNCControls *controls=[viewer valueForKey:@"controls"]; [controls open];
+        XCTAssertFalse(session.localPointerInteractionActive);
+        DesktopMenuPan *pan=[DesktopMenuPan new]; pan.sampleState=UIGestureRecognizerStateChanged; CGPoint point;
+        XCTAssertFalse([viewer pointerForGesture:pan point:&point],@"A late pan callback must not reactivate input behind the control panel");
+        XCTAssertFalse(session.localPointerInteractionActive);
+        [controls close];
+        pan.sampleState=UIGestureRecognizerStateBegan; XCTAssertTrue([viewer pointerForGesture:pan point:&point]);
+        XCTAssertTrue(session.localPointerInteractionActive,@"A fresh desktop gesture still works after closing the panel");
+        [viewer chooseView];
+        XCTAssertFalse(session.localPointerInteractionActive,@"Presenting the native picker ends prior pointer ownership");
+        XCTAssertNotNil(viewer.presentedViewController);
+        pan.sampleState=UIGestureRecognizerStateChanged;
+        XCTAssertFalse([viewer pointerForGesture:pan point:&point],@"Late callbacks behind a modal menu are ignored");
+        CompanionVNCDisplayPicker *picker=[viewer valueForKey:@"displayPicker"];
+        session.localPointerInteractionActive=YES; // Earlier callback queued before the explicit choice.
+        picker.selectionHandler(@5);
+        XCTAssertFalse(session.localPointerInteractionActive);
+        XCTAssertEqualObjects([viewer valueForKey:@"pendingStreamDisplayID"],@5);
+        XCTAssertTrue([[session valueForKey:@"desktopResizePending"] boolValue]);
+        XCTAssertFalse(session.connected,@"The new frame must still complete before input reopens");
+    }];
+}
+- (void)testRejectedDisplayChoiceKeepsNoticeAndNeverBypassesPausedSession {
+    [self withDisplayMenuViewer:^(CompanionVNCViewer *viewer,CompanionVNCSession *session){
+        [viewer chooseView]; [session setValue:@YES forKey:@"paused"];
+        CompanionVNCDisplayPicker *picker=[viewer valueForKey:@"displayPicker"]; picker.selectionHandler(@5);
+        XCTAssertNil([viewer valueForKey:@"pendingStreamDisplayID"]);
+        XCTAssertFalse([[session valueForKey:@"desktopResizePending"] boolValue]);
+        XCTAssertGreaterThan([[viewer valueForKey:@"displayNoticeUntil"] doubleValue],NSProcessInfo.processInfo.systemUptime);
+        XCTAssertEqualObjects([viewer cursorDiagnosticFlags][@"displaySelectionRejections"],@1);
+        XCTAssertGreaterThan([[viewer cursorDiagnosticFlags][@"displaySelectionRejectMask"] unsignedIntegerValue],0);
+        XCTAssertEqualObjects(session.diagnosticCounters[@"probeRequests"],@0);
+    }];
+}
+- (void)testMatchingDisplayKeepsProgressAfterLayoutDeadlineButHonorsBaselineDeadline {
+    for (NSNumber *expire in @[@NO,@YES]) {
+        int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+        CompanionVNCSession *session=[CompanionVNCSession new]; rfbClient *client=rfbGetClient(8,3,4);
+        client->sock=pair[0]; client->width=3200; client->height=1200; [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+        [self deliverLayout:self.fixture[@"monitorLayouts"][@"all"] session:session client:client peer:pair[1]];
+        for (NSString *key in @[@"running",@"established",@"inputReady",@"appleGestureServer"]) [session setValue:@YES forKey:key];
+        XCTAssertTrue([session requestDesktopDisplayID:5]); [session setValue:@NO forKey:@"releaseInputRequested"];
+        XCTAssertTrue([session processDesktopSizeChange:client]); uint8_t bytes[32]; XCTAssertEqual(recv(pair[1],bytes,8,MSG_WAITALL),8);
+        [self deliverLayout:self.fixture[@"monitorLayouts"][@"first"] session:session client:client peer:pair[1]];
+        XCTAssertTrue([session requestFullDesktop:client]); XCTAssertEqual(recv(pair[1],bytes,10,MSG_WAITALL),10);
+        [session setValue:@NO forKey:@"desktopRefreshPending"]; [session updatedX:0 y:0 width:1600 height:600];
+        NSNumber *received=session.diagnosticCounters[@"baselineReceivedPixels"]; double now=NSProcessInfo.processInfo.systemUptime;
+        [session setValue:@(now-6.5) forKey:@"desktopResizeStarted"];
+        [session setValue:@(now-(expire.boolValue?8.1:2.0)) forKey:@"baselineStarted"];
+        [session setValue:@(now-0.1) forKey:@"baselineLastProgress"]; [session setValue:@(now-1.5) forKey:@"lastFullRefresh"];
+        XCTAssertTrue([session processDesktopSizeChange:client]);
+        XCTAssertEqualObjects(session.diagnosticCounters[@"probeTimedOut"],@0);
+        XCTAssertEqualObjects(session.diagnosticCounters[@"baselineReceivedPixels"],received,@"The layout was accepted; do not throw away its fresh pixels at six seconds");
+        XCTAssertEqual(recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT),-1);
+        XCTAssertFalse(session.connected);
+        if (expire.boolValue) {
+            XCTAssertFalse([session maintainDesktopBaseline:client now:now]); XCTAssertEqualObjects(session.diagnosticCounters[@"failureStage"],@102);
+            XCTAssertEqual(recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT),-1);
+        } else {
+            XCTAssertTrue([session maintainDesktopBaseline:client now:now]);
+            XCTAssertEqual(recv(pair[1],bytes,sizeof(bytes),MSG_DONTWAIT),-1);
+            XCTestExpectation *fresh=[self expectationWithDescription:@"Complete the same progressing baseline"];
+            session.frameHandler=^(UIImage *image){[fresh fulfill];}; [session updatedX:0 y:600 width:1600 height:600]; [session publishFrame:client];
+            [self waitForExpectations:@[fresh] timeout:2]; session.frameHandler=nil;
+            XCTAssertTrue(session.connected); XCTAssertEqualObjects(session.diagnosticCounters[@"probeAccepted"],@1);
+            XCTAssertEqualObjects(session.diagnosticCounters[@"fullRefreshRequests"],@1);
+        }
+        [session setValue:@NO forKey:@"running"]; [session stop]; rfbClientCleanup(client); close(pair[1]);
+    }
+}
+- (void)testDisplaySelectionTimeoutAndInterruptedStateDoNotPersistOrAdmitInput {
+    DesktopSizeSession *fake=[DesktopSizeSession new]; DesktopSizeViewer *viewer=[self viewerWithSession:fake];
+    __block NSUInteger saves=0; viewer.displaySelectionHandler=^(NSNumber *identifier){saves++;};
+    [viewer setValue:@5 forKey:@"pendingStreamDisplayID"]; fake.snapshot=@{@"probeOutcome":@3};
+    [viewer updateDesktopSizeState]; XCTAssertEqual(saves,0); XCTAssertNil([viewer valueForKey:@"pendingStreamDisplayID"]);
+    for (NSString *key in @[@"inputInactive",@"restoreViewportPending",@"inputOnly"]) {
+        [viewer setValue:@YES forKey:key]; XCTAssertFalse([viewer applyStreamDisplay:@5]); [viewer setValue:@NO forKey:key];
+    }
+    [viewer setValue:[NSObject new] forKey:@"textReview"]; XCTAssertFalse([viewer applyStreamDisplay:@5]); [viewer setValue:nil forKey:@"textReview"];
+    XCTAssertFalse([viewer applyStreamDisplay:@(-1)]); XCTAssertFalse([viewer applyStreamDisplay:@(UINT64_MAX)]);
+    [viewer stopViewer];
+}
+- (void)testReplacementOwnerCannotReusePreviousDisplayIDsOrPendingResize {
+    CompanionVNCSession *session=[CompanionVNCSession new];
+    [session setValue:@{@"views":@[@{@"id":@5}]} forKey:@"desktopCatalogue"];
+    [session setValue:@3 forKey:@"desktopResizeOutcome"]; [session setValue:@2 forKey:@"desktopResizeRequests"];
+    [session setValue:@YES forKey:@"desktopResizeAwaiting"];
+    // No endpoints: exercise synchronous owner setup without contacting a Mac.
+    [session connectAddresses:@[] port:5900 username:@"synthetic" password:@"synthetic"];
+    XCTAssertEqual(session.desktopDisplayLayout.count,0);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"probeRequests"],@0);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"probeAwaiting"],@NO);
+    XCTAssertFalse([session requestDesktopDisplayID:5]); [session stop];
+}
+- (void)testMirrorHandoffReusesUnrememberedLoginAndDropsOldVirtualDisplayID {
+    CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
+    DesktopSizeSession *session=[DesktopSizeSession new]; session.usable=YES; session.available=YES; session.snapshot=self.acceptedSnapshot;
+    viewer.session=session;
+    id<DesktopLoginRecoveryTesting> state=[viewer valueForKey:@"credentialState"];
+    [state editWithUsername:@"synthetic" password:@"transient-only" remember:NO]; [state beginLogin]; [state authenticated];
+    UIGraphicsImageRenderer *renderer=[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(8,8)];
+    UIImage *image=[renderer imageWithActions:^(UIGraphicsImageRendererContext *context){ [UIColor.whiteColor setFill]; UIRectFill(CGRectMake(0,0,8,8)); }];
+    [viewer setValue:image forKey:@"lastFramebuffer"]; [viewer setValue:@{@"id":@99} forKey:@"selectedDisplay"];
+    [viewer setValue:[NSValue valueWithCGRect:CGRectMake(0,0,8,8)] forKey:@"activeCrop"];
+    __block NSUInteger attempts=0; __block BOOL retired=NO;
+    viewer.disconnectHandler=^{retired=YES;};
+    viewer.connectHandler=^(NSString *user,NSString *password,BOOL remember){
+        attempts++; XCTAssertTrue(retired, @"Retire the old SSH owner before opening its replacement"); XCTAssertEqualObjects(user,@"synthetic"); XCTAssertEqualObjects(password,@"transient-only"); XCTAssertFalse(remember);
+        XCTAssertNil([viewer valueForKey:@"resumeDisplayID"]);
+        XCTAssertTrue(CGSizeEqualToSize([[viewer valueForKey:@"resumeCropSize"] CGSizeValue],CGSizeZero));
+    };
+    XCTAssertTrue([viewer applyMirrorDisplay]); XCTAssertEqual(attempts,1);
+    XCTAssertNotNil([state loginForResume]); viewer.connectHandler=nil; viewer.disconnectHandler=nil; [viewer stopViewer];
+}
+- (void)testSavedMonitorWaitsForUsablePixelsAndRequestsStreamInsteadOfOnlyCropping {
+    DesktopSizeSession *session=[DesktopSizeSession new]; DesktopSizeViewer *viewer=[self viewerWithSession:session];
+    NSDictionary *display=@{@"id":@5,@"title":@"Display 1",@"pixelWidth":@1600,@"pixelHeight":@1200,@"x":@0,@"y":@0,@"width":@0.5,@"height":@1};
+    session.catalogue=@{@"views":@[display],@"aspectRatio":@(3200.0/1200)};
+    [viewer setValue:@[display] forKey:@"displayViews"]; [viewer setValue:@(3200.0/1200) forKey:@"displayAspect"];
+    [viewer setValue:[NSValue valueWithCGSize:CGSizeMake(3200,1200)] forKey:@"framebufferSize"];
+    viewer.restoredDisplayID=@5; viewer.restoredDesktopSizePreset=0;
+    session.available=NO; session.usable=NO; [viewer restoreSavedDisplay]; XCTAssertNil(session.requestedDisplay);
+    XCTAssertEqualObjects(viewer.restoredDisplayID,@5);
+    session.available=YES; session.usable=YES; [viewer restoreSavedDisplay];
+    XCTAssertEqualObjects(session.requestedDisplay,@5); XCTAssertEqualObjects([viewer valueForKey:@"pendingStreamDisplayID"],@5);
+    XCTAssertNil(viewer.restoredDisplayID);
+    [viewer stopViewer];
+}
+- (void)testImmediateClosureLeavesNumericRequestOutcome {
+    CompanionVNCSession *session = [CompanionVNCSession new];
+    for (NSString *key in @[@"running", @"established", @"inputReady", @"appleGestureServer"]) [session setValue:@YES forKey:key];
+    XCTAssertTrue([session requestDesktopSizeWidth:832 height:440]);
+    [session finish:@"Disconnected"];
+    NSDictionary *counters = session.diagnosticCounters;
+    XCTAssertEqualObjects(counters[@"probeOutcome"], @3);
+    XCTAssertEqualObjects(counters[@"probeAwaiting"], @NO);
+    XCTAssertEqualObjects(counters[@"sessionRunning"], @NO);
+    XCTAssertEqualObjects(counters[@"sessionEstablished"], @NO);
+    XCTAssertNotNil(counters[@"sampleUptime"]);
+}
+@end

@@ -20,6 +20,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic) BOOL preferredTrackpad;
 @property(nonatomic) BOOL followCursorEnabled;
 @property(nonatomic, copy, nullable) NSNumber *restoredDisplayID;
+/// Device-local choice: zero mirrors the Mac; 1–3 select a virtual landscape size.
+@property(nonatomic) NSInteger restoredDesktopSizePreset;
+@property(nonatomic, copy, nullable) void (^desktopSizeSelectionHandler)(NSInteger preset);
 @property(nonatomic, copy) NSArray<NSDictionary *> *quickActions;
 @property(nonatomic, copy, nullable) NSArray<NSDictionary *> * (^quickActionsProvider)(BOOL inputOnly);
 @property(nonatomic, copy, nullable) void (^settingsHandler)(void);

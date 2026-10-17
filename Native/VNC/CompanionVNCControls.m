@@ -208,6 +208,7 @@ void CompanionVNCPlayInterfaceFeedback(NSString *kind) {
     self.bounds = previous; [self setNeedsLayout];
     return CGSizeMake(width, height);
 }
+- (BOOL)menuOpen { return self.panel != nil; }
 - (void)toggle { if (self.panel) [self close]; else [self open]; }
 - (void)open {
     self.fadeGeneration++; self.button.alpha = 1;

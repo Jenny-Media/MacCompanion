@@ -1,15 +1,14 @@
 --- a/include/rfb/rfbclient.h
 +++ b/include/rfb/rfbclient.h
-@@ -742,6 +742,12 @@
- /* sockets.c */
- 
- extern rfbBool errorMessageOnReadFailure;
+@@ -744,0 +745,11 @@
 +
 +typedef struct {
++  uint64_t socketBytes, deliveredBytes, waitCalls;
++  double waitMS;
++} CompanionVNCReadMetrics;
++typedef struct {
 +  rfbBool (*service)(rfbClient *client);
++  CompanionVNCReadMetrics *metrics; /* Optional, numeric-only, sole-owner storage. */
 +} CompanionVNCReadService;
 +/* The caller retains this descriptor until cleared on the sole socket owner. */
 +extern void CompanionVNCSetReadService(rfbClient *client, const CompanionVNCReadService *service);
- 
- extern rfbBool ReadFromRFBServer(rfbClient* client, char *out, unsigned int n);
- extern rfbBool WriteToRFBServer(rfbClient* client, const char *buf, unsigned int n);

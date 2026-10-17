@@ -60,6 +60,10 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         viewer.showsTouchPoints = VNCSessionPreferences.showsTouchPoints
         viewer.trackpadHapticsEnabled = VNCSessionPreferences.trackpadHaptics
         viewer.restoredDisplayID = VNCSessionPreferences.display(mac.id)
+        viewer.restoredDesktopSizePreset = VNCSessionPreferences.desktopSize(mac.id)
+        viewer.desktopSizeSelectionHandler = { selected in
+            MainActor.assumeIsolated { VNCSessionPreferences.setDesktopSize(selected, mac: mac.id) }
+        }
         viewer.fullscreen = VNCSessionPreferences.fullscreen(mac.id)
         viewer.presentationHandler = { value in MainActor.assumeIsolated { VNCSessionPreferences.setFullscreen(value, mac: mac.id) } }
         viewer.preferredTrackpad = VNCSessionPreferences.trackpad(mac.id)
@@ -267,6 +271,9 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
             let previous = viewer?.session
             previous?.stop()
             let retiring = retirement
+            if viewer?.restoredDesktopSizePreset == 0 {
+                viewer?.restoredDisplayID = VNCSessionPreferences.display(mac.id)
+            }
             viewer?.prepareConnection()
             work = Task { [weak self] in
                 guard let self, let viewer else { return }

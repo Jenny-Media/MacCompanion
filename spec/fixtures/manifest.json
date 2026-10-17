@@ -826,6 +826,12 @@
       "kind": "client.iosTextComposer.v1",
       "expect": "valid",
       "canonicalSHA256": "3b1b5b91e54ca8b0613a0ab0040b0b9f52c0fd7ac1a00fdd4be4618587ecea2f"
+    },
+    {
+      "path": "ios-dynamic-resolution-prototype-v1.json",
+      "kind": "client.iosDynamicResolutionPrototype.v1",
+      "expect": "valid",
+      "canonicalSHA256": "349c90a20c008d1e5e3649a5fa61de0ca9c82096c64f5c93c87ae7037d371cce"
     }
   ]
 }

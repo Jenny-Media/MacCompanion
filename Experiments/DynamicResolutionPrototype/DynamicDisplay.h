@@ -1,0 +1,8 @@
+#pragma once
+#include "../../Native/VNC/CompanionVNCDesktopSize.h"
+#define MCDynamicSize CompanionVNCDesktopSize
+#define MCDynamicPacketBytes CompanionVNCDesktopPacketBytes
+#define MCDynamicSelectionPacket CompanionVNCDesktopSelectionPacket
+#define MCDynamicSizeValid CompanionVNCDesktopSizeValid
+#define MCDynamicSizeForViewport CompanionVNCDesktopSizeForViewport
+#define MCDynamicDisplayPacket CompanionVNCDesktopDisplayPacket

@@ -68,6 +68,47 @@ struct DirectMacLibraryRow: View {
     }
 }
 
+/// A draft binding keeps Cancel independent from the saved per-Mac preference.
+struct DirectDesktopDisplaySection: View {
+    @Binding var selection: Int
+    var body: some View {
+        Section {
+            choice("Virtual Display", detail: "Landscape desktop sized for remote use.", symbol: "display", selected: selection != 0) {
+                if selection == 0 { selection = 2 }
+            }
+            choice("Mirror Mac Screen", detail: "Use the Mac’s screen resolution and layout.", symbol: "display.2", selected: selection == 0) { selection = 0 }
+            if selection != 0 {
+                DisclosureGroup("Advanced") {
+                    Picker("Desktop Size", selection: $selection) {
+                        Text("Larger Text").tag(1)
+                        Text("Balanced").tag(2)
+                        Text("More Space").tag(3)
+                    }.accessibilityIdentifier("mac-desktop-size")
+                }
+            }
+        } header: { Text("Screen Sharing Display") }
+        footer: {
+            Text(selection == 0
+                 ? "The Mac’s screen stays visible. Large displays may use more data."
+                 : "Recommended. The Mac’s screen may go dark while connected. Rotating your iPhone or opening the keyboard won’t resize the desktop.")
+        }
+    }
+    private func choice(_ title: String, detail: String, symbol: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: symbol).frame(width: 28).foregroundStyle(.tint)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title).foregroundStyle(.primary)
+                    Text(detail).font(.footnote).foregroundStyle(.secondary)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle").foregroundStyle(selected ? Color.accentColor : .secondary)
+            }.padding(.vertical, 4).contentShape(Rectangle())
+        }.buttonStyle(.plain).accessibilityIdentifier(selectionID(title))
+            .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+    private func selectionID(_ title: String) -> String { title == "Virtual Display" ? "mac-display-virtual" : "mac-display-mirror" }
+}
+
 /// Keep each destination's identity consistent in settings, practice and My Macs.
 extension DirectMacConnection {
     var shortcutColor: Color {

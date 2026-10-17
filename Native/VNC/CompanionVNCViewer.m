@@ -1,6 +1,7 @@
 #import <UIKit/UIKit.h>
 #import "CompanionVNCSession.h"
 #import "CompanionVNCViewer.h"
+#import "CompanionVNCDesktopSize.h"
 #import "CompanionVNCKeyboard.h"
 #import "CompanionVNCViewport.h"
 #import "CompanionVNCAdaptiveLayout.h"
@@ -58,7 +59,14 @@
 @property UILabel *progressLabel;
 @property UIActivityIndicatorView *spinner;
 @property CompanionVNCControls *controls;
+@property BOOL retiringPointerGestures;
+@property NSUInteger displaySelectionRejections, displaySelectionRejectMask;
 @property BOOL initialDisplayApplied;
+@property BOOL desktopSizeRestored;
+@property NSInteger pendingDesktopSizePreset;
+@property NSNumber *pendingStreamDisplayID;
+@property BOOL restoringMirror;
+@property BOOL restoringStreamViewport;
 @property BOOL immersiveChrome;
 @property CGPoint trackpadTranslation;
 @property UISwitch *remember;
@@ -137,6 +145,7 @@
 @property BOOL diagnosticScheduled;
 @property NSUInteger diagnosticGeneration, diagnosticWrites;
 @property NSDictionary *diagnosticFlags;
+@property(nonatomic, copy) NSDictionary *lastConnectionFailure;
 - (BOOL)composedTextAvailable;
 @end
 
@@ -228,7 +237,7 @@
     self.controls.actionHandler = ^(NSDictionary *action) { [weak performControlAction:action]; };
     self.controls.customizeHandler = ^{ if (weak.settingsHandler) weak.settingsHandler(); };
     self.controls.openingHandler = ^{
-        [weak releasePointer]; [weak cancelTrackpadTouches];
+        [weak retirePointerForMenu];
         if (weak.quickActionsProvider) weak.quickActions = weak.quickActionsProvider(weak.inputOnly);
         weak.controls.textCopyAvailable = [weak canCopyScreenText];
     };
@@ -500,6 +509,9 @@
     return self.inputOnly ? @"Connecting to Trackpad & Keyboard…" : @"Connecting to Screen Sharing…";
 }
 - (void)prepareConnection {
+    self.desktopSizeRestored = NO; self.pendingDesktopSizePreset = 0; self.pendingStreamDisplayID = nil;
+    self.displaySelectionRejections = self.displaySelectionRejectMask = 0;
+    self.initialDisplayApplied = NO; self.restoringStreamViewport = NO;
     self.deferredTextReviewFailure = nil;
     self.diagnosticGeneration++; self.diagnosticScheduled = NO; self.diagnosticFlags = nil;
     [self retireTextDraft];
@@ -531,6 +543,13 @@
         strong.latestCounters = stats;
         if (strong.exited) return;
         BOOL running = strong.session.running, connected = [state isEqualToString:@"Connected"] && strong.session.connected && strong.lastFramebuffer != nil && !strong.restoreViewportPending;
+        if (!running && ![state isEqualToString:@"Disconnected"] && [stats[@"handshakeStage"] integerValue] >= 5) {
+            // Session counters contain only bounded numeric aggregates/geometry.
+            // Keep one failure across replacement owners, before teardown clears it.
+            NSMutableDictionary *failure = [stats mutableCopy];
+            [failure addEntriesFromDictionary:strong.session.diagnosticCounters ?: @{}];
+            strong.lastConnectionFailure = [failure copy];
+        }
         if (!running && strong.textReview) {
             [strong retireTextDraft];
             if (strong.disconnectHandler) strong.disconnectHandler();
@@ -570,6 +589,7 @@
             else { [strong finishCredentialSession]; [strong showRecoveryStage:[stats[@"failureStage"] integerValue]]; if (strong.sessionPhaseHandler) strong.sessionPhaseHandler(@"ended"); }
         }
         [strong updateConnectionChrome];
+        [strong updateDesktopSizeState];
         [strong reportDiagnostics:stats];
     };
 }
@@ -578,6 +598,7 @@
     NSMutableDictionary *diagnostics = [stats mutableCopy] ?: [NSMutableDictionary new];
     [diagnostics addEntriesFromDictionary:self.session.diagnosticCounters ?: @{}];
     diagnostics[@"cursorPresentation"] = [self cursorDiagnosticFlags];
+    if (self.lastConnectionFailure) diagnostics[@"lastConnectionFailure"] = self.lastConnectionFailure;
     diagnostics[@"diagnosticWrites"] = @(++self.diagnosticWrites);
     diagnostics[@"viewer"] = @{@"canvasWidth": @(self.canvas.bounds.size.width), @"canvasHeight": @(self.canvas.bounds.size.height),
         @"imageWidth": @(self.image.bounds.size.width), @"imageHeight": @(self.image.bounds.size.height),
@@ -711,6 +732,7 @@
 }
 - (void)showConnectionFailure { [self showConnectionFailureStage:0]; }
 - (void)showConnectionFailureStage:(NSInteger)stage {
+    self.restoringMirror = NO;
     UIApplication.sharedApplication.idleTimerDisabled = NO;
     [self finishCredentialSession];
     [self retireTextDraft];
@@ -739,8 +761,8 @@
     [self showRecoveryController:[DirectRecoveryBridgeV1 savedLoginWithConnected:self.session.connected done:^{ [weak clearRecovery]; weak.image.alpha = 1; [weak updateConnectionChrome]; }] overFrame:self.session.connected];
 }
 - (void)rememberViewport {
-    self.resumeDisplayID = self.selectedDisplay[@"id"];
-    self.resumeCropSize = self.activeCrop.size;
+    self.resumeDisplayID = self.restoringMirror ? nil : self.selectedDisplay[@"id"];
+    self.resumeCropSize = self.restoringMirror ? CGSizeZero : self.activeCrop.size;
     self.resumeZoomRatio = self.canvas.minimumZoomScale > 0 ? self.canvas.zoomScale / self.canvas.minimumZoomScale : 1;
     self.resumeCenter = CGRectIsEmpty(self.activeCrop) || CGRectIsNull(self.activeCrop) ? CGPointMake(.5, .5) : [self viewportCenter];
 }
@@ -811,6 +833,9 @@
     BOOL missing = self.resumeDisplayID && !display;
     [self selectDisplay:display];
     BOOL selectionValid = !self.resumeDisplayID || [self.selectedDisplay[@"id"] isEqual:self.resumeDisplayID];
+    if (display && self.restoredDesktopSizePreset == 0 && [self.session.desktopDisplayLayout[@"views"] count]) {
+        self.restoredDisplayID = display[@"id"]; self.initialDisplayApplied = NO; self.restoringStreamViewport = YES;
+    }
     self.resumeDisplayID = nil;
     if (missing) {
         self.displayNoticeUntil = NSProcessInfo.processInfo.systemUptime + 3;
@@ -866,7 +891,7 @@
     });
 }
 - (void)updateStatusPresentation {
-    BOOL busy = self.checkingResume || self.starting || self.restoreViewportPending;
+    BOOL busy = self.checkingResume || self.starting || self.restoreViewportPending || self.pendingDesktopSizePreset != 0 || self.pendingStreamDisplayID != nil;
     self.statusBackdrop.hidden = self.status.hidden;
     self.statusSpinner.hidden = !busy || self.status.hidden;
     if (!self.statusSpinner.hidden) [self.statusSpinner startAnimating]; else [self.statusSpinner stopAnimating];
@@ -1143,8 +1168,19 @@
 - (CompanionVNCTrackpadFeedback *)feedbackForGesture:(UIGestureRecognizer *)gesture {
     return gesture.view == self.tabletopPad ? self.tabletopFeedback : self.trackpadFeedback;
 }
+- (void)retirePointerForMenu {
+    if (self.retiringPointerGestures) return;
+    self.retiringPointerGestures = YES;
+    [self releasePointer]; [self cancelTrackpadTouches];
+    NSArray *gestures = self.drag ? [@[self.click, self.drag, self.hold, self.remoteScroll, self.remotePinch]
+        arrayByAddingObjectsFromArray:self.tabletopGestures ?: @[]] : @[];
+    for (UIGestureRecognizer *gesture in gestures) {
+        BOOL enabled = gesture.enabled; gesture.enabled = NO; gesture.enabled = enabled;
+    }
+    self.retiringPointerGestures = NO;
+}
 - (void)presentViewController:(UIViewController *)controller animated:(BOOL)animated completion:(void (^)(void))completion {
-    [self cancelPendingTaps]; [self cancelTrackpadTouches]; [super presentViewController:controller animated:animated completion:completion];
+    [self retirePointerForMenu]; [super presentViewController:controller animated:animated completion:completion];
 }
 - (void)chooseView {
     if (self.restoreViewportPending) return;
@@ -1154,12 +1190,29 @@
     [self updateDisplayPicker];
     __weak CompanionVNCViewer *weak = self;
     picker.selectionHandler = ^(NSNumber *displayID) {
+        // A local choice explicitly hands control away from prior desktop touches.
+        [weak retirePointerForMenu];
         // Resolve against the latest server layout, not a stale menu snapshot.
         NSDictionary *selected = nil;
         for (NSDictionary *d in weak.displayViews) if ([d[@"id"] isEqual:displayID]) { selected = d; break; }
         weak.initialDisplayApplied = YES; weak.restoredDisplayID = nil;
-        [weak selectDisplay:selected];
-        if (weak.displaySelectionHandler) weak.displaySelectionHandler(selected[@"id"]);
+        if ([weak.session.desktopDisplayLayout[@"views"] count]) {
+            if (![weak applyStreamDisplay:displayID ?: @0]) {
+                weak.displaySelectionRejections++;
+                weak.displaySelectionRejectMask = (!weak.foreground || weak.exited ? 1 : 0)
+                    | (weak.inputInactive || weak.inputOnly || weak.textReview ? 2 : 0)
+                    | (weak.restoreViewportPending || weak.checkingResume ? 4 : 0)
+                    | (weak.pendingDesktopSizePreset || weak.pendingStreamDisplayID ? 8 : 0)
+                    | (weak.session.localPointerInteractionActive ? 16 : 0)
+                    | (!weak.session.desktopSizeAvailable ? 32 : 0);
+                weak.displayNoticeUntil = NSProcessInfo.processInfo.systemUptime + 4;
+                weak.status.text = @"Display could not be changed right now. Try again in a moment."; weak.status.hidden = NO;
+                [weak updateStatusPresentation]; [weak updateCursorDiagnostics];
+            }
+        } else {
+            [weak selectDisplay:selected];
+            if (weak.displaySelectionHandler) weak.displaySelectionHandler(selected[@"id"]);
+        }
     };
     if ([self.presentedViewController isKindOfClass:UINavigationController.class]) {
         UINavigationController *navigation = (id)self.presentedViewController;
@@ -1172,9 +1225,15 @@
     [self presentViewController:menu animated:YES completion:nil];
 }
 - (void)updateDisplayPicker {
-    self.displayPicker.layoutAspect = self.displayAspect;
-    CGFloat aspect = self.framebufferSize.width / self.framebufferSize.height;
-    self.displayPicker.displays = self.displayAspect > 0 && fabs(aspect - self.displayAspect) / self.displayAspect < .03 ? self.displayViews : @[];
+    NSDictionary *catalogue = self.session.desktopDisplayLayout;
+    if ([catalogue[@"views"] count] && ![self.displayLayout[@"virtual"] boolValue]) {
+        self.displayPicker.layoutAspect = [catalogue[@"aspectRatio"] doubleValue];
+        self.displayPicker.displays = catalogue[@"views"];
+    } else {
+        self.displayPicker.layoutAspect = self.displayAspect;
+        CGFloat aspect = self.framebufferSize.width / self.framebufferSize.height;
+        self.displayPicker.displays = self.displayAspect > 0 && fabs(aspect - self.displayAspect) / self.displayAspect < .03 ? self.displayViews : @[];
+    }
     self.displayPicker.selectedID = self.selectedDisplay[@"id"];
 }
 - (void)chooseInputMode { [self showInputMenu]; }
@@ -1200,6 +1259,9 @@
     return p;
 }
 - (BOOL)pointerForGesture:(UIGestureRecognizer *)gesture point:(CGPoint *)p {
+    if (self.retiringPointerGestures || self.controls.menuOpen || self.presentedViewController) {
+        self.session.localPointerInteractionActive = NO; return NO;
+    }
     if (CGRectIsNull(self.activeCrop) || CGRectIsEmpty(self.activeCrop)) { self.session.localPointerInteractionActive = NO; return NO; }
     self.session.localPointerInteractionActive = gesture.state == UIGestureRecognizerStateBegan || gesture.state == UIGestureRecognizerStateChanged;
     if (!self.trackpadMode && gesture.view != self.tabletopPad) return CompanionVNCPointerPoint(self.activeCrop, [gesture locationInView:self.image], self.pointerHeld, p);
@@ -1369,7 +1431,10 @@
         @"indicatorShown": @(!self.cursorIndicator.hidden && !self.cursorOverlay.hidden),
         @"usesFallback": @(!self.cursorIndicator.hidden && !self.cursorOverlay.hidden && self.remoteCursorImage == nil),
         @"foreground": @(self.foreground), @"inputInactive": @(self.inputInactive),
-        @"checkingResume": @(self.checkingResume), @"restoringViewport": @(self.restoreViewportPending)};
+        @"checkingResume": @(self.checkingResume), @"restoringViewport": @(self.restoreViewportPending),
+        @"controlMenuOpen": @(self.controls.menuOpen), @"modalPresented": @(self.presentedViewController != nil),
+        @"pendingDisplayChange": @(self.pendingStreamDisplayID != nil || self.pendingDesktopSizePreset != 0),
+        @"displaySelectionRejections": @(self.displaySelectionRejections), @"displaySelectionRejectMask": @(self.displaySelectionRejectMask)};
 }
 - (void)updateCursorDiagnostics {
     NSDictionary *flags = [self cursorDiagnosticFlags];
@@ -1707,13 +1772,22 @@
     self.initialDisplayApplied = YES;
     NSDictionary *selected = nil;
     for (NSDictionary *d in self.displayViews) if ([d[@"id"] isEqual:self.restoredDisplayID]) { selected = d; break; }
-    self.restoredDisplayID = nil; [self selectDisplay:selected];
+    if ([self.session.desktopDisplayLayout[@"views"] count] && self.restoredDesktopSizePreset == 0) {
+        // Retry admission after the first usable frame, not before authentication.
+        if (!self.session.desktopSizeAvailable) { self.initialDisplayApplied = NO; return; }
+        if (selected && ![self applyStreamDisplay:selected[@"id"]]) { self.initialDisplayApplied = NO; return; }
+    } else [self selectDisplay:selected];
+    self.restoredDisplayID = nil;
 }
 - (void)performControlAction:(NSDictionary *)action {
     NSString *kind = action[@"kind"];
     if (self.textReview) return;
     if ([kind isEqual:@"copyText"]) { [self showCopyScreenText]; return; }
     if ([kind isEqual:@"viewMenu"]) { [self showViewMenu]; return; }
+    if ([kind isEqual:@"advancedDisplay"]) { [self showAdvancedDisplayMenu]; return; }
+    if ([kind isEqual:@"mirrorDisplay"]) { [self applyMirrorDisplay]; return; }
+    if ([kind isEqual:@"virtualDisplay"]) { [self applyDesktopSizePreset:self.restoredDesktopSizePreset > 0 ? self.restoredDesktopSizePreset : 2]; return; }
+    if ([kind isEqual:@"desktopSize"]) { [self applyDesktopSizePreset:[action[@"preset"] integerValue]]; return; }
     if ([kind isEqual:@"inputMenu"]) { [self showInputMenu]; return; }
     if ([kind isEqual:@"files"]) { if (self.filesHandler) self.filesHandler(); return; }
     if ([kind isEqual:@"composeText"]) { [self showTextComposer]; return; }
@@ -1834,11 +1908,137 @@
     }
     if (resume) [self revealDeferredTextReviewFailure];
 }
+- (BOOL)displayChangeAllowed {
+    return self.foreground && !self.exited && !self.inputInactive && !self.inputOnly && !self.textReview
+        && !self.restoreViewportPending && !self.checkingResume && !self.pendingDesktopSizePreset
+        && !self.pendingStreamDisplayID && self.session.desktopSizeAvailable;
+}
+- (BOOL)applyStreamDisplay:(NSNumber *)identifier {
+    if (![self displayChangeAllowed] || !identifier || identifier.longLongValue < 0 || identifier.unsignedLongLongValue > UINT32_MAX) return NO;
+    [self releasePointer]; [self cancelTrackpadTouches]; [self resetModifiers];
+    if (![self.session requestDesktopDisplayID:identifier.unsignedIntValue]) return NO;
+    self.pendingStreamDisplayID = identifier;
+    self.status.text = @"Switching Display…"; self.status.hidden = NO; [self updateStatusPresentation];
+    [self updateDesktopSizeState]; // Already presented streams complete synchronously.
+    return YES;
+}
+- (BOOL)applyMirrorDisplay {
+    if (![self displayChangeAllowed]) return NO;
+    self.restoredDesktopSizePreset = 0; self.desktopSizeRestored = YES;
+    if (self.desktopSizeSelectionHandler) self.desktopSizeSelectionHandler(0);
+    if (![self.session.diagnosticCounters[@"layoutVirtual"] boolValue]) return YES;
+    // A new authenticated classic session restores the physical desktop. Never
+    // merely clear the preference while leaving the host in a virtual session.
+    [self releasePointer]; [self cancelTrackpadTouches]; [self resetModifiers];
+    self.restoringMirror = YES; self.resumeDisplayID = nil; self.initialDisplayApplied = YES;
+    // The Swift owner joins SSH retirement before opening the replacement.
+    if (self.disconnectHandler) self.disconnectHandler(); else [self.session stop];
+    [self startResuming:YES];
+    return self.starting;
+}
+- (BOOL)desktopSizeMatchesPreset:(NSInteger)preset {
+    CompanionVNCDesktopSize size;
+    if (preset < 1 || preset > 3 || !CompanionVNCDesktopSizeForPreset((int)preset, &size) || !self.session.desktopFrameReady) return NO;
+    NSDictionary *stats = self.session.diagnosticCounters;
+    return [stats[@"layoutVirtual"] boolValue] && [stats[@"layoutCount"] integerValue] == 1
+        && [stats[@"framebufferWidth"] integerValue] == size.width * 2 && [stats[@"framebufferHeight"] integerValue] == size.height * 2
+        && [stats[@"layoutWidth"] integerValue] == size.width * 2 && [stats[@"layoutHeight"] integerValue] == size.height * 2;
+}
+- (void)retainDesktopSizePreset:(NSInteger)preset {
+    self.desktopSizeRestored = YES;
+    self.restoredDesktopSizePreset = preset;
+    if (self.desktopSizeSelectionHandler) self.desktopSizeSelectionHandler(preset);
+}
+- (BOOL)applyDesktopSizePreset:(NSInteger)preset {
+    CompanionVNCDesktopSize size;
+    if (preset < 1 || preset > 3 || !CompanionVNCDesktopSizeForPreset((int)preset, &size) || ![self displayChangeAllowed]) return NO;
+    if ([self desktopSizeMatchesPreset:preset]) { [self retainDesktopSizePreset:preset]; return YES; }
+    [self releasePointer]; [self cancelTrackpadTouches]; [self resetModifiers];
+    if (![self.session requestDesktopSizePreset:preset]) return NO;
+    self.desktopSizeRestored = YES; self.pendingDesktopSizePreset = preset;
+    self.status.text = @"Resizing Desktop…"; self.status.hidden = NO;
+    [self updateStatusPresentation]; return YES;
+}
+- (void)updateDesktopSizeState {
+    if (self.pendingStreamDisplayID) {
+        NSInteger result = [self.session.diagnosticCounters[@"probeOutcome"] integerValue];
+        if ((result == 2 && self.session.desktopFrameReady) || result == 3 || result == 4 || !self.session.running) {
+            NSNumber *identifier = self.pendingStreamDisplayID; self.pendingStreamDisplayID = nil;
+            if (result == 2 && self.session.desktopFrameReady) {
+                NSDictionary *selected = nil;
+                for (NSDictionary *d in self.displayViews) if ([d[@"id"] isEqual:identifier]) selected = d;
+                [self selectDisplay:identifier.unsignedIntValue ? selected : nil];
+                if (self.restoringStreamViewport && CGSizeEqualToSize(self.activeCrop.size, self.resumeCropSize))
+                    [self applyViewportRatio:self.resumeZoomRatio center:self.resumeCenter];
+                if (self.displaySelectionHandler) self.displaySelectionHandler(identifier.unsignedIntValue ? identifier : nil);
+                self.status.hidden = YES;
+            } else if (self.session.connected) {
+                self.displayNoticeUntil = NSProcessInfo.processInfo.systemUptime + 4;
+                self.status.text = @"The Mac couldn’t stream that display. Showing the current desktop."; self.status.hidden = NO;
+            }
+            self.restoringStreamViewport = NO;
+            [self updateStatusPresentation]; [self updateDisplayPicker];
+        }
+    }
+    if (self.restoringMirror && self.session.desktopFrameReady) {
+        self.restoringMirror = NO;
+        if ([self.session.diagnosticCounters[@"layoutVirtual"] boolValue]) {
+            self.displayNoticeUntil = NSProcessInfo.processInfo.systemUptime + 6;
+            self.status.text = @"The Mac is still using a virtual display. Disconnect other screen-sharing sessions and reconnect."; self.status.hidden = NO;
+        }
+    }
+    if (self.pendingDesktopSizePreset) {
+        NSDictionary *stats = self.session.diagnosticCounters;
+        NSInteger result = [stats[@"probeOutcome"] integerValue];
+        if (result == 2 && self.session.desktopFrameReady) {
+            if ([self desktopSizeMatchesPreset:self.pendingDesktopSizePreset]) {
+                [self retainDesktopSizePreset:self.pendingDesktopSizePreset];
+                self.status.hidden = YES;
+            } else {
+                self.displayNoticeUntil = NSProcessInfo.processInfo.systemUptime + 4;
+                self.status.text = @"The Mac selected a different desktop size."; self.status.hidden = NO;
+            }
+            self.pendingDesktopSizePreset = 0;
+        } else if (result == 3 || result == 4 || !self.session.running) {
+            self.pendingDesktopSizePreset = 0;
+            if (self.session.connected) {
+                self.displayNoticeUntil = NSProcessInfo.processInfo.systemUptime + 4;
+                self.status.text = result == 4 ? @"The Mac selected a different desktop size." : @"Desktop size could not be changed.";
+                self.status.hidden = NO;
+            }
+        }
+        [self updateStatusPresentation];
+    }
+    if (!self.desktopSizeRestored && self.foreground && !self.inputInactive && !self.inputOnly
+        && !self.restoreViewportPending && !self.checkingResume && self.session.desktopFrameReady) {
+        if (self.restoredDesktopSizePreset == 0) { self.desktopSizeRestored = YES; [self restoreSavedDisplay]; }
+        else if (self.session.desktopSizeAvailable) {
+            self.desktopSizeRestored = YES;
+            [self applyDesktopSizePreset:self.restoredDesktopSizePreset];
+        }
+    }
+}
+- (void)showAdvancedDisplayMenu {
+    NSMutableArray *items = [NSMutableArray new];
+    NSArray *titles = @[@"Larger Text", @"Balanced", @"More Space"];
+    for (NSInteger preset = 1; preset <= 3; preset++) {
+        CompanionVNCDesktopSize size; CompanionVNCDesktopSizeForPreset((int)preset, &size);
+        [items addObject:@{@"kind": @"desktopSize", @"preset": @(preset), @"title": titles[preset-1],
+            @"subtitle": [NSString stringWithFormat:@"%u × %u%@", size.width, size.height, preset == 2 ? @" · Recommended" : @""],
+            @"symbol": @"display", @"selected": @([self desktopSizeMatchesPreset:preset]),
+            @"disabled": @(!self.session.desktopSizeAvailable || self.inputOnly || self.restoreViewportPending || self.inputInactive)}];
+    }
+    [self presentMenu:@"Advanced" sections:@[@{@"title": @"Desktop Size · Landscape", @"items": items}]];
+}
 - (void)showViewMenu {
+    BOOL virtualDisplay = [self.session.diagnosticCounters[@"layoutVirtual"] boolValue];
     NSMutableArray *desktopItems=[@[
-        @{@"kind": @"displays", @"title": @"Choose Display", @"symbol": @"display.2", @"submenu": @YES, @"push": @YES, @"disabled": @(self.inputOnly)},
+        @{@"kind": @"virtualDisplay", @"title": @"Virtual Display", @"subtitle": @"Landscape desktop · Mac screen may go dark", @"symbol": @"display", @"selected": @(virtualDisplay), @"disabled": @(![self displayChangeAllowed])},
+        @{@"kind": @"mirrorDisplay", @"title": @"Mirror Mac Screen", @"subtitle": @"Original resolution · Mac screen stays visible", @"symbol": @"display.2", @"selected": @(!virtualDisplay && self.session.desktopFrameReady), @"disabled": @(![self displayChangeAllowed])},
+        @{@"kind": @"displays", @"title": @"Choose Display", @"symbol": @"display.2", @"submenu": @YES, @"push": @YES, @"disabled": @(self.inputOnly || virtualDisplay || !self.session.desktopFrameReady)},
         @{@"kind": @"fit", @"title": @"Fit to Window", @"symbol": @"arrow.down.right.and.arrow.up.left", @"disabled": @(self.inputOnly)}] mutableCopy];
     if (!self.inputOnly) [desktopItems addObject:@{@"kind": @"copyText", @"title": @"Copy Text from Screen", @"symbol": @"text.viewfinder", @"disabled": @(![self canCopyScreenText])}];
+    [desktopItems addObject:@{@"kind": @"advancedDisplay", @"title": @"Advanced", @"symbol": @"slider.horizontal.3", @"submenu": @YES, @"push": @YES, @"disabled": @(self.inputOnly)}];
     [self presentMenu:@"View & Display" sections:@[
         @{@"title": @"Screen Sharing", @"items": desktopItems},
         @{@"title": @"Presentation", @"items": @[

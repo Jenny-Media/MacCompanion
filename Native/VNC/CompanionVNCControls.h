@@ -26,6 +26,7 @@ NS_SWIFT_UI_ACTOR
 /// Optional toolbar slot; the shared button and its gestures remain in this overlay.
 @property(nonatomic, weak, nullable) UIView *buttonAnchorView;
 @property(nonatomic, readonly) UIButton *button;
+@property(nonatomic, readonly) BOOL menuOpen;
 @property(nonatomic, copy, nullable) void (^actionHandler)(NSDictionary *);
 @property(nonatomic, copy, nullable) void (^openingHandler)(void);
 @property(nonatomic, copy, nullable) void (^customizeHandler)(void);

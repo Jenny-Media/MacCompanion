@@ -1,9 +1,9 @@
 --- a/src/libvncclient/sockets.c
 +++ b/src/libvncclient/sockets.c
-@@ -45,6 +45,25 @@
- 
- rfbBool errorMessageOnReadFailure = TRUE;
- 
+@@ -38,0 +39 @@
++#include <time.h>
+@@ -46,0 +48,53 @@
++
 +/* Optional cooperative input service, installed only after authentication. */
 +static char companionReadServiceTag;
 +void
@@ -23,43 +23,65 @@
 +  return !service || !service->service || service->service(client);
 +}
 +
- /*
-  * ReadFromRFBServer is called whenever we want to read some data from the RFB
-  * server.  It is non-trivial for two reasons:
-@@ -62,7 +81,7 @@
- rfbBool
- ReadFromRFBServer(rfbClient* client, char *out, unsigned int n)
- {
++static CompanionVNCReadMetrics *
++CompanionVNCGetReadMetrics(rfbClient *client)
++{
++  const CompanionVNCReadService *service = CompanionVNCGetReadService(client);
++  return service ? service->metrics : NULL;
++}
++static void
++CompanionVNCRecordSocketRead(rfbClient *client, unsigned int bytes)
++{
++  CompanionVNCReadMetrics *metrics = CompanionVNCGetReadMetrics(client);
++  if (metrics) metrics->socketBytes += bytes;
++}
++static void
++CompanionVNCRecordDelivered(rfbClient *client, unsigned int bytes)
++{
++  CompanionVNCReadMetrics *metrics = CompanionVNCGetReadMetrics(client);
++  if (metrics) metrics->deliveredBytes += bytes;
++}
++static int
++CompanionVNCWaitForRead(rfbClient *client, unsigned int usecs)
++{
++  CompanionVNCReadMetrics *metrics = CompanionVNCGetReadMetrics(client);
++  if (!metrics) return WaitForMessage(client, usecs);
++  struct timespec before, after;
++  int valid = clock_gettime(CLOCK_MONOTONIC, &before) == 0;
++  int result = WaitForMessage(client, usecs);
++  metrics->waitCalls++;
++  if (valid && clock_gettime(CLOCK_MONOTONIC, &after) == 0) {
++    double elapsed = (after.tv_sec - before.tv_sec) * 1000.0 + (after.tv_nsec - before.tv_nsec) / 1000000.0;
++    if (elapsed > 0) metrics->waitMS += elapsed;
++  }
++  return result;
++}
+@@ -65 +119 @@
 -  const int USECS_WAIT_PER_RETRY = 100000;
 +  const int USECS_WAIT_PER_RETRY = CompanionVNCGetReadService(client) ? 10000 : 100000;
-   int retries = 0;
- #undef DEBUG_READ_EXACT
- #ifdef DEBUG_READ_EXACT
-@@ -112,6 +131,9 @@
-     return (fread(out,1,n,rec->file) != n ? FALSE : TRUE);
-   }
-   
+@@ -66,0 +121 @@
++  const unsigned int requestedBytes = n;
+@@ -114,0 +170,3 @@
 +  if (!CompanionVNCServiceRead(client))
 +    return FALSE;
 +
-   if (n <= client->buffered) {
-     memcpy(out, client->bufoutptr, n);
-     client->bufoutptr += n;
-@@ -134,6 +156,8 @@
- 
-     while (client->buffered < n) {
-       int i;
+@@ -121,0 +180 @@
++    CompanionVNCRecordDelivered(client, requestedBytes);
+@@ -136,0 +196,2 @@
 +      if (!CompanionVNCServiceRead(client))
 +        return FALSE;
-       if (client->tlsSession)
-         i = ReadFromTLS(client, client->buf + client->buffered, RFB_BUF_SIZE - client->buffered);
-       else
-@@ -186,6 +210,8 @@
- 
-     while (n > 0) {
-       int i;
+@@ -165 +226 @@
+-	    WaitForMessage(client, USECS_WAIT_PER_RETRY);
++	    CompanionVNCWaitForRead(client, USECS_WAIT_PER_RETRY);
+@@ -177,0 +239 @@
++      if (i > 0) CompanionVNCRecordSocketRead(client, (unsigned int)i);
+@@ -188,0 +251,2 @@
 +      if (!CompanionVNCServiceRead(client))
 +        return FALSE;
-       if (client->tlsSession)
-         i = ReadFromTLS(client, out, n);
-       else
+@@ -214 +278 @@
+-	    WaitForMessage(client, USECS_WAIT_PER_RETRY);
++	    CompanionVNCWaitForRead(client, USECS_WAIT_PER_RETRY);
+@@ -226,0 +291 @@
++      if (i > 0) CompanionVNCRecordSocketRead(client, (unsigned int)i);
+@@ -240,0 +306 @@
++  CompanionVNCRecordDelivered(client, requestedBytes);

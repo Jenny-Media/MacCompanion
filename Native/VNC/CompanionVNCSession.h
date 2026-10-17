@@ -24,6 +24,14 @@ typedef UIImage CompanionVNCImage;
 @property(nonatomic) BOOL inputOnly;
 /// Tracks admitted local gestures independently from iOS host cursor observations.
 @property(nonatomic) BOOL localPointerInteractionActive;
+/// A ready foreground Apple desktop with validated display metadata.
+@property(nonatomic, readonly) BOOL desktopSizeAvailable;
+/// Only the three indexed landscape presets are admitted; no device-size matching.
+- (BOOL)requestDesktopSizePreset:(NSInteger)preset;
+/// Validated catalogue retained while the host streams one monitor; scoped to this owner.
+@property(nonatomic, readonly) NSDictionary *desktopDisplayLayout;
+/// Zero requests All Displays. A nonzero ID must occur in the current catalogue.
+- (BOOL)requestDesktopDisplayID:(uint32_t)identifier;
 
 @property(nonatomic, readonly) BOOL nativeMagnificationSupported;
 - (BOOL)beginMagnificationX:(NSInteger)x y:(NSInteger)y;

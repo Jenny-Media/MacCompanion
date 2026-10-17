@@ -633,6 +633,7 @@ struct DirectMacEditorV1: View {
     @State private var preferredConnection: DirectMacConnection
     @State private var swipeLeft: DirectMacSwipeAction
     @State private var swipeRight: DirectMacSwipeAction
+    @State private var desktopSize: Int
     @State private var credentialAction: CredentialAction?
     private enum CredentialAction: String, Identifiable {
         case desktop, terminal, serverKey
@@ -670,6 +671,7 @@ struct DirectMacEditorV1: View {
         _preferredConnection = State(initialValue: mac?.preferredConnection ?? .desktop)
         _swipeLeft = State(initialValue: mac?.swipeLeft ?? .terminal)
         _swipeRight = State(initialValue: mac?.swipeRight ?? .trackpad)
+        _desktopSize = State(initialValue: mac.map { VNCSessionPreferences.desktopSize($0.id) } ?? 2)
         _addresses = State(initialValue: (mac?.addresses ?? [""]).map { Draft(address: $0) })
         _sshPort = State(initialValue: mac.map { $0.sshPort == 22 ? "" : String($0.sshPort) } ?? "")
         _port = State(initialValue: mac.map { $0.port == 5900 ? "" : String($0.port) } ?? "")
@@ -751,6 +753,7 @@ struct DirectMacEditorV1: View {
                     }
                 }
                 DirectMacShortcutsSection { sshSheet = .shortcuts }
+                DirectDesktopDisplaySection(selection: $desktopSize)
                 if discoveryKey != nil {
                     Section {
                         DisclosureGroup("Mac Details") {
@@ -825,7 +828,10 @@ struct DirectMacEditorV1: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         if mac == nil && !DirectProAccess.shared.canAddMac(count: library.macs.count) { sshSheet = .pro; return }
-                        if let resolvedPort, library.save(id: mac?.id, name: name, addresses: addresses.map(\.address), port: resolvedPort, sshPort: resolvedSSHPort, usesAutomaticName: usesAutomaticName, preferredConnection: preferredConnection, swipeLeft: swipeLeft, swipeRight: swipeRight) { CompanionVNCPlayInterfaceFeedback("success"); startAutomaticDiscovery(); dismiss() }
+                        if let resolvedPort, library.save(id: mac?.id, name: name, addresses: addresses.map(\.address), port: resolvedPort, sshPort: resolvedSSHPort, usesAutomaticName: usesAutomaticName, preferredConnection: preferredConnection, swipeLeft: swipeLeft, swipeRight: swipeRight) {
+                            if let id = mac?.id ?? library.macs.last?.id { VNCSessionPreferences.setDesktopSize(desktopSize, mac: id) }
+                            CompanionVNCPlayInterfaceFeedback("success"); startAutomaticDiscovery(); dismiss()
+                        }
                         else { CompanionVNCPlayInterfaceFeedback("error") }
                     }.disabled(!valid)
                 }

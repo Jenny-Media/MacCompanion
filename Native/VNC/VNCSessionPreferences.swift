@@ -131,6 +131,16 @@ struct VNCQuickAction: Codable, Identifiable, Equatable, Sendable {
     static func setSpeed(_ value: Double, mac id: UUID) { if value.isFinite { UserDefaults.standard.set(min(3, max(0.5, value)), forKey: prefix(id) + "speed"); changed(id) } }
     static func display(_ id: UUID) -> NSNumber? { UserDefaults.standard.object(forKey: prefix(id) + "display") as? NSNumber }
     static func setDisplay(_ value: NSNumber?, mac id: UUID) { UserDefaults.standard.set(value, forKey: prefix(id) + "display"); changed(id) }
+    // Device-local mode: zero mirrors the Mac; 1–3 choose a virtual landscape size.
+    static func desktopSize(_ id: UUID) -> Int {
+        guard let value = UserDefaults.standard.object(forKey: prefix(id) + "desktop-size") as? Int,
+              (0...3).contains(value) else { return 2 }
+        return value
+    }
+    static func setDesktopSize(_ value: Int, mac id: UUID) {
+        guard (0...3).contains(value) else { return }
+        UserDefaults.standard.set(value, forKey: prefix(id) + "desktop-size")
+    }
     static func fullscreen(_ id: UUID) -> Bool { UserDefaults.standard.bool(forKey: prefix(id) + "fullscreen") }
     static func setFullscreen(_ value: Bool, mac id: UUID) { UserDefaults.standard.set(value, forKey: prefix(id) + "fullscreen"); changed(id) }
     static func trackpad(_ id: UUID) -> Bool { UserDefaults.standard.bool(forKey: prefix(id) + "trackpad") }
@@ -191,7 +201,7 @@ struct VNCQuickAction: Codable, Identifiable, Equatable, Sendable {
         } else if status != errSecSuccess { throw CocoaError(.fileWriteUnknown) }
     }
     static func clear(_ id: UUID) {
-        for suffix in ["speed", "display", "trackpad", "follow-cursor", "fullscreen"] { UserDefaults.standard.removeObject(forKey: prefix(id) + suffix) }
+        for suffix in ["speed", "display", "trackpad", "follow-cursor", "fullscreen", "desktop-size"] { UserDefaults.standard.removeObject(forKey: prefix(id) + suffix) }
         SecItemDelete(query(id) as CFDictionary)
     }
 }
