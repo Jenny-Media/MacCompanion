@@ -620,7 +620,7 @@
             strong.session.inputOnly = strong.inputOnly;
             if (strong.textSendInterrupted) [strong showTextSendWarning];
             else { [strong clearRecovery]; strong.image.alpha = 1; }
-            strong.checkingResume = NO; strong.reconnectWhenReady = NO; strong.resumeGeneration++; strong.statusGeneration++;
+            [strong completeResumeReadiness];
             [strong updateCursor];
             if (strong.sessionPhaseHandler) strong.sessionPhaseHandler(@"connected");
             if (strong.connectedHandler) strong.connectedHandler();
@@ -642,6 +642,11 @@
         [strong updateDesktopSizeState];
         [strong reportDiagnostics:stats];
     };
+}
+- (void)completeResumeReadiness {
+    self.checkingResume = NO; self.reconnectWhenReady = NO;
+    self.resumeGeneration++; self.statusGeneration++;
+    [self restoreSavedDisplay];
 }
 - (void)reportDiagnostics:(NSDictionary *)stats {
     if (!self.diagnosticHandler) return;
@@ -723,7 +728,7 @@
     [lines addObject:@"Server identity is verified before login."];
     return [lines componentsJoinedByString:@"\n"];
 }
-- (void)loginEdited { [self.credentialState editWithUsername:self.username.text ?: @"" password:self.password.text ?: @"" remember:self.remember.on]; [self clearRecovery]; self.progressLabel.text = @""; [self updateConnectionChrome]; }
+- (void)loginEdited { [self.credentialState discardSessionRecovery]; [self.credentialState editWithUsername:self.username.text ?: @"" password:self.password.text ?: @"" remember:self.remember.on]; [self clearRecovery]; self.progressLabel.text = @""; [self updateConnectionChrome]; }
 - (void)showMacs {
     if (self.requestExitHandler && self.requestExitHandler()) return;
     if (self.session.connected) CompanionVNCPlayInterfaceFeedback(@"end");
@@ -819,10 +824,12 @@
     self.changingDisplayMode = self.mirrorRestartScheduled = NO; self.mirrorCleanupRemaining = 0;
     self.mirrorRestoreOutcome = stage == 116 ? 3 : stage == 117 ? 5 : 4;
     UIApplication.sharedApplication.idleTimerDisabled = NO;
-    if (self.failedDisplayModePreset && stage >= 116 && stage <= 118) {
+    BOOL rejectedLoginOrTrust = [@[@2,@7,@8,@111,@112,@113,@115] containsObject:@(stage)];
+    BOOL retryableModeFailure = (stage >= 116 && stage <= 118) || (self.mirrorFullRestartUsed && !rejectedLoginOrTrust);
+    if (self.failedDisplayModePreset && retryableModeFailure) {
         // Keep only the existing bounded session recovery for explicit retry.
         // Visible unremembered fields stay empty; exit/edit still invalidate it.
-        [self.credentialState suspend]; [self renderCredentialForm];
+        [self.credentialState suspendForModeRetry]; [self renderCredentialForm];
     } else [self finishCredentialSession];
     [self retireTextDraft];
     self.starting = NO; self.checkingResume = NO; self.resumeGeneration++; self.statusGeneration++; self.awaitingReplacementLayout = NO; self.pendingRestorationFrame = nil; self.restoreViewportPending = NO;
@@ -858,9 +865,14 @@
     self.resumeZoomRatio = self.canvas.minimumZoomScale > 0 ? self.canvas.zoomScale / self.canvas.minimumZoomScale : 1;
     self.resumeCenter = CGRectIsEmpty(self.activeCrop) || CGRectIsNull(self.activeCrop) ? CGPointMake(.5, .5) : [self viewportCenter];
 }
+- (void)discardPendingDisplayPreferences {
+    self.pendingDesktopSizePreset = self.lateDesktopSizePreset = 0;
+    self.pendingStreamDisplayID = nil; self.restoringStreamViewport = NO;
+}
 - (void)becameInactive {
     if (!self.foreground || self.exited || self.inputInactive) return;
     self.inputInactive = YES; self.modeVerificationTimed = NO; self.modeVerificationGeneration++;
+    [self discardPendingDisplayPreferences];
     [self cancelDisplayModeConfirmation];
     [self.controls close]; [self releasePointer]; [self resetModifiers]; [self cancelTrackpadTouches];
     [self invalidateTextReview:YES];
@@ -871,6 +883,7 @@
 - (void)backgroundWithCompletion:(void (^)(void))completion {
     [self retireTextDraft];
     if (!self.foreground || self.exited) { if (completion) completion(); return; }
+    [self discardPendingDisplayPreferences];
     self.reconnectWhenReady = self.session.running || self.starting;
     [self.credentialState suspend]; [self renderCredentialForm];
     self.modeVerificationTimed = NO; self.modeVerificationGeneration++;
@@ -2082,6 +2095,7 @@
     self.session.displayHandoffInputBlocked = NO; self.statusGeneration++;
     self.failedDisplayModePreset = nil;
     if (verified) [self retainDesktopSizePreset:target];
+    if (target == 0) [self restoreSavedDisplay];
 }
 - (void)expireDisplayModeVerification:(CompanionVNCSession *)owner generation:(NSUInteger)generation {
     if (self.session != owner || self.modeVerificationGeneration != generation
@@ -2110,13 +2124,18 @@
     if ([stats[@"layoutCount"] unsignedIntegerValue] == 0) {
         // Initial legacy connections keep their ordinary behavior. A mode change
         // on a previously validated Apple host must wait for its new metadata.
-        if (!self.mirrorFullRestartUsed) [self completeDisplayModeVerified:NO];
+        if (!self.mirrorFullRestartUsed && ![stats[@"appleDisplayProtocol"] boolValue]) [self completeDisplayModeVerified:NO];
         return;
     }
     if (self.modeTargetPreset > 0) {
         if ([self desktopSizeMatchesPreset:self.modeTargetPreset]) { [self completeDisplayModeVerified:YES]; return; }
         if (!self.modeResizeRequested) self.modeResizeRequested = [self.session requestDesktopSizePresetForHandoff:self.modeTargetPreset];
         return;
+    }
+    if (!virtual) {
+        NSInteger width = [stats[@"layoutWidth"] integerValue], height = [stats[@"layoutHeight"] integerValue];
+        if (width <= 0 || height <= 0 || width != [stats[@"framebufferWidth"] integerValue]
+            || height != [stats[@"framebufferHeight"] integerValue]) return;
     }
     [self.mirrorObservedLayouts addObject:@(virtual)];
     if (!virtual) { [self completeDisplayModeVerified:YES]; return; }
@@ -2193,7 +2212,7 @@
             }
             self.pendingDesktopSizePreset = 0;
         } else if (result == 3 || result == 4 || !self.session.running) {
-            self.lateDesktopSizePreset = result == 3 && self.session.running ? self.pendingDesktopSizePreset : 0;
+            self.lateDesktopSizePreset = (result == 3 || result == 4) && self.session.running ? self.pendingDesktopSizePreset : 0;
             self.pendingDesktopSizePreset = 0;
             if (self.session.connected) {
                 self.displayNoticeUntil = NSProcessInfo.processInfo.systemUptime + 4;

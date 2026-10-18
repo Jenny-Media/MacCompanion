@@ -67,6 +67,7 @@ private final class DesktopSyntheticRFB: ChannelInboundHandler, @unchecked Senda
     private var stage = 0
     private let cursorPackets: [[UInt8]]
     private var sentCursorPackets = false
+    private var sentDisplayLayout = false
     init(_ record: DesktopSSHRecord, cursorPackets: [[UInt8]] = []) { self.record = record; self.cursorPackets = cursorPackets }
     private func send(_ bytes: [UInt8], _ context: ChannelHandlerContext) {
         context.writeAndFlush(wrapOutboundOut(.init(type: .channel, data: .byteBuffer(ByteBuffer(bytes: bytes)))), promise: nil)
@@ -110,6 +111,7 @@ private final class DesktopSyntheticRFB: ChannelInboundHandler, @unchecked Senda
                 case 3: count = 10
                 case 4: count = 8
                 case 5: count = 6
+                case 9: count = 16 // Apple automatic framebuffer delivery, enabled after valid layout metadata.
                 case 6:
                     guard let length: UInt32 = input.getInteger(at: input.readerIndex + 4) else { return }
                     guard length <= 16384 else { context.close(promise: nil); return }; count = 8 + Int(length)
@@ -123,6 +125,17 @@ private final class DesktopSyntheticRFB: ChannelInboundHandler, @unchecked Senda
                     }
                 } else if kind == 3 {
                     record.add("update")
+                    if !sentDisplayLayout && record.count("encoding.1105") > 0 {
+                        sentDisplayLayout = true
+                        // Generated single-monitor metadata for this synthetic
+                        // 256 x 128 desktop; not another mutable fixture corpus.
+                        var body = [UInt8](repeating: 0, count: 76)
+                        func put16(_ offset: Int, _ value: UInt16) { body[offset] = UInt8(value >> 8); body[offset + 1] = UInt8(value & 255) }
+                        put16(0, 5); put16(2, 128); put16(4, 64); put16(6, 256); put16(8, 128); put16(18, 1)
+                        body[13] = 5; body[39] = 5
+                        put16(44, 64); put16(46, 128); put16(52, 128); put16(54, 256)
+                        send([0, 0, 0, 1] + [0, 0, 0, 0, 1, 0, 0, 128] + [0, 0, 4, 81] + [0, 76] + body, context)
+                    }
                     // 256 x 128 raw BGRA image, with a distinct synthetic color.
                     var frame: [UInt8] = [0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 128, 0, 0, 0, 0]
                     for _ in 0..<32768 { frame += [180, 90, 30, 0] }
@@ -132,7 +145,8 @@ private final class DesktopSyntheticRFB: ChannelInboundHandler, @unchecked Senda
                         for packet in cursorPackets { send(packet, context) }
                         record.add("cursorPacketsSent")
                     }
-                } else if kind == 4 { record.add(bytes[1] == 0 ? "keyUp" : "keyDown") }
+                } else if kind == 9 { record.add(bytes[4...7].allSatisfy { $0 == 0 } ? "automaticUpdatesStart" : "automaticUpdatesStop") }
+                else if kind == 4 { record.add(bytes[1] == 0 ? "keyUp" : "keyDown") }
                 else if kind == 5 { record.add(bytes[1] == 0 ? "pointerUp" : "pointerDown") }
             }
             input.discardReadBytes()
@@ -581,6 +595,7 @@ private func desktopWriterFinished(_ group: DispatchGroup) -> Bool { group.wait(
                 try await wait("normal view presents framebuffer") { viewer.value(forKey: "lastFramebuffer") != nil }
                 XCTAssertEqual(server.record.count("auth"), 1); XCTAssertEqual(server.record.count("forward"), 1)
                 XCTAssertEqual(server.record.count("ardExchange"), 1)
+                if !inputOnly { try await wait("normal desktop arms automatic delivery") { server.record.count("automaticUpdatesStart") > 0 } }
                 viewer.session.key(0xffe3, down: true)
                 _ = viewer.session.tryClickX(20, y: 20, mask: 1)
                 try await wait("ordered native input reaches encrypted channel") { server.record.count("keyDown") > 0 && server.record.count("pointerDown") > 0 }

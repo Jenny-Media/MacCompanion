@@ -70,8 +70,10 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
 - (void)cancelDisplayModeConfirmation;
 - (BOOL)restartDisplayModePreset:(NSInteger)preset;
 - (void)connectionAction;
+- (void)loginEdited;
 - (void)startResuming:(BOOL)resuming;
 - (void)restoreSavedDisplay;
+- (void)completeResumeReadiness;
 @end
 @interface DesktopSizeSession : CompanionVNCSession
 @property BOOL usable, available;
@@ -110,6 +112,10 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     id<DesktopLoginRecoveryTesting> login=[viewer valueForKey:@"credentialState"];
     [login editWithUsername:@"synthetic" password:@"transient" remember:NO]; [login beginLogin]; [login authenticated];
     return viewer;
+}
+- (NSDictionary *)physicalSnapshot {
+    return @{@"appleDisplayProtocol":@YES,@"layoutVirtual":@NO,@"layoutCount":@2,
+        @"layoutWidth":@3200,@"layoutHeight":@1200,@"framebufferWidth":@3200,@"framebufferHeight":@1200};
 }
 - (NSDictionary *)acceptedSnapshot {
     return @{@"probeOutcome":@2,@"layoutVirtual":@YES,@"layoutCount":@1,@"framebufferWidth":@2560,
@@ -543,7 +549,7 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     __block NSInteger choice=-1; viewer.desktopSizeSelectionHandler=^(NSInteger value){choice=value;};
     XCTAssertTrue([viewer applyMirrorDisplay]); XCTAssertTrue(viewer.requestedResume);
     XCTAssertEqual(choice,-1); XCTAssertEqual(viewer.restoredDesktopSizePreset,0);
-    [viewer setValue:@NO forKey:@"starting"]; session.snapshot=@{@"layoutVirtual":@NO,@"layoutCount":@2};
+    [viewer setValue:@NO forKey:@"starting"]; session.snapshot=self.physicalSnapshot;
     [viewer updateDesktopSizeState]; XCTAssertEqual(choice,0); XCTAssertEqual(session.requests,0);
     viewer.requestedResume=NO; XCTAssertTrue([viewer applyMirrorDisplay]); XCTAssertFalse(viewer.requestedResume);
     [viewer setValue:@YES forKey:@"inputInactive"]; XCTAssertFalse([viewer applyMirrorDisplay]);
@@ -1262,7 +1268,7 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     [viewer prepareConnection]; XCTAssertTrue(viewer.session.displayHandoffInputBlocked);
     XCTAssertEqualObjects([viewer valueForKey:@"mirrorRestoreAttempts"],@2);
     DesktopSizeSession *physical=[DesktopSizeSession new]; physical.usable=YES; physical.displayHandoffInputBlocked=YES;
-    physical.snapshot=@{@"layoutVirtual":@NO,@"layoutCount":@2}; viewer.session=physical;
+    physical.snapshot=self.physicalSnapshot; viewer.session=physical;
     [viewer updateDisplayModeRestoration]; XCTAssertFalse(physical.displayHandoffInputBlocked);
     XCTAssertFalse([[viewer valueForKey:@"changingDisplayMode"] boolValue]); XCTAssertEqualObjects([viewer valueForKey:@"mirrorRestoreOutcome"],@2);
     XCTAssertEqualObjects([viewer valueForKey:@"mirrorObservedLayouts"],(@[@YES,@NO]));
@@ -1349,7 +1355,7 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     for (NSNumber *target in @[@0,@2]) {
         DesktopSizeSession *session=[DesktopSizeSession new]; DesktopSizeViewer *viewer=[self viewerWithSession:session];
         BOOL fromVirtual=target.integerValue==0;
-        session.snapshot=fromVirtual ? self.acceptedSnapshot : @{@"layoutVirtual":@NO,@"layoutCount":@2};
+        session.snapshot=fromVirtual ? self.acceptedSnapshot : self.physicalSnapshot;
         viewer.restoredDesktopSizePreset=fromVirtual ? 2 : 0;
         __block NSUInteger retires=0,saves=0;
         viewer.disconnectHandler=^{retires++;}; viewer.desktopSizeSelectionHandler=^(NSInteger p){saves++;};
@@ -1368,7 +1374,7 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     for (NSNumber *target in @[@0,@2]) {
         DesktopSizeSession *old=[DesktopSizeSession new]; DesktopSizeViewer *viewer=[self viewerWithSession:old];
         BOOL fromVirtual=target.integerValue==0;
-        old.snapshot=fromVirtual ? self.acceptedSnapshot : @{@"layoutVirtual":@NO,@"layoutCount":@2};
+        old.snapshot=fromVirtual ? self.acceptedSnapshot : self.physicalSnapshot;
         viewer.restoredDesktopSizePreset=fromVirtual ? 2 : 0;
         [viewer setValue:@{@"id":@9} forKey:@"selectedDisplay"];
         [viewer setValue:@2 forKey:@"pendingDesktopSizePreset"]; // Busy requests cannot open a confirmation.
@@ -1381,7 +1387,7 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
         XCTAssertTrue(old.displayHandoffInputBlocked); XCTAssertNil([viewer valueForKey:@"selectedDisplay"]);
         XCTAssertNil(old.stateHandler); XCTAssertNil(old.frameHandler); XCTAssertNil(old.cursorHandler); XCTAssertNil(old.displayLayoutHandler);
         DesktopSizeSession *fresh=[DesktopSizeSession new]; fresh.usable=NO; fresh.available=YES; fresh.displayHandoffInputBlocked=YES;
-        fresh.snapshot=target.integerValue ? self.acceptedSnapshot : @{@"layoutVirtual":@NO,@"layoutCount":@2};
+        fresh.snapshot=target.integerValue ? self.acceptedSnapshot : self.physicalSnapshot;
         viewer.session=fresh; [viewer updateDisplayModeRestoration]; XCTAssertEqual(saves,0); XCTAssertTrue(fresh.displayHandoffInputBlocked);
         fresh.usable=YES; [viewer updateDisplayModeRestoration];
         XCTAssertEqual(saves,1); XCTAssertEqual(saved,target.integerValue); XCTAssertFalse(fresh.displayHandoffInputBlocked);
@@ -1402,14 +1408,14 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
         XCTAssertFalse([viewer acceptDisplayModeConfirmation]); XCTAssertFalse(viewer.requestedResume);
         XCTAssertEqual(viewer.restoredDesktopSizePreset,2); [viewer stopViewer];
     }
-    DesktopSizeSession *physical=[DesktopSizeSession new]; physical.snapshot=@{@"layoutVirtual":@NO,@"layoutCount":@2};
+    DesktopSizeSession *physical=[DesktopSizeSession new]; physical.snapshot=self.physicalSnapshot;
     DesktopSizeViewer *viewer=[self viewerWithSession:physical];
     XCTAssertNil([viewer displayModeConfirmationForPreset:0]); XCTAssertTrue([viewer applyStreamDisplay:@5]);
     XCTAssertNil([viewer valueForKey:@"modeConfirmationPreset"]); XCTAssertFalse(viewer.requestedResume);
     XCTAssertEqualObjects(physical.requestedDisplay,@5); XCTAssertEqual(viewer.session,physical); [viewer stopViewer];
 }
 - (void)testVirtualModeHandoffRequestsOnceWhileAllRemoteInputRemainsBlocked {
-    DesktopSizeSession *session=[DesktopSizeSession new]; session.snapshot=@{@"layoutVirtual":@NO,@"layoutCount":@2};
+    DesktopSizeSession *session=[DesktopSizeSession new]; session.snapshot=self.physicalSnapshot;
     DesktopSizeViewer *viewer=[self viewerWithSession:session];
     [viewer setValue:@YES forKey:@"changingDisplayMode"]; [viewer setValue:@2 forKey:@"modeTargetPreset"];
     session.displayHandoffInputBlocked=YES;
@@ -1526,6 +1532,160 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     [viewer expireDisplayModeVerification:fresh generation:current];
     XCTAssertEqualObjects([viewer valueForKey:@"lastConnectionFailure"][@"displayModeFailureStage"],@118);
     XCTAssertFalse([[viewer valueForKey:@"changingDisplayMode"] boolValue]); [viewer stopViewer];
+}
+
+- (void)testInitialAppleImageWaitsForMetadataBeforeApplyingEitherSavedMode {
+    for (NSNumber *target in @[@0,@2]) {
+        DesktopSizeSession *session=[DesktopSizeSession new];
+        session.snapshot=@{@"appleDisplayProtocol":@YES,@"layoutVirtual":@NO,@"layoutCount":@0};
+        DesktopSizeViewer *viewer=[self mirrorViewerWithSession:session attempt:1];
+        [viewer setValue:target forKey:@"modeTargetPreset"]; viewer.restoredDesktopSizePreset=target.integerValue;
+        __block NSUInteger saves=0; viewer.desktopSizeSelectionHandler=^(NSInteger p){saves++;};
+        [viewer updateDisplayModeRestoration];
+        XCTAssertTrue([[viewer valueForKey:@"changingDisplayMode"] boolValue]);
+        XCTAssertTrue(session.displayHandoffInputBlocked); XCTAssertEqual(saves,0);
+        session.snapshot=self.acceptedSnapshot;
+        [viewer updateDisplayModeRestoration];
+        if (target.integerValue) {
+            XCTAssertFalse([[viewer valueForKey:@"changingDisplayMode"] boolValue]); XCTAssertEqual(saves,1);
+        } else {
+            XCTAssertTrue([[viewer valueForKey:@"mirrorRestartScheduled"] boolValue]);
+            XCTestExpectation *next=[self expectationWithDescription:@"late metadata starts bounded Mirror recovery"];
+            dispatch_async(dispatch_get_main_queue(),^{[next fulfill];}); [self waitForExpectations:@[next] timeout:2];
+            XCTAssertTrue(viewer.requestedResume); XCTAssertEqual(viewer.mirrorRetirementDelay,16); XCTAssertEqual(saves,0);
+        }
+        [viewer stopViewer];
+    }
+}
+- (void)testNonAppleLegacyImageCanFinishWithoutDisplayMetadataOrSavingMode {
+    DesktopSizeSession *session=[DesktopSizeSession new];
+    session.snapshot=@{@"appleDisplayProtocol":@NO,@"layoutVirtual":@NO,@"layoutCount":@0};
+    DesktopSizeViewer *viewer=[self mirrorViewerWithSession:session attempt:1];
+    __block NSUInteger saves=0; viewer.desktopSizeSelectionHandler=^(NSInteger p){saves++;};
+    [viewer updateDisplayModeRestoration];
+    XCTAssertFalse([[viewer valueForKey:@"changingDisplayMode"] boolValue]);
+    XCTAssertFalse(session.displayHandoffInputBlocked); XCTAssertEqual(saves,0); [viewer stopViewer];
+}
+- (void)testAuthenticatedAppleProtocolIsKnownBeforeItsFirstDisplayLayout {
+    CompanionVNCSession *session=[CompanionVNCSession new]; [session setValue:@YES forKey:@"appleGestureServer"];
+    XCTAssertEqualObjects(session.diagnosticCounters[@"appleDisplayProtocol"],@YES);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"layoutCount"],@0); [session stop];
+}
+- (void)testMirrorRequiresMatchingFreshFramebufferGeometryBeforeSavingOrOpeningInput {
+    DesktopSizeSession *session=[DesktopSizeSession new];
+    session.snapshot=@{@"layoutVirtual":@NO,@"layoutCount":@2,@"layoutWidth":@3200,@"layoutHeight":@1200,
+        @"framebufferWidth":@1600,@"framebufferHeight":@1200};
+    DesktopSizeViewer *viewer=[self mirrorViewerWithSession:session attempt:1]; [viewer setValue:@YES forKey:@"mirrorFullRestartUsed"];
+    __block NSUInteger saves=0; viewer.desktopSizeSelectionHandler=^(NSInteger p){saves++;};
+    [viewer updateDisplayModeRestoration];
+    XCTAssertTrue([[viewer valueForKey:@"changingDisplayMode"] boolValue]); XCTAssertTrue(session.displayHandoffInputBlocked); XCTAssertEqual(saves,0);
+    session.snapshot=@{@"layoutVirtual":@NO,@"layoutCount":@2,@"layoutWidth":@3200,@"layoutHeight":@1200,
+        @"framebufferWidth":@3200,@"framebufferHeight":@1200};
+    session.usable=NO; [viewer updateDisplayModeRestoration]; XCTAssertEqual(saves,0);
+    session.usable=YES; [viewer updateDisplayModeRestoration]; XCTAssertEqual(saves,1); XCTAssertFalse(session.displayHandoffInputBlocked);
+    [viewer stopViewer];
+}
+- (void)testSavedMirrorMonitorIsRequestedImmediatelyWhenInitialHandoffGateOpens {
+    DesktopSizeSession *session=[DesktopSizeSession new];
+    NSArray *views=@[@{@"id":@5,@"x":@0,@"y":@0,@"width":@0.5,@"height":@1},@{@"id":@9,@"x":@0.5,@"y":@0,@"width":@0.5,@"height":@1}];
+    session.catalogue=@{@"views":views};
+    session.snapshot=@{@"layoutVirtual":@NO,@"layoutCount":@2,@"layoutWidth":@3200,@"layoutHeight":@1200,
+        @"framebufferWidth":@3200,@"framebufferHeight":@1200};
+    DesktopSizeViewer *viewer=[self mirrorViewerWithSession:session attempt:1]; viewer.restoredDisplayID=@5;
+    [viewer setValue:views forKey:@"displayViews"]; [viewer setValue:@(3200.0/1200) forKey:@"displayAspect"];
+    [viewer setValue:[NSValue valueWithCGSize:CGSizeMake(3200,1200)] forKey:@"framebufferSize"];
+    session.available=NO; [viewer restoreSavedDisplay]; XCTAssertNil(session.requestedDisplay);
+    session.available=YES; [viewer updateDisplayModeRestoration];
+    XCTAssertEqualObjects(session.requestedDisplay,@5, @"No second framebuffer/layout callback is required to apply the saved monitor");
+    [viewer stopViewer];
+}
+- (void)testSavedMirrorMonitorRestoresAsSoonAsResumeReadinessClears {
+    DesktopSizeSession *session=[DesktopSizeSession new];
+    DesktopSizeViewer *viewer=[self mirrorViewerWithSession:session attempt:1];
+    NSArray *views=@[@{@"id":@5,@"x":@0,@"y":@0,@"width":@0.5,@"height":@1},@{@"id":@9,@"x":@0.5,@"y":@0,@"width":@0.5,@"height":@1}];
+    session.catalogue=@{@"views":views}; session.snapshot=self.physicalSnapshot; viewer.restoredDisplayID=@5;
+    [viewer setValue:views forKey:@"displayViews"]; [viewer setValue:@(3200.0/1200) forKey:@"displayAspect"];
+    [viewer setValue:[NSValue valueWithCGSize:CGSizeMake(3200,1200)] forKey:@"framebufferSize"];
+    [viewer setValue:@YES forKey:@"checkingResume"];
+    [viewer updateDisplayModeRestoration]; XCTAssertNil(session.requestedDisplay);
+    [viewer completeResumeReadiness];
+    XCTAssertEqualObjects(session.requestedDisplay,@5, @"Resume readiness retries the saved monitor without another frame or layout callback");
+    [viewer stopViewer];
+}
+- (void)testModeRestartTransportFailuresRetainUnrememberedLoginForExplicitRetry {
+    for (NSNumber *stage in @[@110,@114]) {
+        CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
+        id<DesktopLoginRecoveryTesting> login=[viewer valueForKey:@"credentialState"];
+        [login editWithUsername:@"synthetic" password:@"transient" remember:NO]; [login beginLogin]; [login authenticated];
+        [viewer setValue:@YES forKey:@"changingDisplayMode"]; [viewer setValue:@YES forKey:@"mirrorFullRestartUsed"];
+        [viewer setValue:@0 forKey:@"modeTargetPreset"]; [viewer setValue:@2 forKey:@"modePreviousPreset"];
+        [viewer prepareConnection]; [viewer showConnectionFailureStage:stage.integerValue];
+        XCTAssertNotNil([login loginForResume]);
+        XCTAssertEqualObjects(((UITextField *)[viewer valueForKey:@"username"]).text,@"");
+        XCTAssertEqualObjects(((UITextField *)[viewer valueForKey:@"password"]).text,@"");
+        __block NSUInteger connects=0;
+        viewer.connectHandler=^(NSString *user,NSString *password,BOOL remember){
+            connects++; XCTAssertEqualObjects(user,@"synthetic"); XCTAssertEqualObjects(password,@"transient"); XCTAssertFalse(remember);
+        };
+        [viewer connectionAction]; XCTAssertEqual(connects,1); XCTAssertEqual(viewer.restoredDesktopSizePreset,0);
+        viewer.connectHandler=nil; [viewer stopViewer]; XCTAssertNil([login loginForResume]);
+    }
+}
+- (void)testModeRestartCredentialTrustAndCancellationFailuresRetirePrivateRecovery {
+    for (NSNumber *stage in @[@2,@7,@8,@111,@112,@113,@115]) {
+        CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
+        id<DesktopLoginRecoveryTesting> login=[viewer valueForKey:@"credentialState"];
+        [login editWithUsername:@"synthetic" password:@"transient" remember:NO]; [login beginLogin]; [login authenticated];
+        [viewer setValue:@YES forKey:@"changingDisplayMode"]; [viewer setValue:@YES forKey:@"mirrorFullRestartUsed"];
+        [viewer setValue:@0 forKey:@"modeTargetPreset"]; [viewer prepareConnection];
+        [viewer showConnectionFailureStage:stage.integerValue]; XCTAssertNil([login loginForResume]);
+        XCTAssertEqualObjects(((UITextField *)[viewer valueForKey:@"password"]).text,@"");
+        [viewer stopViewer];
+    }
+}
+- (void)testDeliberateFormEditReplacesPrivateLoginBeforeModeRetry {
+    CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
+    id<DesktopLoginRecoveryTesting> login=[viewer valueForKey:@"credentialState"];
+    [login editWithUsername:@"original" password:@"original-only" remember:NO]; [login beginLogin];
+    [viewer setValue:@YES forKey:@"changingDisplayMode"]; [viewer setValue:@2 forKey:@"modeTargetPreset"];
+    [viewer prepareConnection]; [viewer showConnectionFailureStage:117]; XCTAssertNotNil([login loginForResume]);
+    ((UITextField *)[viewer valueForKey:@"username"]).text=@"replacement";
+    ((UITextField *)[viewer valueForKey:@"password"]).text=@"replacement-only";
+    [viewer loginEdited]; XCTAssertNil([login loginForResume]);
+    __block NSUInteger connects=0;
+    viewer.connectHandler=^(NSString *user,NSString *password,BOOL remember){
+        connects++; XCTAssertEqualObjects(user,@"replacement"); XCTAssertEqualObjects(password,@"replacement-only"); XCTAssertFalse(remember);
+    };
+    [viewer connectionAction]; XCTAssertEqual(connects,1); viewer.connectHandler=nil; [viewer stopViewer];
+}
+- (void)testLateExactVirtualFrameReconcilesBothTimeoutOutcomesOnlyAfterFreshPixels {
+    for (NSNumber *outcome in @[@3,@4]) {
+        DesktopSizeSession *session=[DesktopSizeSession new]; DesktopSizeViewer *viewer=[self viewerWithSession:session];
+        session.snapshot=@{@"layoutVirtual":@YES,@"layoutCount":@1,@"layoutWidth":@2048,@"layoutHeight":@1280,
+            @"framebufferWidth":@2048,@"framebufferHeight":@1280};
+        __block NSInteger saved=-1; viewer.desktopSizeSelectionHandler=^(NSInteger p){saved=p;};
+        XCTAssertTrue([viewer applyDesktopSizePreset:2]);
+        NSMutableDictionary *timeout=[session.snapshot mutableCopy]; timeout[@"probeOutcome"]=outcome; session.snapshot=timeout;
+        [viewer updateDesktopSizeState]; XCTAssertEqualObjects([viewer valueForKey:@"lateDesktopSizePreset"],@2); XCTAssertEqual(saved,-1);
+        session.snapshot=self.acceptedSnapshot; session.usable=NO; [viewer updateDesktopSizeState]; XCTAssertEqual(saved,-1);
+        session.usable=YES; [viewer updateDesktopSizeState]; XCTAssertEqual(saved,2);
+        XCTAssertEqualObjects([viewer valueForKey:@"lateDesktopSizePreset"],@0); [viewer stopViewer];
+    }
+}
+- (void)testInterruptionCannotPersistQueuedDisplayChoiceOrLateSizeResult {
+    for (NSNumber *background in @[@NO,@YES]) for (NSNumber *physical in @[@NO,@YES]) {
+        DesktopSizeSession *session=[DesktopSizeSession new]; DesktopSizeViewer *viewer=[self viewerWithSession:session];
+        session.snapshot=self.acceptedSnapshot;
+        if (physical.boolValue) [viewer setValue:@5 forKey:@"pendingStreamDisplayID"];
+        else [viewer setValue:@2 forKey:@"pendingDesktopSizePreset"];
+        [viewer setValue:@2 forKey:@"lateDesktopSizePreset"];
+        __block NSUInteger saves=0; viewer.desktopSizeSelectionHandler=^(NSInteger p){saves++;}; viewer.displaySelectionHandler=^(NSNumber *p){saves++;};
+        if (background.boolValue) [viewer background]; else [viewer becameInactive];
+        [viewer updateDesktopSizeState];
+        XCTAssertEqual(saves,0); XCTAssertEqualObjects([viewer valueForKey:@"pendingDesktopSizePreset"],@0);
+        XCTAssertNil([viewer valueForKey:@"pendingStreamDisplayID"]); XCTAssertEqualObjects([viewer valueForKey:@"lateDesktopSizePreset"],@0);
+        [viewer stopViewer];
+    }
 }
 
 @end

@@ -679,7 +679,18 @@
       "mirrorStillVirtual": 116,
       "virtualUnavailable": 117,
       "metadataUnavailable": 118
-    }
+    },
+    "knownAppleWaitsForMetadata": true,
+    "legacyFallbackRequiresNonAppleProtocol": true,
+    "mirrorRequiresMatchingFramebufferGeometry": true,
+    "restoreSavedMonitorWhenGateOpens": true,
+    "explicitTransportRetryRetainsSessionLogin": true,
+    "explicitFormEditsRetireSessionRecovery": true,
+    "interruptionDiscardsPendingPreference": true,
+    "lateVirtualOutcomes": [
+      3,
+      4
+    ]
   },
   "virtualLayoutDeadlineCases": [
     {

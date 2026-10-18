@@ -75,7 +75,7 @@
     XCTAssertTrue(MCDynamicDisplayPacket((MCDynamicSize){1132,600}, expected, sizeof(expected)));
     XCTAssertEqual(memcmp(bytes, expected, 196), 0);
     XCTAssertEqualObjects(session.diagnosticCounters[@"probeRequests"], @1);
-    [session setValue:@(NSProcessInfo.processInfo.systemUptime - 7) forKey:@"desktopResizeStarted"];
+    [session setValue:@(NSProcessInfo.processInfo.systemUptime - 21) forKey:@"desktopResizeStarted"];
     XCTAssertTrue([session processDesktopSizeChange:client]);
     XCTAssertEqualObjects(session.diagnosticCounters[@"probeTimedOut"], @1);
     XCTAssertFalse([session tryClickX:1 y:1 mask:1]);
@@ -174,7 +174,7 @@
     uint8_t bytes[196]; XCTAssertEqual(recv(pair[1],bytes,196,MSG_WAITALL),196);
     [self deliverLayout:self.fixture[@"layoutCases"][2] session:session client:client peer:pair[1]];
     XCTAssertEqual(client->width,1600); XCTAssertEqual(client->height,1200); XCTAssertFalse(session.connected);
-    [session setValue:@(NSProcessInfo.processInfo.systemUptime-7) forKey:@"desktopResizeStarted"];
+    [session setValue:@(NSProcessInfo.processInfo.systemUptime-21) forKey:@"desktopResizeStarted"];
     XCTAssertTrue([session processDesktopSizeChange:client]);
     XCTAssertEqualObjects(session.diagnosticCounters[@"probeOutcome"],@4);
     XCTAssertEqualObjects(session.diagnosticCounters[@"probeAccepted"],@0); XCTAssertEqualObjects(session.diagnosticCounters[@"probeRequests"],@1);

@@ -1527,6 +1527,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
         @"sessionInputReady": @(_inputReady), @"sessionReviewBlocked": @(_reviewInputSuspended), @"sessionDisplayHandoffBlocked": @(_displayHandoffInputBlocked),
         @"sessionInterruptionBlocked": @(_interruptionInputSuspended), @"sessionPaused": @(_paused)}];
     stats[@"sampleUptime"] = @(NSProcessInfo.processInfo.systemUptime);
+    stats[@"appleDisplayProtocol"] = @(_appleGestureServer);
     stats[@"probeRequests"] = @(_desktopResizeRequests); stats[@"probeAccepted"] = @(_desktopResizeAccepted);
     stats[@"switches"] = [_desktopSwitchSamples copy] ?: @[];
     stats[@"fullRefreshRequests"] = @(_fullRefreshRequests); stats[@"coalescedFullRefreshes"] = @(_coalescedFullRefreshes);

@@ -45,7 +45,13 @@ Do not restore the old mode's crop, zoom, selected ID or pending resize. Keep on
 "Switching display mode…" status through the whole transition. Save a new mode
 only after its validated layout and complete fresh image have been presented.
 Failed changes keep the previous saved preference and allow explicit retry of
-the failed target using session login recovery.
+the failed target using session login recovery. Transport failures during an
+active mode restart retain this private recovery without refilling unremembered
+form fields; credential/trust rejection and explicit cancellation still end it.
+Deliberate form edits discard the old private recovery before a new attempt.
+Interruption discards pending monitor/size preference commits, including late
+reconciliation; foreground return cannot save an interrupted choice. Matching
+late virtual frames may reconcile either timeout outcome (3 or 4).
 
 A virtual-to-physical transition permits the existing bounded 16-second quiet
 allowance after all known retirement work, without a promised completion countdown.
@@ -61,8 +67,13 @@ A narrowly admitted handoff-only preset request may create the virtual display
 without opening this gate: it still requires this established Apple owner's valid
 metadata, fresh baseline and all foreground/review/pause/stop guards. Generic
 resize APIs remain blocked during a mode handoff. Verify the requested mode and
-complete pixels before enabling input. Unsupported legacy hosts retain ordinary
-connection behavior and are not marked as verified mode changes.
+complete pixels before enabling input. Only a non-Apple protocol may take the initial metadata-free legacy fallback.
+A known Apple owner must await display metadata even when a complete image
+arrives first. Mirror requires positive layout dimensions matching the fresh
+framebuffer, just as Virtual does. Once that gate opens, immediately retry a
+saved physical-monitor selection without waiting for another screen update.
+Unsupported legacy hosts retain ordinary connection behavior and are not marked
+as verified mode changes.
 
 Failure stage 116 means the host still reports a virtual display after Mirror
 recovery; 117 means the requested virtual display could not be established; 118
