@@ -386,7 +386,7 @@ struct DirectGestureGuide: View {
         Form {
             Section("Screen Sharing") {
                 Text("Pointer: tap where you want to click. Trackpad: slide anywhere to move the cursor.")
-                Text("Tap to click. Hold, then move to drag. Tap with two fingers to right-click. Scroll with two fingers.")
+                Text("Tap to click. Hold, then move to drag. Tap with two fingers to right-click. In Trackpad, scroll with two fingers.")
                 Text("Pan the zoomed view with two fingers in Pointer or three in Trackpad. Pinch to zoom the desktop image. Double-tap with two fingers to zoom in or fit.")
             }
             Section("Trackpad & Keyboard Only") {
