@@ -663,23 +663,35 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     rfbClient *client=rfbGetClient(8,3,4); client->sock=pair[0]; client->width=8144; client->height=2134;
     [session configureClient:client]; XCTAssertTrue([session allocate:client]);
     NSDictionary *vectors=self.fixture[@"selectedCatalogueLayouts"];
+    XCTAssertTrue([self.fixture[@"physicalSelectionDelivery"][@"validatedCurrentStreamRepeatRetainsDelivery"] boolValue]);
     NSDictionary *all=@{@"bodyHex":vectors[@"catalogueHex"]};
     [self deliverLayout:all session:session client:client peer:pair[1]];
     for (NSString *key in @[@"running",@"established",@"inputReady",@"appleGestureServer"]) [session setValue:@YES forKey:key];
     __block NSDictionary *visibleLayout=nil;
     session.displayLayoutHandler=^(NSDictionary *layout){ visibleLayout=layout; };
+    uint8_t delivery[16];
+    XCTAssertTrue([session configureDesktopUpdates:client]); XCTAssertEqual(recv(pair[1],delivery,16,MSG_WAITALL),16);
+    struct timeval timeout={.tv_sec=1}; setsockopt(pair[1],SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
     for (NSNumber *identifier in @[@5,@9,@0]) {
         XCTAssertTrue([session requestDesktopDisplayID:identifier.unsignedIntValue]);
         [session setValue:@NO forKey:@"releaseInputRequested"]; XCTAssertTrue([session processDesktopSizeChange:client]);
         uint8_t packet[8]; XCTAssertEqual(recv(pair[1],packet,8,MSG_WAITALL),8);
         NSDictionary *row=identifier.intValue==5 ? vectors[@"cases"][0] : identifier.intValue==9 ? vectors[@"cases"][1] : all;
-        if (identifier.intValue==9) {
-            // An old external-monitor reply cannot complete the newer internal request.
-            [self deliverLayout:vectors[@"cases"][0] session:session client:client peer:pair[1]];
-            XCTAssertEqual(client->width,5120); XCTAssertFalse(session.connected);
+        if (identifier.intValue!=5) {
+            // The real loop configures updates between old and matching reports.
+            // A repeat of the proven stream must not silence the target metadata.
+            [self deliverLayout:vectors[@"cases"][identifier.intValue==9 ? 0 : 1] session:session client:client peer:pair[1]];
+            XCTAssertEqual(client->width,identifier.intValue==9 ? 5120 : 3024); XCTAssertFalse(session.connected);
             XCTAssertEqualObjects(session.diagnosticCounters[@"probeOutcome"],@1);
+            XCTAssertTrue([session configureDesktopUpdates:client]);
+            XCTAssertEqual(recv(pair[1],delivery,16,MSG_DONTWAIT),-1, @"No disable packet before the requested layout");
+            XCTAssertEqualObjects(session.diagnosticCounters[@"automaticDesktopUpdates"],@YES);
         }
+        BOOL wasActive=[session.diagnosticCounters[@"automaticDesktopUpdates"] boolValue];
         [self deliverLayout:row session:session client:client peer:pair[1]];
+        if (wasActive) { XCTAssertEqual(recv(pair[1],delivery,16,MSG_WAITALL),16); XCTAssertEqual(delivery[4],255); }
+        XCTAssertTrue([session configureDesktopUpdates:client]); XCTAssertEqual(recv(pair[1],delivery,16,MSG_WAITALL),16);
+        XCTAssertEqual(delivery[0],9); XCTAssertEqual(delivery[4],0);
         int width=identifier.intValue==5 ? 5120 : identifier.intValue==9 ? 3024 : 8144;
         int height=identifier.intValue==9 ? 1964 : 2134;
         XCTAssertEqual(client->width,width); XCTAssertEqual(client->height,height);
@@ -1714,6 +1726,42 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
         XCTAssertEqual(retires-before,[boundary isEqualToString:@"accept"] ? 1 : 0);
         if ([boundary isEqualToString:@"accept"]) { XCTAssertTrue(viewer.requestedResume); XCTAssertNil([viewer valueForKey:@"pendingStreamDisplayID"]); }
         viewer.disconnectHandler=nil; viewer.filesTransferActiveHandler=nil; [viewer stopViewer];
+    }
+}
+- (void)testColdPendingDisplayVerificationOffersInputOnlyWithoutWaitingForFailure {
+    XCTAssertTrue([self.fixture[@"displayModeHandoffPolicy"][@"pendingNoFrameInputOnlyAction"] boolValue]);
+    for (NSNumber *hadInitialFrame in @[@NO,@YES]) {
+    CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
+    id<DesktopLoginRecoveryTesting> login=[viewer valueForKey:@"credentialState"];
+    [login editWithUsername:@"synthetic" password:@"transient" remember:NO]; [login beginLogin];
+    [viewer setValue:@YES forKey:@"starting"]; [viewer setValue:@YES forKey:@"changingDisplayMode"];
+    [viewer setValue:@2 forKey:@"modeTargetPreset"]; [viewer setValue:@0 forKey:@"modePreviousPreset"];
+    if (hadInitialFrame.boolValue) {
+        UIImage *image=[[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(8,8)] imageWithActions:^(UIGraphicsImageRendererContext *context){ [UIColor.blueColor setFill]; UIRectFill(CGRectMake(0,0,8,8)); }];
+        [viewer frame:image];
+    }
+    [viewer updateConnectionChrome];
+    XCTAssertEqual([viewer valueForKey:@"lastFramebuffer"] != nil,hadInitialFrame.boolValue);
+    XCTAssertFalse(((UIView *)[viewer valueForKey:@"loginScroll"]).hidden);
+    XCTAssertTrue(((UIView *)[viewer valueForKey:@"controls"]).hidden);
+    NSMutableArray<UIView *> *views=[NSMutableArray arrayWithObject:viewer.view]; UIButton *action=nil;
+    for (NSUInteger i=0;i<views.count;i++) {
+        UIView *view=views[i]; [views addObjectsFromArray:view.subviews];
+        if ([view.accessibilityIdentifier isEqualToString:@"connection-inputOnly"] && [view isKindOfClass:UIButton.class]) action=(UIButton *)view;
+    }
+    XCTAssertNotNil(action); if (!action) { [viewer stopViewer]; return; }
+    XCTAssertFalse(action.hidden); XCTAssertTrue(action.enabled);
+    CompanionVNCSession *old=viewer.session; __block NSUInteger connects=0,retires=0,saves=0;
+    __weak CompanionVNCViewer *weak=viewer;
+    viewer.connectHandler=^(NSString *u,NSString *p,BOOL remember){ connects++; XCTAssertEqualObjects(u,@"synthetic"); XCTAssertEqualObjects(p,@"transient"); XCTAssertFalse(remember); [weak prepareConnection]; };
+    viewer.disconnectHandler=^{retires++;}; viewer.desktopSizeSelectionHandler=^(NSInteger preset){saves++;};
+    [action sendActionsForControlEvents:UIControlEventTouchUpInside];
+    XCTAssertEqual(connects,1); XCTAssertEqual(retires,1); XCTAssertEqual(saves,0);
+    XCTAssertNotEqual(viewer.session,old); XCTAssertTrue(viewer.session.inputOnly); XCTAssertTrue(viewer.inputOnly);
+    XCTAssertNil(old.stateHandler); XCTAssertNil(old.frameHandler); XCTAssertNil(old.displayLayoutHandler);
+    XCTAssertNil([viewer valueForKey:@"failedDisplayModePreset"]); XCTAssertFalse([[viewer valueForKey:@"changingDisplayMode"] boolValue]);
+    XCTAssertEqual(viewer.restoredDesktopSizePreset,0); XCTAssertTrue(action.hidden);
+    viewer.connectHandler=nil; viewer.disconnectHandler=nil; [viewer stopViewer];
     }
 }
 - (void)testInputOnlyRecoveryWithoutSessionCredentialsShowsItsOwnLogin {

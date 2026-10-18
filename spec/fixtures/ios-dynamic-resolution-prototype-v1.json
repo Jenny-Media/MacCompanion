@@ -640,7 +640,8 @@
     "pauseAndInputOnlyStillDisable": true,
     "virtualSizeStillStopsBeforeRequest": true,
     "inputNeedsFreshCompletePixels": true,
-    "requiresValidOldGeometry": true
+    "requiresValidOldGeometry": true,
+    "validatedCurrentStreamRepeatRetainsDelivery": true
   },
   "mirrorHandoffPolicy": {
     "maximumFreshConnectionsPerRestart": 2,
@@ -690,7 +691,9 @@
     "lateVirtualOutcomes": [
       3,
       4
-    ]
+    ],
+    "temporaryInactivityRetainsPrivateRecovery": true,
+    "pendingNoFrameInputOnlyAction": true
   },
   "virtualLayoutDeadlineCases": [
     {

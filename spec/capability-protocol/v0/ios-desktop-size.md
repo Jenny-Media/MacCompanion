@@ -54,7 +54,8 @@ failed. Selecting it abandons that operation, retires its native and SSH owners,
 and opens a fresh input-only connection using the existing bounded login recovery.
 No virtual-display request, physical-display verification, pixel baseline or host
 cleanup delay is required. Keep the previous saved display choice. Offer this action
-on the failure card even before an image arrives. Stale recovery actions, background,
+on the failure card even before an image arrives, and on the initial display-verification
+progress card while no image has arrived. Stale recovery actions, background,
 app lock and exit cannot start a replacement. If session credentials are unavailable,
 show the normal input-only login form; never bypass authentication or server trust.
 If replacing that owner will interrupt an active borrowed Files transfer, confirm
@@ -96,7 +97,10 @@ pre-frame failures. Stop/reconnect errors cannot replace them with a generic
 connection-ended notice. Keep bounded numeric target, attempt, phase and last
 failure diagnostics; no endpoint, credential, pixels or input values are retained.
 Exit, owner replacement, inactivity or app locking cancels pending work. Cleanup
-requirements survive interrupted foreground recovery; stale callbacks cannot
+requirements and private login survive temporary inactivity, including Control Center.
+Retire pending transport work without reporting explicit user cancellation, and restart
+the required quiet allowance on foreground recovery before opening a new connection.
+Explicit cancellation still clears recovery. Stale callbacks cannot
 complete another owner's operation or save a preference.
 
 Choose Display sends the indexed message-13 request on the existing authenticated
@@ -171,6 +175,10 @@ Do not relax the ordinary all-display parser, admit unknown IDs/versions, accept
 malformed companion records, or infer geometry from pixels. A fresh normalized
 layout and complete selected-stream baseline must reopen input without reconnect.
 Repeated identical catalogue-bearing metadata must not invalidate a ready baseline.
+While selecting another monitor or All Displays, validate a repeated report for the
+currently proven selected stream against its retained catalogue and geometry. Keep
+its existing delivery subscription; it is not acknowledgement of the new selection.
+Unknown IDs, changed rectangles or malformed companion records remain invalid.
 Virtual-to-mirror retirement/reconnect stays automatic; no manual reconnect is a
 normal part of the display choice. An initial pixel baseline for the selected
 monitor must not wait for unstreamed physical monitors or desktop gaps.

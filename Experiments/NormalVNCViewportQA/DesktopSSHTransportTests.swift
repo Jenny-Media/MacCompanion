@@ -8,6 +8,14 @@ import Crypto
 import Darwin
 @testable import Mac_Companion
 
+@MainActor private final class DesktopOpeningInterruptionViewer: CompanionVNCViewer {
+    var openingHook: (() -> Void)?
+    override func showConnectionProgress(_ message: String) {
+        super.showConnectionProgress(message)
+        if message == "Opening encrypted connection…", let hook = openingHook { openingHook = nil; hook() }
+    }
+}
+
 /// Generated interoperability workload, never an additional golden corpus.
 /// SSH authenticates a synthetic account. The RFB peer completes ARD's client
 /// exchange but does not claim to validate macOS account authentication.
@@ -686,6 +694,94 @@ private func desktopWriterFinished(_ group: DispatchGroup) -> Bool { group.wait(
             XCTAssertEqual(server.record.count("tcp"),0, reason); XCTAssertEqual(server.record.count("auth"),0, reason)
             coordinator.disconnect(); viewer.stop(); try await server.close()
         }
+    }
+
+    func testMirrorInactivityRetainsTransientRecoveryAndRestartsQuietInterval() async throws {
+        let server = DesktopSSHServer(.rfb); try await server.start()
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic Mac", addresses: ["127.0.0.1"], sshPort: server.port)
+        let viewer = CompanionVNCViewer(), coordinator = VNCRemoteDesktopView.Coordinator(mac: mac)
+        viewer.loadViewIfNeeded(); coordinator.viewer = viewer
+        let login = try XCTUnwrap(viewer.value(forKey: "credentialState") as? DirectDesktopLoginState)
+        login.edit(username: "synthetic", password: "synthetic-only", remember: false)
+        _ = login.beginLogin(); login.authenticated()
+        viewer.restoredDesktopSizePreset = 0
+        for key in ["starting", "changingDisplayMode", "mirrorRequiresCleanup", "mirrorFullRestartUsed"] { viewer.setValue(true, forKey: key) }
+        viewer.setValue(0, forKey: "modeTargetPreset"); viewer.setValue(2, forKey: "modePreviousPreset")
+        var recoveries = 0
+        viewer.connectHandler = { user, password, remember in MainActor.assumeIsolated {
+            recoveries += 1; XCTAssertEqual(user,"synthetic"); XCTAssertEqual(password,"synthetic-only"); XCTAssertFalse(remember)
+            coordinator.connect(user: user, password: password, remember: remember)
+        } }
+        viewer.disconnectHandler = { MainActor.assumeIsolated { coordinator.disconnect() } }
+        coordinator.observeActivity()
+        do {
+            coordinator.connect(user: "synthetic", password: "synthetic-only", remember: false)
+            let retired = viewer.session
+            try await Task.sleep(for: .milliseconds(150))
+            NotificationCenter.default.post(name: UIApplication.willResignActiveNotification, object: nil)
+            try await Task.sleep(for: .milliseconds(350))
+            XCTAssertEqual(server.record.count("tcp"),0); XCTAssertEqual(server.record.count("auth"),0)
+            XCTAssertEqual(login.loginForResume()?["password"],"synthetic-only", "Temporary inactivity is not explicit cancellation")
+            NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+            try await Task.sleep(for: .milliseconds(350))
+            XCTAssertEqual(recoveries,1); XCTAssertFalse(viewer.session === retired)
+            XCTAssertNil(viewer.value(forKey: "failedDisplayModePreset")); XCTAssertTrue(viewer.value(forKey: "starting") as? Bool == true)
+            XCTAssertEqual(login.loginForResume()?["password"],"synthetic-only")
+            XCTAssertEqual(server.record.count("tcp"),0); XCTAssertEqual(server.record.count("auth"),0)
+            let remaining = try XCTUnwrap(viewer.value(forKey: "mirrorCleanupRemaining") as? Int)
+            XCTAssertGreaterThan(remaining,13); XCTAssertLessThanOrEqual(remaining,16)
+            coordinator.disconnect(); viewer.stop(); XCTAssertNil(login.loginForResume()); try await server.close()
+        } catch {
+            NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+            coordinator.disconnect(); viewer.stop(); try? await server.close()
+            coordinator.stopObserving(); viewer.connectHandler = nil; viewer.disconnectHandler = nil; throw error
+        }
+        coordinator.stopObserving(); viewer.connectHandler = nil; viewer.disconnectHandler = nil
+    }
+
+    func testActivationDuringRejectedOpeningRetirementKeepsTransientRecovery() async throws {
+        let server = DesktopSSHServer(.retiring); try await server.start()
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic Mac", addresses: ["127.0.0.1"], sshPort: server.port)
+        try TerminalSecretStore.write(Data(server.hostKey.utf8), id: mac.id, kind: "host-key")
+        let viewer = DesktopOpeningInterruptionViewer(), coordinator = VNCRemoteDesktopView.Coordinator(mac: mac)
+        viewer.loadViewIfNeeded(); coordinator.viewer = viewer
+        let login = try XCTUnwrap(viewer.value(forKey: "credentialState") as? DirectDesktopLoginState)
+        login.edit(username: "synthetic", password: "synthetic-only", remember: false)
+        _ = login.beginLogin(); login.authenticated()
+        for key in ["starting", "changingDisplayMode", "mirrorFullRestartUsed"] { viewer.setValue(true, forKey: key) }
+        viewer.restoredDesktopSizePreset = 2; viewer.setValue(2, forKey: "modeTargetPreset"); viewer.setValue(0, forKey: "modePreviousPreset")
+        var recoveries = 0
+        viewer.connectHandler = { user, password, remember in MainActor.assumeIsolated {
+            recoveries += 1; XCTAssertEqual(user,"synthetic"); XCTAssertEqual(password,"synthetic-only"); XCTAssertFalse(remember)
+            coordinator.connect(user: user, password: password, remember: remember)
+        } }
+        viewer.disconnectHandler = { MainActor.assumeIsolated { coordinator.disconnect() } }
+        coordinator.observeActivity()
+        var activation: Task<Void, Error>?
+        viewer.openingHook = {
+            NotificationCenter.default.post(name: UIApplication.willResignActiveNotification, object: nil)
+            activation = Task { @MainActor in
+                try await self.wait("rejected opening sends forwarded EOF") { server.record.count("forwardedEOF") > 0 }
+                XCTAssertEqual(server.record.count("peerCleanup"),0,"Return while retirement is still pending")
+                XCTAssertEqual(server.record.count("tcp"),1,"No overlapping replacement before retirement")
+                NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+            }
+        }
+        do {
+            coordinator.connect(user: "synthetic", password: "synthetic-only", remember: false)
+            try await wait("foreground recovery survives rejected-opening retirement") { recoveries == 1 }
+            try await activation?.value
+            try await wait("retiring peer finishes before replacement transport") { server.record.count("peerCleanup") >= 1 }
+            XCTAssertEqual(login.loginForResume()?["password"],"synthetic-only")
+            XCTAssertNil(viewer.value(forKey: "failedDisplayModePreset"))
+            XCTAssertGreaterThanOrEqual(server.record.count("peerCleanup"),1)
+            coordinator.disconnect(); viewer.stop(); try await server.close()
+        } catch {
+            activation?.cancel(); NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+            coordinator.disconnect(); viewer.stop(); try? await server.close()
+            coordinator.stopObserving(); viewer.connectHandler = nil; viewer.disconnectHandler = nil; try? TerminalSecretStore.remove(mac.id); throw error
+        }
+        coordinator.stopObserving(); viewer.connectHandler = nil; viewer.disconnectHandler = nil; try? TerminalSecretStore.remove(mac.id)
     }
 
     func testPendingOpeningRetiresBeforeReplacementAndCannotOverwriteIt() async throws {

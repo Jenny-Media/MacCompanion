@@ -1164,12 +1164,25 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     NSMutableArray *views = [NSMutableArray new];
     CGFloat aspect = 0;
     BOOL parsed = encoding == 1105 && CompanionVNCDecodeDisplayLayout(body.bytes, length, &decoded);
-    BOOL selectedCatalogue = NO;
+    BOOL selectedCatalogue = NO, retainedCurrentStream = NO;
     if (!parsed && encoding == 1105) {
         [_lock lock];
         if (_desktopResizeSelection && !_desktopResizePending && _desktopResizeDisplayID && _desktopResizeRequests > 0) {
             selectedCatalogue = CompanionVNCDecodeSelectedDisplayLayout(body.bytes, length, _desktopResizeDisplayID, &_desktopCatalogueLayout, &decoded);
             parsed = selectedCatalogue;
+        }
+        if (!parsed && _desktopResizeSelection && (_desktopResizePending || _desktopResizeAwaiting)
+            && _coverageLayoutValid && !_desktopResizeVirtualLayout && _coverageLayout.count == 1) {
+            // A packet already in flight can still name the proven old stream.
+            // Validate all catalogue records, but never acknowledge the new target.
+            CompanionVNCDisplay current = _coverageLayout.displays[0];
+            CompanionVNCDisplayLayout previous = {0};
+            retainedCurrentStream = current.id != _desktopResizeDisplayID
+                && CompanionVNCDecodeSelectedDisplayLayout(body.bytes,length,current.id,&_desktopCatalogueLayout,&previous)
+                && (CompanionVNCBE32((const uint8_t *)body.bytes + 14) & 1) == 0
+                && previous.width == _coverageLayout.width && previous.height == _coverageLayout.height
+                && current.x == 0 && current.y == 0
+                && current.width == previous.displays[0].width && current.height == previous.displays[0].height;
         }
         [_lock unlock];
     }
@@ -1203,7 +1216,9 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
         }
         geometry[@"records"] = records;
     }
+    if (retainedCurrentStream) { geometry[@"parsed"] = @YES; geometry[@"retainedCurrentStream"] = @YES; }
     [_lock lock]; _layoutMessages++; _layoutDiagnostics = geometry; [_lock unlock];
+    if (retainedCurrentStream) return TRUE; // Preserve validated geometry and its live subscription.
     if (encoding == 1101) { [self report:@"Connected"]; return TRUE; }
     // A same-geometry layout can signal an agent handoff that dropped arming.
     _automaticUpdatePending = YES;

@@ -321,12 +321,30 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
                             self.viewer?.showConnectionProgress(message)
                         })
                     guard generation == token, !Task.isCancelled, viewer.connectionForegroundAvailable,
-                          DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { await opened.close(); throw CancellationError() }
+                          DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else {
+                        if generation == token, !Task.isCancelled, !viewer.connectionForegroundAvailable {
+                            // Publish the pause before awaited channel retirement:
+                            // activation during close must resume that pause,
+                            // not turn the original interruption into cancellation.
+                            viewer.background(completion: {})
+                        }
+                        await opened.close(); throw CancellationError()
+                    }
                     tunnel = opened
                     viewer.session.connectSocket(opened.takeSocket(), username: user, password: password)
                     work = nil
                 } catch {
-                    if generation == token { disconnect(); viewer.showConnectionFailureStage(error is CancellationError ? 113 : DirectDesktopSSHTunnel.failureStage(error)) }
+                    if generation == token {
+                        if error is CancellationError, !Task.isCancelled, !viewer.connectionForegroundAvailable {
+                            // Control Center and other temporary inactivity are a
+                            // lifecycle pause, not explicit cancellation of login.
+                            // This retires the opener and resumes with the same
+                            // private credentials and cleanup requirement on return.
+                            viewer.background(completion: {})
+                        } else {
+                            disconnect(); viewer.showConnectionFailureStage(error is CancellationError ? 113 : DirectDesktopSSHTunnel.failureStage(error))
+                        }
+                    }
                 }
             }
         }

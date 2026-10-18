@@ -43,7 +43,7 @@
 @property UIButton *loginDetails;
 @property UILabel *loginDetailsText;
 @property BOOL loginDetailsExpanded;
-@property UIButton *loginClose, *loginCancel;
+@property UIButton *loginClose, *loginCancel, *loginTrackpad;
 @property UIImageView *loginIcon;
 @property NSLayoutConstraint *loginIconHeight, *loginIconWidth, *loginTop, *loginBottom, *loginMaxWidth;
 @property NSLayoutConstraint *loginContentTop;
@@ -359,7 +359,11 @@
     [cancel.heightAnchor constraintGreaterThanOrEqualToConstant:48].active = YES;
     self.connect.backgroundColor = UIColor.systemBlueColor; [self.connect setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     self.connect.layer.cornerRadius = 16; self.connect.accessibilityIdentifier = @"mac-login-connect";
-    UIStackView *actions = [[UIStackView alloc] initWithArrangedSubviews:@[self.connect, cancel]];
+    self.loginTrackpad = [self button:@"Use Trackpad & Keyboard" action:@selector(useInputOnlyConnection)];
+    self.loginTrackpad.backgroundColor = UIColor.clearColor; self.loginTrackpad.tintColor = UIColor.systemBlueColor;
+    self.loginTrackpad.accessibilityIdentifier = @"connection-inputOnly";
+    self.loginTrackpad.titleLabel.numberOfLines = 0; self.loginTrackpad.titleLabel.textAlignment = NSTextAlignmentCenter;
+    UIStackView *actions = [[UIStackView alloc] initWithArrangedSubviews:@[self.connect, self.loginTrackpad, cancel]];
     actions.axis = UILayoutConstraintAxisVertical; actions.spacing = 0;
     self.loginFields = [[UIStackView alloc] initWithArrangedSubviews:@[self.credentialColumns, saveRow]];
     self.loginFields.axis = UILayoutConstraintAxisVertical; self.loginFields.spacing = 14;
@@ -1826,6 +1830,8 @@
     self.loginDetails.accessibilityValue = self.loginDetailsExpanded ? @"Expanded" : @"Collapsed";
     self.connect.hidden = progress;
     self.loginClose.hidden = progress; self.loginCancel.hidden = !progress;
+    self.loginTrackpad.hidden = !progress || !self.changingDisplayMode || self.inputOnly;
+    self.loginTrackpad.enabled = self.connectionForegroundAvailable;
     BOOL canRetryMode = self.failedDisplayModePreset != nil && [self.credentialState loginForResume] != nil;
     self.connect.enabled = !progress && ((self.username.text.length > 0 && self.password.text.length > 0) || canRetryMode);
     self.connect.alpha = self.connect.enabled ? 1 : .35;
@@ -1869,6 +1875,9 @@
         if (value) [self setTrackpadModeEnabled:YES];
         [self applyPresentation];
     }
+}
+- (void)useInputOnlyConnection {
+    if (self.connectionForegroundAvailable && self.starting && self.changingDisplayMode && !self.inputOnly) self.inputOnly = YES;
 }
 - (void)restartInputOnlyConnection {
     if (!self.connectionForegroundAvailable || self.textReview) return;
