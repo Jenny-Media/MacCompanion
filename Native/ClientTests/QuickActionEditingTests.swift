@@ -9,7 +9,7 @@ import XCTest
     func testScreenTextIsAFreeDesktopBuiltInAndPreservesSavedProfiles() throws {
         let action = VNCQuickAction(title: "Copy Text", kind: .copyText)
         #if os(iOS)
-        XCTAssertEqual(DirectControlMode.desktop.defaults.map(\.kind), [.composeText, .mode, .copyText, .fit, .rightClick])
+        XCTAssertEqual(DirectControlMode.desktop.defaults.map(\.kind), [.composeText, .copyText, .rightClick])
         XCTAssertTrue(DirectQuickActionEditing.standards(.desktop).contains { $0.kind == .copyText })
         XCTAssertTrue(DirectQuickActionEditing.canSave([action], mode: .desktop, hasPro: false))
         #else
@@ -22,6 +22,31 @@ import XCTest
         let decoded = try JSONDecoder().decode([VNCQuickAction].self, from: JSONEncoder().encode(saved))
         XCTAssertEqual(decoded, saved, "Existing saved choices retain identity, visibility and order")
     }
+    #if os(iOS)
+    func testCompactDefaultsUpgradeOnlyUntouchedDesktopProfilesWithoutLosingRetainedIDs() {
+        let legacy = DirectControlMode.desktop.legacyDefaults
+        for previous in [legacy, [VNCQuickAction.composeText] + legacy] {
+            let migrated = DirectControlMode.desktop.upgradingUntouchedDefaults(previous)
+            XCTAssertEqual(migrated.map(\.kind), [.composeText, .copyText, .rightClick])
+            for action in previous where [.composeText, .copyText, .rightClick].contains(action.kind) {
+                XCTAssertEqual(migrated.first { $0.kind == action.kind }, action)
+            }
+            var changed = previous; changed[0].enabled = false
+            XCTAssertEqual(DirectControlMode.desktop.upgradingUntouchedDefaults(changed), changed)
+            changed = previous; changed[0].title = "My choice"
+            XCTAssertEqual(DirectControlMode.desktop.upgradingUntouchedDefaults(changed), changed)
+            changed = previous; changed[0].text = "synthetic payload"
+            XCTAssertEqual(DirectControlMode.desktop.upgradingUntouchedDefaults(changed), changed)
+            changed = Array(previous.reversed())
+            XCTAssertEqual(DirectControlMode.desktop.upgradingUntouchedDefaults(changed), changed)
+        }
+        XCTAssertEqual(DirectControlMode.desktop.upgradingUntouchedDefaults([]), [])
+        for kind in [VNCQuickAction.Kind.mode, .fit] {
+            XCTAssertFalse(DirectControlMode.desktop.defaults.contains { $0.kind == kind })
+            XCTAssertEqual(DirectQuickActionEditing.standards(.desktop).filter { $0.kind == kind }.count, 1)
+        }
+    }
+    #endif
     func testAddingHiddenStandardRestoresItsIdentityInsteadOfDuplicatingIt() throws {
         let hidden = VNCQuickAction(title: "Custom Return Label", kind: .returnKey, enabled: false)
         var actions = [hidden]

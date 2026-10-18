@@ -15,7 +15,12 @@ final class MacShortcutsScene: UIResponder, UIWindowSceneDelegate {
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options: UIScene.ConnectionOptions) {
         guard let scene = scene as? UIWindowScene else { return }
         let folder = URL.cachesDirectory.appending(path: "synthetic-mac-shortcuts")
-        if ProcessInfo.processInfo.arguments.contains("--reset-library") { try? FileManager.default.removeItem(at: folder) }
+        if ProcessInfo.processInfo.arguments.contains("--reset-library") {
+            try? FileManager.default.removeItem(at: folder)
+            for value in ["00000000-0000-0000-0000-000000000011", "00000000-0000-0000-0000-000000000022"] {
+                VNCSessionPreferences.clear(UUID(uuidString: value)!)
+            }
+        }
         let library = DirectMacLibraryV1(url: folder.appending(path: "macs.json"), removeLogin: { _ in })
         if library.macs.isEmpty {
             _ = library.save(id: UUID(uuidString: "00000000-0000-0000-0000-000000000011"), name: "First Mac", address: "first.invalid")

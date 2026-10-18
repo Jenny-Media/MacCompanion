@@ -322,7 +322,7 @@
     "knownEndIndependentOfActivityUpdate": true,
     "inactiveReturnRestoresLatestTerminalGrid": true,
     "replacementComposeTextRequiresPresentedDesktop": true,
-    "replacementVideoModeChange": "defer-until-presentation-ready",
+    "replacementVideoModeChange": "fresh-input-only-owner",
     "retainedResumePhase": "paused",
     "retainedResumeOpacity": 1,
     "interruptionAdmissionSeparateFromReview": true,
@@ -2610,7 +2610,13 @@
     "backpressureScope": "perDirection",
     "sourceReadRequiresOwnQueueBelowHighWatermark": true,
     "sourceReadRequiresDestinationWritable": true,
-    "reversePendingWritesBlockSourceRead": false
+    "reversePendingWritesBlockSourceRead": false,
+    "retirement": {
+      "sendForwardedEOFBeforeParentClose": true,
+      "awaitRemoteChannelClosure": true,
+      "maximumSeconds": 2,
+      "noReconnectUntilRetired": true
+    }
   },
   "sshTransportCases": [
     {
@@ -3151,15 +3157,13 @@
       "events": [
         "replacement",
         "trackpad-only-request",
-        "layout",
-        "frame",
-        "trackpad-only-request"
+        "fresh-input-owner-authenticated"
       ],
       "expect": [
-        "desktop-mode-retained",
-        "frame-requests-retained",
-        "current-crop-presented",
-        "trackpad-mode-admitted"
+        "desktop-owner-retired",
+        "pending-presentation-discarded",
+        "fresh-input-only-owner",
+        "input-admitted-without-pixels"
       ]
     },
     {
@@ -3168,14 +3172,13 @@
         "replacement",
         "frame",
         "trackpad-only-request",
-        "layout",
-        "trackpad-only-request"
+        "fresh-input-owner-authenticated"
       ],
       "expect": [
-        "desktop-mode-retained",
-        "pending-frame-retained",
-        "current-crop-presented",
-        "trackpad-mode-admitted"
+        "desktop-owner-retired",
+        "pending-presentation-discarded",
+        "fresh-input-only-owner",
+        "input-admitted-without-pixels"
       ]
     },
     {
@@ -3184,14 +3187,13 @@
         "cached-trackpad-view",
         "replacement",
         "same-mode-replayed",
-        "matching-layout",
-        "frame"
+        "input-owner-authenticated"
       ],
       "expect": [
-        "current-mode-retained",
-        "replacement-frame-delivery-retained",
-        "current-presentation-ready",
-        "native-trackpad-admitted"
+        "native-trackpad-before-auth",
+        "no-ongoing-pixel-requests",
+        "current-geometry-used",
+        "input-admitted-without-pixels"
       ]
     },
     {
@@ -3578,5 +3580,51 @@
     "presentRecoveryDuringReview": false,
     "presentRecoveryAfterBack": true,
     "endTransportImmediately": true
-  }
+  },
+  "inputOnlyInitializationPolicy": {
+    "initialFramebufferRequest": false,
+    "framebufferAllocation": false,
+    "coverageAllocation": false,
+    "geometryMaximum": 65535,
+    "unsolicitedPixelsWithoutStorage": "reject-before-decoding",
+    "videoAllocation": "deferred-until-requested",
+    "videoLimitFailure": "retain-input-only"
+  },
+  "inputOnlyInitializationCases": [
+    {
+      "name": "large combined desktop",
+      "width": 8192,
+      "height": 8192,
+      "inputGeometryValid": true,
+      "videoAdmitted": false
+    },
+    {
+      "name": "maximum pointer coordinates",
+      "width": 65535,
+      "height": 65535,
+      "inputGeometryValid": true,
+      "videoAdmitted": false
+    },
+    {
+      "name": "normal desktop",
+      "width": 256,
+      "height": 128,
+      "inputGeometryValid": true,
+      "videoAdmitted": true
+    },
+    {
+      "name": "empty desktop",
+      "width": 0,
+      "height": 128,
+      "inputGeometryValid": false,
+      "videoAdmitted": false
+    },
+    {
+      "name": "unrepresentable geometry",
+      "width": 65536,
+      "height": 128,
+      "inputGeometryValid": false,
+      "videoAdmitted": false
+    }
+  ]
 }

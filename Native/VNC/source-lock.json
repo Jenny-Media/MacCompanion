@@ -15,21 +15,28 @@
     "purpose": "Both native direct-client generated builds deliver empty standard cursor reports; historical key and adapter filename retained for exact patch admission."
   },
   "desktopReadInputService": {
-    "purpose": "Cooperative input service on the sole direct-client socket owner, after authentication only; wire/authentication unchanged.",
+    "purpose": "Cooperative input service and optional numeric read counters on the sole direct-client socket owner, after authentication only; wire/authentication unchanged. Geometry-only input initialization rejects unsolicited pixel rectangles before built-in decoders, without changing authentication.",
     "patches": [
       {
         "path": "include/rfb/rfbclient.h",
         "originalSHA256": "1dfd2c3050d4c92854e0c37c4e9825e5db966f594b834fd983383929d3deed7b",
-        "adaptedSHA256": "16485be1655011ef3f574f105b8e6377defbc69b7d1ce87d20e4fbbfdb124032",
+        "adaptedSHA256": "6bcbd15b23c6210abb2c334aa767b0584e752aa6de2f0be57916d674533fdbfb",
         "patchPath": "Native/VNC/direct-read-service-header.patch",
-        "patchSHA256": "fdcbd2c97c4624fcd38f3b6230ffcb841ceda2f672f107d6ef23ce847098de0f"
+        "patchSHA256": "e26b4e46bdc9773c3ce3e717d560e1c6b54472ae6a1f81a038ccff26af1adb02"
       },
       {
         "path": "src/libvncclient/sockets.c",
         "originalSHA256": "5ce6cda0978c8ac4505b1d321724069ca074e4e049ab34991ad05a13337e221d",
-        "adaptedSHA256": "9731598b1333d4b5900ddef46ca9b361d4a2e3c753c8bd070faf7d5661f318c2",
+        "adaptedSHA256": "b01bf58efd0875819f9924a330a9b2f5879c81efe6cf586571ccf758bfc42a3e",
         "patchPath": "Native/VNC/direct-read-service-sockets.patch",
-        "patchSHA256": "a8f99f7326979e8ce6421df1c4d91f3622a1c9cc567967c6765589d4fd56ebac"
+        "patchSHA256": "b938889acda3267a1423fae6bd301a5e0c8a88e191e873c851e6974b4a61dd13"
+      },
+      {
+        "path": "src/libvncclient/rfbclient.c",
+        "originalSHA256": "7010aba9a90ab9eebf3cffa54125c28b152099cdf2bbf6a59a89bf3271377a42",
+        "adaptedSHA256": "a10ef7bc80b0b8dfec5442d090d1e164eefaf9546dd13481b2abde83b9cbf94c",
+        "patchPath": "Native/VNC/direct-input-only-decoder.patch",
+        "patchSHA256": "e537a5456d53c128836dd57eb4aeba2d3c2ef71127db18dd76164b1252617b94"
       }
     ]
   }

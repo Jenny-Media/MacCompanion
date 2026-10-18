@@ -52,6 +52,33 @@ import XCTest
         XCTAssertTrue(app.staticTexts.matching(identifier: "mac-preview-status").matching(predicate).firstMatch.waitForExistence(timeout: 5), app.debugDescription)
     }
     private func done(_ app: XCUIApplication) { app.buttons["mac-shortcut-done"].tap(); XCTAssertTrue(app.navigationBars["Edit Mac"].waitForExistence(timeout: 5)) }
+    func testDisplayChoicesCancelSaveAndPerMacIsolation() {
+        let app = launch(); defer { app.terminate() }
+        edit(app, first)
+        let virtual = app.buttons["mac-display-virtual"], mirror = app.buttons["mac-display-mirror"]
+        reveal(mirror, in: app, editor: true)
+        XCTAssertTrue(virtual.isSelected); mirror.tap(); XCTAssertTrue(mirror.isSelected)
+        app.buttons["Cancel"].tap(); edit(app, first); reveal(mirror, in: app, editor: true)
+        XCTAssertTrue(virtual.isSelected, "Cancel must discard the draft")
+        mirror.tap(); app.buttons["Save"].tap(); edit(app, first); reveal(mirror, in: app, editor: true)
+        XCTAssertTrue(mirror.isSelected); capture("mirror-display-choice", app: app)
+        app.buttons["Cancel"].tap(); edit(app, second); reveal(mirror, in: app, editor: true)
+        XCTAssertTrue(virtual.isSelected, "Display choices must be isolated per Mac")
+    }
+    func testLargeTextDisplayChoicesAndAdvancedSizesAreReachable() {
+        let app = launch(large: true, dark: true); defer { app.terminate() }
+        edit(app, first)
+        let virtual = app.buttons["mac-display-virtual"], mirror = app.buttons["mac-display-mirror"]
+        reveal(virtual, in: app, editor: true); XCTAssertTrue(virtual.isSelected)
+        capture("virtual-display-choice-large-text", app: app)
+        reveal(mirror, in: app, editor: true); mirror.tap(); XCTAssertTrue(mirror.isSelected)
+        reveal(virtual, in: app, editor: true); virtual.tap()
+        let advanced = app.buttons["Advanced"]; reveal(advanced, in: app, editor: true); advanced.tap()
+        let size = app.buttons["mac-desktop-size"]; reveal(size, in: app, editor: true); size.tap()
+        let more = app.buttons["More Space"]; XCTAssertTrue(more.waitForExistence(timeout: 3)); more.tap()
+        app.buttons["Save"].tap(); edit(app, first); reveal(virtual, in: app, editor: true)
+        XCTAssertTrue(virtual.isSelected)
+    }
     func testSharedSheetHasThreeAlignedTwoLineRows() {
         let app = launch(); defer { app.terminate() }
         edit(app, first); openSheet(app)

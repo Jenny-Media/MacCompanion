@@ -8,6 +8,14 @@ import Crypto
 import Darwin
 @testable import Mac_Companion
 
+@MainActor private final class DesktopOpeningInterruptionViewer: CompanionVNCViewer {
+    var openingHook: (() -> Void)?
+    override func showConnectionProgress(_ message: String) {
+        super.showConnectionProgress(message)
+        if message == "Opening encrypted connection…", let hook = openingHook { openingHook = nil; hook() }
+    }
+}
+
 /// Generated interoperability workload, never an additional golden corpus.
 /// SSH authenticates a synthetic account. The RFB peer completes ARD's client
 /// exchange but does not claim to validate macOS account authentication.
@@ -67,7 +75,11 @@ private final class DesktopSyntheticRFB: ChannelInboundHandler, @unchecked Senda
     private var stage = 0
     private let cursorPackets: [[UInt8]]
     private var sentCursorPackets = false
-    init(_ record: DesktopSSHRecord, cursorPackets: [[UInt8]] = []) { self.record = record; self.cursorPackets = cursorPackets }
+    private var sentDisplayLayout = false
+    private let serverInitSize: (UInt16, UInt16)
+    init(_ record: DesktopSSHRecord, cursorPackets: [[UInt8]] = [], serverInitSize: (UInt16, UInt16) = (256, 128)) {
+        self.record = record; self.cursorPackets = cursorPackets; self.serverInitSize = serverInitSize
+    }
     private func send(_ bytes: [UInt8], _ context: ChannelHandlerContext) {
         context.writeAndFlush(wrapOutboundOut(.init(type: .channel, data: .byteBuffer(ByteBuffer(bytes: bytes)))), promise: nil)
     }
@@ -97,7 +109,8 @@ private final class DesktopSyntheticRFB: ChannelInboundHandler, @unchecked Senda
             case 3:
                 guard input.readBytes(length: 1) != nil else { return }
                 let name = Array("Synthetic Desktop".utf8)
-                send([1, 0, 0, 128, 32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 16, 8, 0, 0, 0, 0,
+                let (width, height) = serverInitSize
+                send([UInt8(width >> 8), UInt8(width & 255), UInt8(height >> 8), UInt8(height & 255), 32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 16, 8, 0, 0, 0, 0,
                       0, 0, 0, UInt8(name.count)] + name, context); stage = 4
             default:
                 guard let kind: UInt8 = input.getInteger(at: input.readerIndex) else { return }
@@ -110,6 +123,7 @@ private final class DesktopSyntheticRFB: ChannelInboundHandler, @unchecked Senda
                 case 3: count = 10
                 case 4: count = 8
                 case 5: count = 6
+                case 9: count = 16 // Apple automatic framebuffer delivery, enabled after valid layout metadata.
                 case 6:
                     guard let length: UInt32 = input.getInteger(at: input.readerIndex + 4) else { return }
                     guard length <= 16384 else { context.close(promise: nil); return }; count = 8 + Int(length)
@@ -123,6 +137,18 @@ private final class DesktopSyntheticRFB: ChannelInboundHandler, @unchecked Senda
                     }
                 } else if kind == 3 {
                     record.add("update")
+                    guard serverInitSize == (256, 128) else { record.add("unexpectedVideoRequest"); context.close(promise: nil); return }
+                    if !sentDisplayLayout && record.count("encoding.1105") > 0 {
+                        sentDisplayLayout = true
+                        // Generated single-monitor metadata for this synthetic
+                        // 256 x 128 desktop; not another mutable fixture corpus.
+                        var body = [UInt8](repeating: 0, count: 76)
+                        func put16(_ offset: Int, _ value: UInt16) { body[offset] = UInt8(value >> 8); body[offset + 1] = UInt8(value & 255) }
+                        put16(0, 5); put16(2, 128); put16(4, 64); put16(6, 256); put16(8, 128); put16(18, 1)
+                        body[13] = 5; body[39] = 5
+                        put16(44, 64); put16(46, 128); put16(52, 128); put16(54, 256)
+                        send([0, 0, 0, 1] + [0, 0, 0, 0, 1, 0, 0, 128] + [0, 0, 4, 81] + [0, 76] + body, context)
+                    }
                     // 256 x 128 raw BGRA image, with a distinct synthetic color.
                     var frame: [UInt8] = [0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 128, 0, 0, 0, 0]
                     for _ in 0..<32768 { frame += [180, 90, 30, 0] }
@@ -132,7 +158,8 @@ private final class DesktopSyntheticRFB: ChannelInboundHandler, @unchecked Senda
                         for packet in cursorPackets { send(packet, context) }
                         record.add("cursorPacketsSent")
                     }
-                } else if kind == 4 { record.add(bytes[1] == 0 ? "keyUp" : "keyDown") }
+                } else if kind == 9 { record.add(bytes[4...7].allSatisfy { $0 == 0 } ? "automaticUpdatesStart" : "automaticUpdatesStop") }
+                else if kind == 4 { record.add(bytes[1] == 0 ? "keyUp" : "keyDown") }
                 else if kind == 5 { record.add(bytes[1] == 0 ? "pointerUp" : "pointerDown") }
             }
             input.discardReadBytes()
@@ -140,17 +167,40 @@ private final class DesktopSyntheticRFB: ChannelInboundHandler, @unchecked Senda
     }
     func errorCaught(context: ChannelHandlerContext, error: Error) { context.close(promise: nil) }
 }
+// A real SSH peer delays cleanup after forwarded EOF, exposing a parent that
+// closes before the old Screen Sharing socket has finished retiring.
+private final class DesktopRetiringPeer: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = SSHChannelData
+    let record: DesktopSSHRecord
+    let responds: Bool
+    init(_ record: DesktopSSHRecord, responds: Bool) { self.record = record; self.responds = responds }
+    func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+        if let event = event as? ChannelEvent, case .inputClosed = event {
+            record.add("forwardedEOF")
+            if responds {
+                let channel = context.channel, record = record
+                context.eventLoop.scheduleTask(in: .milliseconds(80)) {
+                    record.add(channel.isActive ? "peerCleanup" : "prematureParentClose")
+                    channel.close(promise: nil)
+                }
+            }
+        } else { context.fireUserInboundEventTriggered(event) }
+    }
+}
 private final class DesktopSSHServer: @unchecked Sendable {
-    enum Mode: Sendable { case echo, rfb, denied, silent }
+    enum Mode: Sendable { case echo, rfb, denied, silent, retiring, stalledRetirement }
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     let key = NIOSSHPrivateKey(ed25519Key: .init())
     let record = DesktopSSHRecord()
     let mode: Mode
     let screenPort: Int
+    let serverInitSize: (UInt16, UInt16)
     let cursorPackets: [[UInt8]]
     var listener: Channel!
     private var clients: [Channel] = [] // Sole server event loop.
-    init(_ mode: Mode, screenPort: Int = 5900, cursorPackets: [[UInt8]] = []) { self.mode = mode; self.screenPort = screenPort; self.cursorPackets = cursorPackets }
+    init(_ mode: Mode, screenPort: Int = 5900, cursorPackets: [[UInt8]] = [], serverInitSize: (UInt16, UInt16) = (256, 128)) {
+        self.mode = mode; self.screenPort = screenPort; self.cursorPackets = cursorPackets; self.serverInitSize = serverInitSize
+    }
     var port: Int { listener.localAddress!.port! }
     var hostKey: String { String(openSSHPublicKey: key.publicKey) }
     func start() async throws {
@@ -164,9 +214,14 @@ private final class DesktopSSHServer: @unchecked Sendable {
                         return child.eventLoop.makeFailedFuture(DesktopSSHFailure.forwarding)
                     }
                     record.add("forward")
+                    if self.mode == .retiring || self.mode == .stalledRetirement {
+                        return child.setOption(ChannelOptions.allowRemoteHalfClosure, value: true).flatMap {
+                            child.pipeline.addHandler(DesktopRetiringPeer(self.record, responds: self.mode == .retiring))
+                        }
+                    }
                     return child.getOption(SSHChildChannelOptions.peerMaximumMessageLength).flatMap { maximum in
                         self.record.add("peerPacket.\(maximum)")
-                        return self.mode == .echo ? child.pipeline.addHandler(DesktopSSHEcho(self.record)) : child.pipeline.addHandler(DesktopSyntheticRFB(self.record, cursorPackets: self.cursorPackets))
+                        return self.mode == .echo ? child.pipeline.addHandler(DesktopSSHEcho(self.record)) : child.pipeline.addHandler(DesktopSyntheticRFB(self.record, cursorPackets: self.cursorPackets, serverInitSize: self.serverInitSize))
                     }
                 })
             return channel.pipeline.addHandler(handler)
@@ -238,6 +293,8 @@ private func desktopWriterFinished(_ group: DispatchGroup) -> Bool { group.wait(
             let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
             let policy = try XCTUnwrap(fixture["sshTransportPolicy"] as? [String: Any])
             XCTAssertEqual(DesktopSSHRelay.limit, policy["queueLimitBytes"] as? Int)
+            let retirement = try XCTUnwrap(policy["retirement"] as? [String: Any])
+            XCTAssertEqual(DirectDesktopSSHTunnel.retirementSeconds, (retirement["maximumSeconds"] as? NSNumber)?.int64Value)
             let packetLimit = try XCTUnwrap(policy["maximumSSHPacketBytes"] as? Int)
             XCTAssertEqual(server.record.count("peerPacket.\(packetLimit)"), 1)
             XCTAssertEqual(policy["receiveWindowBytes"] as? Int, packetLimit)
@@ -366,6 +423,26 @@ private func desktopWriterFinished(_ group: DispatchGroup) -> Bool { group.wait(
         let details = try XCTUnwrap(viewer.value(forKey: "loginIssueDetails") as? String)
         XCTAssertTrue(details.contains("Remote Login (SSH)")); XCTAssertTrue(details.contains("Port: 2222"))
         viewer.stop()
+    }
+    func testEstablishedRetirementForwardsEOFAndWaitsForPeerCleanupBeforeReplacement() async throws {
+        let server = DesktopSSHServer(.retiring); try await server.start()
+        let tunnel = try await open(server)
+        await tunnel.close()
+        XCTAssertEqual(server.record.count("forwardedEOF"), 1)
+        XCTAssertEqual(server.record.count("peerCleanup"), 1)
+        XCTAssertEqual(server.record.count("prematureParentClose"), 0)
+        let active = try await server.activeClients(); XCTAssertEqual(active, 0)
+        try await server.close()
+    }
+    func testUnresponsiveRetirementIsBoundedAndClosesEveryOwnedChannel() async throws {
+        let server = DesktopSSHServer(.stalledRetirement); try await server.start()
+        let tunnel = try await open(server), started = ProcessInfo.processInfo.systemUptime
+        await tunnel.close()
+        let elapsed = ProcessInfo.processInfo.systemUptime - started
+        XCTAssertEqual(server.record.count("forwardedEOF"), 1)
+        XCTAssertLessThan(elapsed, 4)
+        XCTAssertFalse(tunnel.bridge.isActive); XCTAssertFalse(tunnel.remote.isActive)
+        try await server.close()
     }
     func testCancellationDuringHandshakeClosesParent() async throws {
         let server = DesktopSSHServer(.silent); try await server.start()
@@ -531,9 +608,23 @@ private func desktopWriterFinished(_ group: DispatchGroup) -> Bool { group.wait(
             _ = viewer.perform(NSSelectorFromString("start"))
             do {
                 try await wait("native desktop becomes ready through SSH") { viewer.session.connected }
-                try await wait("normal view presents framebuffer") { viewer.value(forKey: "lastFramebuffer") != nil }
+                if inputOnly {
+                    try await wait("input-only controls become ready without pixels") {
+                        (viewer.value(forKey: "loginScroll") as? UIScrollView)?.isHidden == true &&
+                        (viewer.value(forKey: "starting") as? Bool) == false
+                    }
+                    XCTAssertNil(viewer.value(forKey: "lastFramebuffer"))
+                    XCTAssertEqual((viewer.session.diagnosticCounters["presentedFrames"] as? NSNumber)?.intValue, 0)
+                    // An input-only connection must not request an initial image.
+                    XCTAssertEqual(server.record.count("update"), 0, "Geometry-only initialization requests no image")
+                    XCTAssertEqual(viewer.session.diagnosticCounters["framebufferAllocations"] as? Int, 0)
+                    XCTAssertEqual(viewer.session.diagnosticCounters["baselineExpectedPixels"] as? Int, 0)
+                    let crop = try XCTUnwrap(viewer.value(forKey: "activeCrop") as? NSValue).cgRectValue
+                    XCTAssertEqual(crop, CGRect(x: 0, y: 0, width: 256, height: 128), "Pointer bounds come from ServerInit")
+                } else { try await wait("normal view presents framebuffer") { viewer.value(forKey: "lastFramebuffer") != nil } }
                 XCTAssertEqual(server.record.count("auth"), 1); XCTAssertEqual(server.record.count("forward"), 1)
                 XCTAssertEqual(server.record.count("ardExchange"), 1)
+                if !inputOnly { try await wait("normal desktop arms automatic delivery") { server.record.count("automaticUpdatesStart") > 0 } }
                 viewer.session.key(0xffe3, down: true)
                 _ = viewer.session.tryClickX(20, y: 20, mask: 1)
                 try await wait("ordered native input reaches encrypted channel") { server.record.count("keyDown") > 0 && server.record.count("pointerDown") > 0 }
@@ -543,6 +634,15 @@ private func desktopWriterFinished(_ group: DispatchGroup) -> Bool { group.wait(
                 viewer.session.resume()
                 try await wait("same owner resumes") { viewer.session.connected }
                 XCTAssertEqual(server.record.count("tcp"), 1)
+                if inputOnly {
+                    XCTAssertEqual(server.record.count("update"), 0, "Resume remains geometry-only")
+                    XCTAssertEqual(viewer.session.diagnosticCounters["framebufferAllocations"] as? Int, 0)
+                    viewer.inputOnly = false
+                    try await wait("deferred video allocates and presents on the same owner") { viewer.session.desktopFrameReady }
+                    XCTAssertEqual(viewer.session.diagnosticCounters["framebufferAllocations"] as? Int, 1)
+                    XCTAssertEqual(server.record.count("tcp"), 1)
+                    XCTAssertEqual(server.record.count("auth"), 1)
+                }
                 try await wait("connected UI dismisses sign-in progress") {
                     (viewer.value(forKey: "loginScroll") as? UIScrollView)?.isHidden == true &&
                     (viewer.value(forKey: "starting") as? Bool) == false
@@ -559,4 +659,207 @@ private func desktopWriterFinished(_ group: DispatchGroup) -> Bool { group.wait(
             window.isHidden = true; window.rootViewController = nil; prior?.makeKeyAndVisible(); try? TerminalSecretStore.remove(mac.id)
         }
     }
+    func testLargeDesktopTrackpadAuthenticatesAndControlsWithoutVideoAllocation() async throws {
+        let server = DesktopSSHServer(.rfb, serverInitSize: (8192, 8192)); try await server.start()
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic Large Mac", addresses: ["127.0.0.1"], sshPort: server.port)
+        try TerminalSecretStore.write(Data(server.hostKey.utf8), id: mac.id, kind: "host-key")
+        defer { try? TerminalSecretStore.remove(mac.id) }
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let prior = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        let viewer = CompanionVNCViewer(), coordinator = VNCRemoteDesktopView.Coordinator(mac: mac)
+        viewer.inputOnly = true; viewer.sshPort = mac.sshPort; viewer.servicePort = mac.port; coordinator.viewer = viewer
+        viewer.connectHandler = { user, password, remember in MainActor.assumeIsolated { coordinator.connect(user: user, password: password, remember: remember) } }
+        viewer.disconnectHandler = { MainActor.assumeIsolated { coordinator.disconnect() } }
+        window.rootViewController = viewer; window.makeKeyAndVisible(); viewer.loadViewIfNeeded()
+        defer { window.isHidden = true; window.rootViewController = nil; prior?.makeKeyAndVisible() }
+        (viewer.value(forKey: "username") as? UITextField)?.text = "synthetic"
+        (viewer.value(forKey: "password") as? UITextField)?.text = "synthetic-only"
+        _ = viewer.perform(NSSelectorFromString("start"))
+        do {
+            try await wait("large desktop input-only UI ready") { viewer.session.connected && (viewer.value(forKey: "loginScroll") as? UIScrollView)?.isHidden == true }
+            XCTAssertEqual((viewer.value(forKey: "activeCrop") as? NSValue)?.cgRectValue, CGRect(x: 0, y: 0, width: 8192, height: 8192))
+            XCTAssertEqual(viewer.session.diagnosticCounters["framebufferAllocations"] as? Int, 0)
+            XCTAssertEqual(viewer.session.diagnosticCounters["baselineExpectedPixels"] as? Int, 0)
+            XCTAssertNil(viewer.value(forKey: "lastFramebuffer")); XCTAssertFalse(viewer.session.desktopFramebufferAvailable)
+            viewer.session.key(97, down: true); viewer.session.key(97, down: false)
+            XCTAssertTrue(viewer.session.tryClickX(8191, y: 8191, mask: 1))
+            try await wait("large desktop key and pointer reach SSH peer") { server.record.count("keyDown") > 0 && server.record.count("pointerDown") > 0 }
+            viewer.inputOnly = false
+            XCTAssertTrue(viewer.inputOnly); XCTAssertTrue(viewer.session.inputOnly); XCTAssertTrue(viewer.session.connected)
+            viewer.session.pause { server.record.add("paused") }
+            try await wait("large desktop paused") { server.record.count("paused") == 1 }
+            viewer.session.resume(); try await wait("large desktop resumes without an image") { viewer.session.connected }
+            XCTAssertEqual(server.record.count("update"), 0); XCTAssertEqual(server.record.count("unexpectedVideoRequest"), 0)
+            XCTAssertEqual(server.record.count("auth"), 1); XCTAssertEqual(server.record.count("ardExchange"), 1)
+            XCTAssertEqual(server.record.count("tcp"), 1)
+            XCTAssertEqual(viewer.session.diagnosticCounters["framebufferAllocations"] as? Int, 0)
+            coordinator.disconnect(); try await wait("large desktop closes") { !viewer.session.running }; try await server.close()
+        } catch { coordinator.disconnect(); try? await server.close(); throw error }
+    }
+    func testMirrorRestartKeepsTransportClosedForWholeCleanupIntervalBeforeFreshAuthentication() async throws {
+        let server = DesktopSSHServer(.rfb); try await server.start()
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic Mac", addresses: ["127.0.0.1"], sshPort: server.port)
+        try TerminalSecretStore.write(Data(server.hostKey.utf8), id: mac.id, kind: "host-key")
+        let viewer = CompanionVNCViewer(), coordinator = VNCRemoteDesktopView.Coordinator(mac: mac)
+        viewer.loadViewIfNeeded(); coordinator.viewer = viewer; viewer.restoredDesktopSizePreset = 0
+        coordinator.connect(user: "synthetic", password: "synthetic-only", remember: false)
+        do {
+            try await wait("initial encrypted desktop") { viewer.session.desktopFrameReady }
+            let previous = viewer.session
+            viewer.setValue(true, forKey: "starting"); viewer.setValue(true, forKey: "changingDisplayMode")
+            viewer.setValue(true, forKey: "mirrorRequiresCleanup"); viewer.setValue(true, forKey: "mirrorFullRestartUsed")
+            coordinator.disconnect()
+            let started = ContinuousClock.now
+            coordinator.connect(user: "synthetic", password: "synthetic-only", remember: false)
+            try await Task.sleep(for: .milliseconds(1200))
+            XCTAssertEqual(server.record.count("tcp"),1, "No replacement may keep the old host display alive")
+            XCTAssertEqual(server.record.count("auth"),1); XCTAssertTrue(viewer.session.displayHandoffInputBlocked)
+            XCTAssertFalse(previous.running)
+            let active = try await server.activeClients(); XCTAssertEqual(active,0, "The preceding SSH owner must be fully closed during cleanup")
+            let remaining = try XCTUnwrap(viewer.value(forKey: "mirrorCleanupRemaining") as? Int)
+            XCTAssertGreaterThan(remaining,13); XCTAssertLessThanOrEqual(remaining,16)
+            try await Task.sleep(for: .seconds(15))
+            try await wait("one fresh SSH authentication after cleanup") { server.record.count("auth") == 2 }
+            XCTAssertGreaterThanOrEqual(started.duration(to: .now), .seconds(16))
+            try await wait("fresh native framebuffer after restart") { viewer.session.desktopFrameReady }
+            XCTAssertEqual(server.record.count("tcp"),2); XCTAssertEqual(server.record.count("forward"),2)
+            XCTAssertEqual(viewer.value(forKey: "mirrorCleanupRemaining") as? Int,0)
+            XCTAssertEqual(viewer.mirrorRetirementDelay,0)
+            coordinator.disconnect(); viewer.stop(); try await server.close(); try? TerminalSecretStore.remove(mac.id)
+        } catch { coordinator.disconnect(); viewer.stop(); try? await server.close(); try? TerminalSecretStore.remove(mac.id); throw error }
+    }
+    func testMirrorCleanupCannotOpenConnectionAfterExitReplacementOrLossOfForeground() async throws {
+        for reason in ["exit", "replacement", "inactive", "background"] {
+            let server = DesktopSSHServer(.rfb); try await server.start()
+            let mac = try DirectMacRecordV1.normalized(name: "Synthetic Mac", addresses: ["127.0.0.1"], sshPort: server.port)
+            let viewer = CompanionVNCViewer(), coordinator = VNCRemoteDesktopView.Coordinator(mac: mac)
+            viewer.loadViewIfNeeded(); coordinator.viewer = viewer
+            viewer.setValue(true, forKey: "starting"); viewer.setValue(true, forKey: "changingDisplayMode")
+            viewer.setValue(true, forKey: "mirrorRequiresCleanup")
+            coordinator.connect(user: "synthetic", password: "synthetic-only", remember: false)
+            try await Task.sleep(for: .milliseconds(150))
+            switch reason {
+            case "exit": viewer.stop()
+            case "replacement": coordinator.disconnect(); viewer.prepareConnection()
+            case "inactive": viewer.becameInactive()
+            default: await viewer.background()
+            }
+            try await Task.sleep(for: .milliseconds(350))
+            XCTAssertEqual(server.record.count("tcp"),0, reason); XCTAssertEqual(server.record.count("auth"),0, reason)
+            coordinator.disconnect(); viewer.stop(); try await server.close()
+        }
+    }
+
+    func testMirrorInactivityRetainsTransientRecoveryAndRestartsQuietInterval() async throws {
+        let server = DesktopSSHServer(.rfb); try await server.start()
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic Mac", addresses: ["127.0.0.1"], sshPort: server.port)
+        let viewer = CompanionVNCViewer(), coordinator = VNCRemoteDesktopView.Coordinator(mac: mac)
+        viewer.loadViewIfNeeded(); coordinator.viewer = viewer
+        let login = try XCTUnwrap(viewer.value(forKey: "credentialState") as? DirectDesktopLoginState)
+        login.edit(username: "synthetic", password: "synthetic-only", remember: false)
+        _ = login.beginLogin(); login.authenticated()
+        viewer.restoredDesktopSizePreset = 0
+        for key in ["starting", "changingDisplayMode", "mirrorRequiresCleanup", "mirrorFullRestartUsed"] { viewer.setValue(true, forKey: key) }
+        viewer.setValue(0, forKey: "modeTargetPreset"); viewer.setValue(2, forKey: "modePreviousPreset")
+        var recoveries = 0
+        viewer.connectHandler = { user, password, remember in MainActor.assumeIsolated {
+            recoveries += 1; XCTAssertEqual(user,"synthetic"); XCTAssertEqual(password,"synthetic-only"); XCTAssertFalse(remember)
+            coordinator.connect(user: user, password: password, remember: remember)
+        } }
+        viewer.disconnectHandler = { MainActor.assumeIsolated { coordinator.disconnect() } }
+        coordinator.observeActivity()
+        do {
+            coordinator.connect(user: "synthetic", password: "synthetic-only", remember: false)
+            let retired = viewer.session
+            try await Task.sleep(for: .milliseconds(150))
+            NotificationCenter.default.post(name: UIApplication.willResignActiveNotification, object: nil)
+            try await Task.sleep(for: .milliseconds(350))
+            XCTAssertEqual(server.record.count("tcp"),0); XCTAssertEqual(server.record.count("auth"),0)
+            XCTAssertEqual(login.loginForResume()?["password"],"synthetic-only", "Temporary inactivity is not explicit cancellation")
+            NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+            try await Task.sleep(for: .milliseconds(350))
+            XCTAssertEqual(recoveries,1); XCTAssertFalse(viewer.session === retired)
+            XCTAssertNil(viewer.value(forKey: "failedDisplayModePreset")); XCTAssertTrue(viewer.value(forKey: "starting") as? Bool == true)
+            XCTAssertEqual(login.loginForResume()?["password"],"synthetic-only")
+            XCTAssertEqual(server.record.count("tcp"),0); XCTAssertEqual(server.record.count("auth"),0)
+            let remaining = try XCTUnwrap(viewer.value(forKey: "mirrorCleanupRemaining") as? Int)
+            XCTAssertGreaterThan(remaining,13); XCTAssertLessThanOrEqual(remaining,16)
+            coordinator.disconnect(); viewer.stop(); XCTAssertNil(login.loginForResume()); try await server.close()
+        } catch {
+            NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+            coordinator.disconnect(); viewer.stop(); try? await server.close()
+            coordinator.stopObserving(); viewer.connectHandler = nil; viewer.disconnectHandler = nil; throw error
+        }
+        coordinator.stopObserving(); viewer.connectHandler = nil; viewer.disconnectHandler = nil
+    }
+
+    func testActivationDuringRejectedOpeningRetirementKeepsTransientRecovery() async throws {
+        let server = DesktopSSHServer(.retiring); try await server.start()
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic Mac", addresses: ["127.0.0.1"], sshPort: server.port)
+        try TerminalSecretStore.write(Data(server.hostKey.utf8), id: mac.id, kind: "host-key")
+        let viewer = DesktopOpeningInterruptionViewer(), coordinator = VNCRemoteDesktopView.Coordinator(mac: mac)
+        viewer.loadViewIfNeeded(); coordinator.viewer = viewer
+        let login = try XCTUnwrap(viewer.value(forKey: "credentialState") as? DirectDesktopLoginState)
+        login.edit(username: "synthetic", password: "synthetic-only", remember: false)
+        _ = login.beginLogin(); login.authenticated()
+        for key in ["starting", "changingDisplayMode", "mirrorFullRestartUsed"] { viewer.setValue(true, forKey: key) }
+        viewer.restoredDesktopSizePreset = 2; viewer.setValue(2, forKey: "modeTargetPreset"); viewer.setValue(0, forKey: "modePreviousPreset")
+        var recoveries = 0
+        viewer.connectHandler = { user, password, remember in MainActor.assumeIsolated {
+            recoveries += 1; XCTAssertEqual(user,"synthetic"); XCTAssertEqual(password,"synthetic-only"); XCTAssertFalse(remember)
+            coordinator.connect(user: user, password: password, remember: remember)
+        } }
+        viewer.disconnectHandler = { MainActor.assumeIsolated { coordinator.disconnect() } }
+        coordinator.observeActivity()
+        var activation: Task<Void, Error>?
+        viewer.openingHook = {
+            NotificationCenter.default.post(name: UIApplication.willResignActiveNotification, object: nil)
+            activation = Task { @MainActor in
+                try await self.wait("rejected opening sends forwarded EOF") { server.record.count("forwardedEOF") > 0 }
+                XCTAssertEqual(server.record.count("peerCleanup"),0,"Return while retirement is still pending")
+                XCTAssertEqual(server.record.count("tcp"),1,"No overlapping replacement before retirement")
+                NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+            }
+        }
+        do {
+            coordinator.connect(user: "synthetic", password: "synthetic-only", remember: false)
+            try await wait("foreground recovery survives rejected-opening retirement") { recoveries == 1 }
+            try await activation?.value
+            try await wait("retiring peer finishes before replacement transport") { server.record.count("peerCleanup") >= 1 }
+            XCTAssertEqual(login.loginForResume()?["password"],"synthetic-only")
+            XCTAssertNil(viewer.value(forKey: "failedDisplayModePreset"))
+            XCTAssertGreaterThanOrEqual(server.record.count("peerCleanup"),1)
+            coordinator.disconnect(); viewer.stop(); try await server.close()
+        } catch {
+            activation?.cancel(); NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+            coordinator.disconnect(); viewer.stop(); try? await server.close()
+            coordinator.stopObserving(); viewer.connectHandler = nil; viewer.disconnectHandler = nil; try? TerminalSecretStore.remove(mac.id); throw error
+        }
+        coordinator.stopObserving(); viewer.connectHandler = nil; viewer.disconnectHandler = nil; try? TerminalSecretStore.remove(mac.id)
+    }
+
+    func testPendingOpeningRetiresBeforeReplacementAndCannotOverwriteIt() async throws {
+        let server = DesktopSSHServer(.silent); try await server.start()
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic Mac", addresses: ["127.0.0.1"], sshPort: server.port)
+        let viewer = CompanionVNCViewer(), coordinator = VNCRemoteDesktopView.Coordinator(mac: mac)
+        viewer.loadViewIfNeeded(); coordinator.viewer = viewer
+        do {
+            coordinator.connect(user: "synthetic", password: "synthetic-only", remember: false)
+            try await wait("first pending SSH handshake") { server.record.count("tcp") == 1 }
+            let old = viewer.session
+            coordinator.disconnect()
+            viewer.setValue(true, forKey: "starting"); viewer.setValue(true, forKey: "changingDisplayMode")
+            viewer.setValue(2, forKey: "modeTargetPreset")
+            coordinator.connect(user: "synthetic", password: "synthetic-only", remember: false)
+            try await wait("replacement after joined pending retirement") { server.record.count("tcp") == 2 }
+            let active = try await server.activeClients()
+            XCTAssertEqual(active,1, "The old pending opener must not survive the replacement")
+            XCTAssertFalse(old.running); XCTAssertFalse(viewer.session === old)
+            XCTAssertTrue(viewer.session.displayHandoffInputBlocked)
+            XCTAssertNil(viewer.value(forKey: "failedDisplayModePreset"), "The cancelled opener must not fail the replacement")
+            XCTAssertTrue(viewer.value(forKey: "starting") as? Bool == true)
+            coordinator.disconnect(); viewer.stop(); try await server.close()
+        } catch { coordinator.disconnect(); viewer.stop(); try? await server.close(); throw error }
+    }
+
 }

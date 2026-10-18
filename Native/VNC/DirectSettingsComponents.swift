@@ -68,6 +68,47 @@ struct DirectMacLibraryRow: View {
     }
 }
 
+/// A draft binding keeps Cancel independent from the saved per-Mac preference.
+struct DirectDesktopDisplaySection: View {
+    @Binding var selection: Int
+    var body: some View {
+        Section {
+            choice("Virtual Display", detail: "Landscape desktop sized for remote use.", symbol: "display", selected: selection != 0) {
+                if selection == 0 { selection = 2 }
+            }
+            choice("Mirror Mac Screen", detail: "Use the Mac’s screen resolution and layout.", symbol: "display.2", selected: selection == 0) { selection = 0 }
+            if selection != 0 {
+                DisclosureGroup("Advanced") {
+                    Picker("Desktop Size", selection: $selection) {
+                        Text("Larger Text").tag(1)
+                        Text("Balanced").tag(2)
+                        Text("More Space").tag(3)
+                    }.accessibilityIdentifier("mac-desktop-size")
+                }
+            }
+        } header: { Text("Screen Sharing Display") }
+        footer: {
+            Text(selection == 0
+                 ? "The Mac’s screen stays visible. Large displays may use more data."
+                 : "Recommended. The Mac’s screen may go dark while connected. Rotating your iPhone or opening the keyboard won’t resize the desktop.")
+        }
+    }
+    private func choice(_ title: String, detail: String, symbol: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: symbol).frame(width: 28).foregroundStyle(.tint)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title).foregroundStyle(.primary)
+                    Text(detail).font(.footnote).foregroundStyle(.secondary)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle").foregroundStyle(selected ? Color.accentColor : .secondary)
+            }.padding(.vertical, 4).contentShape(Rectangle())
+        }.buttonStyle(.plain).accessibilityIdentifier(selectionID(title))
+            .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+    private func selectionID(_ title: String) -> String { title == "Virtual Display" ? "mac-display-virtual" : "mac-display-mirror" }
+}
+
 /// Keep each destination's identity consistent in settings, practice and My Macs.
 extension DirectMacConnection {
     var shortcutColor: Color {
@@ -335,6 +376,28 @@ struct DirectInformationGroup: View {
                 }.font(.subheadline).foregroundStyle(.secondary)
             }
         }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 6)
+    }
+}
+#endif
+
+#if os(iOS)
+struct DirectGestureGuide: View {
+    var body: some View {
+        Form {
+            Section("Screen Sharing") {
+                Text("Pointer: tap where you want to click. Trackpad: slide anywhere to move the cursor.")
+                Text("Tap to click. Hold, then move to drag. Tap with two fingers to right-click. In Trackpad, scroll with two fingers.")
+                Text("Pan the zoomed view with two fingers in Pointer or three in Trackpad. Pinch to zoom the desktop image. Double-tap with two fingers to zoom in or fit.")
+            }
+            Section("Trackpad & Keyboard Only") {
+                Text("Slide to move the cursor, tap to click, and hold then move to drag. Tap with two fingers to right-click. Scroll with two fingers.")
+                Text("On supported Mac connections, pinch to zoom the Mac app at the cursor.")
+            }
+            Section("Session Controls") {
+                Text("Tap the More button to open controls. Or hold it, slide onto an action or category, and release. Slide away to cancel.")
+                Text("Use Customize to choose and arrange quick actions. Input preferences are in App Settings → Controls.")
+            }
+        }.navigationTitle("Gesture Guide").navigationBarTitleDisplayMode(.inline)
     }
 }
 #endif

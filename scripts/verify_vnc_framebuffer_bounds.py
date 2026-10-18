@@ -27,6 +27,18 @@ for case in profile["framebufferCases"]:
     else:
         checks.append("assert(bytes == 17);")
     checks.append("bytes = 17;")
+input_entry = next(item for item in manifest["fixtures"] if item["path"] == "direct-screen-sharing-v1.json")
+assert input_entry["expect"] == "valid"
+input_profile = json.loads((fixtures / input_entry["path"]).read_text())
+policy = input_profile["inputOnlyInitializationPolicy"]
+assert policy["geometryMaximum"] == 65535
+assert not any(policy[key] for key in ["initialFramebufferRequest", "framebufferAllocation", "coverageAllocation"])
+assert policy["unsolicitedPixelsWithoutStorage"] == "reject-before-decoding"
+for case in input_profile["inputOnlyInitializationCases"]:
+    width, height = case["width"], case["height"]
+    assert case["inputGeometryValid"] == (0 < width <= 65535 and 0 < height <= 65535)
+    checks.append(f"assert(CompanionVNCInputGeometryValid({width}, {height}) == {str(case['inputGeometryValid']).lower()});")
+    checks.append(f"assert(CompanionVNCFramebufferByteCount({width}, {height}, &bytes) == {str(case['videoAdmitted']).lower()});")
 source = '\n'.join([
     '#include <assert.h>', '#include "CompanionVNCFramebufferBounds.h"',
     'int main(void) { size_t bytes = 17;', *checks, 'return 0; }',
@@ -41,4 +53,4 @@ with tempfile.TemporaryDirectory(prefix="maccompanion-vnc-bounds-") as directory
                     "-I", str(ROOT / "Native/VNC"), str(path / "test.c"),
                     "-o", str(path / "test")], check=True)
     subprocess.run([str(path / "test")], check=True)
-print(f"VNC framebuffer bounds: {len(profile['framebufferCases'])} indexed cases passed")
+print(f"VNC bounds: {len(profile['framebufferCases'])} framebuffer and {len(input_profile['inputOnlyInitializationCases'])} independent input-only indexed cases passed")

@@ -26,6 +26,9 @@ import Foundation
     @objc func edit(username: String, password: String, remember: Bool) {
         draft.username = username; draft.password = password; draft.remember = remember
     }
+    @objc func discardSessionRecovery() {
+        pending = nil; recovery = nil; attempt = nil; established = false
+    }
     @objc func replace(username: String, password: String) {
         pending = nil; recovery = nil; established = false; attempt = nil
         draft = DirectFilesLoginDraft()
@@ -50,6 +53,10 @@ import Foundation
         attempt = nil
     }
     @objc func suspend() { draft.suspend() }
+    @objc func suspendForModeRetry() {
+        draft.suspend()
+        if !draft.remember { draft.username = "" }
+    }
     @objc func resume(active: Bool, allowed: Bool) {
         draft.resume()
         // A live owner needs no visible secret and must not reread storage.

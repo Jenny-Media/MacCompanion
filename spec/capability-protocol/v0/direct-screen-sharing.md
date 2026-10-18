@@ -59,6 +59,13 @@ Terminal and Files settings are unchanged. EOF, cancellation and errors close ow
 and channels without replay. Retire the preceding native owner and tunnel before
 starting another. Native input releases finish before an established tunnel is
 closed; pending handshakes and fingerprint prompts are cancelled immediately.
+For an established tunnel, consumer EOF is forwarded as SSH channel EOF while
+its parent remains alive. Await the remote channel close exchange before closing
+the parent or opening a replacement. A two-second watchdog bounds unresponsive
+peers and forces owned-channel teardown; cancellation during opening stays
+immediate. A local socket-close callback must not prematurely close the parent
+and discard the forwarded EOF/close exchange. This is standard SSH channel
+retirement, with no new Apple display, authentication or UDP messages.
 
 Inside the encrypted channel the only RFB authentication scheme remains Apple ARD (30) using the
 pinned upstream implementation. No no-auth or legacy VNC-password fallback is
@@ -139,8 +146,11 @@ length. Consume unsupported/malformed bodies without applying geometry; never
 resize or reconnect based on this private metadata. Only use normalized crops
 when metadata aspect agrees with the actual framebuffer. A layout replacement
 updates selected IDs or returns to All Displays if no longer valid. Selection
-confines local presentation/input; the complete framebuffer is still received.
-No remote resolution/layout-setting messages are sent. Without verified bounds,
+confines local presentation/input in the original path; the complete framebuffer is still received.
+The direct iOS extension in [ios-desktop-size.md](ios-desktop-size.md) separately
+specifies explicit per-Mac virtual-display and host monitor-selection messages,
+including catalogue-bearing selected-monitor replies. Other paths send no remote
+resolution/layout-setting messages. Without verified bounds,
 show an explanatory display menu and retain All Displays. Valid rows show a
 geometry-only arrangement diagram, dimensions and the current selection;
 All Displays highlights every rectangle. Menu choices resolve against the latest
@@ -321,6 +331,27 @@ Connection readiness is mode-specific. Desktop requires a complete presented
 baseline, including after resume or leaving input-only mode. Trackpad & Keyboard
 requires a running, authenticated input owner, but no presented framebuffer:
 it deliberately suppresses desktop presentation and regular pixel requests.
+Set input-only on the native owner before authentication, including cold starts
+and replacement connections. Reveal its local controls when that owner is ready,
+without waiting for an image. Initialize pointer bounds from the admitted ServerInit
+framebuffer dimensions; a cached image or selected-display crop is not required.
+Native iOS/macOS input-only initialization performs the same RFB authentication and ServerInit exchange,
+then sets the pixel format and encodings without allocating a desktop framebuffer or
+baseline coverage maps, and without requesting an initial image. Admit positive
+ServerInit dimensions representable by the 16-bit pointer coordinates (1–65535 on
+each axis), independently of the video memory limit. Send no ongoing pixel requests.
+Metadata and cursor rectangles remain bounded by their existing parsers. An unsolicited
+pixel rectangle without backing storage ends the connection safely before decoding;
+never allocate an image merely because the server sent pixels. Capability refreshes
+and resize messages cannot turn an input-only request into a full desktop request.
+A geometry-only resize also needs no framebuffer or coverage allocation.
+When video is requested on a retained input-only owner, admit the existing desktop
+size/memory limits and allocate backing storage and coverage before asking for pixels.
+If the known desktop exceeds those limits, keep Trackpad & Keyboard connected and
+explain that Screen Sharing is unavailable at that size. Authentication, foreground
+checks, held-input release, session recovery and fresh-baseline readiness are unchanged.
+Healthy in-session toggles may retain the authenticated connection. Pending or failed
+display operations instead use the independent replacement path in ios-desktop-size.md.
 Publish its initial Connected state after successful RFB initialization and on
 an admitted resume or switch into input-only mode. Paused, stopping, overflowed
 or unauthenticated owners cannot publish Connected in either mode. Switching
@@ -395,7 +426,7 @@ A busy queue reports a retryable issue without partial text or a disconnect.
 ## iOS session text composer
 
 Desktop, Trackpad & Keyboard and Terminal offer a free **Compose Text** session
-Quick Action (also available under Keyboard & Input). Existing untouched default
+Quick Action (also available under Input on iOS). Existing untouched default
 profiles gain this action; preserve all customized profiles and their disabled
 actions. macOS does not expose this tool. Present a small floating text bubble
 above the visible app shortcut bar and native keyboard, retaining visible session
@@ -922,6 +953,11 @@ capability refresh from requesting pixels in input-only mode. Input-only mode
 never enables automatic desktop delivery.
 The existing baseline/input/presentation epochs remain authoritative, and the
 paused owner sleeps after its bounded release/disable work.
+During explicit physical monitor selection, retain an already active subscription
+until matching layout arrives, as specified in `ios-desktop-size.md`. Do not renew
+or start old bounds while waiting. This preserves metadata delivery without
+relaxing input or complete-pixel readiness; virtual sizing and pause still stop
+automatic delivery as before.
 
 This is a compatibility extension based on the host implementation, not an
 Apple-published API. The current server reader interprets bytes 4–7 as the period

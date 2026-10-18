@@ -507,7 +507,7 @@ struct TerminalServerTrustView: View {
         case 7, 8, 111: return .loginRejected
         case 112: return .serverChanged
         case 113: return .connectionCancelled
-        case 114: return .desktopUnavailable
+        case 114, 116, 117, 118: return .desktopUnavailable
         case 115: return .savedDataUnavailable
         case 101: return .inputPaused
         default: return hadFrame ? .desktopDisconnected : .desktopUnavailable
@@ -521,6 +521,9 @@ struct TerminalServerTrustView: View {
         case 111: message = "The Mac didn’t accept this account and password for Remote Login. Check the login and allow this account in Remote Login settings."
         case 114: message = "SSH connected, but Screen Sharing wasn’t available through it. Enable Screen Sharing, check its saved port, and allow SSH forwarding on the Mac."
         case 115: message = "The SSH server trust couldn’t be read or saved. Unlock this iPhone and retry. The saved Mac is kept."
+        case 116: message = "The Mac is still using a virtual display. Mirror Mac Screen couldn’t be opened. Reconnect to try again."
+        case 117: message = "The Mac didn’t finish opening the virtual display. Reconnect to try again."
+        case 118: message = "The Mac didn’t provide display information for this mode. Reconnect to try again."
         case 103: message = "The desktop image couldn’t be decoded. Reconnect to request a fresh image. Your login and view settings are kept."
         case 9: message = "This desktop exceeds the supported size limit. Reduce the Mac’s shared desktop size before retrying."
         default: message = nil
@@ -536,18 +539,31 @@ struct TerminalServerTrustView: View {
         desktop(stage: stage, hadFrame: hadFrame, port: port, textInterrupted: false, retry: retry, edit: edit)
     }
     @objc static func desktop(stage: Int, hadFrame: Bool, port: Int, textInterrupted: Bool, retry: @escaping @MainActor @Sendable () -> Void, edit: @escaping @MainActor @Sendable () -> Void) -> UIViewController {
-        let original = desktopNotice(stage: stage, hadFrame: hadFrame, port: port)
+        desktop(stage: stage, hadFrame: hadFrame, port: port, textInterrupted: textInterrupted, retry: retry, edit: edit, inputOnly: nil)
+    }
+    @objc static func desktop(stage: Int, hadFrame: Bool, port: Int, textInterrupted: Bool, retry: @escaping @MainActor @Sendable () -> Void, edit: @escaping @MainActor @Sendable () -> Void, inputOnly: (@MainActor @Sendable () -> Void)?) -> UIViewController {
+        let modeFailure = (116...118).contains(stage)
+        let base = desktopNotice(stage: stage, hadFrame: hadFrame, port: port)
+        let original = modeFailure ? DirectRecoveryNotice(reason: base.reason, title: "Couldn’t switch display mode", message: base.message, details: base.details) : base
         let notice = textInterrupted ? DirectRecoveryNotice.make(original.reason,
             message: original.message + " Text may have been partially sent. Check your Mac before sending it again; input won’t be replayed.", details: original.details) : original
         let reason = notice.reason
         if !hadFrame {
-            let controller = UIHostingController(rootView: DirectConnectionNotice(notice: notice).directAppearance())
+            let controller = UIHostingController(rootView: VStack(alignment: .leading, spacing: 12) {
+                DirectConnectionNotice(notice: notice)
+                if let inputOnly {
+                    Button("Use Trackpad & Keyboard", action: inputOnly)
+                        .buttonStyle(.bordered).frame(maxWidth: .infinity, minHeight: 44)
+                        .accessibilityIdentifier("recovery-inputOnly")
+                }
+            }.directAppearance())
             controller.sizingOptions = .intrinsicContentSize; controller.view.backgroundColor = .clear
             return controller
         }
         let controller = UIHostingController(rootView: DirectRecoveryCard(notice: notice,
             primary: .init(title: reason == .loginRejected ? "Edit Login" : hadFrame ? "Reconnect" : "Try Again", perform: reason == .loginRejected ? edit : retry),
-            secondary: reason == .loginRejected ? nil : .init(title: "Edit Login", perform: edit)).directAppearance())
+            secondary: inputOnly.map { .init(title: "Use Trackpad & Keyboard", perform: $0) }
+                ?? (reason == .loginRejected || modeFailure ? nil : .init(title: "Edit Login", perform: edit))).directAppearance())
         controller.sizingOptions = .intrinsicContentSize
         controller.view.backgroundColor = .clear
         return controller

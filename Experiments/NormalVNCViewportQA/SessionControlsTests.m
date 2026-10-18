@@ -59,6 +59,10 @@
 @property NSMutableArray *pointers;
 @end
 @implementation ControlsSession
+- (instancetype)init {
+    if ((self=[super init])) { [self setValue:@1600 forKey:@"framebufferWidth"]; [self setValue:@1600 forKey:@"framebufferHeight"]; }
+    return self;
+}
 - (BOOL)connected { return YES; }
 - (BOOL)established { return YES; }
 - (BOOL)composedTextReady { return YES; }
@@ -166,6 +170,10 @@
     UIViewController *holder = [UIViewController new]; window.rootViewController = holder; [window makeKeyAndVisible];
     CompanionVNCControls *controls = [[CompanionVNCControls alloc] initWithFrame:CGRectMake(0,0,320,874)];
     controls.traitOverrides.preferredContentSizeCategory = UIContentSizeCategoryExtraExtraExtraLarge;
+    // Keep this constrained-layout regression independent of shorter default
+    // labels; callers can still supply long session-specific categories.
+    controls.categoryActions = @[@{@"kind":@"viewMenu",@"title":@"View & Display"},
+        @{@"kind":@"inputMenu",@"title":@"Keyboard & Input"},@{@"kind":@"session",@"title":@"Session"}];
     controls.quickActions = @[@{@"kind":@"paste",@"title":@"Paste",@"enabled":@YES},
                               @{@"kind":@"interrupt",@"title":@"Ctrl-C",@"enabled":@YES}];
     [holder.view addSubview:controls]; [controls open];
@@ -513,7 +521,7 @@
     XCTAssertEqual([controls hitTest:CGPointMake(0, 0) withEvent:nil], controls); // outside dismiss is locally captured
     [controls close]; XCTAssertNil([controls hitTest:CGPointMake(0, 0) withEvent:nil]);
 }
-- (void)testQuickActionsStayReachableWithMaximumActionsAndInputOnlyDisablesVideoChoices {
+- (void)testQuickActionsStayReachableWithMaximumActionsAndInputOnlyOmitsVideoChoices {
     CompanionVNCControls *controls = [[CompanionVNCControls alloc] initWithFrame:CGRectMake(0,0,956,440)];
     NSMutableArray *actions = [NSMutableArray new];
     for (NSUInteger i=0;i<15;i++) [actions addObject:@{@"kind": i == 0 ? @"fit" : @"text", @"title": @"Quick Action", @"enabled": @YES}];
@@ -523,7 +531,26 @@
     XCTAssertTrue(CGRectContainsRect(scroll.bounds, choices.firstObject.frame));
     XCTAssertEqual(choices.count,18); // only three category entries outside quick actions
     [controls close]; controls.inputOnly = YES; [controls open];
-    choices = [controls valueForKey:@"choices"]; XCTAssertFalse(choices.firstObject.enabled);
+    choices = [controls valueForKey:@"choices"]; XCTAssertEqual(choices.count,17); XCTAssertTrue(choices.firstObject.enabled);
+    XCTAssertFalse([[[controls valueForKey:@"items"] valueForKey:@"kind"] containsObject:@"fit"]);
+    [controls close];
+}
+- (void)testQuickPanelUsesAStableSnapshotAndDisabledActionsNeverExecute {
+    CompanionVNCControls *controls=[[CompanionVNCControls alloc] initWithFrame:CGRectMake(0,0,440,956)];
+    controls.quickActions=@[@{@"kind":@"composeText",@"title":@"Compose Text",@"enabled":@YES,@"disabled":@YES},
+        @{@"kind":@"rightClick",@"title":@"Right Click",@"enabled":@YES}];
+    __block NSUInteger actions=0; controls.actionHandler=^(NSDictionary *item) { actions++; };
+    [controls open]; [controls layoutIfNeeded];
+    NSArray *snapshot=[controls valueForKey:@"items"]; NSArray<UIButton *> *choices=[controls valueForKey:@"choices"];
+    XCTAssertFalse(choices[0].enabled); [controls chosen:choices[0]]; XCTAssertEqual(actions,0);
+    UIButton *row=choices[1]; row.highlighted=YES;
+    controls.quickActions=@[@{@"kind":@"composeText",@"title":@"Compose Text",@"enabled":@YES}];
+    XCTAssertEqual([controls valueForKey:@"items"],snapshot);
+    XCTAssertEqual(((NSArray *)[controls valueForKey:@"choices"])[1],row); XCTAssertTrue(row.highlighted);
+    [controls close]; [controls open];
+    XCTAssertEqual([(NSArray *)[controls valueForKey:@"choices"] count],4);
+    XCTAssertTrue(((UIButton *)((NSArray *)[controls valueForKey:@"choices"])[0]).enabled);
+    XCTAssertEqualObjects([[controls valueForKey:@"items"] valueForKey:@"title"],(@[@"Compose Text",@"Display",@"Input",@"Session"]));
     [controls close];
 }
 - (void)testGroupedMenusNavigateBackWithoutReplacingSessionAndDisabledChoicesDoNotRun {
@@ -564,8 +591,8 @@
         [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.35]];
         navigation = (id)viewer.presentedViewController;
         CompanionVNCMenu *view = (id)navigation.topViewController; [view loadViewIfNeeded];
-        XCTAssertTrue([view.sections.firstObject[@"items"][0][@"disabled"] boolValue]);
-        [view tableView:view.tableView didSelectRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:0]];
+        XCTAssertEqualObjects(view.sections.firstObject[@"items"][0][@"kind"], @"inputOnly");
+        XCTAssertEqualObjects(view.sections.firstObject[@"items"][0][@"title"], @"Show Mac Screen");
         XCTAssertEqual(navigation.viewControllers.count,1); XCTAssertEqual(viewer.session,owner);
         [viewer dismissViewControllerAnimated:NO completion:nil];
     }];

@@ -369,29 +369,45 @@
     [viewer stopViewer]; [viewer dismissViewControllerAnimated:NO completion:nil]; window.hidden=YES; window.rootViewController=nil; [previous makeKeyAndVisible];
     [owner setValue:@NO forKey:@"running"]; client->frameBuffer=NULL; rfbClientCleanup(client);
 }
-- (void)testReplacementVideoModeRequestsKeepFramesUntilPresentationThenSwitchNormally {
+- (void)testReplacementVideoWaitCanBeAbandonedForAFreshInputOnlyConnection {
     NSDictionary *profile=[self profile];
-    XCTAssertEqualObjects(profile[@"recoveryPolicy"][@"replacementVideoModeChange"],@"defer-until-presentation-ready");
+    XCTAssertEqualObjects(profile[@"recoveryPolicy"][@"replacementVideoModeChange"],@"fresh-input-only-owner");
     for (NSNumber *frameFirst in @[@YES,@NO]) {
         NSString *name=frameFirst.boolValue ? @"replacement-video-mode-change-frame-first" : @"replacement-video-mode-change-before-frame";
         XCTAssertTrue([[profile[@"interruptionCases"] valueForKey:@"name"] containsObject:name]);
         CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
+        id<LifecycleCredentialState> login=[viewer valueForKey:@"credentialState"];
+        [login editWithUsername:@"synthetic" password:@"transient" remember:NO]; [login beginLogin]; [login authenticated];
         NSDictionary *display=@{@"id":@2,@"title":@"Synthetic display",@"x":@.5,@"y":@0,@"width":@.5,@"height":@1};
         NSDictionary *layout=@{@"aspectRatio":@(800.0/600),@"views":@[display]};
         viewer.displayLayout=layout; [viewer frame:[self frame]]; [viewer selectDisplay:display];
         LifecycleSession *old=[LifecycleSession new]; old.alive=YES; old.ready=YES; old.authenticated=YES; viewer.session=old;
         [viewer background]; [viewer prepareConnection]; [viewer setValue:@YES forKey:@"foreground"]; [viewer setValue:@NO forKey:@"inputInactive"];
         CompanionVNCSession *owner=viewer.session; [owner setValue:@YES forKey:@"running"]; [owner setValue:@YES forKey:@"established"];
+        void (^oldFrame)(UIImage *)=owner.frameHandler;
         if (frameFirst.boolValue) [viewer frame:[self frame]];
-        UIImage *pending=[viewer valueForKey:@"pendingRestorationFrame"];
-        [viewer performControlAction:@{@"kind":@"inputOnly"}]; viewer.inputOnly=YES;
-        XCTAssertFalse(viewer.inputOnly); XCTAssertFalse(owner.inputOnly,@"Pending presentation must retain native frame delivery");
-        XCTAssertTrue(owner.running); XCTAssertEqual([viewer valueForKey:@"pendingRestorationFrame"],pending);
-        viewer.displayLayout=layout; if (!frameFirst.boolValue) [viewer frame:[self frame]];
+        __block NSUInteger connects=0;
+        __weak CompanionVNCViewer *weakViewer=viewer;
+        viewer.connectHandler=^(NSString *user,NSString *password,BOOL remember){
+            connects++; XCTAssertEqualObjects(user,@"synthetic"); XCTAssertEqualObjects(password,@"transient"); XCTAssertFalse(remember);
+            [weakViewer prepareConnection];
+        };
+        [viewer performControlAction:@{@"kind":@"inputOnly"}];
+        CompanionVNCSession *replacement=viewer.session;
+        XCTAssertEqual(connects,1); XCTAssertNotEqual(replacement,owner); XCTAssertTrue(replacement.inputOnly); XCTAssertTrue(viewer.inputOnly);
+        oldFrame([self frame]);
+        XCTAssertNil([viewer valueForKey:@"lastFramebuffer"]); XCTAssertNil([viewer valueForKey:@"pendingRestorationFrame"]);
         XCTAssertFalse([[viewer valueForKey:@"restoreViewportPending"] boolValue]);
-        [viewer performControlAction:@{@"kind":@"inputOnly"}]; XCTAssertTrue(viewer.inputOnly); XCTAssertTrue(owner.inputOnly);
-        [viewer performControlAction:@{@"kind":@"inputOnly"}]; XCTAssertFalse(viewer.inputOnly); XCTAssertFalse(owner.inputOnly);
-        [viewer stopViewer]; [owner setValue:@NO forKey:@"running"];
+        rfbClient *client=rfbGetClient(8,3,4); client->width=2; client->height=2;
+        [replacement configureClient:client]; XCTAssertTrue([replacement allocate:client]);
+        for (NSString *key in @[@"running",@"established",@"inputReady"]) [replacement setValue:@YES forKey:key];
+        replacement.stateHandler(@"Connected",replacement.diagnosticCounters);
+        XCTAssertTrue(((UIView *)[viewer valueForKey:@"login"]).hidden);
+        [viewer performControlAction:@{@"kind":@"inputOnly"}];
+        XCTAssertFalse(viewer.inputOnly); XCTAssertFalse(replacement.inputOnly); XCTAssertEqual(viewer.session,replacement);
+        XCTAssertFalse(replacement.connected, @"Returning to video still waits for fresh pixels");
+        [owner setValue:@NO forKey:@"running"]; [replacement setValue:@NO forKey:@"running"];
+        viewer.connectHandler=nil; [viewer stopViewer]; rfbClientCleanup(client);
     }
 }
 - (void)testRestorationWaitsForMatchingAspectAndAllDisplaysNeedsNoMetadata {
@@ -419,24 +435,25 @@
         [viewer stopViewer];
     }
 }
-- (void)testReplayedTrackpadModeKeepsReplacementFramesUntilCurrentPresentation {
+- (void)testReplayedTrackpadModeKeepsReplacementIndependentOfPixels {
     XCTAssertTrue([[[self profile][@"interruptionCases"] valueForKey:@"name"] containsObject:@"replacement-video-mode-replay-before-frame"]);
     CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
-    NSDictionary *display=@{@"id":@2,@"title":@"Synthetic display",@"x":@.5,@"y":@0,@"width":@.5,@"height":@1};
-    NSDictionary *layout=@{@"aspectRatio":@(800.0/600),@"views":@[display]};
-    viewer.displayLayout=layout; [viewer frame:[self frame]]; [viewer selectDisplay:display];
+    [viewer frame:[self frame]];
     LifecycleSession *old=[LifecycleSession new]; old.alive=YES; old.ready=YES; old.authenticated=YES; viewer.session=old;
     viewer.inputOnly=YES; [viewer background]; [viewer prepareConnection];
     [viewer setValue:@YES forKey:@"foreground"]; [viewer setValue:@NO forKey:@"inputInactive"];
     CompanionVNCSession *owner=viewer.session;
-    for (NSString *key in @[@"running",@"established",@"inputReady",@"baselinePresented"]) [owner setValue:@YES forKey:key];
-    XCTAssertFalse(owner.inputOnly);
-    viewer.inputOnly=YES; // A representable update reapplies the current view mode.
-    XCTAssertTrue(viewer.inputOnly); XCTAssertFalse(owner.inputOnly,@"A same-value replay must not suppress the pending frame");
-    viewer.displayLayout=layout; [viewer frame:[self frame]];
+    XCTAssertTrue(owner.inputOnly); XCTAssertNil([viewer valueForKey:@"lastFramebuffer"]);
+    rfbClient *client=rfbGetClient(8,3,4); client->width=2; client->height=2;
+    [owner configureClient:client]; XCTAssertTrue([owner allocate:client]);
+    for (NSString *key in @[@"running",@"established",@"inputReady"]) [owner setValue:@YES forKey:key];
+    viewer.inputOnly=YES;
+    XCTAssertTrue(owner.inputOnly); owner.stateHandler(@"Connected",owner.diagnosticCounters);
+    XCTAssertTrue(((UIView *)[viewer valueForKey:@"login"]).hidden);
     XCTAssertFalse([[viewer valueForKey:@"restoreViewportPending"] boolValue]);
-    XCTAssertTrue(owner.inputOnly,@"The ready callback forwards the retained Trackpad mode after presentation");
-    XCTAssertTrue(owner.running); [viewer stopViewer]; [owner setValue:@NO forKey:@"running"];
+    XCTAssertTrue(CGRectEqualToRect([[viewer valueForKey:@"activeCrop"] CGRectValue],CGRectMake(0,0,2,2)));
+    XCTAssertEqualObjects(owner.diagnosticCounters[@"presentedFrames"],@0);
+    [owner setValue:@NO forKey:@"running"]; [viewer stopViewer]; rfbClientCleanup(client);
 }
 - (void)testBackgroundConnectionFailurePublishesEndedInsteadOfLeavingPausedActivity {
     CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];

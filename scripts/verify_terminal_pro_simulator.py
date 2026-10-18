@@ -97,6 +97,7 @@ def execute(args, parser, compiler):
         if not destination.exists(): run('/usr/bin/ssh-keygen', '-q', '-t', algorithm, '-N', secret, '-f', destination)
     resources = [ROOT / 'spec/fixtures/manifest.json', ROOT / 'spec/fixtures/direct-screen-sharing-v1.json', ROOT / 'spec/fixtures/vnc-desktop-tunnel-v0.1.json',
                  ROOT / 'spec/fixtures/direct-files-v1.json', ROOT / 'spec/fixtures/ios-text-composer-v1.json',
+                 ROOT / 'spec/fixtures/ios-dynamic-resolution-prototype-v1.json',
                  ROOT / 'spec/storekit/v0/LifetimePro.storekit', qa / 'synthetic-ed25519', qa / 'synthetic-ed25519.pub', qa / 'synthetic-rsa']
     spec['targets']['DirectClientTests'] = {
         'type': 'bundle.unit-test', 'platform': 'iOS',

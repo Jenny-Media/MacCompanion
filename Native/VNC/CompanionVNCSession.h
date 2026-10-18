@@ -22,8 +22,23 @@ typedef UIImage CompanionVNCImage;
 // A complete Desktop baseline presented by this owner, independent of retained UI pixels.
 @property(nonatomic, readonly) BOOL desktopFrameReady;
 @property(nonatomic) BOOL inputOnly;
+/// Geometry admission for video, not an allocation or a presented-frame guarantee.
+@property(nonatomic, readonly) BOOL desktopFramebufferAvailable;
+/// Independent local gate while a display-mode handoff verifies host geometry.
+/// Reception and fresh-baseline presentation continue while input is blocked.
+@property(nonatomic) BOOL displayHandoffInputBlocked;
 /// Tracks admitted local gestures independently from iOS host cursor observations.
 @property(nonatomic) BOOL localPointerInteractionActive;
+/// A ready foreground Apple desktop with validated display metadata.
+@property(nonatomic, readonly) BOOL desktopSizeAvailable;
+/// Only the three indexed landscape presets are admitted; no device-size matching.
+- (BOOL)requestDesktopSizePreset:(NSInteger)preset;
+/// Fresh-owner mode transition only; does not release the independent input gate.
+- (BOOL)requestDesktopSizePresetForHandoff:(NSInteger)preset;
+/// Validated catalogue retained while the host streams one monitor; scoped to this owner.
+@property(nonatomic, readonly) NSDictionary *desktopDisplayLayout;
+/// Zero requests All Displays. A nonzero ID must occur in the current catalogue.
+- (BOOL)requestDesktopDisplayID:(uint32_t)identifier;
 
 @property(nonatomic, readonly) BOOL nativeMagnificationSupported;
 - (BOOL)beginMagnificationX:(NSInteger)x y:(NSInteger)y;
