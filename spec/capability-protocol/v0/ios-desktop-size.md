@@ -49,6 +49,8 @@ the failed target using session login recovery. Transport failures during an
 active mode restart retain this private recovery without refilling unremembered
 form fields; credential/trust rejection and explicit cancellation still end it.
 Deliberate form edits discard the old private recovery before a new attempt.
+While a failed mode change awaits retry, disable Trackpad & Keyboard Only and
+reject presentation changes from stale menus or direct callers so retry can run.
 Interruption discards pending monitor/size preference commits, including late
 reconciliation; foreground return cannot save an interrupted choice. Matching
 late virtual frames may reconcile either timeout outcome (3 or 4).

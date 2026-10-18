@@ -1833,8 +1833,9 @@
 }
 - (void)setInputOnly:(BOOL)value {
     // Keep frame delivery alive until the replacement's visible crop is ready.
-    // This also fences direct callers, rather than only the controls menu.
-    if (self.restoreViewportPending) return;
+    // A failed display-mode retry also needs screen mode. Fence stale menu
+    // actions and direct callers until that recovery is retried or dismissed.
+    if (self.restoreViewportPending || (self.failedDisplayModePreset != nil && _inputOnly != value)) return;
     if (_inputOnly != value) { [self retireTextDraft]; self.textComposer = nil; }
     _inputOnly = value;
     if (self.quickActionsProvider) self.quickActions = self.quickActionsProvider(value);
@@ -2284,7 +2285,7 @@
             @{@"kind": @"copyText", @"title": @"Copy Text from Screen", @"symbol": @"text.viewfinder", @"disabled": @(![self canCopyScreenText])}]}];
     }
     [sections addObject:@{@"title": @"Presentation", @"items": @[
-        @{@"kind": @"inputOnly", @"title": self.inputOnly ? @"Show Mac Screen" : @"Trackpad & Keyboard Only", @"symbol": self.inputOnly ? @"desktopcomputer" : @"rectangle.and.hand.point.up.left", @"disabled": @(self.changingDisplayMode || self.restoreViewportPending || self.pendingDesktopSizePreset || self.pendingStreamDisplayID)},
+        @{@"kind": @"inputOnly", @"title": self.inputOnly ? @"Show Mac Screen" : @"Trackpad & Keyboard Only", @"symbol": self.inputOnly ? @"desktopcomputer" : @"rectangle.and.hand.point.up.left", @"disabled": @(self.changingDisplayMode || self.failedDisplayModePreset != nil || self.restoreViewportPending || self.pendingDesktopSizePreset || self.pendingStreamDisplayID)},
         @{@"kind": @"fullscreen", @"title": self.fullscreen ? @"Show Keyboard Bar" : @"Hide Keyboard Bar", @"symbol": self.fullscreen ? @"keyboard" : @"keyboard.chevron.compact.down"}]}];
     return sections;
 }

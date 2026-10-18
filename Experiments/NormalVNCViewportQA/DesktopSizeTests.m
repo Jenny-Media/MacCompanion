@@ -46,6 +46,7 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
 @end
 @interface CompanionVNCViewer (DesktopSizeTesting)
 - (void)showViewMenu;
+- (void)performControlAction:(NSDictionary *)action;
 - (NSArray *)displayMenuSections;
 - (NSArray *)inputMenuSections;
 - (void)frame:(UIImage *)frame;
@@ -1513,6 +1514,49 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     [viewer connectionAction]; XCTAssertEqual(connects,1); XCTAssertEqual(viewer.mirrorRetirementDelay,16);
     XCTAssertEqualObjects([viewer valueForKey:@"lastConnectionFailure"][@"displayModeFailureStage"],@116);
     viewer.connectHandler=nil; [viewer stopViewer]; XCTAssertNil([login loginForResume]);
+}
+
+- (void)testFailedDisplayModeRecoveryBlocksPresentationChangesAndPreservesRetry {
+    for (NSDictionary *failure in @[@{@"target":@0,@"stage":@116}, @{@"target":@0,@"stage":@118},
+                                    @{@"target":@2,@"stage":@117}, @{@"target":@2,@"stage":@118}]) {
+        CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
+        DesktopSizeSession *session=[DesktopSizeSession new]; session.usable=YES; session.available=YES;
+        viewer.session=session;
+        id<DesktopLoginRecoveryTesting> login=[viewer valueForKey:@"credentialState"];
+        [login editWithUsername:@"synthetic" password:@"transient" remember:NO]; [login beginLogin]; [login authenticated];
+        UIImage *image=[[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(8,8)] imageWithActions:^(UIGraphicsImageRendererContext *context){
+            [UIColor.blackColor setFill]; UIRectFill(CGRectMake(0,0,8,8));
+        }];
+        [viewer setValue:image forKey:@"lastFramebuffer"];
+        NSDictionary *staleAction=[viewer displayMenuSections].lastObject[@"items"][0];
+        XCTAssertEqualObjects(staleAction[@"kind"],@"inputOnly"); XCTAssertFalse([staleAction[@"disabled"] boolValue]);
+        NSInteger target=[failure[@"target"] integerValue];
+        viewer.restoredDesktopSizePreset=target == 0 ? 2 : 0;
+        [viewer setValue:@YES forKey:@"changingDisplayMode"]; [viewer setValue:@YES forKey:@"mirrorFullRestartUsed"];
+        [viewer setValue:@(target) forKey:@"modeTargetPreset"];
+        [viewer setValue:@(viewer.restoredDesktopSizePreset) forKey:@"modePreviousPreset"];
+        [viewer showConnectionFailureStage:[failure[@"stage"] integerValue]];
+        XCTAssertEqualObjects([viewer valueForKey:@"failedDisplayModePreset"],@(target));
+        XCTAssertFalse(((UIView *)[viewer valueForKey:@"controls"]).hidden, @"Recovery over a cached frame keeps the controls menu reachable");
+        NSDictionary *action=[viewer displayMenuSections].lastObject[@"items"][0];
+        XCTAssertTrue([action[@"disabled"] boolValue], @"Presentation cannot change while a display-mode retry is pending");
+        [viewer performControlAction:staleAction];
+        XCTAssertFalse(viewer.inputOnly, @"A menu opened before failure must not bypass the recovery guard");
+        viewer.inputOnly=YES;
+        XCTAssertFalse(viewer.inputOnly, @"Direct callers must preserve the screen required for display recovery");
+        XCTAssertNotNil([login loginForResume]);
+        XCTAssertEqualObjects(((UITextField *)[viewer valueForKey:@"username"]).text,@"");
+        XCTAssertEqualObjects(((UITextField *)[viewer valueForKey:@"password"]).text,@"");
+        __block NSUInteger connects=0;
+        viewer.connectHandler=^(NSString *user,NSString *password,BOOL remember){
+            connects++; XCTAssertEqualObjects(user,@"synthetic"); XCTAssertEqualObjects(password,@"transient"); XCTAssertFalse(remember);
+        };
+        viewer.session=[CompanionVNCSession new]; // The failed transport is no longer running.
+        [viewer connectionAction];
+        XCTAssertEqual(connects,1); XCTAssertEqual(viewer.restoredDesktopSizePreset,target);
+        XCTAssertEqualObjects([viewer valueForKey:@"modeTargetPreset"],@(target));
+        viewer.connectHandler=nil; [viewer stopViewer]; XCTAssertNil([login loginForResume]);
+    }
 }
 
 - (void)testModeVerificationDeadlineCannotCrossInterruptionOrOwnerReplacement {
