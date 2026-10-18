@@ -26,11 +26,26 @@ struct DirectMacLibraryRow: View {
     let remove: () -> Void
     let chooseFreeMac: () -> Void
     @ScaledMetric(relativeTo: .title2) private var menuIconSize = 22
+    @AppStorage private var desktopSize: Int
+
+    init(mac: DirectMacRecordV1, reordering: Bool, canChooseFreeMac: Bool,
+         open: @escaping (DirectMacConnection) -> Void, browseFiles: @escaping () -> Void,
+         edit: @escaping () -> Void, remove: @escaping () -> Void, chooseFreeMac: @escaping () -> Void) {
+        self.mac = mac; self.reordering = reordering; self.canChooseFreeMac = canChooseFreeMac
+        self.open = open; self.browseFiles = browseFiles; self.edit = edit
+        self.remove = remove; self.chooseFreeMac = chooseFreeMac
+        _desktopSize = AppStorage(wrappedValue: 2, VNCSessionPreferences.desktopSizeKey(mac.id))
+    }
+    private var displayMode: String { desktopSize == 0 ? "Mirror Mac Screen" : "Virtual Display" }
+    private var connectionSummary: String {
+        mac.preferredConnection == .desktop ? displayMode : mac.preferredConnection.title
+    }
     var body: some View {
         HStack(spacing: 12) {
-            Button { open(mac.preferredConnection) } label: { DirectMacListRowLabel(mac: mac) }
+            Button { open(mac.preferredConnection) } label: { DirectMacListRowLabel(mac: mac, connectionSummary: connectionSummary) }
                 .buttonStyle(.plain).disabled(reordering)
                 .accessibilityLabel("Connect to " + mac.name + " using " + mac.preferredConnection.title)
+                .accessibilityValue(mac.preferredConnection == .desktop ? displayMode : "")
                 .accessibilityHint(mac.family.title)
                 .accessibilityIdentifier("mac-connect-" + mac.id.uuidString)
             if !reordering {

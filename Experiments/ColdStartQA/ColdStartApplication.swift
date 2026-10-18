@@ -75,6 +75,11 @@ final class ColdStartLibraryReadGate: @unchecked Sendable {
         if !arguments.contains("--empty-library") {
             _ = seeded.save(id: nil, name: "Free Mac", address: "127.0.0.1")
             _ = seeded.save(id: nil, name: "Second Mac", address: "127.0.0.1")
+            if arguments.contains("--row-modes-review") {
+                VNCSessionPreferences.setDesktopSize(0, mac: seeded.macs[1].id)
+                _ = seeded.save(id: nil, name: "Terminal Mac", addresses: ["terminal-fixture.local"], preferredConnection: .terminal)
+                _ = seeded.save(id: nil, name: "Trackpad Mac", addresses: ["trackpad-fixture.local"], preferredConnection: .trackpad)
+            }
         }
         let gate = libraryRead
         if !arguments.contains("--held-library") { gate.release() }

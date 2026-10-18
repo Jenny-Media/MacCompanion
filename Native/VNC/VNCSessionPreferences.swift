@@ -143,14 +143,15 @@ struct VNCQuickAction: Codable, Identifiable, Equatable, Sendable {
     static func display(_ id: UUID) -> NSNumber? { UserDefaults.standard.object(forKey: prefix(id) + "display") as? NSNumber }
     static func setDisplay(_ value: NSNumber?, mac id: UUID) { UserDefaults.standard.set(value, forKey: prefix(id) + "display"); changed(id) }
     // Device-local mode: zero mirrors the Mac; 1–3 choose a virtual landscape size.
+    static func desktopSizeKey(_ id: UUID) -> String { prefix(id) + "desktop-size" }
     static func desktopSize(_ id: UUID) -> Int {
-        guard let value = UserDefaults.standard.object(forKey: prefix(id) + "desktop-size") as? Int,
+        guard let value = UserDefaults.standard.object(forKey: desktopSizeKey(id)) as? Int,
               (0...3).contains(value) else { return 2 }
         return value
     }
     static func setDesktopSize(_ value: Int, mac id: UUID) {
         guard (0...3).contains(value) else { return }
-        UserDefaults.standard.set(value, forKey: prefix(id) + "desktop-size")
+        UserDefaults.standard.set(value, forKey: desktopSizeKey(id))
     }
     static func fullscreen(_ id: UUID) -> Bool { UserDefaults.standard.bool(forKey: prefix(id) + "fullscreen") }
     static func setFullscreen(_ value: Bool, mac id: UUID) { UserDefaults.standard.set(value, forKey: prefix(id) + "fullscreen"); changed(id) }

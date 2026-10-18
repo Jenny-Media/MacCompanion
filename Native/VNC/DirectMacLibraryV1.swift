@@ -934,6 +934,7 @@ struct DirectSessionSettingsV1: View {
 
 struct DirectMacListRowLabel: View {
     let mac: DirectMacRecordV1
+    let connectionSummary: String
     @ScaledMetric(relativeTo: .title2) private var hardwareIconSize = 22
     @ScaledMetric(relativeTo: .title2) private var badgeSize = 44
 
@@ -945,8 +946,12 @@ struct DirectMacListRowLabel: View {
     }
     private var name: some View { Text(mac.name).font(.headline).foregroundStyle(.primary).fixedSize(horizontal: false, vertical: true) }
     private var action: some View {
-        Text(mac.preferredConnection.actionTitle).font(.caption).foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
+        Label {
+            Text(connectionSummary).fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: mac.preferredConnection == .desktop ? "display" : mac.preferredConnection.symbol)
+                .accessibilityHidden(true)
+        }.labelStyle(.titleAndIcon).font(.caption).foregroundStyle(.secondary)
     }
     private var address: some View {
         Text(mac.addresses.count > 1 ? "\(mac.address) · \(mac.addresses.count) addresses" : mac.address)

@@ -10,6 +10,42 @@ import XCTest
         XCTAssertTrue(row.waitForExistence(timeout: 5)); row.tap()
     }
 
+    func testMacRowsKeepTheSavedDisplayModeAndOtherConnectionNamesDistinct() {
+        let app = launch(["--connect-flow", "--row-modes-review"]); defer { app.terminate() }
+        let virtual = app.buttons["Connect to Free Mac using Screen Sharing"]
+        let mirror = app.buttons["Connect to Second Mac using Screen Sharing"]
+        XCTAssertTrue(virtual.waitForExistence(timeout: 8))
+        XCTAssertEqual(virtual.value as? String, "Virtual Display")
+        XCTAssertEqual(mirror.value as? String, "Mirror Mac Screen")
+        XCTAssertEqual(app.buttons["Connect to Terminal Mac using Terminal"].value as? String ?? "", "")
+        XCTAssertEqual(app.buttons["Connect to Trackpad Mac using Trackpad & Keyboard"].value as? String ?? "", "")
+        capture("mac-row-saved-modes", app)
+        app.buttons["Manage Free Mac"].tap(); app.buttons["Mac Settings"].tap()
+        let form = app.descendants(matching: .any)["mac-editor-form"].firstMatch
+        let mirrorChoice = app.buttons["mac-display-mirror"]
+        for _ in 0..<6 where !mirrorChoice.isHittable { form.swipeUp() }
+        XCTAssertTrue(mirrorChoice.isHittable); mirrorChoice.tap()
+        app.navigationBars["Edit Mac"].buttons["Save"].tap()
+        let saved = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            virtual.exists && virtual.value as? String == "Mirror Mac Screen"
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 5), .completed)
+        app.buttons["Manage Free Mac"].tap(); app.buttons["Mac Settings"].tap()
+        let virtualChoice = app.buttons["mac-display-virtual"]
+        for _ in 0..<6 where !virtualChoice.isHittable { form.swipeUp() }
+        XCTAssertTrue(virtualChoice.isHittable); virtualChoice.tap()
+        app.navigationBars["Edit Mac"].buttons["Cancel"].tap()
+        XCTAssertTrue(virtual.waitForExistence(timeout: 5))
+        XCTAssertEqual(virtual.value as? String, "Mirror Mac Screen", "Cancelling a draft must leave the saved row mode unchanged")
+        XCTAssertEqual(mirror.value as? String, "Mirror Mac Screen")
+        capture("mac-row-saved-mode-after-cancel", app)
+    }
+
+    private func capture(_ name: String, _ app: XCUIApplication) {
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+    }
+
     func testUnlockTimingSnapshotWaitsForAdmissionAndEligibleNativeDisplayTick() {
         let app = launch(["--held-library", "--inactive-auth", "--manual-auth"]); defer { app.terminate() }
         XCTAssertTrue(app.staticTexts["Authenticating; inactive"].waitForExistence(timeout: 8))
