@@ -210,7 +210,7 @@
     XCTAssertEqual(client->width,1600); XCTAssertEqual(client->height,1600);
     XCTestExpectation *callback=[self expectationWithDescription:@"Pending layout consumed"];
     dispatch_async(dispatch_get_main_queue(),^{[callback fulfill];}); [self waitForExpectations:@[callback] timeout:2];
-    XCTAssertNil([session valueForKey:@"latestLayout"]);
+    XCTAssertEqual([session.desktopDisplayLayout[@"views"] count],1);
     for (NSString *key in @[@"running",@"established",@"inputReady",@"appleGestureServer"]) [session setValue:@YES forKey:key];
     XCTAssertFalse([session requestDesktopDisplayID:999]); XCTAssertTrue([session requestDesktopDisplayID:9]);
     [session setValue:@NO forKey:@"running"]; [session stop]; rfbClientCleanup(client); close(pair[1]);

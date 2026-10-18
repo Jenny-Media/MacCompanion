@@ -51,6 +51,8 @@ form fields; credential/trust rejection and explicit cancellation still end it.
 Deliberate form edits discard the old private recovery before a new attempt.
 While a failed mode change awaits retry, disable Trackpad & Keyboard Only and
 reject presentation changes from stale menus or direct callers so retry can run.
+This is local to that viewer, never a saved restriction. Successful verification
+or explicit exit to My Macs clears it; repeated failures keep recovery pending.
 Interruption discards pending monitor/size preference commits, including late
 reconciliation; foreground return cannot save an interrupted choice. Matching
 late virtual frames may reconcile either timeout outcome (3 or 4).
@@ -165,6 +167,14 @@ Repeated identical catalogue-bearing metadata must not invalidate a ready baseli
 Virtual-to-mirror retirement/reconnect stays automatic; no manual reconnect is a
 normal part of the display choice. An initial pixel baseline for the selected
 monitor must not wait for unstreamed physical monitors or desktop gaps.
+
+Each UI layout callback owns an immutable snapshot and captures its connection
+generation and presentation epoch as its version. Discard callbacks from retired
+versions and stopped or paused owners. Deliver current-version callbacks in order,
+including repeated metadata: a frame queued between two same-version reports must
+receive its preceding layout. No callback can consume or clear another snapshot.
+Deliver the selected stream's normalized layout before its matching fresh image.
+Pause, resume, Stop and replacement reject old callbacks.
 
 ## Repeated selection and update ordering
 

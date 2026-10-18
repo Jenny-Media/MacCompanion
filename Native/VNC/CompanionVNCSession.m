@@ -102,7 +102,7 @@ static void QuietLog(const char *format, ...) {
     NSInteger _failureStage, _credentialRequests;
     NSInteger _framebufferWidth, _framebufferHeight;
     BOOL _probeOnly;
-    BOOL _dirty, _extensionFailed, _layoutPending, _metadataCallback, _baselinePresented;
+    BOOL _dirty, _extensionFailed, _metadataCallback, _baselinePresented;
     CompanionVNCCoverage _coverage;
     CompanionVNCDisplayLayout _coverageLayout;
     BOOL _coverageLayoutValid;
@@ -122,7 +122,6 @@ static void QuietLog(const char *format, ...) {
 #endif
     NSUInteger _fullRefreshRetries, _receivedPixels, _expectedPixels;
     NSUInteger _decoderFailures;
-    NSDictionary *_latestLayout;
     NSDictionary *_layoutDiagnostics;
     NSUInteger _layoutMessages;
     double _lastFrame;
@@ -634,7 +633,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     if (_running) { [_lock unlock]; if (socket >= 0) close(socket); return; }
     [self retirePointerInteractionLocked]; [self cancelNativeGesturesLocked]; _appleGestureServer = NO; _nativeGestureLayout = NO;
     _sentMagnification = (CompanionVNCMagnification){0}; _sentScroll = (CompanionVNCScroll){0};
-    _running = YES; _established = NO; _stopping = NO; _overflow = NO; _framePending = NO; _cursorPending = NO; _pendingCursorImage = nil; _layoutPending = NO; _latestLayout = nil; _inputReady = NO; _failureStage = 0;
+    _running = YES; _established = NO; _stopping = NO; _overflow = NO; _framePending = NO; _cursorPending = NO; _pendingCursorImage = nil; _inputReady = NO; _failureStage = 0;
     _desktopCatalogue = nil; _desktopResizeDisplays = nil; memset(&_desktopCatalogueLayout, 0, sizeof(_desktopCatalogueLayout));
     _desktopResizePending = _desktopResizeAwaiting = _desktopResizeSelection = _desktopResizeVirtualLayout = _desktopResizeLayoutSeen = NO;
     _desktopResizeRequests = _desktopResizeAccepted = _desktopResizeTimedOut = _desktopResizeOutcome = _desktopResizeLayoutResizes = _desktopResizeNoops = _desktopResizeMetadataRequests = 0;
@@ -1280,22 +1279,22 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
             if (isfinite(candidate) && candidate >= 1 && candidate <= 4) scale = candidate;
         }
     }
-    NSDictionary *layout = @{@"aspectRatio": @(aspect), @"backingScale": @(scale), @"views": views, @"virtual": @(_desktopResizeVirtualLayout)};
+    NSDictionary *layout = @{@"aspectRatio": @(aspect), @"backingScale": @(scale), @"views": [views copy], @"virtual": @(_desktopResizeVirtualLayout)};
     [self report:@"Connected"];
-    [_lock lock]; NSInteger generation = _generation; NSUInteger epoch = _presentationEpoch; _latestLayout = layout;
+    [_lock lock]; NSInteger generation = _generation; NSUInteger epoch = _presentationEpoch;
     // A selected stream has its own origin/geometry; keep the full catalogue for switching.
     if (parsed && (!_desktopCatalogue || (!_desktopResizeAwaiting && !_desktopResizePending
         && (!_desktopResizeSelection || _desktopResizeDisplayID == 0)))) {
         _desktopCatalogueLayout = decoded; _desktopCatalogue = layout; _desktopResizeDisplays = [views copy];
     }
-    if (_layoutPending) { [_lock unlock]; return TRUE; }
-    _layoutPending = YES; [_lock unlock];
+    [_lock unlock];
+    // Each snapshot owns its connection and presentation version. Keep valid
+    // same-epoch callbacks in order: a queued frame needs its preceding layout.
     dispatch_async(dispatch_get_main_queue(), ^{
-        [self->_lock lock]; BOOL valid = generation == self->_generation && epoch == self->_presentationEpoch && self->_running && !self->_stopping && !self->_paused;
-        NSDictionary *latest = self->_latestLayout;
-        if (generation == self->_generation) { self->_layoutPending = NO; self->_latestLayout = nil; }
+        [self->_lock lock]; BOOL valid = generation == self->_generation && epoch == self->_presentationEpoch
+            && self->_running && !self->_stopping && !self->_paused;
         [self->_lock unlock];
-        if (valid && self.displayLayoutHandler) self.displayLayoutHandler(latest);
+        if (valid && self.displayLayoutHandler) self.displayLayoutHandler(layout);
     });
     return TRUE;
 }
