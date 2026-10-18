@@ -7,6 +7,7 @@
 
 @interface CompanionVNCSession (NativeGestureTesting)
 - (void)configureClient:(rfbClient *)client;
+- (rfbBool)allocate:(rfbClient *)client;
 - (BOOL)sendMagnificationEvent:(NSDictionary *)event client:(rfbClient *)client;
 - (BOOL)releaseMagnification:(rfbClient *)client;
 - (BOOL)sendScrollEvent:(NSDictionary *)event client:(rfbClient *)client;
@@ -187,7 +188,11 @@
         int yes=1; setsockopt(pair[0],SOL_SOCKET,SO_NOSIGPIPE,&yes,sizeof(yes));
         rfbClient *client=rfbGetClient(8,3,4); client->sock=pair[0]; client->width=3024; client->height=1964;
         client->supportedMessages.client2server[0] |= 1 << rfbPointerEvent;
-        CompanionVNCSession *s=[self sessionWithInputOnly:only.boolValue]; [s configureClient:client];
+        CompanionVNCSession *s=[self sessionWithInputOnly:only.boolValue]; [s setValue:@NO forKey:@"established"];
+        [s configureClient:client]; XCTAssertTrue([s allocate:client]);
+        // Mirror completed initialization and validated host gesture metadata. Video
+        // has backing storage; input-only has only geometry, as in the real owner.
+        for (NSString *key in @[@"established",@"inputReady",@"nativeGestureLayout"]) [s setValue:@YES forKey:key];
         // Keep this socket-owner test focused on input, without requiring desktop pixels.
         [s setValue:@YES forKey:@"baselinePresented"]; [s setValue:@NO forKey:@"modeChanged"];
         // The coverage timeout starts well after this bounded pause/stop check.

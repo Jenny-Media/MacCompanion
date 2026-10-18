@@ -164,6 +164,8 @@ static void QuietLog(const char *format, ...) {
     NSUInteger _automaticUpdateStarts, _automaticUpdateStops;
 }
 - (rfbCredential *)credential:(int)type;
+- (BOOL)initializeClient:(rfbClient *)client inputOnly:(BOOL)inputOnly;
+- (BOOL)admitInputOnlyGeometry:(rfbClient *)client;
 - (rfbBool)allocate:(rfbClient *)client;
 - (void)updatedX:(int)x y:(int)y width:(int)width height:(int)height;
 - (BOOL)resetBaseline:(rfbClient *)client;
@@ -423,8 +425,17 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     [_lock unlock]; dispatch_semaphore_signal(_wake);
 }
 - (BOOL)inputOnly { [_lock lock]; BOOL value = _inputOnly; [_lock unlock]; return value; }
+- (BOOL)desktopFramebufferAvailable {
+    [_lock lock]; size_t bytes;
+    BOOL admitted = CompanionVNCFramebufferByteCount((int)_framebufferWidth, (int)_framebufferHeight, &bytes);
+    [_lock unlock]; return admitted;
+}
 - (void)setInputOnly:(BOOL)value {
-    [_lock lock];
+    [_lock lock]; size_t bytes;
+    // A video request cannot take a working large-desktop input owner offline.
+    if (_inputOnly && !value && _established && !CompanionVNCFramebufferByteCount((int)_framebufferWidth, (int)_framebufferHeight, &bytes)) {
+        [_lock unlock]; return;
+    }
     if (_inputOnly != value) {
         [self retirePointerInteractionLocked]; [self cancelNativeGesturesLocked]; _inputOnly = value; _modeChanged = YES; _presentationEpoch++; _inputEpoch++;
         if (_established) {
@@ -686,9 +697,8 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
             uint32_t schemes[] = {rfbARD};
 
             SetClientAuthSchemes(client, schemes, 1);
-            int argc = 1; char *argv[] = {"MacCompanion", NULL};
-            // rfbInitClient frees the rfbClient on failure; framebuffer ownership is ours.
-            BOOL connected = rfbInitClient(client, &argc, argv);
+            // Both paths consume/clean up the client on failure; backing pixels are ours.
+            BOOL connected = [self initializeClient:client inputOnly:self.inputOnly];
             self->_username = nil; self->_password = nil;
             if (!connected) {
                 [self registerSocket:-1];
@@ -706,6 +716,25 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
             (void)generation;
         }
     });
+}
+- (BOOL)initializeClient:(rfbClient *)client inputOnly:(BOOL)inputOnly {
+#if !(TARGET_OS_OSX || TARGET_OS_IOS)
+    inputOnly = NO; // This target's managed library has no geometry-only decoder guard.
+#endif
+    if (!inputOnly) {
+        int argc = 1; char *argv[] = {"MacCompanion", NULL};
+        return rfbInitClient(client, &argc, argv);
+    }
+    // The socket is already connected. Reuse the library's complete authentication
+    // and ServerInit exchange, omitting its viewer-only allocation/initial request.
+    BOOL initialized = InitialiseRFBConnection(client);
+    if (initialized) {
+        client->width = client->si.framebufferWidth; client->height = client->si.framebufferHeight;
+        initialized = [self admitInputOnlyGeometry:client] && SetFormatAndEncodings(client);
+        if (initialized) [self configureFramebufferRequests:client];
+    }
+    if (!initialized) rfbClientCleanup(client);
+    return initialized;
 }
 - (void)processConnectedClient:(rfbClient *)client {
     BOOL healthy = YES;
@@ -744,6 +773,13 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
             // Release actually-sent input first, then disable server delivery
             // before acknowledging pause. A blocked subscription write cannot
             // take Stop's release budget away from held keys or buttons.
+            // Cold input-only owners have no backing image. Allocate on this sole
+            // owner before any video request or decoder can use the framebuffer.
+            BOOL allocatedVideo = NO;
+            if (!paused && !inputOnly && !client->frameBuffer) {
+                if (![self allocate:client]) { healthy = NO; break; }
+                allocatedVideo = YES; self->_desktopRefreshPending = YES;
+            }
             healthy = [self processDesktopSizeChange:client]; if (!healthy) break;
             healthy = [self configureDesktopUpdates:client]; if (!healthy) break;
             healthy = [self requestPendingDesktopLayout:client]; if (!healthy) break;
@@ -768,7 +804,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
             }
             if (resume || modeChanged) { self->_cursorPositionKnown = NO; self->_cursorPositionDirty = NO; self->_cursorDirty = YES; }
             if (!inputOnly && (resume || modeChanged)) {
-                if (![self resetBaseline:client]) { healthy = NO; break; }
+                if (!allocatedVideo && ![self resetBaseline:client]) { healthy = NO; break; }
                 self->_desktopRefreshPending = YES;
             }
             if (!inputOnly && ![self maintainDesktopBaseline:client now:NSProcessInfo.processInfo.systemUptime]) { healthy = NO; break; }
@@ -1091,7 +1127,29 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     }
     return credential;
 }
+- (BOOL)admitInputOnlyGeometry:(rfbClient *)client {
+    if (!CompanionVNCInputGeometryValid(client->width, client->height)) { protocolFailure = 9; return NO; }
+    free(_pixels); _pixels = NULL; client->frameBuffer = NULL; CompanionVNCCoverageFree(&_coverage);
+    [_lock lock];
+    [self retirePointerInteractionLocked]; [self cancelNativeGesturesLocked];
+    _framebufferWidth = client->width; _framebufferHeight = client->height;
+    _baselinePresented = NO; _receivedPixels = _expectedPixels = 0; _presentationEpoch++;
+    _nativeGestureLayout = CompanionVNCNativeGesturesSupported(YES, _coverageLayoutValid, client->width, client->height, _coverageLayout.width, _coverageLayout.height);
+    if (_established) {
+        _inputReady = NO; _releaseInputRequested = YES; _modeChanged = YES; _inputEpoch++;
+        [_events removeAllObjects]; _queuedPointerMask = 0;
+#if TARGET_OS_IOS
+        [self cancelComposedTextLocked];
+#endif
+    }
+    _handshakeStage = 5; [_lock unlock]; protocolStage = 5;
+    _dirty = NO; _cursorPositionKnown = NO; _cursorPositionDirty = NO; _cursorDirty = YES;
+    [self configureFramebufferRequests:client]; return YES;
+}
 - (rfbBool)allocate:(rfbClient *)client {
+#if TARGET_OS_OSX || TARGET_OS_IOS
+    if (self.inputOnly) return [self admitInputOnlyGeometry:client];
+#endif
     [_lock lock]; [self cancelNativeGesturesLocked];
     _framebufferWidth = client->width; _framebufferHeight = client->height;
     _automaticUpdatePending = YES; if (_established && !_inputOnly) _desktopRefreshPending = YES;
@@ -1120,6 +1178,10 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
         [self cancelNativeGesturesLocked]; [_events removeAllObjects]; _queuedPointerMask = 0;
     }
     [_lock unlock];
+    // Metadata may reset a cold input-only baseline; it must not allocate pixels or maps.
+    if (self.inputOnly && !client->frameBuffer) {
+        CompanionVNCCoverageFree(&_coverage); [self applyCoverageLayout:client]; return YES;
+    }
     if (!CompanionVNCCoverageReset(&_coverage, client->width, client->height)) return NO;
     _baselineStarted = _lastFullRefresh = _baselineLastProgress = NSProcessInfo.processInfo.systemUptime;
     _baselineRequestSent = NO;

@@ -1,0 +1,16 @@
+--- a/src/libvncclient/rfbclient.c
++++ b/src/libvncclient/rfbclient.c
+@@ -2264,0 +2265,13 @@
++      }
++
++      /* Geometry-only input clients deliberately have no desktop backing store. */
++      if (!client->frameBuffer) {
++        switch (rect.encoding) {
++        case rfbEncodingRaw: case rfbEncodingCopyRect:
++        case rfbEncodingRRE: case rfbEncodingCoRRE: case rfbEncodingHextile:
++        case rfbEncodingUltra: case rfbEncodingUltraZip: case rfbEncodingTRLE:
++        case rfbEncodingZlib: case rfbEncodingTight:
++        case rfbEncodingZRLE: case rfbEncodingZYWRLE:
++          return FALSE;
++        default: break; /* Existing metadata extensions do not decode pixels. */
++        }

@@ -84,10 +84,14 @@ TRANSFORMS = {'include/rfb/rfbclient.h': [(b'extern rfbBool ReadFromRFBServer(rf
                                  b';\n}\n\n\n/*\n * Write an exact number of bytes',
                                  1)]}
 
+# Reject unsolicited desktop pixels before a geometry-only owner reaches a decoder.
+TRANSFORMS['src/libvncclient/rfbclient.c'] = [(b'      switch (rect.encoding) {\n\n      case rfbEncodingRaw:', b'      /* Geometry-only input clients deliberately have no desktop backing store. */\n      if (!client->frameBuffer) {\n        switch (rect.encoding) {\n        case rfbEncodingRaw: case rfbEncodingCopyRect:\n        case rfbEncodingRRE: case rfbEncodingCoRRE: case rfbEncodingHextile:\n        case rfbEncodingUltra: case rfbEncodingUltraZip: case rfbEncodingTRLE:\n        case rfbEncodingZlib: case rfbEncodingTight:\n        case rfbEncodingZRLE: case rfbEncodingZYWRLE:\n          return FALSE;\n        default: break; /* Existing metadata extensions do not decode pixels. */\n        }\n      }\n\n      switch (rect.encoding) {\n\n      case rfbEncodingRaw:', 1)]
+
 def adapted_read_service(original, policy):
     path = policy['path']
     patch_name = {'include/rfb/rfbclient.h': 'Native/VNC/direct-read-service-header.patch',
-                  'src/libvncclient/sockets.c': 'Native/VNC/direct-read-service-sockets.patch'}
+                  'src/libvncclient/sockets.c': 'Native/VNC/direct-read-service-sockets.patch',
+                  'src/libvncclient/rfbclient.c': 'Native/VNC/direct-input-only-decoder.patch'}
     if path not in TRANSFORMS or policy['patchPath'] != patch_name[path]:
         raise ValueError('Unexpected VNC read-service adapter path.')
     digest = lambda value: hashlib.sha256(value).hexdigest()

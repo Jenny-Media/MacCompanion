@@ -86,6 +86,10 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
 @property NSNumber *requestedDisplay;
 @end
 @implementation DesktopSizeSession
+- (instancetype)init {
+    if ((self=[super init])) { [self setValue:@3200 forKey:@"framebufferWidth"]; [self setValue:@1200 forKey:@"framebufferHeight"]; }
+    return self;
+}
 - (BOOL)running { return YES; }
 - (BOOL)established { return self.usable; }
 - (BOOL)connected { return self.usable; }
@@ -246,6 +250,7 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
         NSMutableString *hex=[NSMutableString new]; for (NSUInteger i=0;i<sizeof(packet);i++) [hex appendFormat:@"%02x",packet[i]];
         XCTAssertEqualObjects(hex,row[@"hex"]);
         CompanionVNCSession *session=[CompanionVNCSession new];
+        [session setValue:@3200 forKey:@"framebufferWidth"]; [session setValue:@1200 forKey:@"framebufferHeight"];
         for (NSString *key in @[@"running",@"established",@"inputReady",@"appleGestureServer",@"coverageLayoutValid"]) [session setValue:@YES forKey:key];
         XCTAssertFalse([session requestDesktopSizePreset:0]); XCTAssertFalse([session requestDesktopSizePreset:4]);
         XCTAssertFalse([session requestDesktopSizePreset:NSIntegerMax]);
@@ -940,7 +945,7 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
 - (void)testRoutinePullRestartWaitsThroughPauseInputOnlyAndRetirement {
     int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
     CompanionVNCSession *session=[CompanionVNCSession new]; rfbClient *client=rfbGetClient(8,3,4);
-    client->sock=pair[0]; client->width=client->height=100; [session configureClient:client];
+    client->sock=pair[0]; client->width=client->height=100; [session configureClient:client]; XCTAssertTrue([session allocate:client]);
     for (NSString *key in @[@"running",@"established",@"inputReady",@"baselinePresented",@"routinePullPausedForSwitch"]) [session setValue:@YES forKey:key];
     uint8_t bytes[32];
     for (NSString *key in @[@"paused",@"inputOnly",@"stopping",@"overflow"]) {

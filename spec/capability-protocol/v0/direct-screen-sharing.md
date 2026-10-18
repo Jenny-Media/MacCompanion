@@ -335,8 +335,21 @@ Set input-only on the native owner before authentication, including cold starts
 and replacement connections. Reveal its local controls when that owner is ready,
 without waiting for an image. Initialize pointer bounds from the admitted ServerInit
 framebuffer dimensions; a cached image or selected-display crop is not required.
-The RFB library still sends its initial framebuffer request during initialization.
-Input-only does not wait for that response and sends no ongoing pixel requests.
+Native iOS/macOS input-only initialization performs the same RFB authentication and ServerInit exchange,
+then sets the pixel format and encodings without allocating a desktop framebuffer or
+baseline coverage maps, and without requesting an initial image. Admit positive
+ServerInit dimensions representable by the 16-bit pointer coordinates (1–65535 on
+each axis), independently of the video memory limit. Send no ongoing pixel requests.
+Metadata and cursor rectangles remain bounded by their existing parsers. An unsolicited
+pixel rectangle without backing storage ends the connection safely before decoding;
+never allocate an image merely because the server sent pixels. Capability refreshes
+and resize messages cannot turn an input-only request into a full desktop request.
+A geometry-only resize also needs no framebuffer or coverage allocation.
+When video is requested on a retained input-only owner, admit the existing desktop
+size/memory limits and allocate backing storage and coverage before asking for pixels.
+If the known desktop exceeds those limits, keep Trackpad & Keyboard connected and
+explain that Screen Sharing is unavailable at that size. Authentication, foreground
+checks, held-input release, session recovery and fresh-baseline readiness are unchanged.
 Healthy in-session toggles may retain the authenticated connection. Pending or failed
 display operations instead use the independent replacement path in ios-desktop-size.md.
 Publish its initial Connected state after successful RFB initialization and on

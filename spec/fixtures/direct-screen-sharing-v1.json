@@ -3580,5 +3580,51 @@
     "presentRecoveryDuringReview": false,
     "presentRecoveryAfterBack": true,
     "endTransportImmediately": true
-  }
+  },
+  "inputOnlyInitializationPolicy": {
+    "initialFramebufferRequest": false,
+    "framebufferAllocation": false,
+    "coverageAllocation": false,
+    "geometryMaximum": 65535,
+    "unsolicitedPixelsWithoutStorage": "reject-before-decoding",
+    "videoAllocation": "deferred-until-requested",
+    "videoLimitFailure": "retain-input-only"
+  },
+  "inputOnlyInitializationCases": [
+    {
+      "name": "large combined desktop",
+      "width": 8192,
+      "height": 8192,
+      "inputGeometryValid": true,
+      "videoAdmitted": false
+    },
+    {
+      "name": "maximum pointer coordinates",
+      "width": 65535,
+      "height": 65535,
+      "inputGeometryValid": true,
+      "videoAdmitted": false
+    },
+    {
+      "name": "normal desktop",
+      "width": 256,
+      "height": 128,
+      "inputGeometryValid": true,
+      "videoAdmitted": true
+    },
+    {
+      "name": "empty desktop",
+      "width": 0,
+      "height": 128,
+      "inputGeometryValid": false,
+      "videoAdmitted": false
+    },
+    {
+      "name": "unrepresentable geometry",
+      "width": 65536,
+      "height": 128,
+      "inputGeometryValid": false,
+      "videoAdmitted": false
+    }
+  ]
 }

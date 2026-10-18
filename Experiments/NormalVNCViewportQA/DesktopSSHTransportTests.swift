@@ -76,7 +76,10 @@ private final class DesktopSyntheticRFB: ChannelInboundHandler, @unchecked Senda
     private let cursorPackets: [[UInt8]]
     private var sentCursorPackets = false
     private var sentDisplayLayout = false
-    init(_ record: DesktopSSHRecord, cursorPackets: [[UInt8]] = []) { self.record = record; self.cursorPackets = cursorPackets }
+    private let serverInitSize: (UInt16, UInt16)
+    init(_ record: DesktopSSHRecord, cursorPackets: [[UInt8]] = [], serverInitSize: (UInt16, UInt16) = (256, 128)) {
+        self.record = record; self.cursorPackets = cursorPackets; self.serverInitSize = serverInitSize
+    }
     private func send(_ bytes: [UInt8], _ context: ChannelHandlerContext) {
         context.writeAndFlush(wrapOutboundOut(.init(type: .channel, data: .byteBuffer(ByteBuffer(bytes: bytes)))), promise: nil)
     }
@@ -106,7 +109,8 @@ private final class DesktopSyntheticRFB: ChannelInboundHandler, @unchecked Senda
             case 3:
                 guard input.readBytes(length: 1) != nil else { return }
                 let name = Array("Synthetic Desktop".utf8)
-                send([1, 0, 0, 128, 32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 16, 8, 0, 0, 0, 0,
+                let (width, height) = serverInitSize
+                send([UInt8(width >> 8), UInt8(width & 255), UInt8(height >> 8), UInt8(height & 255), 32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 16, 8, 0, 0, 0, 0,
                       0, 0, 0, UInt8(name.count)] + name, context); stage = 4
             default:
                 guard let kind: UInt8 = input.getInteger(at: input.readerIndex) else { return }
@@ -133,6 +137,7 @@ private final class DesktopSyntheticRFB: ChannelInboundHandler, @unchecked Senda
                     }
                 } else if kind == 3 {
                     record.add("update")
+                    guard serverInitSize == (256, 128) else { record.add("unexpectedVideoRequest"); context.close(promise: nil); return }
                     if !sentDisplayLayout && record.count("encoding.1105") > 0 {
                         sentDisplayLayout = true
                         // Generated single-monitor metadata for this synthetic
@@ -189,10 +194,13 @@ private final class DesktopSSHServer: @unchecked Sendable {
     let record = DesktopSSHRecord()
     let mode: Mode
     let screenPort: Int
+    let serverInitSize: (UInt16, UInt16)
     let cursorPackets: [[UInt8]]
     var listener: Channel!
     private var clients: [Channel] = [] // Sole server event loop.
-    init(_ mode: Mode, screenPort: Int = 5900, cursorPackets: [[UInt8]] = []) { self.mode = mode; self.screenPort = screenPort; self.cursorPackets = cursorPackets }
+    init(_ mode: Mode, screenPort: Int = 5900, cursorPackets: [[UInt8]] = [], serverInitSize: (UInt16, UInt16) = (256, 128)) {
+        self.mode = mode; self.screenPort = screenPort; self.cursorPackets = cursorPackets; self.serverInitSize = serverInitSize
+    }
     var port: Int { listener.localAddress!.port! }
     var hostKey: String { String(openSSHPublicKey: key.publicKey) }
     func start() async throws {
@@ -213,7 +221,7 @@ private final class DesktopSSHServer: @unchecked Sendable {
                     }
                     return child.getOption(SSHChildChannelOptions.peerMaximumMessageLength).flatMap { maximum in
                         self.record.add("peerPacket.\(maximum)")
-                        return self.mode == .echo ? child.pipeline.addHandler(DesktopSSHEcho(self.record)) : child.pipeline.addHandler(DesktopSyntheticRFB(self.record, cursorPackets: self.cursorPackets))
+                        return self.mode == .echo ? child.pipeline.addHandler(DesktopSSHEcho(self.record)) : child.pipeline.addHandler(DesktopSyntheticRFB(self.record, cursorPackets: self.cursorPackets, serverInitSize: self.serverInitSize))
                     }
                 })
             return channel.pipeline.addHandler(handler)
@@ -607,9 +615,10 @@ private func desktopWriterFinished(_ group: DispatchGroup) -> Bool { group.wait(
                     }
                     XCTAssertNil(viewer.value(forKey: "lastFramebuffer"))
                     XCTAssertEqual((viewer.session.diagnosticCounters["presentedFrames"] as? NSNumber)?.intValue, 0)
-                    // LibVNCClient sends its standard initial request inside rfbInitClient.
-                    // Its response must never gate input or trigger ongoing polling.
-                    XCTAssertEqual(server.record.count("update"), 1, "Only the library initialization request is sent")
+                    // An input-only connection must not request an initial image.
+                    XCTAssertEqual(server.record.count("update"), 0, "Geometry-only initialization requests no image")
+                    XCTAssertEqual(viewer.session.diagnosticCounters["framebufferAllocations"] as? Int, 0)
+                    XCTAssertEqual(viewer.session.diagnosticCounters["baselineExpectedPixels"] as? Int, 0)
                     let crop = try XCTUnwrap(viewer.value(forKey: "activeCrop") as? NSValue).cgRectValue
                     XCTAssertEqual(crop, CGRect(x: 0, y: 0, width: 256, height: 128), "Pointer bounds come from ServerInit")
                 } else { try await wait("normal view presents framebuffer") { viewer.value(forKey: "lastFramebuffer") != nil } }
@@ -625,7 +634,15 @@ private func desktopWriterFinished(_ group: DispatchGroup) -> Bool { group.wait(
                 viewer.session.resume()
                 try await wait("same owner resumes") { viewer.session.connected }
                 XCTAssertEqual(server.record.count("tcp"), 1)
-                if inputOnly { XCTAssertEqual(server.record.count("update"), 1, "Resume sends no additional video requests") }
+                if inputOnly {
+                    XCTAssertEqual(server.record.count("update"), 0, "Resume remains geometry-only")
+                    XCTAssertEqual(viewer.session.diagnosticCounters["framebufferAllocations"] as? Int, 0)
+                    viewer.inputOnly = false
+                    try await wait("deferred video allocates and presents on the same owner") { viewer.session.desktopFrameReady }
+                    XCTAssertEqual(viewer.session.diagnosticCounters["framebufferAllocations"] as? Int, 1)
+                    XCTAssertEqual(server.record.count("tcp"), 1)
+                    XCTAssertEqual(server.record.count("auth"), 1)
+                }
                 try await wait("connected UI dismisses sign-in progress") {
                     (viewer.value(forKey: "loginScroll") as? UIScrollView)?.isHidden == true &&
                     (viewer.value(forKey: "starting") as? Bool) == false
@@ -641,6 +658,43 @@ private func desktopWriterFinished(_ group: DispatchGroup) -> Bool { group.wait(
             } catch { coordinator.disconnect(); try? await server.close(); window.isHidden = true; window.rootViewController = nil; prior?.makeKeyAndVisible(); try? TerminalSecretStore.remove(mac.id); throw error }
             window.isHidden = true; window.rootViewController = nil; prior?.makeKeyAndVisible(); try? TerminalSecretStore.remove(mac.id)
         }
+    }
+    func testLargeDesktopTrackpadAuthenticatesAndControlsWithoutVideoAllocation() async throws {
+        let server = DesktopSSHServer(.rfb, serverInitSize: (8192, 8192)); try await server.start()
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic Large Mac", addresses: ["127.0.0.1"], sshPort: server.port)
+        try TerminalSecretStore.write(Data(server.hostKey.utf8), id: mac.id, kind: "host-key")
+        defer { try? TerminalSecretStore.remove(mac.id) }
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let prior = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        let viewer = CompanionVNCViewer(), coordinator = VNCRemoteDesktopView.Coordinator(mac: mac)
+        viewer.inputOnly = true; viewer.sshPort = mac.sshPort; viewer.servicePort = mac.port; coordinator.viewer = viewer
+        viewer.connectHandler = { user, password, remember in MainActor.assumeIsolated { coordinator.connect(user: user, password: password, remember: remember) } }
+        viewer.disconnectHandler = { MainActor.assumeIsolated { coordinator.disconnect() } }
+        window.rootViewController = viewer; window.makeKeyAndVisible(); viewer.loadViewIfNeeded()
+        defer { window.isHidden = true; window.rootViewController = nil; prior?.makeKeyAndVisible() }
+        (viewer.value(forKey: "username") as? UITextField)?.text = "synthetic"
+        (viewer.value(forKey: "password") as? UITextField)?.text = "synthetic-only"
+        _ = viewer.perform(NSSelectorFromString("start"))
+        do {
+            try await wait("large desktop input-only UI ready") { viewer.session.connected && (viewer.value(forKey: "loginScroll") as? UIScrollView)?.isHidden == true }
+            XCTAssertEqual((viewer.value(forKey: "activeCrop") as? NSValue)?.cgRectValue, CGRect(x: 0, y: 0, width: 8192, height: 8192))
+            XCTAssertEqual(viewer.session.diagnosticCounters["framebufferAllocations"] as? Int, 0)
+            XCTAssertEqual(viewer.session.diagnosticCounters["baselineExpectedPixels"] as? Int, 0)
+            XCTAssertNil(viewer.value(forKey: "lastFramebuffer")); XCTAssertFalse(viewer.session.desktopFramebufferAvailable)
+            viewer.session.key(97, down: true); viewer.session.key(97, down: false)
+            XCTAssertTrue(viewer.session.tryClickX(8191, y: 8191, mask: 1))
+            try await wait("large desktop key and pointer reach SSH peer") { server.record.count("keyDown") > 0 && server.record.count("pointerDown") > 0 }
+            viewer.inputOnly = false
+            XCTAssertTrue(viewer.inputOnly); XCTAssertTrue(viewer.session.inputOnly); XCTAssertTrue(viewer.session.connected)
+            viewer.session.pause { server.record.add("paused") }
+            try await wait("large desktop paused") { server.record.count("paused") == 1 }
+            viewer.session.resume(); try await wait("large desktop resumes without an image") { viewer.session.connected }
+            XCTAssertEqual(server.record.count("update"), 0); XCTAssertEqual(server.record.count("unexpectedVideoRequest"), 0)
+            XCTAssertEqual(server.record.count("auth"), 1); XCTAssertEqual(server.record.count("ardExchange"), 1)
+            XCTAssertEqual(server.record.count("tcp"), 1)
+            XCTAssertEqual(viewer.session.diagnosticCounters["framebufferAllocations"] as? Int, 0)
+            coordinator.disconnect(); try await wait("large desktop closes") { !viewer.session.running }; try await server.close()
+        } catch { coordinator.disconnect(); try? await server.close(); throw error }
     }
     func testMirrorRestartKeepsTransportClosedForWholeCleanupIntervalBeforeFreshAuthentication() async throws {
         let server = DesktopSSHServer(.rfb); try await server.start()

@@ -22,6 +22,8 @@ typedef UIImage CompanionVNCImage;
 // A complete Desktop baseline presented by this owner, independent of retained UI pixels.
 @property(nonatomic, readonly) BOOL desktopFrameReady;
 @property(nonatomic) BOOL inputOnly;
+/// Geometry admission for video, not an allocation or a presented-frame guarantee.
+@property(nonatomic, readonly) BOOL desktopFramebufferAvailable;
 /// Independent local gate while a display-mode handoff verifies host geometry.
 /// Reception and fresh-baseline presentation continue while input is blocked.
 @property(nonatomic) BOOL displayHandoffInputBlocked;

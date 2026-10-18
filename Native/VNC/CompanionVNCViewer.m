@@ -1865,13 +1865,21 @@
         return;
     }
     if (!value && (self.restoreViewportPending || (_inputOnly && (self.starting || self.checkingResume)))) return;
+    if (self.session.established) {
+        self.session.inputOnly = value;
+        // Geometry can change between drawing the menu and selecting its action.
+        // Reflect the native owner's admission rather than leaving UI and mode apart.
+        if (self.session.inputOnly != value) {
+            self.status.text = @"Screen Sharing is unavailable at this desktop size. Trackpad & Keyboard stays connected.";
+            self.status.hidden = NO; [self updateStatusPresentation]; return;
+        }
+    }
     if (_inputOnly != value) { [self retireTextDraft]; self.textComposer = nil; }
     _inputOnly = value;
     if (self.quickActionsProvider) self.quickActions = self.quickActionsProvider(value);
     else if (!self.quickActions) self.controls.quickActions = [DirectConnectionBridge defaultQuickActionsForInputOnly:value];
     if (self.isViewLoaded) {
         [self releasePointer]; [self cancelTrackpadTouches]; [self resetModifiers];
-        if (self.session.established) self.session.inputOnly = value;
         if (value) [self setTrackpadModeEnabled:YES];
         [self applyPresentation];
     }
@@ -1904,8 +1912,7 @@
 - (void)updateInputOnlyGeometry {
     NSDictionary *stats = self.session.diagnosticCounters;
     NSInteger width = [stats[@"framebufferWidth"] integerValue], height = [stats[@"framebufferHeight"] integerValue];
-    size_t bytes;
-    if (!self.inputOnly || !self.session.established || !CompanionVNCFramebufferByteCount(width,height,&bytes)) return;
+    if (!self.inputOnly || !self.session.established || !CompanionVNCInputGeometryValid(width,height)) return;
     CGSize size = CGSizeMake(width,height);
     if (!CGSizeEqualToSize(self.framebufferSize,size) || CGRectIsNull(self.activeCrop) || CGRectIsEmpty(self.activeCrop)) {
         [self cancelTrackpadTouches]; [self releasePointer]; [self invalidateCursorPosition];

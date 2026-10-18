@@ -1,8 +1,10 @@
 #import <XCTest/XCTest.h>
 #import "CompanionVNCViewer.h"
 #import "CompanionVNCTapGesture.h"
+#import "CompanionVNCFramebufferBounds.h"
 #import <rfb/rfbclient.h>
 #import <sys/socket.h>
+#import <arpa/inet.h>
 #import <unistd.h>
 @interface CompanionVNCTapGesture (Testing)
 - (void)touchesBegan:(NSSet *)touches withEvent:(UIEvent *)event;
@@ -28,6 +30,7 @@
 - (void)configureClient:(rfbClient *)client;
 - (BOOL)allocate:(rfbClient *)client;
 - (BOOL)resetBaseline:(rfbClient *)client;
+- (BOOL)handleServerMessage:(rfbClient *)client;
 - (BOOL)registerSocket:(int)socket;
 - (void)processConnectedClient:(rfbClient *)client;
 @end
@@ -106,6 +109,81 @@
     XCTAssertFalse([[viewer valueForKey:@"checkingResume"] boolValue]); XCTAssertNil([viewer valueForKey:@"lastFramebuffer"]);
     XCTAssertEqualObjects(session.diagnosticCounters[@"presentedFrames"],@0);
     [session setValue:@NO forKey:@"running"]; [viewer stopViewer]; rfbClientCleanup(client);
+}
+- (void)testInputOnlyGeometryDoesNotAllocateDesktopStorageAndRetainsLargeDesktopControl {
+    NSURL *url=[[NSBundle bundleForClass:self.class] URLForResource:@"direct-screen-sharing-v1" withExtension:@"json"];
+    NSDictionary *profile=[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:url] options:0 error:NULL];
+    NSArray *cases=profile[@"inputOnlyInitializationCases"]; XCTAssertGreaterThan(cases.count,0);
+    for (NSDictionary *sample in cases) {
+        CompanionVNCViewer *viewer=[CompanionVNCViewer new]; viewer.inputOnly=YES; [viewer loadViewIfNeeded];
+        CompanionVNCSession *session=viewer.session; rfbClient *client=rfbGetClient(8,3,4);
+        client->width=[sample[@"width"] intValue]; client->height=[sample[@"height"] intValue]; [session configureClient:client];
+        XCTAssertEqual([session allocate:client],[sample[@"inputGeometryValid"] boolValue],@"%@",sample[@"name"]);
+        XCTAssertEqual(client->frameBuffer,NULL); XCTAssertEqualObjects(session.diagnosticCounters[@"framebufferAllocations"],@0);
+        XCTAssertEqualObjects(session.diagnosticCounters[@"baselineExpectedPixels"],@0);
+        if ([sample[@"inputGeometryValid"] boolValue]) {
+            for (NSString *key in @[@"running",@"established",@"inputReady"]) [session setValue:@YES forKey:key];
+            session.stateHandler(@"Connected",session.diagnosticCounters);
+            XCTAssertTrue(CGRectEqualToRect([[viewer valueForKey:@"activeCrop"] CGRectValue],CGRectMake(0,0,client->width,client->height)));
+            XCTAssertTrue([session resetBaseline:client]); XCTAssertEqualObjects(session.diagnosticCounters[@"baselineExpectedPixels"],@0);
+            XCTAssertEqual(session.desktopFramebufferAvailable,[sample[@"videoAdmitted"] boolValue]);
+            if (!session.desktopFramebufferAvailable) {
+                viewer.inputOnly=NO; XCTAssertTrue(viewer.inputOnly); XCTAssertTrue(session.inputOnly); XCTAssertTrue(session.connected);
+                session.inputOnly=NO; XCTAssertTrue(session.inputOnly); XCTAssertTrue(session.connected);
+                XCTAssertTrue([session tryClickX:client->width-1 y:client->height-1 mask:1]);
+                XCTAssertTrue([((UILabel *)[viewer valueForKey:@"status"]).text containsString:@"stays connected"]);
+            }
+            [session setValue:@NO forKey:@"running"];
+        }
+        [viewer stopViewer]; rfbClientCleanup(client);
+    }
+}
+- (void)testGeometryOnlyOwnerRejectsEveryBuiltInPixelEncodingBeforeReadingPayload {
+    for (NSNumber *encoding in @[@(rfbEncodingRaw),@(rfbEncodingCopyRect),@(rfbEncodingRRE),@(rfbEncodingCoRRE),@(rfbEncodingHextile),@(rfbEncodingUltra),@(rfbEncodingUltraZip),@(rfbEncodingTRLE),@(rfbEncodingZlib),@(rfbEncodingTight),@(rfbEncodingZRLE),@(rfbEncodingZYWRLE)]) {
+        int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+        CompanionVNCSession *session=[CompanionVNCSession new]; session.inputOnly=YES;
+        rfbClient *client=rfbGetClient(8,3,4); client->sock=pair[0]; client->width=2; client->height=2;
+        [session configureClient:client]; XCTAssertTrue([session allocate:client]); XCTAssertEqual(client->frameBuffer,NULL);
+        uint32_t be=htonl(encoding.unsignedIntValue);
+        uint8_t header[]={0,0,0,1,0,0,0,0,0,1,0,1,0,0,0,0}; memcpy(header+12,&be,4);
+        // No pixel payload follows: a decoder would block or access missing storage.
+        XCTAssertEqual(write(pair[1],header,sizeof(header)),sizeof(header));
+        XCTAssertFalse([session handleServerMessage:client]); XCTAssertEqual(client->frameBuffer,NULL);
+        XCTAssertEqualObjects(session.diagnosticCounters[@"framebufferAllocations"],@0);
+        rfbClientCleanup(client); close(pair[1]);
+    }
+}
+- (void)testInputOnlyCapabilityRefreshCannotRequestDesktopPixels {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+    struct timeval timeout={.tv_usec=100000}; setsockopt(pair[1],SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
+    CompanionVNCSession *session=[CompanionVNCSession new]; session.inputOnly=YES;
+    rfbClient *client=rfbGetClient(8,3,4); client->sock=pair[0]; client->width=8192; client->height=8192;
+    [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    uint8_t packet[16+sz_rfbSupportedMessages]={0,0,0,1,0,0,0,0,0,64,0,1};
+    uint32_t encoding=htonl(rfbEncodingSupportedMessages); memcpy(packet+12,&encoding,4); memset(packet+16,255,sz_rfbSupportedMessages);
+    XCTAssertEqual(write(pair[1],packet,sizeof(packet)),sizeof(packet)); XCTAssertTrue([session handleServerMessage:client]);
+    // A capability report may re-enable the library's request bit. Its rectangle
+    // still has no area, so that response can never solicit a desktop image.
+    uint8_t reply[10]; ssize_t count=recv(pair[1],reply,sizeof(reply),0);
+    if (count>0) { XCTAssertEqual(count,10); XCTAssertEqual(reply[0],rfbFramebufferUpdateRequest); XCTAssertEqual(reply[6]|reply[7]|reply[8]|reply[9],0); }
+    XCTAssertEqual(client->frameBuffer,NULL); XCTAssertEqualObjects(session.diagnosticCounters[@"framebufferAllocations"],@0);
+    rfbClientCleanup(client); close(pair[1]);
+}
+- (void)testGeometryOnlyResizeAndPointerMetadataRemainSafeWithoutRequestingAnImage {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+    struct timeval timeout={.tv_usec=100000}; setsockopt(pair[1],SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
+    CompanionVNCSession *session=[CompanionVNCSession new]; session.inputOnly=YES;
+    rfbClient *client=rfbGetClient(8,3,4); client->sock=pair[0]; client->width=256; client->height=128;
+    [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    // NewFBSize followed by PointerPos, both metadata-only rectangles.
+    uint8_t update[]={0,0,0,2,0,0,0,0,32,0,32,0,255,255,255,33,0,42,0,17,0,0,0,0,255,255,255,24};
+    XCTAssertEqual(write(pair[1],update,sizeof(update)),sizeof(update)); XCTAssertTrue([session handleServerMessage:client]);
+    XCTAssertEqual(client->width,8192); XCTAssertEqual(client->height,8192); XCTAssertEqual(client->frameBuffer,NULL);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"baselineExpectedPixels"],@0);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"framebufferAllocations"],@0);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"cursorPositionUpdates"],@1);
+    uint8_t request[10]; XCTAssertLessThan(recv(pair[1],request,sizeof(request),0),0);
+    rfbClientCleanup(client); close(pair[1]);
 }
 - (void)testActualSocketInputOnlySendsInputWithoutRequestingPixelsThenReturnsToDesktop {
     int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);

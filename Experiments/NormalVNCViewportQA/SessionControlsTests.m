@@ -59,6 +59,10 @@
 @property NSMutableArray *pointers;
 @end
 @implementation ControlsSession
+- (instancetype)init {
+    if ((self=[super init])) { [self setValue:@1600 forKey:@"framebufferWidth"]; [self setValue:@1600 forKey:@"framebufferHeight"]; }
+    return self;
+}
 - (BOOL)connected { return YES; }
 - (BOOL)established { return YES; }
 - (BOOL)composedTextReady { return YES; }
