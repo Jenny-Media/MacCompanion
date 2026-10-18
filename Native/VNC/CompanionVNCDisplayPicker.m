@@ -20,6 +20,10 @@
 - (UIModalPresentationStyle)adaptivePresentationStyleForPresentationController:(UIPresentationController *)controller { return UIModalPresentationNone; }
 - (void)setDisplays:(NSArray<NSDictionary *> *)displays {
     if ([_displays isEqualToArray:displays]) return;
+    // Freeze row identities for this presentation, even if a monitor is added
+    // or removed. Selection is revalidated against current session metadata;
+    // reopening creates a fresh picker with the latest catalogue.
+    if (self.viewIfLoaded.window) return;
     _displays = [displays copy];
     if (self.isViewLoaded) [self.tableView reloadData];
 }

@@ -19,24 +19,69 @@ Mirror Mac Screen preserves its physical resolution and layout. Existing stored
 presets 1–3 retain their meaning. A missing or invalid setting defaults to Balanced;
 an explicit zero means mirror. Cancel in Edit Mac must not save a draft choice.
 
-View & Display offers the same two choices. Advanced offers Larger Text
+Display directly offers the same two choices on supported Apple hosts.
+Desktop Size is shown directly in Display only for Virtual Display and offers Larger Text
 (1024 × 640 points), Balanced (1280 × 800, recommended), and More Space
 (1440 × 900), all landscape 16:10 at density 2. Rotation, keyboard, composer,
 Fit and Zoom never request a resize. Explicit successful virtual changes are saved
 only after matching layout and a fresh complete frame; failures retain the previous
 choice. A configured virtual choice is restored at most once per replacement owner.
 
-Switching from an active virtual desktop to Mirror Mac Screen retires the old
-native and SSH owners and reconnects once using the session's existing transient
-login. It does not erase or save credentials or automatically retry. The selected
-mirror preference prevents reapplying the virtual size. A physical layout and fresh
-usable pixels are required before claiming the mirror has been restored; a host
-that remains virtual must show a notice rather than false success.
+An explicit active-session change between Virtual Display and Mirror Mac Screen
+first presents a confirmation. Titles are "Switch to Virtual Display?" and
+"Switch to Mirror Mac Screen?". Messages are "Your connection will restart. Your
+Mac’s screen may go dark." and "Your connection will restart to show your Mac’s
+displays.". Actions are Cancel and Switch & Reconnect. If borrowed Files has an
+active transfer, append "File transfers using this connection will stop." Cancel,
+inactivity, exit and stale-owner confirmations cannot save or start a change.
+Ordinary reconnects, initial saved choices and physical monitor selection have no
+confirmation. Revalidate the captured owner and foreground readiness on acceptance.
+
+Both confirmed mode changes use the same full restart, preserving only transient
+login (including unremembered credentials), a dimmed preview and the target mode.
+Retire input and the old native callbacks, join all prior SSH retirement including
+cancelled connection-opening tasks, then create a fresh native and SSH owner.
+Do not restore the old mode's crop, zoom, selected ID or pending resize. Keep one
+"Switching display mode…" status through the whole transition. Save a new mode
+only after its validated layout and complete fresh image have been presented.
+Failed changes keep the previous saved preference and allow explicit retry of
+the failed target using session login recovery.
+
+A virtual-to-physical transition permits the existing bounded 16-second quiet
+allowance after all known retirement work, without a promised completion countdown.
+The allowance is not a host readiness acknowledgement. If a fresh complete layout
+is still virtual, retire it and permit one additional full quiet/reconnect attempt
+within the same operation. Initial saved Mirror with an unexpected virtual layout
+uses that same bounded recovery once. No network/login retry, general reconnect
+loop, helper, UDP negotiation, new wire packet or host process control is added.
+Another connection can reset the host's idle exit timer; do not infer its source.
+
+The independent native handoff gate blocks all user input while receiving frames.
+A narrowly admitted handoff-only preset request may create the virtual display
+without opening this gate: it still requires this established Apple owner's valid
+metadata, fresh baseline and all foreground/review/pause/stop guards. Generic
+resize APIs remain blocked during a mode handoff. Verify the requested mode and
+complete pixels before enabling input. Unsupported legacy hosts retain ordinary
+connection behavior and are not marked as verified mode changes.
+
+Failure stage 116 means the host still reports a virtual display after Mirror
+recovery; 117 means the requested virtual display could not be established; 118
+means display metadata did not arrive within forty foreground seconds after
+establishment or resumption. Interruptions invalidate the old timer; resumed
+verification gets its own bounded timer on that owner. Preserve
+these failures across intentional stop callbacks and manual retry, including
+pre-frame failures. Stop/reconnect errors cannot replace them with a generic
+connection-ended notice. Keep bounded numeric target, attempt, phase and last
+failure diagnostics; no endpoint, credential, pixels or input values are retained.
+Exit, owner replacement, inactivity or app locking cancels pending work. Cleanup
+requirements survive interrupted foreground recovery; stale callbacks cannot
+complete another owner's operation or save a preference.
 
 Choose Display sends the indexed message-13 request on the existing authenticated
 socket. IDs must come from validated metadata retained for this owner. ID zero
 requests All Displays. Retain the full physical catalogue while a single display
-is streamed, so another display and All Displays remain available. Selecting a
+is streamed, so another display and All Displays remain available. Menu visibility
+must use this retained catalogue, not the one-monitor selected-stream layout. Selecting a
 monitor must not crop an unrelated framebuffer using old catalogue coordinates.
 Acceptance requires matching fresh geometry and complete pixels; all-display
 acceptance additionally requires the retained catalogue's original dimensions and
@@ -50,20 +95,26 @@ Only an established Apple desktop with a validated layout and ready foreground
 input may admit a request. Input-only, text review, interruption, paused, stopping,
 concurrent resize and active pointer interaction states reject it. The sole socket
 owner releases actually-sent input before sending one request. Pending input and
-old presentation epochs are retired. No reconnect or resize replay is automatic
-within the operation. Generic packet building stays bounded at 6 million pixels;
+old presentation epochs are retired. Physical monitor and same-mode virtual-size requests never reconnect or replay a resize;
+mode changes use the full restart specified above. Generic packet building stays bounded at 6 million pixels;
 the public preset API admits only the three indexed landscape sizes.
 
 Validated single-display metadata may announce backing dimensions without a
 standard DesktopSize rectangle. For requested virtual or selected streams, adopt
 those dimensions only during the corresponding explicit operation on the socket
 owner within framebuffer limits. The bounded physical All Displays recovery
-below handles unsolicited catalogue changes separately. A same-size transition
+below handles unsolicited catalogue changes separately. A matching late virtual
+layout may be adopted on this owner while its original request is still current,
+up to thirty seconds from the write; only complete matching fresh pixels may
+reconcile the earlier timeout into success. A newer request, interruption or
+retirement cancels that late-result window. A same-size transition
 from physical to virtual also retires old pixels. Exact acceptance requires the
 requested dimensions, matching single virtual layout and fresh complete pixels.
-A different host-selected size is reported as different, not accepted. If no
-exact requested layout arrives within six seconds, recover a full baseline at
-current validated host geometry. Once the exact layout arrives, its fresh-pixel
+A different host-selected size is reported as different, not accepted. Physical
+monitor selection retains its six-second layout bound. Virtual display creation
+and same-mode virtual resizing allow twenty seconds for layout; do not apply the
+physical-monitor timeout to host display creation. On timeout recover the current
+baseline, or end a pending mode change with its specific recovery. Once the exact layout arrives, its fresh-pixel
 baseline has the existing eight-second absolute deadline from that baseline's
 reset. Do not discard a progressing matching image at the earlier layout deadline.
 Never stretch old pixels or reopen input before the new frame is usable.

@@ -98,6 +98,25 @@ import UIKit
         XCTAssertTrue(restore.isHittable, "Purchase controls must remain reachable in landscape")
         capture("ios-pro-landscape-purchase-controls", app: app)
     }
+    func testGestureGuideLivesInSettingsAndRemainsReachableWithLargeText() {
+        continueAfterFailure = false
+        for large in [false, true] {
+            let app = app()
+            if large { app.launchArguments = ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXL"] }
+            app.launch()
+            XCTAssertTrue(app.buttons["open-app-settings"].waitForExistence(timeout: 10))
+            app.buttons["open-app-settings"].tap()
+            let guide = app.buttons["settings-gesture-guide"]
+            for _ in 0..<4 where !guide.isHittable { app.swipeUp() }
+            XCTAssertTrue(guide.isHittable); guide.tap()
+            XCTAssertTrue(app.navigationBars["Gesture Guide"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.staticTexts["Screen Sharing"].exists)
+            capture(large ? "gesture-guide-large-text" : "gesture-guide", app: app)
+            app.navigationBars.buttons["App Settings"].tap()
+            XCTAssertTrue(app.navigationBars["App Settings"].exists)
+            app.terminate()
+        }
+    }
     func testGearOpensSettingsAndAppearanceChangesTheExistingSheet() throws {
         continueAfterFailure = false
         let app = XCUIApplication(bundleIdentifier: ProcessInfo.processInfo.environment["MACCOMPANION_SETTINGS_QA_BUNDLE"] ?? "dev.maccompanion.proqa.ios")

@@ -641,5 +641,76 @@
     "virtualSizeStillStopsBeforeRequest": true,
     "inputNeedsFreshCompletePixels": true,
     "requiresValidOldGeometry": true
-  }
+  },
+  "mirrorHandoffPolicy": {
+    "maximumFreshConnectionsPerRestart": 2,
+    "maximumInitialPlusRecoveryConnections": 2,
+    "retirementGraceMilliseconds": 16000,
+    "requiresCompleteFreshFrame": true,
+    "independentInputGate": true,
+    "restartOnlyUnexpectedVirtualLayout": false,
+    "noRapidRetry": true,
+    "failureClosesVirtualConnection": true,
+    "failureStage": 116,
+    "noNetworkOrLoginRetry": true,
+    "noUDPOrNewWireMessage": true,
+    "outcomes": {
+      "pending": 0,
+      "physical": 2,
+      "stillVirtual": 3,
+      "interrupted": 4,
+      "legacyMetadataUnavailable": 1
+    },
+    "maximumUnexpectedVirtualRecoveries": 1
+  },
+  "displayModeHandoffPolicy": {
+    "fullRestartBothDirections": true,
+    "confirmationRequiredForActiveModeChanges": true,
+    "saveOnlyAfterVerifiedFreshFrame": true,
+    "physicalLayoutDeadlineSeconds": 6,
+    "virtualLayoutDeadlineSeconds": 20,
+    "virtualLateResultDeadlineSeconds": 30,
+    "maximumUnexpectedVirtualRecoveries": 1,
+    "retirementGraceMilliseconds": 16000,
+    "joinsPendingSSHOpeningRetirement": true,
+    "detachesRetiredCallbacks": true,
+    "noUDPOrNewWireMessage": true,
+    "failureStages": {
+      "mirrorStillVirtual": 116,
+      "virtualUnavailable": 117,
+      "metadataUnavailable": 118
+    }
+  },
+  "virtualLayoutDeadlineCases": [
+    {
+      "elapsed": 5.9,
+      "exactLayout": false,
+      "timedOut": false
+    },
+    {
+      "elapsed": 6,
+      "exactLayout": false,
+      "timedOut": false
+    },
+    {
+      "elapsed": 12.3,
+      "exactLayout": false,
+      "timedOut": false
+    },
+    {
+      "elapsed": 19.9,
+      "exactLayout": false,
+      "timedOut": false
+    },
+    {
+      "elapsed": 20,
+      "exactLayout": false,
+      "timedOut": true
+    },
+    {
+      "elapsed": 21,
+      "exactLayout": true,
+      "timedOut": false
+    }
+  ]
 }

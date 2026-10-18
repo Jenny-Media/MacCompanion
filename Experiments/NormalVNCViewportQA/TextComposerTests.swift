@@ -132,10 +132,17 @@ import StoreKitTest
             root.view.frame.size = size; panel.view.frame = root.view.bounds
             bar.frame = shortcut; panel.simulatedKeyboardFrame = keyboard
             panel.view.setNeedsLayout(); panel.view.layoutIfNeeded()
+            // Placement constraints update in viewDidLayoutSubviews. Let UIKit
+            // apply the new constants before measuring the rendered card.
+            try await Task.sleep(for: .milliseconds(30))
+            panel.view.setNeedsLayout(); panel.view.layoutIfNeeded(); panel.view.layoutIfNeeded()
             let frame = panel.panelFrame
             XCTAssertFalse(frame.intersects(shortcut), "Bubble must leave the shortcut row visible")
             XCTAssertFalse(frame.intersects(keyboard), "Bubble must also avoid a moved keyboard")
-            XCTAssertTrue(panel.view.bounds.contains(frame)); XCTAssertGreaterThan(frame.height, 88)
+            XCTAssertTrue(panel.view.bounds.contains(frame))
+            // A moved keyboard can leave only 88 points of safe space. The
+            // existing compact card clamps to that space instead of overlapping.
+            XCTAssertGreaterThanOrEqual(frame.height, min(112, panel.placementArea.height))
             XCTAssertTrue(frame.contains(panel.closeActionFrame)); XCTAssertTrue(frame.contains(panel.deliveryActionFrame))
             if keyboard.isEmpty || keyboard.maxY >= size.height {
                 XCTAssertEqual(frame.maxY, shortcut.minY - 8, accuracy: 1, "Bottom snap follows the bar, not the keyboard")
@@ -424,17 +431,22 @@ import StoreKitTest
     func testTrackpadNativeControlsExposeComposeBeforeAndAfterModeChanges() throws {
         let viewer = CompanionVNCViewer(); viewer.loadViewIfNeeded()
         let controls = try XCTUnwrap(viewer.value(forKey: "controls") as? CompanionVNCControls)
-        for onlyInput in [false, true, false, true] {
+        let owner = viewer.session
+        defer { owner.setValue(false, forKey: "running") }
+        for ready in [false, true] { for onlyInput in [false, true, false, true] {
             controls.close(); viewer.inputOnly = onlyInput
+            for key in ["running", "inputReady", "established", "baselinePresented"] { owner.setValue(ready, forKey: key) }
+            owner.setValue(false, forKey: "awaitingResumeFrame") // Simulate completion of the mode's fresh baseline.
+            XCTAssertEqual(owner.composedTextReady, ready)
             controls.perform(NSSelectorFromString("open"))
             let choices = try XCTUnwrap(controls.value(forKey: "choices") as? [UIButton])
             let compose = try XCTUnwrap(choices.first { $0.accessibilityIdentifier == "session-action-composeText" })
-            XCTAssertTrue(compose.isEnabled)
+            XCTAssertEqual(compose.isEnabled, ready, "Keep Compose discoverable while disabled until the session is ready")
             XCTAssertEqual(choices.first?.accessibilityIdentifier, "session-action-composeText")
             let expected = (onlyInput ? DirectControlMode.trackpad : .desktop).defaults.map { $0.kind.rawValue }
             XCTAssertEqual(controls.quickActions.compactMap { $0["kind"] as? String }, expected)
-            XCTAssertEqual(expected.contains("mode"), !onlyInput)
-        }
+            XCTAssertEqual(expected.contains("copyText"), !onlyInput)
+        } }
         controls.close()
     }
     func testTrackpadComposerQuickActionPresentsWithoutDesktopPixelsAndSendsOnlyOnRequest() async throws {
@@ -482,7 +494,8 @@ import StoreKitTest
             let old = mode.legacyDefaults
             let upgraded = mode.upgradingUntouchedDefaults(old)
             XCTAssertEqual(upgraded.first?.kind, .composeText)
-            XCTAssertEqual(Array(upgraded.dropFirst()), old, "Existing IDs and choices must remain intact")
+            let retained = mode == .desktop ? old.filter { [.copyText, .rightClick].contains($0.kind) } : old
+            XCTAssertEqual(Array(upgraded.dropFirst()), retained, "Retained actions preserve their IDs and payloads")
             var customized = old; customized[0].enabled = false
             XCTAssertEqual(mode.upgradingUntouchedDefaults(customized), customized)
             customized = old; customized[0].title = "My Action"
@@ -696,7 +709,9 @@ import StoreKitTest
             // synthetic connected framebuffer, without opening a network socket.
             viewer.prepareConnection()
             let owner = viewer.session
-            owner.setValue(true, forKey: "running"); owner.setValue(true, forKey: "inputReady")
+            // Mirror verification, like normal recovery, requires the replacement's
+            // complete baseline rather than a synthetic Connected label alone.
+            for key in ["running", "established", "inputReady", "baselinePresented"] { owner.setValue(true, forKey: key) }
             let image = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 2)).image { context in
                 UIColor.black.setFill(); context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
             }

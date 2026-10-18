@@ -53,6 +53,8 @@ for row in fixture['baselineRefreshPolicy']['cases']:
     checks.append(f'assert(CompanionVNCBaselineRefreshAction({row["elapsed"]},{row["lastRequestAge"]},{row["lastProgressAge"]},{row["retries"]})=={expected});')
 for row in fixture['displayLayoutDeadlineCases']:
     checks.append(f'assert(CompanionVNCDesktopLayoutTimedOut({row["elapsed"]},{str(row["exactLayout"]).lower()})=={str(row["timedOut"]).lower()});')
+for row in fixture['virtualLayoutDeadlineCases']:
+    checks.append(f'assert(CompanionVNCVirtualLayoutTimedOut({row["elapsed"]},{str(row["exactLayout"]).lower()})=={str(row["timedOut"]).lower()});')
 source = '\n'.join(['#include <assert.h>', '#include "CompanionVNCDesktopSize.h"',
     'int main(void){ uint8_t p[196]; CompanionVNCDesktopSize s;', *checks,
     'assert(!CompanionVNCDesktopSizeForPreset(0,&s)); assert(!CompanionVNCDesktopSizeForPreset(4,&s));',

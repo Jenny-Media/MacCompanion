@@ -156,7 +156,29 @@ App Settings groups Appearance, Controls, SSH Keys, Sync & Security, and Help.
 The library gear opens Settings directly; Help contains Set Up Your Mac. Open
 settings and nested sheets observe appearance changes without being recreated.
 
-The floating session menu groups View & Display, Keyboard & Input and Session.
+The floating iOS session menu groups Display, Input and Session. Display keeps
+Fit, Copy Text and (only with multiple physical monitors) Choose Display. Count
+physical monitors from the retained host catalogue, not the currently selected
+stream; streaming one monitor must keep other monitors and All Displays reachable. Display
+offers Virtual Display/Mirror Mac Screen directly, with Desktop Size
+only while using Virtual Display. Unsupported hosts omit desktop sizing. A Mirror
+handoff verifies physical metadata and fresh pixels before reopening remote input.
+Both active mode changes require Cancel / Switch & Reconnect confirmation and
+a full restart. Only verified fresh pixels save the target mode. Virtual-to-Mirror
+allows sixteen seconds after awaited native/SSH retirement, including cancelled
+openers, with one bounded additional recovery if the host still reports Virtual.
+A saved Mirror connection can use that same unexpected-virtual recovery once.
+The UI keeps one switching status; elapsed time alone does not prove cleanup.
+A still-virtual result closes with explicit recovery; it does not reopen remote
+input, start UDP video or retry network/login errors. The cleanup interval allows
+the inspected Mac service's 15-second no-viewer exit timer; physical acceptance
+still requires metadata and complete fresh pixels, not merely elapsed time.
+Input contains mouse mode and keyboard actions; video-free sessions omit mouse
+mode and all screen-only controls and expose Show Mac Screen. Persistent input
+preferences remain in App Settings → Controls, quick-action editing stays under
+Customize, and Gesture Guide is under App Settings → Help. A menu takes a snapshot
+when opened; temporary busy states disable applicable choices rather than hide
+or reorder them while a user is reaching for a row.
 Customizable quick actions follow saved order from the top of the grid and support
 tap and press-and-slide. Customize opens an input-free preview of the same native
 renderer with drag reordering, accessible move actions and an inline inspector.
@@ -164,10 +186,11 @@ The Add Action sheet offers standards that aren't already visible. All changes,
 including confirmed Restore Defaults, remain drafts until Save; Cancel discards them. Mac
 uses menu rows with the same labels as its session menu. Hidden legacy actions,
 profile scope, Pro gating and the 15-total/12-custom limits are preserved.
-On iOS Desktop, the default first quick-action row is Mouse Mode and Copy Text;
-Fit to Window and Right Click follow. Existing saved profiles keep their choices
-and order; Add Action offers Copy Text. View & Display also contains Copy Text
-from Screen. This free tool freezes original received pixels and automatically enables native
+On iOS Screen Sharing, the default quick actions are Compose Text, Copy Text and
+Right Click. Untouched previous defaults migrate on read while retaining surviving
+action identities; customized labels, order, disabled state, snippets and chords
+remain unchanged. Add Action still offers Mouse Mode and Fit to Window. Display
+also contains Copy Text from Screen. This free tool freezes original received pixels and automatically enables native
 Live Text selection on supported devices. Touch and hold text to select and copy;
 use Review to open a resizable drawer without opening the keyboard. Text and Area share a compact bottom selector beside Review and Copy. Area provides a connected crop outline, small handles with large hit targets, a resize magnifier and automatic on-device recognition after adjustment settles. Results become ready without opening Review. The frozen image stays behind the drawer; closing Review preserves corrections. Native Back and a leading-edge swipe return to Screen Sharing.
 More contains language, whole-area, retry and explicit Share actions. Return to Live
@@ -475,7 +498,7 @@ or workspace terminology is required in the interface.
 
 ## iOS landscape desktop size
 
-View & Display → Advanced contains the optional desktop size choices: Larger
+Display → Desktop Size contains the optional desktop size choices: Larger
 Text, Balanced (recommended), and More Space. These request a landscape virtual
 desktop; phone rotation and keyboard/composer presentation only alter the local
 viewport. New entries recommend Balanced; Edit Mac can instead select mirroring.
@@ -490,9 +513,14 @@ host helper is linked into the direct app.
 
 Edit Mac saves Virtual Display (Balanced recommended) or Mirror Mac Screen locally
 for this viewer. Mirror preserves physical resolution; Virtual stays landscape and
-may blank the Mac's physical screens. Advanced retains three sizes; rotation and
-keyboard use do not resize. View & Display can switch modes; restoring the physical
-desktop uses one authenticated replacement session with the active transient login.
+may blank the Mac's physical screens. Desktop Size retains three sizes; rotation and
+keyboard use do not resize. Display mode changes ask for confirmation and fully
+retire the native/SSH owner before reconnecting with the active transient login.
+Virtual creation allows twenty seconds for layout, then requires fresh complete
+pixels. Mirror includes a sixteen-second quiet allowance and at most one further
+unexpected-virtual recovery. The replacement must confirm the target layout and
+fresh pixels; a virtual layout alone does not identify another viewer. Failed
+changes keep the saved mode, retain their specific error and allow explicit retry.
 Choose Display requests a host-selected stream using validated IDs. It retains the
 monitor catalogue, requires fresh matching layout/pixels, and never saves a failed
 selection. UDP/video transport and codec negotiation are unchanged and deferred.

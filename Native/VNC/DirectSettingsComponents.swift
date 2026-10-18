@@ -379,3 +379,25 @@ struct DirectInformationGroup: View {
     }
 }
 #endif
+
+#if os(iOS)
+struct DirectGestureGuide: View {
+    var body: some View {
+        Form {
+            Section("Screen Sharing") {
+                Text("Pointer: tap where you want to click. Trackpad: slide anywhere to move the cursor.")
+                Text("Tap to click. Hold, then move to drag. Tap with two fingers to right-click. Scroll with two fingers.")
+                Text("Pan the zoomed view with two fingers in Pointer or three in Trackpad. Pinch to zoom the desktop image. Double-tap with two fingers to zoom in or fit.")
+            }
+            Section("Trackpad & Keyboard Only") {
+                Text("Slide to move the cursor, tap to click, and hold then move to drag. Tap with two fingers to right-click. Scroll with two fingers.")
+                Text("On supported Mac connections, pinch to zoom the Mac app at the cursor.")
+            }
+            Section("Session Controls") {
+                Text("Tap the More button to open controls. Or hold it, slide onto an action or category, and release. Slide away to cancel.")
+                Text("Use Customize to choose and arrange quick actions. Input preferences are in App Settings → Controls.")
+            }
+        }.navigationTitle("Gesture Guide").navigationBarTitleDisplayMode(.inline)
+    }
+}
+#endif

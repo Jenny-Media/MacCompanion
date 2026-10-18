@@ -878,6 +878,10 @@ struct DirectSessionSettingsV1: View {
                 }
                 Section("Help") {
                     Button { settingsSheet = .help } label: { DirectSettingsRow(title: "Set Up Your Mac", symbol: "questionmark.circle") }
+                    #if os(iOS)
+                    NavigationLink { DirectGestureGuide() } label: { Label("Gesture Guide", systemImage: "hand.draw") }
+                        .accessibilityIdentifier("settings-gesture-guide")
+                    #endif
                 }
             }
             .sheet(item: $settingsSheet) { selection in

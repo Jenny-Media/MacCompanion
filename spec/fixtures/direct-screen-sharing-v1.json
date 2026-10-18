@@ -2610,7 +2610,13 @@
     "backpressureScope": "perDirection",
     "sourceReadRequiresOwnQueueBelowHighWatermark": true,
     "sourceReadRequiresDestinationWritable": true,
-    "reversePendingWritesBlockSourceRead": false
+    "reversePendingWritesBlockSourceRead": false,
+    "retirement": {
+      "sendForwardedEOFBeforeParentClose": true,
+      "awaitRemoteChannelClosure": true,
+      "maximumSeconds": 2,
+      "noReconnectUntilRetired": true
+    }
   },
   "sshTransportCases": [
     {

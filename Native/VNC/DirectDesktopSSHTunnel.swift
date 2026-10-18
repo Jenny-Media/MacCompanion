@@ -51,6 +51,9 @@ final class DesktopSSHRelay: ChannelDuplexHandler, @unchecked Sendable {
     static let limit = 2 * 1024 * 1024
     private weak var partner: DesktopSSHRelay?
     private var context: ChannelHandlerContext?
+    // Only the consumer-facing relay initiates graceful forwarded EOF. The
+    // remote-facing relay closes both ends when the peer actually retires.
+    private var forwardConsumerEOF = false
     private var pendingRead = false
     private var queued = 0
     private(set) var transferred = 0
@@ -59,7 +62,7 @@ final class DesktopSSHRelay: ChannelDuplexHandler, @unchecked Sendable {
     var queuedBytes: Int { queued }
     static func pair() -> (DesktopSSHRelay, DesktopSSHRelay) {
         let a = DesktopSSHRelay(), b = DesktopSSHRelay()
-        a.partner = b; b.partner = a
+        a.partner = b; b.partner = a; a.forwardConsumerEOF = true
         return (a, b)
     }
     func handlerAdded(context: ChannelHandlerContext) {
@@ -103,7 +106,9 @@ final class DesktopSSHRelay: ChannelDuplexHandler, @unchecked Sendable {
         partner?.resumeRead(); context.fireChannelWritabilityChanged()
     }
     func channelInactive(context: ChannelHandlerContext) {
-        closeBoth(); context.fireChannelInactive()
+        if forwardConsumerEOF { partner?.context?.close(mode: .output, promise: nil) }
+        else { closeBoth() }
+        context.fireChannelInactive()
     }
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
         if let event = event as? ChannelEvent, case .inputClosed = event { closeBoth() }
@@ -117,6 +122,7 @@ final class DirectDesktopSSHTunnel: @unchecked Sendable {
     // The pinned NIOSSH library also uses this as its initial receive window.
     // Keep this Desktop-only; Terminal and Files have independent settings.
     static let maximumPacketBytes = 1024 * 1024
+    static let retirementSeconds: Int64 = 2
     let client: SSHClient
     let remote: Channel
     let bridge: Channel
@@ -141,8 +147,18 @@ final class DirectDesktopSSHTunnel: @unchecked Sendable {
         if cancellationSocket >= 0 { _ = shutdown(cancellationSocket, SHUT_RDWR) }
     }
     func close() async {
-        cancelReads(); opening.cancel()
-        try? await bridge.close(); try? await remote.close(); try? await client.close()
+        // Native input has retired. Let the bridge drain to EOF and send SSH
+        // EOF before closing the parent; SSH channel close awaits the peer's
+        // reply. Closing the parent first aborts that exchange on the host.
+        let opening = opening, bridge = bridge, remote = remote
+        let watchdog = remote.eventLoop.scheduleTask(in: .seconds(Self.retirementSeconds)) {
+            opening.cancel(); bridge.close(promise: nil); remote.close(promise: nil)
+        }
+        cancelReads()
+        try? await remote.closeFuture.get()
+        watchdog.cancel()
+        try? await bridge.close(); try? await client.close()
+        opening.cancel()
         let descriptors = releaseDescriptors()
         for fd in descriptors where fd >= 0 { Darwin.close(fd) }
     }
@@ -270,8 +286,13 @@ final class DirectDesktopSSHTunnel: @unchecked Sendable {
                 originatorAddress: try SocketAddress(ipAddress: "127.0.0.1", port: 0))) {
                 $0.pipeline.addHandler(relays.1)
             }
-            // A closed forwarding channel must not leave an idle SSH parent.
-            local.closeFuture.whenComplete { _ in parent.close(promise: nil) }
+            // Keep the parent alive for the forwarded EOF/close exchange.
+            // Local closure alone is not proof the remote socket has retired.
+            // Bound unexpected consumer closure just like explicit retirement.
+            local.closeFuture.whenComplete { _ in
+                let watchdog = parent.eventLoop.scheduleTask(in: .seconds(Self.retirementSeconds)) { parent.close(promise: nil) }
+                remote.closeFuture.whenComplete { _ in watchdog.cancel(); parent.close(promise: nil) }
+            }
             remote.closeFuture.whenComplete { _ in parent.close(promise: nil) }
             try await local.setOption(ChannelOptions.autoRead, value: true).get()
             try Task.checkCancellation()

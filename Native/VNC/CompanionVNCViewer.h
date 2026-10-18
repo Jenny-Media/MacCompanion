@@ -28,6 +28,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy, nullable) void (^settingsHandler)(void);
 @property(nonatomic, copy, nullable) void (^appSettingsHandler)(void);
 @property(nonatomic, copy, nullable) void (^filesHandler)(void);
+@property(nonatomic, copy, nullable) BOOL (^filesTransferActiveHandler)(void);
 @property(nonatomic, copy, nullable) void (^accessHandler)(void);
 @property(nonatomic, copy, nullable) BOOL (^accessEditingAllowed)(void);
 @property(nonatomic, copy, nullable) BOOL (^requestExitHandler)(void);
@@ -50,6 +51,11 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy, nullable) void (^windowBoundsHandler)(CGPoint, CGSize, void (^)(CGRect));
 - (void)stopViewer;
 - (void)prepareConnection;
+/// Snapshot before preparing the replacement; applied after joining SSH retirement.
+@property(nonatomic, readonly) NSTimeInterval mirrorRetirementDelay;
+@property(nonatomic, readonly) BOOL connectionForegroundAvailable;
+- (void)showMirrorCleanupRemaining:(NSUInteger)seconds;
+- (void)finishMirrorCleanup;
 - (void)showConnectionFailure;
 - (void)showConnectionFailureStage:(NSInteger)stage;
 - (void)showConnectionProgress:(NSString *)message;

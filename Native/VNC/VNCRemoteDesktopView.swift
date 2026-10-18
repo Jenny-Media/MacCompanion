@@ -79,6 +79,9 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         viewer.accessHandler = { [weak coordinator = context.coordinator] in MainActor.assumeIsolated { coordinator?.showAccess() } }
         viewer.requestExitHandler = { [weak coordinator = context.coordinator] in MainActor.assumeIsolated { coordinator?.confirmExitIfNeeded() ?? false } }
         viewer.filesHandler = { [weak coordinator = context.coordinator] in MainActor.assumeIsolated { coordinator?.showFiles() } }
+        viewer.filesTransferActiveHandler = { [weak coordinator = context.coordinator] in
+            MainActor.assumeIsolated { coordinator?.files.isBorrowed == true && coordinator?.files.transferActive == true }
+        }
         context.coordinator.files.activityChanged = { [weak viewer] value in viewer?.filesStatus = value == "Ready" ? "" : value }
         viewer.appSettingsHandler = { [weak coordinator = context.coordinator] in
             MainActor.assumeIsolated { coordinator?.showAppSettings() }
@@ -271,6 +274,7 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
             let previous = viewer?.session
             previous?.stop()
             let retiring = retirement
+            let mirrorGrace = viewer?.mirrorRetirementDelay ?? 0
             if viewer?.restoredDesktopSizePreset == 0 {
                 viewer?.restoredDisplayID = VNCSessionPreferences.display(mac.id)
             }
@@ -284,8 +288,28 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
                         if previous?.running != true { break }
                         try await Task.sleep(for: .milliseconds(50))
                     }
+                    if mirrorGrace > 0 {
+                        // Stay completely disconnected beyond the inspected host's
+                        // no-viewer exit timer. Reopening during this interval can
+                        // preserve the very virtual display we are trying to retire.
+                        let deadline = ContinuousClock.now.advanced(by: .seconds(mirrorGrace))
+                        var displayed = -1
+                        while ContinuousClock.now < deadline {
+                            try Task.checkCancellation()
+                            guard generation == token, viewer.connectionForegroundAvailable,
+                                  DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { throw CancellationError() }
+                            let remaining = ContinuousClock.now.duration(to: deadline).components
+                            let seconds = max(1, Int(remaining.seconds) + (remaining.attoseconds > 0 ? 1 : 0))
+                            if displayed != seconds { viewer.showMirrorCleanupRemaining(UInt(seconds)); displayed = seconds }
+                            try await Task.sleep(for: .milliseconds(100))
+                        }
+                        try Task.checkCancellation()
+                        guard generation == token, viewer.connectionForegroundAvailable,
+                              DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { throw CancellationError() }
+                        viewer.finishMirrorCleanup()
+                    }
                     try Task.checkCancellation()
-                    guard generation == token, previous?.running != true, DirectAppLockV1.shared.canAccess,
+                    guard generation == token, previous?.running != true, viewer.connectionForegroundAvailable, DirectAppLockV1.shared.canAccess,
                           DirectClientPlatformV1.sessionAvailable else { throw CancellationError() }
                     let opened = try await DirectDesktopSSHTunnel.open(addresses: mac.addresses,
                         sshPort: mac.sshPort, screenSharingPort: mac.port, username: user, password: password,
@@ -296,12 +320,13 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
                             guard let self, self.generation == token else { return }
                             self.viewer?.showConnectionProgress(message)
                         })
-                    guard generation == token, !Task.isCancelled else { await opened.close(); throw CancellationError() }
+                    guard generation == token, !Task.isCancelled, viewer.connectionForegroundAvailable,
+                          DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { await opened.close(); throw CancellationError() }
                     tunnel = opened
                     viewer.session.connectSocket(opened.takeSocket(), username: user, password: password)
                     work = nil
                 } catch {
-                    if generation == token { disconnect(); viewer.showConnectionFailureStage(DirectDesktopSSHTunnel.failureStage(error)) }
+                    if generation == token { disconnect(); viewer.showConnectionFailureStage(error is CancellationError ? 113 : DirectDesktopSSHTunnel.failureStage(error)) }
                 }
             }
         }
@@ -394,21 +419,19 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
             native?.stop(); login = nil; remember = false
             let lease = accessLease; accessLease = nil
             files.disconnectBorrowed(authenticatedGeneration)
-            guard let retired = tunnel else {
-                Task { await pendingConnection?.value; DirectMacConnections.shared.end(lease) }
-                return
-            }
-            tunnel = nil
+            let retired = tunnel; tunnel = nil
             let earlier = retirement
             retirement = Task {
                 await earlier?.value
-                // Preserve the native owner's balanced key/button releases.
-                // Its Stop is bounded; force wake-up if it cannot finish.
+                // A cancelled opener can own a forwarded channel before it has
+                // published `tunnel`. Its cleanup must finish before our quiet
+                // interval or the next connection, just like an established one.
+                await pendingConnection?.value
                 for _ in 0..<200 {
                     if native?.running != true { break }
                     try? await Task.sleep(for: .milliseconds(50))
                 }
-                await retired.close()
+                await retired?.close()
                 DirectMacConnections.shared.end(lease)
             }
         }

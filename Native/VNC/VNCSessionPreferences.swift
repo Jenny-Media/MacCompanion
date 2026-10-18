@@ -18,7 +18,9 @@ enum DirectControlMode: String, CaseIterable, Identifiable, Sendable {
     }
     var defaults: [VNCQuickAction] {
         #if os(iOS)
-        [VNCQuickAction.composeText] + legacyDefaults
+        if self == .desktop {
+            [VNCQuickAction.composeText, .init(title: "Copy Text", kind: .copyText), .init(title: "Right Click", kind: .rightClick)]
+        } else { [VNCQuickAction.composeText] + legacyDefaults }
         #else
         legacyDefaults
         #endif
@@ -28,15 +30,24 @@ enum DirectControlMode: String, CaseIterable, Identifiable, Sendable {
         // Ignore generated UUIDs, but retain any user choice including title,
         // disabled state, order, shortcut and snippet data. Do not write on read.
         let legacy = legacyDefaults
-        if saved.count == legacy.count && zip(saved, legacy).allSatisfy({ a, b in
-            a.title == b.title && a.kind == b.kind && a.enabled == b.enabled &&
-            a.key == b.key && a.modifiers == b.modifiers && a.text == b.text
-        }) { return [VNCQuickAction.composeText] + saved }
+        func matches(_ expected: [VNCQuickAction]) -> Bool {
+            saved.count == expected.count && zip(saved, expected).allSatisfy { a, b in
+                a.title == b.title && a.kind == b.kind && a.enabled == b.enabled &&
+                a.key == b.key && a.modifiers == b.modifiers && a.text == b.text
+            }
+        }
+        if self == .desktop && (matches(legacy) || matches([VNCQuickAction.composeText] + legacy)) {
+            let retained = saved.filter { [.composeText, .copyText, .rightClick].contains($0.kind) }
+            return retained.first?.kind == .composeText ? retained : [VNCQuickAction.composeText] + retained
+        }
+        if matches(legacy) { return [VNCQuickAction.composeText] + saved }
         #endif
         return saved
     }
     var builtIns: [VNCQuickAction] {
-        defaults + [.init(title: "Escape", kind: .escape), .init(title: "Tab", kind: .tab)] + (self == .trackpad ? [] : [.init(title: "Return", kind: .returnKey)])
+        defaults + (self == .desktop ? legacyDefaults.filter { action in !defaults.contains { $0.kind == action.kind } } : [])
+            + [.init(title: "Escape", kind: .escape), .init(title: "Tab", kind: .tab)]
+            + (self == .trackpad ? [] : [.init(title: "Return", kind: .returnKey)])
     }
 }
 

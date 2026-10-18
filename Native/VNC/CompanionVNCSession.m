@@ -79,7 +79,7 @@ static void QuietLog(const char *format, ...) {
     NSArray *_desktopResizeDisplays;
     CompanionVNCDisplayLayout _desktopCatalogueLayout;
     NSDictionary *_desktopCatalogue;
-    BOOL _desktopResizeLayoutSeen;
+    BOOL _desktopResizeLayoutSeen, _desktopResizeLateEligible;
     NSUInteger _desktopResizeLayoutProbes, _desktopResizeLayoutsAtWrite, _physicalLayoutAdoptions, _selectionDeliveryPreserved;
     double _desktopResizeStarted, _desktopResizeLayoutMS, _desktopResizeCompleteMS;
     NSMutableArray<NSDictionary *> *_events;
@@ -89,7 +89,7 @@ static void QuietLog(const char *format, ...) {
     dispatch_queue_t _worker;
     BOOL _running, _established, _stopping, _framePending, _overflow, _inputReady, _inputOnly, _modeChanged;
     BOOL _paused, _releaseInputRequested, _resumeRequested, _awaitingResumeFrame;
-    BOOL _reviewInputSuspended, _interruptionInputSuspended;
+    BOOL _reviewInputSuspended, _interruptionInputSuspended, _displayHandoffInputBlocked, _desktopResizeHandoff;
     void (^_reviewReleaseCompletion)(void);
     NSUInteger _presentationEpoch, _inputEpoch;
     dispatch_semaphore_t _wake;
@@ -258,7 +258,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 - (BOOL)desktopSizeAvailable {
     [_lock lock];
     BOOL available = _running && _established && _inputReady && _appleGestureServer && _coverageLayoutValid
-        && !_inputOnly && !_paused && !_stopping && !_reviewInputSuspended && !_interruptionInputSuspended
+        && !_inputOnly && !_paused && !_stopping && !_reviewInputSuspended && !_displayHandoffInputBlocked && !_interruptionInputSuspended
         && !_localPointerInteractionActive && !_desktopResizeAwaiting && !_desktopResizePending;
     [_lock unlock]; return available;
 }
@@ -267,15 +267,24 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     if (preset < 1 || preset > 3 || !CompanionVNCDesktopSizeForPreset((int)preset, &size) || !self.desktopSizeAvailable) return NO;
     return [self requestDesktopSizeWidth:size.width height:size.height];
 }
+- (BOOL)requestDesktopSizePresetForHandoff:(NSInteger)preset {
+    CompanionVNCDesktopSize size;
+    if (!CompanionVNCDesktopSizeForPreset((int)preset, &size) || !self.desktopFrameReady) return NO;
+    return [self requestDesktopSizeWidth:size.width height:size.height handoff:YES];
+}
 // A desktop-size change is owned by this same authenticated socket and input epoch.
 - (BOOL)requestDesktopSizeWidth:(double)width height:(double)height {
+    return [self requestDesktopSizeWidth:width height:height handoff:NO];
+}
+- (BOOL)requestDesktopSizeWidth:(double)width height:(double)height handoff:(BOOL)handoff {
     CompanionVNCDesktopSize size;
     if (!CompanionVNCDesktopSizeForViewport(width, height, &size)) return NO;
     [_lock lock];
     BOOL permitted = _running && _established && _inputReady && _appleGestureServer && !_inputOnly
-        && !_paused && !_stopping && !_reviewInputSuspended && !_interruptionInputSuspended
+        && !_paused && !_stopping && !_reviewInputSuspended && (handoff ? _displayHandoffInputBlocked && _coverageLayoutValid : !_displayHandoffInputBlocked) && !_interruptionInputSuspended
         && !_localPointerInteractionActive && !_desktopResizeAwaiting && !_desktopResizePending;
     if (permitted) {
+        _desktopResizeHandoff = handoff; _desktopResizeLateEligible = YES;
         _desktopResizeAdmitted = NSProcessInfo.processInfo.systemUptime; _desktopResizeSampleRecorded = NO;
         _desktopResizeSize = size; _desktopResizeSelection = NO; _desktopResizePending = YES; _desktopResizeOutcome = 1;
         _inputReady = NO; _releaseInputRequested = YES; _inputEpoch++; _presentationEpoch++;
@@ -291,7 +300,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     NSDictionary *display = nil;
     for (NSDictionary *candidate in _desktopResizeDisplays) if ([candidate[@"id"] unsignedIntValue] == identifier) display = candidate;
     BOOL permitted = (display || (identifier == 0 && _desktopCatalogueLayout.count)) && _coverageLayoutValid && _running && _established && _inputReady && _appleGestureServer && !_inputOnly
-        && !_paused && !_stopping && !_reviewInputSuspended && !_interruptionInputSuspended
+        && !_paused && !_stopping && !_reviewInputSuspended && !_displayHandoffInputBlocked && !_interruptionInputSuspended
         && !_localPointerInteractionActive && !_desktopResizeAwaiting && !_desktopResizePending;
     if (permitted && !_desktopResizeVirtualLayout && _baselinePresented && _expectedPixels > 0 && _receivedPixels == _expectedPixels
         && _coverageLayout.width == _framebufferWidth && _coverageLayout.height == _framebufferHeight
@@ -303,6 +312,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     }
     if (permitted) {
         _desktopResizeAdmitted = NSProcessInfo.processInfo.systemUptime; _desktopResizeSampleRecorded = NO;
+        _desktopResizeLateEligible = NO; _desktopResizeHandoff = NO;
         _desktopResizeDisplayID = identifier; _desktopResizeSelection = YES; _desktopResizePending = YES; _desktopResizeOutcome = 1;
         _desktopResizePixelWidth = identifier ? [display[@"pixelWidth"] intValue] : _desktopCatalogueLayout.width;
         _desktopResizePixelHeight = identifier ? [display[@"pixelHeight"] intValue] : _desktopCatalogueLayout.height;
@@ -319,7 +329,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     if (_desktopResizePending && _releaseInputRequested) { [_lock unlock]; return YES; }
     BOOL pending = _desktopResizePending;
     BOOL allowed = _running && _established && _appleGestureServer && !_inputOnly && !_paused
-        && !_stopping && !_reviewInputSuspended && !_interruptionInputSuspended;
+        && !_stopping && !_reviewInputSuspended && (!_displayHandoffInputBlocked || _desktopResizeHandoff) && !_interruptionInputSuspended;
     if (pending) _desktopResizePending = NO;
     BOOL cancel = (_desktopResizeAwaiting && !allowed) || (pending && (!allowed || !_coverageLayoutValid));
     BOOL exactRequestedLayout = _desktopResizeLayoutSeen && _coverageLayoutValid
@@ -327,9 +337,12 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
         && (_desktopResizeSelection
             ? CompanionVNCDesktopSelectionMatches(&_coverageLayout, &_desktopCatalogueLayout, _desktopResizeDisplayID)
             : (_coverageLayout.count == 1 && _desktopResizeVirtualLayout));
-    BOOL timedOut = _desktopResizeAwaiting && CompanionVNCDesktopLayoutTimedOut(
-        NSProcessInfo.processInfo.systemUptime - _desktopResizeStarted, exactRequestedLayout);
+    double layoutAge = NSProcessInfo.processInfo.systemUptime - _desktopResizeStarted;
+    BOOL timedOut = _desktopResizeAwaiting && (_desktopResizeSelection
+        ? CompanionVNCDesktopLayoutTimedOut(layoutAge, exactRequestedLayout)
+        : CompanionVNCVirtualLayoutTimedOut(layoutAge, exactRequestedLayout));
     if (cancel || timedOut) {
+        if (cancel) _desktopResizeLateEligible = NO;
         BOOL differentVirtualSize = timedOut && !_desktopResizeSelection && _desktopResizeVirtualLayout && _coverageLayoutValid
             && _coverageLayout.count == 1 && _coverageLayout.width == client->width && _coverageLayout.height == client->height
             && (client->width != _desktopResizePixelWidth || client->height != _desktopResizePixelHeight);
@@ -394,6 +407,22 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
         _paused, _stopping, _overflow, _awaitingResumeFrame, _baselinePresented);
     [_lock unlock]; return ready;
 }
+- (BOOL)displayHandoffInputBlocked { [_lock lock]; BOOL value = _displayHandoffInputBlocked; [_lock unlock]; return value; }
+- (void)setDisplayHandoffInputBlocked:(BOOL)value {
+    [_lock lock];
+    if (_displayHandoffInputBlocked != value) {
+        _displayHandoffInputBlocked = value; _inputEpoch++;
+        if (!value) _desktopResizeHandoff = NO;
+        if (value) {
+            [self retirePointerInteractionLocked]; [self cancelNativeGesturesLocked];
+            _releaseInputRequested = YES; [_events removeAllObjects]; _queuedPointerMask = 0;
+#if TARGET_OS_IOS
+            [self cancelComposedTextLocked];
+#endif
+        }
+    }
+    [_lock unlock]; dispatch_semaphore_signal(_wake);
+}
 - (BOOL)inputOnly { [_lock lock]; BOOL value = _inputOnly; [_lock unlock]; return value; }
 - (void)setInputOnly:(BOOL)value {
     [_lock lock];
@@ -416,7 +445,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (void)setLocalPointerInteractionActive:(BOOL)active {
     [_lock lock];
-    active = active && _running && _inputReady && !_reviewInputSuspended && !_interruptionInputSuspended && !_paused && !_stopping && !_overflow;
+    active = active && _running && _inputReady && !_reviewInputSuspended && !_displayHandoffInputBlocked && !_interruptionInputSuspended && !_paused && !_stopping && !_overflow;
     if (_localPointerInteractionActive != active) { _localPointerInteractionActive = active; _pointerRevision++; }
     [_lock unlock];
 }
@@ -437,7 +466,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (BOOL)queueMagnification:(unsigned)phase delta:(double)delta x:(NSInteger)x y:(NSInteger)y {
     [_lock lock];
-    BOOL ready = _running && _inputReady && _inputOnly && !_reviewInputSuspended && !_interruptionInputSuspended && !_paused && !_stopping && !_overflow
+    BOOL ready = _running && _inputReady && _inputOnly && !_reviewInputSuspended && !_displayHandoffInputBlocked && !_interruptionInputSuspended && !_paused && !_stopping && !_overflow
         && _appleGestureServer && _nativeGestureLayout;
     BOOL valid = isfinite(delta) && fabs(delta) <= .5 && (phase == 2 || delta == 0)
         && (phase == 1 ? !_queuedMagnification && !_queuedScroll && x >= 0 && y >= 0 && x < _framebufferWidth && y < _framebufferHeight : _queuedMagnification);
@@ -462,7 +491,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (BOOL)sendMagnificationEvent:(NSDictionary *)event client:(rfbClient *)client {
     NSUInteger epoch = [event[@"gestureEpoch"] unsignedIntegerValue];
-    [_lock lock]; BOOL valid = epoch == _gestureEpoch && _inputOnly && _inputReady && !_reviewInputSuspended && !_interruptionInputSuspended && !_paused && !_stopping
+    [_lock lock]; BOOL valid = epoch == _gestureEpoch && _inputOnly && _inputReady && !_reviewInputSuspended && !_displayHandoffInputBlocked && !_interruptionInputSuspended && !_paused && !_stopping
         && _appleGestureServer && _nativeGestureLayout; [_lock unlock];
     if (!valid) return YES; // A discarded event cannot start or resume a gesture.
     unsigned phase = [event[@"magnifyPhase"] unsignedIntValue];
@@ -477,7 +506,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (BOOL)queueScroll:(unsigned)phase dx:(double)dx dy:(double)dy x:(NSInteger)x y:(NSInteger)y {
     [_lock lock];
-    BOOL ready = _running && _inputReady && !_reviewInputSuspended && !_interruptionInputSuspended && !_paused && !_stopping && !_overflow
+    BOOL ready = _running && _inputReady && !_reviewInputSuspended && !_displayHandoffInputBlocked && !_interruptionInputSuspended && !_paused && !_stopping && !_overflow
         && _appleGestureServer && _nativeGestureLayout;
     BOOL valid = (phase == 1 || phase == 2 || phase == 4) && isfinite(dx) && isfinite(dy)
         && fabs(dx) <= 2048 && fabs(dy) <= 2048 && (phase == 2 || (dx == 0 && dy == 0))
@@ -501,7 +530,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (BOOL)sendScrollEvent:(NSDictionary *)event client:(rfbClient *)client {
     NSUInteger epoch = [event[@"gestureEpoch"] unsignedIntegerValue];
-    [_lock lock]; BOOL valid = epoch == _gestureEpoch && _inputReady && !_reviewInputSuspended && !_interruptionInputSuspended && !_paused && !_stopping
+    [_lock lock]; BOOL valid = epoch == _gestureEpoch && _inputReady && !_reviewInputSuspended && !_displayHandoffInputBlocked && !_interruptionInputSuspended && !_paused && !_stopping
         && _appleGestureServer && _nativeGestureLayout; [_lock unlock];
     if (!valid) return YES;
     unsigned phase = [event[@"scrollPhase"] unsignedIntValue];
@@ -515,7 +544,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     return count && WriteToRFBServer(client, (char *)bytes, (unsigned int)count);
 }
 - (BOOL)tryClickX:(NSInteger)x y:(NSInteger)y mask:(NSInteger)mask {
-    [_lock lock]; BOOL accept = _running && _inputReady && !_reviewInputSuspended && !_interruptionInputSuspended && !_paused && !_stopping && !_overflow && _events.count <= 510;
+    [_lock lock]; BOOL accept = _running && _inputReady && !_reviewInputSuspended && !_displayHandoffInputBlocked && !_interruptionInputSuspended && !_paused && !_stopping && !_overflow && _events.count <= 510;
     if (accept) {
         [_events addObject:@{@"x": @(x), @"y": @(y), @"mask": @(mask), @"motion": @NO}];
         [_events addObject:@{@"x": @(x), @"y": @(y), @"mask": @0, @"motion": @NO}]; _queuedPointerMask = 0; _pointerRevision++;
@@ -524,10 +553,11 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (BOOL)suspendInputForReview:(void (^)(void))completion {
     [_lock lock];
-    if (_inputOnly || _reviewInputSuspended || _interruptionInputSuspended || !CompanionVNCConnectionReady(_running, _inputReady, _inputOnly,
+    if (_inputOnly || _displayHandoffInputBlocked || _reviewInputSuspended || _interruptionInputSuspended || !CompanionVNCConnectionReady(_running, _inputReady, _inputOnly,
         _paused, _stopping, _overflow, _awaitingResumeFrame, _baselinePresented)) {
         [_lock unlock]; return NO;
     }
+    _desktopResizeLateEligible = NO;
     [self retirePointerInteractionLocked]; _reviewInputSuspended = YES; _releaseInputRequested = YES; _inputEpoch++;
 #if TARGET_OS_IOS
     [self cancelComposedTextLocked];
@@ -548,6 +578,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     [_lock lock];
     if (!_running || !_established || _stopping || _paused) { [_lock unlock]; if (completion) completion(); return; }
     [self cancelNativeGesturesLocked];
+    _desktopResizeLateEligible = NO;
     [self retirePointerInteractionLocked]; _paused = YES; _inputEpoch++; _pauses++; _inputReady = NO; _releaseInputRequested = YES; _presentationEpoch++;
     [_events removeAllObjects]; _queuedPointerMask = 0; _pauseCompletion = [completion copy];
 #if TARGET_OS_IOS
@@ -558,6 +589,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 - (void)suspendInputForInterruption {
     [_lock lock];
     if (_running && !_paused && !_stopping && !_interruptionInputSuspended) {
+        _desktopResizeLateEligible = NO;
         [self retirePointerInteractionLocked]; _interruptionInputSuspended = YES; _releaseInputRequested = YES; _inputEpoch++;
 #if TARGET_OS_IOS
         [self cancelComposedTextLocked];
@@ -616,6 +648,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     _fullRefreshRequests = _coalescedFullRefreshes = _routinePullRestarts = 0;
     _desktopResizeUnreadAtWrite = _desktopResizeRefreshRequests = _desktopResizePreLayoutRects = 0; _desktopResizePreLayoutCPU = 0;
     _desktopResizeDisplayID = 0; _desktopResizePixelWidth = _desktopResizePixelHeight = 0;
+    _desktopResizeHandoff = _desktopResizeLateEligible = NO;
     _handshakeStage = 0; _layoutDiagnostics = @{}; _layoutMessages = 0; _baselinePresented = NO; _coverageLayoutValid = NO; _metadataCallback = NO;
     _paused = NO; _reviewInputSuspended = NO; _interruptionInputSuspended = NO; _reviewReleaseCompletion = nil;
     _releaseInputRequested = NO; _resumeRequested = NO; _awaitingResumeFrame = NO; _presentationEpoch++;
@@ -795,7 +828,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 - (BOOL)sendInputEvents:(NSArray<NSDictionary *> *)events client:(rfbClient *)client inputEpoch:(NSUInteger)inputEpoch {
     BOOL healthy = YES;
     for (NSDictionary *event in events) {
-        [self->_lock lock]; BOOL currentBatch = inputEpoch == self->_inputEpoch; BOOL acceptsInput = self->_inputReady && !self->_reviewInputSuspended && !self->_interruptionInputSuspended && !self->_paused && !self->_stopping;
+        [self->_lock lock]; BOOL currentBatch = inputEpoch == self->_inputEpoch; BOOL acceptsInput = self->_inputReady && !self->_reviewInputSuspended && !self->_displayHandoffInputBlocked && !self->_interruptionInputSuspended && !self->_paused && !self->_stopping;
 #if TARGET_OS_IOS
         NSString *textID = event[@"composedTextID"];
         if (textID) acceptsInput = acceptsInput && [self composedTextReadyLocked];
@@ -843,7 +876,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     // Invoked synchronously by the existing parser on its sole socket owner.
     // Boundaries requiring release/reconfiguration remain on the outer loop.
     [_lock lock];
-    BOOL allowed = _running && _established && _inputReady && !_reviewInputSuspended && !_interruptionInputSuspended
+    BOOL allowed = _running && _established && _inputReady && !_reviewInputSuspended && !_displayHandoffInputBlocked && !_interruptionInputSuspended
         && !_paused && !_stopping && !_overflow && !_releaseInputRequested && !_resumeRequested && !_modeChanged;
     NSArray *events = allowed && _events.count ? [_events copy] : nil;
     NSUInteger epoch = _inputEpoch, before = _inputs;
@@ -957,9 +990,9 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     double elapsed = NSProcessInfo.processInfo.systemUptime - _desktopResizeStarted;
     double nextAge = _desktopResizeLayoutProbes == 0 ? 0 : _desktopResizeLayoutProbes == 1 ? 0.5 : 1.5;
     BOOL send = _running && _established && !_paused && !_stopping && !_inputOnly
-        && !_reviewInputSuspended && !_interruptionInputSuspended
+        && !_reviewInputSuspended && (!_displayHandoffInputBlocked || _desktopResizeHandoff) && !_interruptionInputSuspended
         && _desktopResizeAwaiting && !_desktopResizeLayoutSeen && _desktopResizeLayoutProbes < 3
-        && isfinite(elapsed) && elapsed >= nextAge && elapsed < 6;
+        && isfinite(elapsed) && elapsed >= nextAge && elapsed < (_desktopResizeSelection ? 6 : 20);
     if (send) _desktopResizeLayoutProbes++;
     [_lock unlock];
     if (!send) return YES;
@@ -1181,11 +1214,20 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     // A display-info response can announce a new canvas without DesktopSize.
     // Explicit changes and validated physical All Displays recovery stay on this socket owner.
     [_lock lock];
-    BOOL probeLayoutCandidate = _desktopResizeRequests > 0 && (_desktopResizeAwaiting || _desktopResizeOutcome == 3 || _desktopResizeOutcome == 4)
+    BOOL lateResultAllowed = _desktopResizeSelection || (_desktopResizeLateEligible && NSProcessInfo.processInfo.systemUptime - _desktopResizeStarted <= 30
+        && !_paused && !_stopping && !_reviewInputSuspended && !_interruptionInputSuspended);
+    BOOL probeLayoutCandidate = _desktopResizeRequests > 0 && (_desktopResizeAwaiting || (lateResultAllowed && (_desktopResizeOutcome == 3 || _desktopResizeOutcome == 4)))
         && parsed
         && (_desktopResizeSelection ? CompanionVNCDesktopSelectionMatches(&decoded, &_desktopCatalogueLayout, _desktopResizeDisplayID)
             : (decoded.count == 1 && _desktopResizeVirtualLayout))
         && (_desktopResizeSelection || (uint64_t)decoded.width * decoded.height <= 6000000);
+    BOOL lateVirtual = probeLayoutCandidate && !_desktopResizeSelection && !_desktopResizeAwaiting
+        && (_desktopResizeOutcome == 3 || _desktopResizeOutcome == 4) && _desktopResizeLateEligible && !_paused && !_stopping && !_reviewInputSuspended && !_interruptionInputSuspended
+        && NSProcessInfo.processInfo.systemUptime - _desktopResizeStarted <= 30
+        && decoded.width == _desktopResizePixelWidth && decoded.height == _desktopResizePixelHeight;
+    if (lateVirtual) {
+        _desktopResizeAwaiting = YES; _desktopResizeOutcome = 1; _desktopResizeSampleRecorded = NO;
+    }
     BOOL firstMatchingLayout = probeLayoutCandidate && !_desktopResizeLayoutSeen;
     if (probeLayoutCandidate) {
         _desktopResizeLayoutSeen = YES;
@@ -1482,7 +1524,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
         @"appleCursorCacheMisses": @(_appleCursorMisses), @"cursorPublications": @(_cursorPublications),
         @"cursorCachedImage": @(_cursorImageAvailable), @"inputEvents": @(_inputs),
         @"presentedFrames": @(_presentedFrames), @"backgroundPauses": @(_pauses), @"retainedResumes": @(_resumes),
-        @"sessionInputReady": @(_inputReady), @"sessionReviewBlocked": @(_reviewInputSuspended),
+        @"sessionInputReady": @(_inputReady), @"sessionReviewBlocked": @(_reviewInputSuspended), @"sessionDisplayHandoffBlocked": @(_displayHandoffInputBlocked),
         @"sessionInterruptionBlocked": @(_interruptionInputSuspended), @"sessionPaused": @(_paused)}];
     stats[@"sampleUptime"] = @(NSProcessInfo.processInfo.systemUptime);
     stats[@"probeRequests"] = @(_desktopResizeRequests); stats[@"probeAccepted"] = @(_desktopResizeAccepted);
@@ -1538,7 +1580,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     });
 }
 - (void)stop {
-    [_lock lock]; [self retirePointerInteractionLocked]; [self cancelNativeGesturesLocked]; _stopping = YES; _presentationEpoch++; [_events removeAllObjects]; NSInteger generation = _generation;
+    [_lock lock]; _desktopResizeLateEligible = NO; [self retirePointerInteractionLocked]; [self cancelNativeGesturesLocked]; _stopping = YES; _presentationEpoch++; [_events removeAllObjects]; NSInteger generation = _generation;
     void (^completion)(void) = _pauseCompletion; _pauseCompletion = nil;
     // A temporary input gate must not close an authenticated transport before
     // its owner releases sent input. Handshakes have no held input to release.
@@ -1559,7 +1601,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (void)enqueue:(NSDictionary *)event {
     [_lock lock];
-    if (_running && _inputReady && !_reviewInputSuspended && !_interruptionInputSuspended && !_paused && !_stopping) {
+    if (_running && _inputReady && !_reviewInputSuspended && !_displayHandoffInputBlocked && !_interruptionInputSuspended && !_paused && !_stopping) {
         // Coalesce only motion with identical button state, preserving key/button ordering.
         NSDictionary *last = _events.lastObject;
         if (event[@"mask"]) {
@@ -1585,7 +1627,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 - (void)key:(uint32_t)key down:(BOOL)down { [self enqueue:@{@"key": @(key), @"down": @(down)}]; }
 - (void)keyEvents:(NSArray<NSDictionary *> *)events {
     [_lock lock];
-    if (_running && _inputReady && !_reviewInputSuspended && !_interruptionInputSuspended && !_paused && !_stopping && !_overflow) {
+    if (_running && _inputReady && !_reviewInputSuspended && !_displayHandoffInputBlocked && !_interruptionInputSuspended && !_paused && !_stopping && !_overflow) {
         if (!CompanionVNCKeyGroupFits(_events.count, events.count, 512)) _overflow = YES;
         else [_events addObjectsFromArray:events];
     }
@@ -1596,7 +1638,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (BOOL)tryKeyEvents:(NSArray<NSDictionary *> *)events {
     [_lock lock];
-    BOOL allowed = _running && _inputReady && !_reviewInputSuspended && !_interruptionInputSuspended && !_paused && !_stopping && !_overflow
+    BOOL allowed = _running && _inputReady && !_reviewInputSuspended && !_displayHandoffInputBlocked && !_interruptionInputSuspended && !_paused && !_stopping && !_overflow
         && events.count > 0 && CompanionVNCKeyGroupFits(_events.count, events.count, 512);
     if (allowed) [_events addObjectsFromArray:events];
     [_lock unlock]; return allowed;
@@ -1606,7 +1648,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     return SendKeyEvent(client, key, down);
 }
 - (BOOL)composedTextReadyLocked {
-    return !_reviewInputSuspended && !_interruptionInputSuspended && CompanionVNCConnectionReady(_running, _inputReady, _inputOnly,
+    return !_reviewInputSuspended && !_displayHandoffInputBlocked && !_interruptionInputSuspended && CompanionVNCConnectionReady(_running, _inputReady, _inputOnly,
         _paused, _stopping, _overflow, _awaitingResumeFrame, _baselinePresented);
 }
 - (BOOL)composedTextReady {

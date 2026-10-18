@@ -140,8 +140,28 @@ private final class DesktopSyntheticRFB: ChannelInboundHandler, @unchecked Senda
     }
     func errorCaught(context: ChannelHandlerContext, error: Error) { context.close(promise: nil) }
 }
+// A real SSH peer delays cleanup after forwarded EOF, exposing a parent that
+// closes before the old Screen Sharing socket has finished retiring.
+private final class DesktopRetiringPeer: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = SSHChannelData
+    let record: DesktopSSHRecord
+    let responds: Bool
+    init(_ record: DesktopSSHRecord, responds: Bool) { self.record = record; self.responds = responds }
+    func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+        if let event = event as? ChannelEvent, case .inputClosed = event {
+            record.add("forwardedEOF")
+            if responds {
+                let channel = context.channel, record = record
+                context.eventLoop.scheduleTask(in: .milliseconds(80)) {
+                    record.add(channel.isActive ? "peerCleanup" : "prematureParentClose")
+                    channel.close(promise: nil)
+                }
+            }
+        } else { context.fireUserInboundEventTriggered(event) }
+    }
+}
 private final class DesktopSSHServer: @unchecked Sendable {
-    enum Mode: Sendable { case echo, rfb, denied, silent }
+    enum Mode: Sendable { case echo, rfb, denied, silent, retiring, stalledRetirement }
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     let key = NIOSSHPrivateKey(ed25519Key: .init())
     let record = DesktopSSHRecord()
@@ -164,6 +184,11 @@ private final class DesktopSSHServer: @unchecked Sendable {
                         return child.eventLoop.makeFailedFuture(DesktopSSHFailure.forwarding)
                     }
                     record.add("forward")
+                    if self.mode == .retiring || self.mode == .stalledRetirement {
+                        return child.setOption(ChannelOptions.allowRemoteHalfClosure, value: true).flatMap {
+                            child.pipeline.addHandler(DesktopRetiringPeer(self.record, responds: self.mode == .retiring))
+                        }
+                    }
                     return child.getOption(SSHChildChannelOptions.peerMaximumMessageLength).flatMap { maximum in
                         self.record.add("peerPacket.\(maximum)")
                         return self.mode == .echo ? child.pipeline.addHandler(DesktopSSHEcho(self.record)) : child.pipeline.addHandler(DesktopSyntheticRFB(self.record, cursorPackets: self.cursorPackets))
@@ -238,6 +263,8 @@ private func desktopWriterFinished(_ group: DispatchGroup) -> Bool { group.wait(
             let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
             let policy = try XCTUnwrap(fixture["sshTransportPolicy"] as? [String: Any])
             XCTAssertEqual(DesktopSSHRelay.limit, policy["queueLimitBytes"] as? Int)
+            let retirement = try XCTUnwrap(policy["retirement"] as? [String: Any])
+            XCTAssertEqual(DirectDesktopSSHTunnel.retirementSeconds, (retirement["maximumSeconds"] as? NSNumber)?.int64Value)
             let packetLimit = try XCTUnwrap(policy["maximumSSHPacketBytes"] as? Int)
             XCTAssertEqual(server.record.count("peerPacket.\(packetLimit)"), 1)
             XCTAssertEqual(policy["receiveWindowBytes"] as? Int, packetLimit)
@@ -366,6 +393,26 @@ private func desktopWriterFinished(_ group: DispatchGroup) -> Bool { group.wait(
         let details = try XCTUnwrap(viewer.value(forKey: "loginIssueDetails") as? String)
         XCTAssertTrue(details.contains("Remote Login (SSH)")); XCTAssertTrue(details.contains("Port: 2222"))
         viewer.stop()
+    }
+    func testEstablishedRetirementForwardsEOFAndWaitsForPeerCleanupBeforeReplacement() async throws {
+        let server = DesktopSSHServer(.retiring); try await server.start()
+        let tunnel = try await open(server)
+        await tunnel.close()
+        XCTAssertEqual(server.record.count("forwardedEOF"), 1)
+        XCTAssertEqual(server.record.count("peerCleanup"), 1)
+        XCTAssertEqual(server.record.count("prematureParentClose"), 0)
+        let active = try await server.activeClients(); XCTAssertEqual(active, 0)
+        try await server.close()
+    }
+    func testUnresponsiveRetirementIsBoundedAndClosesEveryOwnedChannel() async throws {
+        let server = DesktopSSHServer(.stalledRetirement); try await server.start()
+        let tunnel = try await open(server), started = ProcessInfo.processInfo.systemUptime
+        await tunnel.close()
+        let elapsed = ProcessInfo.processInfo.systemUptime - started
+        XCTAssertEqual(server.record.count("forwardedEOF"), 1)
+        XCTAssertLessThan(elapsed, 4)
+        XCTAssertFalse(tunnel.bridge.isActive); XCTAssertFalse(tunnel.remote.isActive)
+        try await server.close()
     }
     func testCancellationDuringHandshakeClosesParent() async throws {
         let server = DesktopSSHServer(.silent); try await server.start()
@@ -559,4 +606,82 @@ private func desktopWriterFinished(_ group: DispatchGroup) -> Bool { group.wait(
             window.isHidden = true; window.rootViewController = nil; prior?.makeKeyAndVisible(); try? TerminalSecretStore.remove(mac.id)
         }
     }
+    func testMirrorRestartKeepsTransportClosedForWholeCleanupIntervalBeforeFreshAuthentication() async throws {
+        let server = DesktopSSHServer(.rfb); try await server.start()
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic Mac", addresses: ["127.0.0.1"], sshPort: server.port)
+        try TerminalSecretStore.write(Data(server.hostKey.utf8), id: mac.id, kind: "host-key")
+        let viewer = CompanionVNCViewer(), coordinator = VNCRemoteDesktopView.Coordinator(mac: mac)
+        viewer.loadViewIfNeeded(); coordinator.viewer = viewer; viewer.restoredDesktopSizePreset = 0
+        coordinator.connect(user: "synthetic", password: "synthetic-only", remember: false)
+        do {
+            try await wait("initial encrypted desktop") { viewer.session.desktopFrameReady }
+            let previous = viewer.session
+            viewer.setValue(true, forKey: "starting"); viewer.setValue(true, forKey: "changingDisplayMode")
+            viewer.setValue(true, forKey: "mirrorRequiresCleanup"); viewer.setValue(true, forKey: "mirrorFullRestartUsed")
+            coordinator.disconnect()
+            let started = ContinuousClock.now
+            coordinator.connect(user: "synthetic", password: "synthetic-only", remember: false)
+            try await Task.sleep(for: .milliseconds(1200))
+            XCTAssertEqual(server.record.count("tcp"),1, "No replacement may keep the old host display alive")
+            XCTAssertEqual(server.record.count("auth"),1); XCTAssertTrue(viewer.session.displayHandoffInputBlocked)
+            XCTAssertFalse(previous.running)
+            let active = try await server.activeClients(); XCTAssertEqual(active,0, "The preceding SSH owner must be fully closed during cleanup")
+            let remaining = try XCTUnwrap(viewer.value(forKey: "mirrorCleanupRemaining") as? Int)
+            XCTAssertGreaterThan(remaining,13); XCTAssertLessThanOrEqual(remaining,16)
+            try await Task.sleep(for: .seconds(15))
+            try await wait("one fresh SSH authentication after cleanup") { server.record.count("auth") == 2 }
+            XCTAssertGreaterThanOrEqual(started.duration(to: .now), .seconds(16))
+            try await wait("fresh native framebuffer after restart") { viewer.session.desktopFrameReady }
+            XCTAssertEqual(server.record.count("tcp"),2); XCTAssertEqual(server.record.count("forward"),2)
+            XCTAssertEqual(viewer.value(forKey: "mirrorCleanupRemaining") as? Int,0)
+            XCTAssertEqual(viewer.mirrorRetirementDelay,0)
+            coordinator.disconnect(); viewer.stop(); try await server.close(); try? TerminalSecretStore.remove(mac.id)
+        } catch { coordinator.disconnect(); viewer.stop(); try? await server.close(); try? TerminalSecretStore.remove(mac.id); throw error }
+    }
+    func testMirrorCleanupCannotOpenConnectionAfterExitReplacementOrLossOfForeground() async throws {
+        for reason in ["exit", "replacement", "inactive", "background"] {
+            let server = DesktopSSHServer(.rfb); try await server.start()
+            let mac = try DirectMacRecordV1.normalized(name: "Synthetic Mac", addresses: ["127.0.0.1"], sshPort: server.port)
+            let viewer = CompanionVNCViewer(), coordinator = VNCRemoteDesktopView.Coordinator(mac: mac)
+            viewer.loadViewIfNeeded(); coordinator.viewer = viewer
+            viewer.setValue(true, forKey: "starting"); viewer.setValue(true, forKey: "changingDisplayMode")
+            viewer.setValue(true, forKey: "mirrorRequiresCleanup")
+            coordinator.connect(user: "synthetic", password: "synthetic-only", remember: false)
+            try await Task.sleep(for: .milliseconds(150))
+            switch reason {
+            case "exit": viewer.stop()
+            case "replacement": coordinator.disconnect(); viewer.prepareConnection()
+            case "inactive": viewer.becameInactive()
+            default: await viewer.background()
+            }
+            try await Task.sleep(for: .milliseconds(350))
+            XCTAssertEqual(server.record.count("tcp"),0, reason); XCTAssertEqual(server.record.count("auth"),0, reason)
+            coordinator.disconnect(); viewer.stop(); try await server.close()
+        }
+    }
+
+    func testPendingOpeningRetiresBeforeReplacementAndCannotOverwriteIt() async throws {
+        let server = DesktopSSHServer(.silent); try await server.start()
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic Mac", addresses: ["127.0.0.1"], sshPort: server.port)
+        let viewer = CompanionVNCViewer(), coordinator = VNCRemoteDesktopView.Coordinator(mac: mac)
+        viewer.loadViewIfNeeded(); coordinator.viewer = viewer
+        do {
+            coordinator.connect(user: "synthetic", password: "synthetic-only", remember: false)
+            try await wait("first pending SSH handshake") { server.record.count("tcp") == 1 }
+            let old = viewer.session
+            coordinator.disconnect()
+            viewer.setValue(true, forKey: "starting"); viewer.setValue(true, forKey: "changingDisplayMode")
+            viewer.setValue(2, forKey: "modeTargetPreset")
+            coordinator.connect(user: "synthetic", password: "synthetic-only", remember: false)
+            try await wait("replacement after joined pending retirement") { server.record.count("tcp") == 2 }
+            let active = try await server.activeClients()
+            XCTAssertEqual(active,1, "The old pending opener must not survive the replacement")
+            XCTAssertFalse(old.running); XCTAssertFalse(viewer.session === old)
+            XCTAssertTrue(viewer.session.displayHandoffInputBlocked)
+            XCTAssertNil(viewer.value(forKey: "failedDisplayModePreset"), "The cancelled opener must not fail the replacement")
+            XCTAssertTrue(viewer.value(forKey: "starting") as? Bool == true)
+            coordinator.disconnect(); viewer.stop(); try await server.close()
+        } catch { coordinator.disconnect(); viewer.stop(); try? await server.close(); throw error }
+    }
+
 }

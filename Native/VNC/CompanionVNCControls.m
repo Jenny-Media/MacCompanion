@@ -215,11 +215,15 @@ void CompanionVNCPlayInterfaceFeedback(NSString *kind) {
     if (self.panel) return;
     if (!self.editingPreview && self.openingHandler) self.openingHandler();
     NSMutableArray *items = [NSMutableArray new];
-    for (NSDictionary *item in self.quickActions) if ([item[@"enabled"] boolValue]) [items addObject:item];
+    for (NSDictionary *item in self.quickActions) {
+        if (![item[@"enabled"] boolValue]) continue;
+        if (!self.editingPreview && self.inputOnly && [@[@"mode", @"fit", @"copyText"] containsObject:item[@"kind"]]) continue;
+        [items addObject:item];
+    }
     self.quickCount = items.count;
     if (!self.editingPreview) [items addObjectsFromArray:self.categoryActions ?: @[
-        @{@"kind": @"viewMenu", @"title": @"View & Display", @"symbol": @"display.2"},
-        @{@"kind": @"inputMenu", @"title": @"Keyboard & Input", @"symbol": @"keyboard"},
+        @{@"kind": @"viewMenu", @"title": @"Display", @"symbol": @"display.2"},
+        @{@"kind": @"inputMenu", @"title": @"Input", @"symbol": @"keyboard"},
         @{@"kind": @"session", @"title": @"Session", @"symbol": @"link"}]];
     self.items = items; self.choices = [NSMutableArray new];
     UIVisualEffect *effect;
@@ -273,6 +277,7 @@ void CompanionVNCPlayInterfaceFeedback(NSString *kind) {
             if (self.inputOnly && ([kind isEqual:@"fit"] || [kind isEqual:@"mode"])) choice.enabled = NO;
             if ([kind isEqual:@"copyText"] && !self.editingPreview) choice.enabled = self.textCopyAvailable && !self.inputOnly;
         }
+        if (!self.editingPreview && [item[@"disabled"] boolValue]) choice.enabled = NO;
         choice.tag = i; choice.accessibilityIdentifier = [@"session-action-" stringByAppendingString:kind];
         [choice addTarget:self action:@selector(chosen:) forControlEvents:UIControlEventTouchUpInside];
         if (self.editingPreview) {

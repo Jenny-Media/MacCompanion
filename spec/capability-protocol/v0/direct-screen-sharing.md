@@ -59,6 +59,13 @@ Terminal and Files settings are unchanged. EOF, cancellation and errors close ow
 and channels without replay. Retire the preceding native owner and tunnel before
 starting another. Native input releases finish before an established tunnel is
 closed; pending handshakes and fingerprint prompts are cancelled immediately.
+For an established tunnel, consumer EOF is forwarded as SSH channel EOF while
+its parent remains alive. Await the remote channel close exchange before closing
+the parent or opening a replacement. A two-second watchdog bounds unresponsive
+peers and forces owned-channel teardown; cancellation during opening stays
+immediate. A local socket-close callback must not prematurely close the parent
+and discard the forwarded EOF/close exchange. This is standard SSH channel
+retirement, with no new Apple display, authentication or UDP messages.
 
 Inside the encrypted channel the only RFB authentication scheme remains Apple ARD (30) using the
 pinned upstream implementation. No no-auth or legacy VNC-password fallback is
@@ -398,7 +405,7 @@ A busy queue reports a retryable issue without partial text or a disconnect.
 ## iOS session text composer
 
 Desktop, Trackpad & Keyboard and Terminal offer a free **Compose Text** session
-Quick Action (also available under Keyboard & Input). Existing untouched default
+Quick Action (also available under Input on iOS). Existing untouched default
 profiles gain this action; preserve all customized profiles and their disabled
 actions. macOS does not expose this tool. Present a small floating text bubble
 above the visible app shortcut bar and native keyboard, retaining visible session

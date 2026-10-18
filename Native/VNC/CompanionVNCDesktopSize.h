@@ -112,6 +112,9 @@ static inline bool CompanionVNCDecodeSelectedDisplayLayout(const uint8_t *p, siz
 static inline bool CompanionVNCDesktopLayoutTimedOut(double elapsed, bool exactLayout) {
     return !isfinite(elapsed) || (!exactLayout && elapsed >= 6);
 }
+static inline bool CompanionVNCVirtualLayoutTimedOut(double elapsed, bool exactLayout) {
+    return !isfinite(elapsed) || (!exactLayout && elapsed >= 20);
+}
 
 // Baseline retries repair stalled coverage; progress never extends the deadline.
 enum { CompanionVNCBaselineWait = 0, CompanionVNCBaselineRetry = 1, CompanionVNCBaselineExpired = 2 };
