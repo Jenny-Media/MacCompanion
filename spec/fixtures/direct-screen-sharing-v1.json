@@ -322,7 +322,7 @@
     "knownEndIndependentOfActivityUpdate": true,
     "inactiveReturnRestoresLatestTerminalGrid": true,
     "replacementComposeTextRequiresPresentedDesktop": true,
-    "replacementVideoModeChange": "defer-until-presentation-ready",
+    "replacementVideoModeChange": "fresh-input-only-owner",
     "retainedResumePhase": "paused",
     "retainedResumeOpacity": 1,
     "interruptionAdmissionSeparateFromReview": true,
@@ -3157,15 +3157,13 @@
       "events": [
         "replacement",
         "trackpad-only-request",
-        "layout",
-        "frame",
-        "trackpad-only-request"
+        "fresh-input-owner-authenticated"
       ],
       "expect": [
-        "desktop-mode-retained",
-        "frame-requests-retained",
-        "current-crop-presented",
-        "trackpad-mode-admitted"
+        "desktop-owner-retired",
+        "pending-presentation-discarded",
+        "fresh-input-only-owner",
+        "input-admitted-without-pixels"
       ]
     },
     {
@@ -3174,14 +3172,13 @@
         "replacement",
         "frame",
         "trackpad-only-request",
-        "layout",
-        "trackpad-only-request"
+        "fresh-input-owner-authenticated"
       ],
       "expect": [
-        "desktop-mode-retained",
-        "pending-frame-retained",
-        "current-crop-presented",
-        "trackpad-mode-admitted"
+        "desktop-owner-retired",
+        "pending-presentation-discarded",
+        "fresh-input-only-owner",
+        "input-admitted-without-pixels"
       ]
     },
     {
@@ -3190,14 +3187,13 @@
         "cached-trackpad-view",
         "replacement",
         "same-mode-replayed",
-        "matching-layout",
-        "frame"
+        "input-owner-authenticated"
       ],
       "expect": [
-        "current-mode-retained",
-        "replacement-frame-delivery-retained",
-        "current-presentation-ready",
-        "native-trackpad-admitted"
+        "native-trackpad-before-auth",
+        "no-ongoing-pixel-requests",
+        "current-geometry-used",
+        "input-admitted-without-pixels"
       ]
     },
     {

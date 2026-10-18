@@ -49,10 +49,17 @@ the failed target using session login recovery. Transport failures during an
 active mode restart retain this private recovery without refilling unremembered
 form fields; credential/trust rejection and explicit cancellation still end it.
 Deliberate form edits discard the old private recovery before a new attempt.
-While a failed mode change awaits retry, disable Trackpad & Keyboard Only and
-reject presentation changes from stale menus or direct callers so retry can run.
-This is local to that viewer, never a saved restriction. Successful verification
-or explicit exit to My Macs clears it; repeated failures keep recovery pending.
+Trackpad & Keyboard remains available while a display operation is pending or
+failed. Selecting it abandons that operation, retires its native and SSH owners,
+and opens a fresh input-only connection using the existing bounded login recovery.
+No virtual-display request, physical-display verification, pixel baseline or host
+cleanup delay is required. Keep the previous saved display choice. Offer this action
+on the failure card even before an image arrives. Stale recovery actions, background,
+app lock and exit cannot start a replacement. If session credentials are unavailable,
+show the normal input-only login form; never bypass authentication or server trust.
+If replacing that owner will interrupt an active borrowed Files transfer, confirm
+that interruption first. Cancellation leaves its owner and transfer unchanged; a
+confirmation cannot cross owner replacement, backgrounding or exit.
 Interruption discards pending monitor/size preference commits, including late
 reconciliation; foreground return cannot save an interrupted choice. Matching
 late virtual frames may reconcile either timeout outcome (3 or 4).

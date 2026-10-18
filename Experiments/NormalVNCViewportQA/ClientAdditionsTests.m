@@ -89,6 +89,24 @@
     XCTAssertFalse([[viewer valueForKey:@"image"] isHidden]); XCTAssertEqualWithAccuracy(canvas.bounds.size.height,before,.1); XCTAssertEqual(viewer.session,owner);
     [viewer stopViewer];
 }
+- (void)testStandaloneInputOnlyStartsAndResumesWithoutADesktopImage {
+    CompanionVNCViewer *viewer=[CompanionVNCViewer new]; viewer.inputOnly=YES; [viewer loadViewIfNeeded];
+    CompanionVNCSession *session=viewer.session; XCTAssertTrue(session.inputOnly);
+    rfbClient *client=rfbGetClient(8,3,4); client->width=2; client->height=2;
+    [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    for (NSString *key in @[@"running",@"established",@"inputReady"]) [session setValue:@YES forKey:key];
+    __block NSUInteger connections=0; viewer.connectedHandler=^{connections++;};
+    [viewer setValue:@YES forKey:@"starting"];
+    session.stateHandler(@"Connected",session.diagnosticCounters);
+    XCTAssertEqual(connections,1); XCTAssertTrue(((UIView *)[viewer valueForKey:@"login"]).hidden);
+    XCTAssertFalse([[viewer valueForKey:@"starting"] boolValue]); XCTAssertNil([viewer valueForKey:@"lastFramebuffer"]);
+    XCTAssertTrue(CGRectEqualToRect([[viewer valueForKey:@"activeCrop"] CGRectValue],CGRectMake(0,0,2,2)));
+    [viewer background]; [viewer foregrounded];
+    [session setValue:@YES forKey:@"inputReady"]; session.stateHandler(@"Connected",session.diagnosticCounters);
+    XCTAssertFalse([[viewer valueForKey:@"checkingResume"] boolValue]); XCTAssertNil([viewer valueForKey:@"lastFramebuffer"]);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"presentedFrames"],@0);
+    [session setValue:@NO forKey:@"running"]; [viewer stopViewer]; rfbClientCleanup(client);
+}
 - (void)testActualSocketInputOnlySendsInputWithoutRequestingPixelsThenReturnsToDesktop {
     int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
     int yes=1; setsockopt(pair[0],SOL_SOCKET,SO_NOSIGPIPE,&yes,sizeof(yes));

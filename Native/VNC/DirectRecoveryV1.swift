@@ -539,6 +539,9 @@ struct TerminalServerTrustView: View {
         desktop(stage: stage, hadFrame: hadFrame, port: port, textInterrupted: false, retry: retry, edit: edit)
     }
     @objc static func desktop(stage: Int, hadFrame: Bool, port: Int, textInterrupted: Bool, retry: @escaping @MainActor @Sendable () -> Void, edit: @escaping @MainActor @Sendable () -> Void) -> UIViewController {
+        desktop(stage: stage, hadFrame: hadFrame, port: port, textInterrupted: textInterrupted, retry: retry, edit: edit, inputOnly: nil)
+    }
+    @objc static func desktop(stage: Int, hadFrame: Bool, port: Int, textInterrupted: Bool, retry: @escaping @MainActor @Sendable () -> Void, edit: @escaping @MainActor @Sendable () -> Void, inputOnly: (@MainActor @Sendable () -> Void)?) -> UIViewController {
         let modeFailure = (116...118).contains(stage)
         let base = desktopNotice(stage: stage, hadFrame: hadFrame, port: port)
         let original = modeFailure ? DirectRecoveryNotice(reason: base.reason, title: "Couldn’t switch display mode", message: base.message, details: base.details) : base
@@ -546,13 +549,21 @@ struct TerminalServerTrustView: View {
             message: original.message + " Text may have been partially sent. Check your Mac before sending it again; input won’t be replayed.", details: original.details) : original
         let reason = notice.reason
         if !hadFrame {
-            let controller = UIHostingController(rootView: DirectConnectionNotice(notice: notice).directAppearance())
+            let controller = UIHostingController(rootView: VStack(alignment: .leading, spacing: 12) {
+                DirectConnectionNotice(notice: notice)
+                if let inputOnly {
+                    Button("Use Trackpad & Keyboard", action: inputOnly)
+                        .buttonStyle(.bordered).frame(maxWidth: .infinity, minHeight: 44)
+                        .accessibilityIdentifier("recovery-inputOnly")
+                }
+            }.directAppearance())
             controller.sizingOptions = .intrinsicContentSize; controller.view.backgroundColor = .clear
             return controller
         }
         let controller = UIHostingController(rootView: DirectRecoveryCard(notice: notice,
             primary: .init(title: reason == .loginRejected ? "Edit Login" : hadFrame ? "Reconnect" : "Try Again", perform: reason == .loginRejected ? edit : retry),
-            secondary: reason == .loginRejected || modeFailure ? nil : .init(title: "Edit Login", perform: edit)).directAppearance())
+            secondary: inputOnly.map { .init(title: "Use Trackpad & Keyboard", perform: $0) }
+                ?? (reason == .loginRejected || modeFailure ? nil : .init(title: "Edit Login", perform: edit))).directAppearance())
         controller.sizingOptions = .intrinsicContentSize
         controller.view.backgroundColor = .clear
         return controller

@@ -331,6 +331,14 @@ Connection readiness is mode-specific. Desktop requires a complete presented
 baseline, including after resume or leaving input-only mode. Trackpad & Keyboard
 requires a running, authenticated input owner, but no presented framebuffer:
 it deliberately suppresses desktop presentation and regular pixel requests.
+Set input-only on the native owner before authentication, including cold starts
+and replacement connections. Reveal its local controls when that owner is ready,
+without waiting for an image. Initialize pointer bounds from the admitted ServerInit
+framebuffer dimensions; a cached image or selected-display crop is not required.
+The RFB library still sends its initial framebuffer request during initialization.
+Input-only does not wait for that response and sends no ongoing pixel requests.
+Healthy in-session toggles may retain the authenticated connection. Pending or failed
+display operations instead use the independent replacement path in ios-desktop-size.md.
 Publish its initial Connected state after successful RFB initialization and on
 an admitted resume or switch into input-only mode. Paused, stopping, overflowed
 or unauthenticated owners cannot publish Connected in either mode. Switching

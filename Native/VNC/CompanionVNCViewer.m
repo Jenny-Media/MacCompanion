@@ -4,6 +4,7 @@
 #import "CompanionVNCDesktopSize.h"
 #import "CompanionVNCKeyboard.h"
 #import "CompanionVNCViewport.h"
+#import "CompanionVNCFramebufferBounds.h"
 #import "CompanionVNCAdaptiveLayout.h"
 #import "CompanionVNCCursor.h"
 #import "CompanionVNCDisplayPicker.h"
@@ -29,6 +30,7 @@
 @property UITextField *host, *username, *password;
 @property DirectDesktopLoginState *credentialState;
 @property UIViewController *recoveryController;
+@property(nonatomic, copy) void (^recoveryInputOnlyAction)(void);
 @property(nonatomic, copy) NSString *loginIssueDetails;
 @property UIViewController *loginBackdrop;
 @property UIScrollView *recoveryPanel;
@@ -72,6 +74,7 @@
 @property BOOL modeResizeRequested, modeVerificationTimed;
 @property NSUInteger modeVerificationGeneration;
 @property NSNumber *failedDisplayModePreset, *modeConfirmationPreset;
+@property BOOL inputOnlyConfirmationPending;
 @property(weak) CompanionVNCSession *modeConfirmationOwner;
 @property(weak) UIAlertController *modeConfirmationAlert;
 @property NSMutableArray<NSNumber *> *mirrorObservedLayouts;
@@ -544,7 +547,7 @@
 - (void)prepareConnection {
     self.mirrorRestartScheduled = NO;
     if (self.changingDisplayMode) self.mirrorRestoreAttempts++;
-    self.desktopSizeRestored = self.changingDisplayMode; self.pendingDesktopSizePreset = 0; self.pendingStreamDisplayID = nil;
+    self.desktopSizeRestored = self.changingDisplayMode || self.inputOnly; self.pendingDesktopSizePreset = 0; self.pendingStreamDisplayID = nil;
     self.lateDesktopSizePreset = 0; self.modeResizeRequested = NO; self.modeVerificationTimed = NO; self.modeVerificationGeneration++;
     self.displaySelectionRejections = self.displaySelectionRejectMask = 0;
     self.initialDisplayApplied = NO; self.restoringStreamViewport = NO;
@@ -553,6 +556,8 @@
     [self retireTextDraft];
     [self invalidateTextReview:NO]; self.textReviewViewportPending=NO;
     self.session = [CompanionVNCSession new];
+    self.session.inputOnly = self.inputOnly;
+    if (self.inputOnly) [self discardInputOnlyPresentation];
     self.session.displayHandoffInputBlocked = self.changingDisplayMode;
     [self clearCursor];
     self.latestCounters = @{};
@@ -563,7 +568,7 @@
         if (weak.session == owner) [weak receivedCursor:image hotspot:hotspot position:position known:known];
     };
     self.session.displayLayoutHandler = ^(NSDictionary *layout) { if (weak.session == owner) weak.displayLayout = layout; };
-    if (self.reconnectWhenReady || self.checkingResume) self.restoreViewportPending = YES;
+    if (!self.inputOnly && (self.reconnectWhenReady || self.checkingResume)) self.restoreViewportPending = YES;
     self.awaitingReplacementLayout = self.restoreViewportPending && self.lastFramebuffer != nil && self.resumeDisplayID != nil;
     self.pendingRestorationFrame = nil;
     if (!self.awaitingReplacementLayout) self.displayLayout = nil;
@@ -592,7 +597,9 @@
             }
             [strong reportDiagnostics:stats]; return;
         }
-        BOOL running = strong.session.running, connected = [state isEqualToString:@"Connected"] && strong.session.connected && strong.lastFramebuffer != nil && !strong.restoreViewportPending && !strong.changingDisplayMode;
+        if (strong.inputOnly && strong.session.established) [strong updateInputOnlyGeometry];
+        BOOL running = strong.session.running, connected = [state isEqualToString:@"Connected"] && strong.session.connected
+            && (strong.inputOnly || (strong.lastFramebuffer != nil && !strong.restoreViewportPending)) && !strong.changingDisplayMode;
         if (!running && ![state isEqualToString:@"Disconnected"] && [stats[@"handshakeStage"] integerValue] >= 5) {
             // Session counters contain only bounded numeric aggregates/geometry.
             // Keep one failure across replacement owners, before teardown clears it.
@@ -646,7 +653,7 @@
 - (void)completeResumeReadiness {
     self.checkingResume = NO; self.reconnectWhenReady = NO;
     self.resumeGeneration++; self.statusGeneration++;
-    [self restoreSavedDisplay];
+    if (!self.inputOnly) [self restoreSavedDisplay];
 }
 - (void)reportDiagnostics:(NSDictionary *)stats {
     if (!self.diagnosticHandler) return;
@@ -700,7 +707,8 @@
     [self invalidateTextReview:NO]; self.textReviewViewportPending=NO; self.deferredTextReviewFailure=nil;
     [self retireTextDraft];
     [self clearRecovery];
-    if (self.lastFramebuffer) { [self rememberViewport]; self.restoreViewportPending = YES; self.image.alpha = .45; }
+    if (!self.inputOnly && self.lastFramebuffer) { [self rememberViewport]; self.restoreViewportPending = YES; self.image.alpha = .45; }
+    if (self.inputOnly) { self.restoreViewportPending = self.awaitingReplacementLayout = NO; self.pendingRestorationFrame = nil; }
     self.starting = YES; self.exited = NO;
     if (self.lastFramebuffer) [self scheduleResumeIndicator:self.changingDisplayMode && self.mirrorFullRestartUsed ? @"Switching display mode…" : @"Reconnecting…"];
     if (self.sessionPhaseHandler) self.sessionPhaseHandler(@"reconnecting");
@@ -764,7 +772,7 @@
     UIApplication.sharedApplication.idleTimerDisabled = NO;
 }
 - (void)clearRecovery {
-    self.loginIssueDetails = nil;
+    self.recoveryInputOnlyAction = nil; self.loginIssueDetails = nil;
     if (!self.recoveryController) return;
     [self.recoveryController willMoveToParentViewController:nil];
     [self.login removeArrangedSubview:self.recoveryController.view];
@@ -795,11 +803,18 @@
 - (void)editRecoveryLogin { [self finishCredentialSession]; [self clearRecovery]; self.login.hidden = NO; self.starting = NO; [self updateConnectionChrome]; [self.username becomeFirstResponder]; }
 - (void)showRecoveryStage:(NSInteger)stage {
     __weak CompanionVNCViewer *weak = self;
+    __weak CompanionVNCSession *owner = self.session;
+    NSNumber *failed = self.failedDisplayModePreset;
+    void (^inputOnly)(void) = nil;
+    if (failed && !self.inputOnly) inputOnly = ^{
+        if (weak.session == owner && [weak.failedDisplayModePreset isEqual:failed]) weak.inputOnly = YES;
+    };
     UIViewController *card = [DirectRecoveryBridgeV1 desktopWithStage:stage hadFrame:self.lastFramebuffer != nil port:((stage == 10 || stage == 11 || (stage >= 110 && stage <= 115)) ? self.sshPort ?: 22 : self.servicePort ?: 5900) textInterrupted:self.textSendInterrupted retry:^{
         if (weak.failedDisplayModePreset) [weak restartDisplayModePreset:weak.failedDisplayModePreset.integerValue];
         else [weak start];
-    } edit:^{ [weak editRecoveryLogin]; }];
+    } edit:^{ [weak editRecoveryLogin]; } inputOnly:inputOnly];
     [self showRecoveryController:card overFrame:self.lastFramebuffer != nil];
+    self.recoveryInputOnlyAction = inputOnly;
     self.loginIssueDetails = [DirectRecoveryBridgeV1 desktopDetailsWithStage:stage hadFrame:self.lastFramebuffer != nil port:((stage == 10 || stage == 11 || (stage >= 110 && stage <= 115)) ? self.sshPort ?: 22 : self.servicePort ?: 5900)];
     [self updateConnectionChrome];
 }
@@ -915,7 +930,7 @@
     if (self.deferredTextReviewFailure) { self.reconnectWhenReady = NO; [self revealDeferredTextReviewFailure]; return; }
     if (!self.reconnectWhenReady) return;
     self.checkingResume = YES;
-    self.status.hidden = YES; [self scheduleResumeIndicator:@"Updating desktop…"]; self.image.alpha = 1;
+    self.status.hidden = YES; [self scheduleResumeIndicator:self.inputOnly ? @"Resuming Trackpad & Keyboard…" : @"Updating desktop…"]; self.image.alpha = 1;
     if (!self.session.running) { [self reconnectAfterFailedResume]; return; }
     [self.session resume];
     CompanionVNCSession *owner = self.session; NSUInteger generation = ++self.resumeGeneration;
@@ -1832,10 +1847,18 @@
     if (self.presentationHandler) self.presentationHandler(value);
 }
 - (void)setInputOnly:(BOOL)value {
-    // Keep frame delivery alive until the replacement's visible crop is ready.
-    // A failed display-mode retry also needs screen mode. Fence stale menu
-    // actions and direct callers until that recovery is retried or dismissed.
-    if (self.restoreViewportPending || (self.failedDisplayModePreset != nil && _inputOnly != value)) return;
+    BOOL replacingDisplay = self.failedDisplayModePreset != nil || self.changingDisplayMode || self.restoreViewportPending
+        || self.pendingDesktopSizePreset || self.pendingStreamDisplayID || (!self.session.running && self.recoveryController);
+    if (value && !_inputOnly && self.isViewLoaded && replacingDisplay) {
+        if (self.filesTransferActiveHandler && self.filesTransferActiveHandler()) {
+            if (!self.presentedViewController) {
+                UIAlertController *alert = [self inputOnlyConfirmation];
+                if (alert) [self presentViewController:alert animated:YES completion:nil];
+            }
+        } else [self restartInputOnlyConnection];
+        return;
+    }
+    if (!value && (self.restoreViewportPending || (_inputOnly && (self.starting || self.checkingResume)))) return;
     if (_inputOnly != value) { [self retireTextDraft]; self.textComposer = nil; }
     _inputOnly = value;
     if (self.quickActionsProvider) self.quickActions = self.quickActionsProvider(value);
@@ -1845,6 +1868,39 @@
         if (self.session.established) self.session.inputOnly = value;
         if (value) [self setTrackpadModeEnabled:YES];
         [self applyPresentation];
+    }
+}
+- (void)restartInputOnlyConnection {
+    if (!self.connectionForegroundAvailable || self.textReview) return;
+    BOOL resumeLogin = [self.credentialState loginForResume] != nil;
+    if (self.changingDisplayMode) self.restoredDesktopSizePreset = self.modePreviousPreset;
+    [self cancelDisplayModeConfirmation];
+    [self retireDisplayModeOwner];
+    self.changingDisplayMode = self.mirrorRestartScheduled = self.mirrorRequiresCleanup = self.mirrorFullRestartUsed = NO;
+    self.failedDisplayModePreset = nil; self.pendingDesktopSizePreset = self.lateDesktopSizePreset = 0; self.pendingStreamDisplayID = nil;
+    self.mirrorCleanupRemaining = 0; self.modeVerificationTimed = NO; self.modeVerificationGeneration++;
+    self.checkingResume = self.reconnectWhenReady = self.restoreViewportPending = self.awaitingReplacementLayout = NO;
+    self.resumeGeneration++; self.statusGeneration++; self.pendingRestorationFrame = nil; self.resumeDisplayID = nil;
+    [self discardInputOnlyPresentation];
+    [self clearRecovery]; self.login.hidden = NO;
+    self.inputOnly = YES;
+    [self startResuming:resumeLogin];
+}
+- (void)discardInputOnlyPresentation {
+    self.restoreViewportPending = self.awaitingReplacementLayout = NO;
+    self.pendingRestorationFrame = nil; self.resumeDisplayID = nil;
+    self.lastFramebuffer = nil; self.image.image = nil; self.framebufferSize = CGSizeZero; self.activeCrop = CGRectNull;
+    self.selectedDisplay = nil; self.displayViews = @[]; self.displayLayout = nil; self.displayAspect = 0;
+}
+- (void)updateInputOnlyGeometry {
+    NSDictionary *stats = self.session.diagnosticCounters;
+    NSInteger width = [stats[@"framebufferWidth"] integerValue], height = [stats[@"framebufferHeight"] integerValue];
+    size_t bytes;
+    if (!self.inputOnly || !self.session.established || !CompanionVNCFramebufferByteCount(width,height,&bytes)) return;
+    CGSize size = CGSizeMake(width,height);
+    if (!CGSizeEqualToSize(self.framebufferSize,size) || CGRectIsNull(self.activeCrop) || CGRectIsEmpty(self.activeCrop)) {
+        [self cancelTrackpadTouches]; [self releasePointer]; [self invalidateCursorPosition];
+        self.framebufferSize = size; self.activeCrop = (CGRect){CGPointZero,size};
     }
 }
 - (void)applyPresentation {
@@ -1899,7 +1955,7 @@
     if ([kind isEqual:@"setTrackpad"]) { [self setTrackpadModeEnabled:YES]; return; }
     if ([kind isEqual:@"functionKeys"]) { [self showFunctionKeys]; return; }
     if ([kind isEqual:@"fullscreen"]) { self.fullscreen = !self.fullscreen; return; }
-    if ([kind isEqual:@"inputOnly"]) { self.inputOnly = !self.inputOnly; return; }
+    if ([kind isEqual:@"inputOnly"]) { if (self.connectionForegroundAvailable) self.inputOnly = !self.inputOnly; return; }
     if ([kind isEqual:@"keyboard"]) { [self keyboard]; return; }
     if ([kind isEqual:@"displays"]) { [self chooseView]; return; }
     if ([kind isEqual:@"input"]) { if (self.settingsHandler) self.settingsHandler(); return; }
@@ -2023,9 +2079,20 @@
     return YES;
 }
 - (void)cancelDisplayModeConfirmation {
-    self.modeConfirmationPreset = nil; self.modeConfirmationOwner = nil;
+    self.inputOnlyConfirmationPending = NO; self.modeConfirmationPreset = nil; self.modeConfirmationOwner = nil;
     UIAlertController *alert = self.modeConfirmationAlert; self.modeConfirmationAlert = nil;
     if (alert && self.presentedViewController == alert) [alert dismissViewControllerAnimated:NO completion:nil];
+}
+- (UIAlertController *)inputOnlyConfirmation {
+    if (!self.connectionForegroundAvailable || self.inputOnly || self.textReview) return nil;
+    [self cancelDisplayModeConfirmation];
+    self.inputOnlyConfirmationPending = YES; self.modeConfirmationOwner = self.session;
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Use Trackpad & Keyboard?"
+        message:@"File transfers using this connection will stop." preferredStyle:UIAlertControllerStyleAlert];
+    __weak CompanionVNCViewer *weak = self;
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action){ [weak cancelDisplayModeConfirmation]; }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Continue" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){ [weak acceptDisplayModeConfirmation]; }]];
+    self.modeConfirmationAlert = alert; return alert;
 }
 - (UIAlertController *)displayModeConfirmationForPreset:(NSInteger)preset {
     if (preset < 0 || preset > 3 || ![self displayChangeAllowed] || self.changingDisplayMode
@@ -2049,10 +2116,15 @@
     if (alert) [self presentViewController:alert animated:YES completion:nil];
 }
 - (BOOL)acceptDisplayModeConfirmation {
-    NSNumber *target = self.modeConfirmationPreset;
-    BOOL current = self.modeConfirmationOwner == self.session && target != nil;
-    self.modeConfirmationPreset = nil; self.modeConfirmationOwner = nil; self.modeConfirmationAlert = nil;
-    if (!current || ![self displayChangeAllowed]) return NO;
+    NSNumber *target = self.modeConfirmationPreset; BOOL inputOnly = self.inputOnlyConfirmationPending;
+    BOOL current = self.modeConfirmationOwner == self.session && (target != nil || inputOnly);
+    self.inputOnlyConfirmationPending = NO; self.modeConfirmationPreset = nil; self.modeConfirmationOwner = nil; self.modeConfirmationAlert = nil;
+    if (!current) return NO;
+    if (inputOnly) {
+        if (!self.connectionForegroundAvailable || self.inputOnly || self.textReview) return NO;
+        [self restartInputOnlyConnection]; return YES;
+    }
+    if (![self displayChangeAllowed]) return NO;
     return [self restartDisplayModePreset:target.integerValue];
 }
 - (void)retireDisplayModeOwner {
@@ -2285,7 +2357,7 @@
             @{@"kind": @"copyText", @"title": @"Copy Text from Screen", @"symbol": @"text.viewfinder", @"disabled": @(![self canCopyScreenText])}]}];
     }
     [sections addObject:@{@"title": @"Presentation", @"items": @[
-        @{@"kind": @"inputOnly", @"title": self.inputOnly ? @"Show Mac Screen" : @"Trackpad & Keyboard Only", @"symbol": self.inputOnly ? @"desktopcomputer" : @"rectangle.and.hand.point.up.left", @"disabled": @(self.changingDisplayMode || self.failedDisplayModePreset != nil || self.restoreViewportPending || self.pendingDesktopSizePreset || self.pendingStreamDisplayID)},
+        @{@"kind": @"inputOnly", @"title": self.inputOnly ? @"Show Mac Screen" : @"Trackpad & Keyboard Only", @"symbol": self.inputOnly ? @"desktopcomputer" : @"rectangle.and.hand.point.up.left", @"disabled": @(!self.connectionForegroundAvailable || (self.inputOnly && (self.starting || self.restoreViewportPending || self.checkingResume)))},
         @{@"kind": @"fullscreen", @"title": self.fullscreen ? @"Show Keyboard Bar" : @"Hide Keyboard Bar", @"symbol": self.fullscreen ? @"keyboard" : @"keyboard.chevron.compact.down"}]}];
     return sections;
 }

@@ -592,7 +592,19 @@ private func desktopWriterFinished(_ group: DispatchGroup) -> Bool { group.wait(
             _ = viewer.perform(NSSelectorFromString("start"))
             do {
                 try await wait("native desktop becomes ready through SSH") { viewer.session.connected }
-                try await wait("normal view presents framebuffer") { viewer.value(forKey: "lastFramebuffer") != nil }
+                if inputOnly {
+                    try await wait("input-only controls become ready without pixels") {
+                        (viewer.value(forKey: "loginScroll") as? UIScrollView)?.isHidden == true &&
+                        (viewer.value(forKey: "starting") as? Bool) == false
+                    }
+                    XCTAssertNil(viewer.value(forKey: "lastFramebuffer"))
+                    XCTAssertEqual((viewer.session.diagnosticCounters["presentedFrames"] as? NSNumber)?.intValue, 0)
+                    // LibVNCClient sends its standard initial request inside rfbInitClient.
+                    // Its response must never gate input or trigger ongoing polling.
+                    XCTAssertEqual(server.record.count("update"), 1, "Only the library initialization request is sent")
+                    let crop = try XCTUnwrap(viewer.value(forKey: "activeCrop") as? NSValue).cgRectValue
+                    XCTAssertEqual(crop, CGRect(x: 0, y: 0, width: 256, height: 128), "Pointer bounds come from ServerInit")
+                } else { try await wait("normal view presents framebuffer") { viewer.value(forKey: "lastFramebuffer") != nil } }
                 XCTAssertEqual(server.record.count("auth"), 1); XCTAssertEqual(server.record.count("forward"), 1)
                 XCTAssertEqual(server.record.count("ardExchange"), 1)
                 if !inputOnly { try await wait("normal desktop arms automatic delivery") { server.record.count("automaticUpdatesStart") > 0 } }
@@ -605,6 +617,7 @@ private func desktopWriterFinished(_ group: DispatchGroup) -> Bool { group.wait(
                 viewer.session.resume()
                 try await wait("same owner resumes") { viewer.session.connected }
                 XCTAssertEqual(server.record.count("tcp"), 1)
+                if inputOnly { XCTAssertEqual(server.record.count("update"), 1, "Resume sends no additional video requests") }
                 try await wait("connected UI dismisses sign-in progress") {
                     (viewer.value(forKey: "loginScroll") as? UIScrollView)?.isHidden == true &&
                     (viewer.value(forKey: "starting") as? Bool) == false
