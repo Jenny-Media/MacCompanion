@@ -401,6 +401,8 @@ struct DirectMacLibraryRootV1: View {
     }
 
     var body: some View {
+        ZStack {
+        DirectLibraryContainer(blocked: session != nil || !appLock.canInteract) {
         NavigationStack {
             DirectMacDiscoveryList(refresh: refreshNearbyMacs) {
                 let downloads = DirectFilesWorkspace.recoverableDownloads(libraryURL: library.storageURL)
@@ -555,13 +557,11 @@ struct DirectMacLibraryRootV1: View {
             } message: {
                 Text("Related sessions will close and transfers will stop. Unsaved downloads stay available until you save or discard them.")
             }
-            .onOpenURL { openRoute($0) }
 
         }
-            .accessibilityHidden(session != nil)
-            .allowsHitTesting(session == nil)
+        }.ignoresSafeArea()
             .background(DirectConnectionPanelAnchor(host: connectionPanel).frame(width: 0, height: 0))
-            .overlay {
+            Group {
                 if quickConnect && session == nil {
                     DirectConnectionPanelContent(host: connectionPanel, cancel: cancelQuickConnect) {
                         DirectQuickConnectView(library: library, panel: connectionPanel,
@@ -585,14 +585,17 @@ struct DirectMacLibraryRootV1: View {
                     }
                 }
             }
+            .accessibilityElement(children: .contain)
+            .accessibilityHidden(!appLock.canInteract)
+        }
         #if DEBUG
         .background(DirectUnlockFrameProbe(lock: appLock, token: appLock.unlockTimingToken, phase: .libraryDisplayTick,
             enabled: session == nil && !settings && editor == nil && files == nil && !setup && !paywall))
         #endif
         .opacity(appLock.contentVisible ? 1 : 0)
         .allowsHitTesting(appLock.canInteract)
-        .accessibilityHidden(!appLock.canInteract)
         .onAppear { appLock.install(); updateTemporaryCleanup() }
+        .onOpenURL { openRoute($0) }
         .onReceive(NotificationCenter.default.publisher(for: DirectMacConnections.changed)) { _ in
             DirectTemporaryMacCleanup.shared.retry()
         }

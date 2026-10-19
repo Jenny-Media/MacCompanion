@@ -105,6 +105,11 @@ final class ColdStartLibraryReadGate: @unchecked Sendable {
                 _ = library.save(id: mac.id, name: mac.name, addresses: mac.addresses, sshPort: port, preferredConnection: .terminal)
                 try DirectMacAccessStore.write(.init(login: .init(username: "synthetic", password: "synthetic-only")), id: mac.id)
                 try TerminalSecretStore.approveHostKey(String(openSSHPublicKey: key.publicKey), id: mac.id)
+                if needsAuthentication {
+                    while authentication.reply == nil { try await Task.sleep(for: .milliseconds(10)) }
+                    activity.active = false; lock.becameInactive()
+                    await completeAuthentication(); activate()
+                }
                 stage = "Connected-session fixture ready"
             } catch { stage = "Connected-session fixture failed" }
             return

@@ -56,7 +56,8 @@ import XCTest
     }
 
     func testConnectedSessionHidesLibraryAccessibilityAndRestoresItAfterDisconnect() {
-        let app = launch(["--connect-flow", "--connected-session-review"]); defer { app.terminate() }
+        for locked in [false, true] {
+        let app = launch(["--connect-flow", "--connected-session-review"] + (locked ? ["--inactive-auth"] : [])); defer { app.terminate() }
         let row = app.buttons["Connect to Free Mac using Terminal"]
         XCTAssertTrue(row.waitForExistence(timeout: 10)); row.tap()
         let controls = app.buttons["terminal-controls"]
@@ -69,12 +70,13 @@ import XCTest
         }
         XCTAssertFalse(row.exists)
         XCTAssertFalse(app.buttons["Manage Second Mac"].exists)
-        capture("connected-terminal-hides-library", app)
+        capture("connected-terminal-hides-library-" + (locked ? "locked-start" : "unlocked-start"), app)
         controls.tap(); app.buttons["Session"].tap(); app.buttons["Disconnect"].tap()
         XCTAssertTrue(app.buttons["macs-add"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["open-app-settings"].exists)
         XCTAssertTrue(row.exists)
-        capture("disconnected-restores-library", app)
+        capture("disconnected-restores-library-" + (locked ? "locked-start" : "unlocked-start"), app)
+        }
     }
 
     func testSearchCanDismissKeyboardWithoutClearingTheFilter() {
@@ -480,14 +482,16 @@ import XCTest
         XCTAssertTrue(host.waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["quick-connect-options"].exists)
         XCTAssertFalse(app.buttons["quick-connect-submit"].isEnabled)
-        let before = app.navigationBars["Connect to Mac"].frame.minY
+        let panel = app.otherElements["connection-sheet"].firstMatch
         let first = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); first.name = "quick-connect-partial-sheet"; first.lifetime = .keepAlways; self.add(first)
         host.tap(); host.typeText("synthetic.invalid")
         XCTAssertTrue(app.buttons["quick-connect-submit"].isEnabled)
-        let expanded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            app.navigationBars["Connect to Mac"].frame.minY < before
-        }, object: nil)
-        XCTAssertEqual(XCTWaiter.wait(for: [expanded], timeout: 5), .completed)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(panel.exists)
+        XCTAssertTrue(host.isHittable)
+        XCTAssertLessThanOrEqual(host.frame.maxY, app.keyboards.firstMatch.frame.minY)
+        XCTAssertEqual(app.navigationBars.matching(identifier: "Connect to Mac").count, 1,
+            "The native form keeps one presentation while the keyboard opens")
         capture("quick-connect-keyboard", app)
         app.buttons["quick-connect-options"].tap()
         XCTAssertTrue(app.navigationBars["Connection Options"].waitForExistence(timeout: 5))
