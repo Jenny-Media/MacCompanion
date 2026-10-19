@@ -59,7 +59,13 @@ import UIKit
     }
     private func updatePreferredSize() {
         // Native form sizing adapts to the available window, not the device model.
-        sheet?.preferredContentSize = CGSize(width: 560, height: transient == nil ? max(expanded ? 620 : 0, preferredHeight) : 620)
+        guard let sheet else { return }
+        let size = CGSize(width: 560, height: transient == nil ? max(expanded ? 620 : 0, preferredHeight) : 620)
+        guard sheet.preferredContentSize != size else { return }
+        let update = { sheet.preferredContentSize = size; sheet.viewIfLoaded?.layoutIfNeeded() }
+        if sheet.viewIfLoaded?.window != nil, !sheet.isBeingPresented, !sheet.isBeingDismissed, !UIAccessibility.isReduceMotionEnabled {
+            UIView.animate(withDuration: 0.22, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseInOut], animations: update)
+        } else { update() }
     }
     private func reconcile() {
         guard !dismissing else { return }

@@ -1083,7 +1083,66 @@
           "expectedHex": "1b08"
         }
       ],
-      "groupedModifiedDeletion": "one-per-logical-call"
+      "groupedModifiedDeletion": "one-per-logical-call",
+      "enhancedShortcutCases": [
+        {
+          "text": "1",
+          "alt": true,
+          "flags": 1,
+          "expectedHex": "1b5b34393b3375"
+        },
+        {
+          "text": "a",
+          "alt": true,
+          "flags": 3,
+          "expectedHex": "1b5b39373b3375"
+        },
+        {
+          "text": "1",
+          "alt": true,
+          "flags": 8,
+          "expectedHex": "1b5b34393b3375"
+        },
+        {
+          "text": "1",
+          "alt": true,
+          "flags": 24,
+          "expectedHex": "1b5b34393b3375"
+        },
+        {
+          "text": "1",
+          "alt": true,
+          "flags": 2,
+          "expectedHex": "1b31"
+        },
+        {
+          "text": "c",
+          "alt": true,
+          "ctrl": true,
+          "flags": 1,
+          "expectedHex": "1b5b39393b3775"
+        },
+        {
+          "text": "1",
+          "alt": true,
+          "shift": true,
+          "flags": 5,
+          "expectedHex": "1b5b34393a33333b3475"
+        },
+        {
+          "text": "1",
+          "alt": true,
+          "shift": true,
+          "flags": 1,
+          "expectedHex": "1b5b34393b3475"
+        },
+        {
+          "text": "A",
+          "alt": true,
+          "flags": 5,
+          "expectedHex": "1b5b39373a36353b3475"
+        }
+      ]
     },
     "lifetimePro": {
       "productType": "non-consumable",
