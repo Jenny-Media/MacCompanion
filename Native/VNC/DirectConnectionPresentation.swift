@@ -1,6 +1,7 @@
 #if os(iOS) && MACCOMPANION_VNC_DEVELOPMENT
 import SwiftUI
 import UIKit
+import Observation
 
 /// Shared presentation only; connection ownership and server trust stay in their
 /// existing controllers. Names are a passive view of the saved Mac list.
@@ -153,21 +154,87 @@ struct DirectConnectionFooter<Actions: View>: View {
     }
 }
 
+/// A connection attempt owns its clock and monotonic presentation milestones.
+/// This observes the existing transport; it never drives authentication or retry.
+@objc(DirectConnectionProgressState) @MainActor @Observable final class DirectConnectionProgressState: NSObject {
+    enum Stage: Int { case restoringDisplays = -1, contacting, securing, signingIn, startingSession }
+    enum Status: Equatable { case complete, active, pending }
+    struct Step: Identifiable {
+        let stage: Stage
+        let title: String
+        let status: Status
+        var id: Int { stage.rawValue }
+    }
+    private(set) var attempt = UUID()
+    private(set) var stage = Stage.contacting
+    private(set) var encrypted = false
+    private(set) var restoresDisplays = false
+    private(set) var startedAt = ProcessInfo.processInfo.systemUptime
+
+    @objc(beginWaitingForDisplays:) func begin(waitingForDisplays: Bool) {
+        attempt = UUID(); startedAt = ProcessInfo.processInfo.systemUptime
+        restoresDisplays = waitingForDisplays; encrypted = false
+        stage = waitingForDisplays ? .restoringDisplays : .contacting
+    }
+    func advance(to next: Stage) {
+        guard next.rawValue > stage.rawValue else { return }
+        stage = next
+    }
+    // These are closed, local transport events, never server-provided strings.
+    @objc(recordTransportMessage:) func recordTransportMessage(_ message: String) {
+        switch message {
+        case "Connecting to Remote Login…": advance(to: .contacting)
+        case "Verifying SSH server…": advance(to: .securing)
+        case "Signing in to Remote Login…", "Opening encrypted connection…":
+            encrypted = true; advance(to: .signingIn)
+        default: break
+        }
+    }
+    @objc(recordNativeState:) func recordNativeState(_ state: String) {
+        guard encrypted else { return }
+        switch state {
+        case "Signing in", "Authenticating with macOS": advance(to: .signingIn)
+        case "Opening desktop", "Connected": advance(to: .startingSession)
+        default: break
+        }
+    }
+    @objc func finishedRestoringDisplays() { advance(to: .contacting) }
+    func elapsedSeconds(at uptime: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Int {
+        max(0, Int(uptime - startedAt))
+    }
+    func steps(service: String) -> [Step] {
+        let final: String = service == "Terminal" ? "Opening Terminal" : service == "Trackpad & Keyboard" ? "Enabling controls" : "Starting desktop"
+        let milestones: [(Stage, String, String)] = (restoresDisplays ? [(.restoringDisplays, "Ready to reconnect", "Waiting for Mac displays")] : []) + [
+            (.contacting, "Mac reached", "Contacting Mac"),
+            (.securing, "Connection secured", "Securing connection"),
+            (.signingIn, "Signed in", "Signing in"),
+            (.startingSession, final, final)
+        ]
+        return milestones.map { value, complete, current in
+            let status: Status = value.rawValue < stage.rawValue ? .complete : value == stage ? .active : .pending
+            return Step(stage: value, title: status == .complete ? complete : current + (status == .active ? "…" : ""), status: status)
+        }
+    }
+}
+
 struct DirectConnectionProgress: View {
     let name: String
     let service: String
     let symbol: String
+    let progress: DirectConnectionProgressState
     var displayMode: String? = nil
     var message = "Connecting…"
+    var addresses: [String] = []
+    var sshPort = 22
+    var screenSharingPort: Int? = nil
     let cancel: () -> Void
     var contentHeightChanged: (CGFloat) -> Void = { _ in }
+    @State private var detailsExpanded = false
     @State private var headerHeight: CGFloat = 0
     @State private var statusHeight: CGFloat = 0
     @State private var footerHeight: CGFloat = 0
     @State private var safeAreaHeight: CGFloat = 0
     private func reportHeight() {
-        // Report natural content, independently of the extra room used to
-        // center progress in a tall phone sheet. This keeps tablet forms fitted.
         contentHeightChanged(headerHeight + statusHeight + 48 + 28 + footerHeight + safeAreaHeight)
     }
     var body: some View {
@@ -179,11 +246,38 @@ struct DirectConnectionProgress: View {
                             headerHeight = $0; reportHeight()
                         }
                     Spacer(minLength: 24)
-                    VStack(spacing: 12) {
-                        ProgressView().controlSize(.regular)
-                        Text(message).font(.subheadline.weight(.medium)).multilineTextAlignment(.center)
+                    VStack(spacing: 20) {
+                        Text(message).font(.title3.weight(.semibold)).multilineTextAlignment(.center)
                             .fixedSize(horizontal: false, vertical: true)
+                        VStack(spacing: 0) {
+                            ForEach(progress.steps(service: service)) { step in
+                                if step.id != progress.steps(service: service).first?.id {
+                                    Divider().padding(.leading, 52)
+                                }
+                                stepRow(step)
+                            }
+                        }.background(Color(uiColor: DirectConnectionStyle.field), in: RoundedRectangle(cornerRadius: 20))
+                        TimelineView(.periodic(from: .now, by: 1)) { _ in
+                            let seconds = progress.elapsedSeconds()
+                            Text("\(seconds) seconds elapsed").font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                                // Reserve the line so tablet sheets do not grow when it appears.
+                                .opacity(seconds >= 5 ? 1 : 0).accessibilityHidden(seconds < 5)
+                                .accessibilityIdentifier("connection-progress-elapsed")
+                        }
+                        VStack(spacing: 12) {
+                            Button { detailsExpanded.toggle() } label: {
+                                HStack(spacing: 8) {
+                                    Text("Connection Details")
+                                    Image(systemName: detailsExpanded ? "chevron.up" : "chevron.down").font(.caption.weight(.semibold))
+                                }.frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                            }.font(.subheadline).foregroundStyle(.blue).buttonStyle(.plain)
+                                .accessibilityIdentifier("connection-progress-details")
+                                .accessibilityValue(detailsExpanded ? "Expanded" : "Collapsed")
+                            if detailsExpanded { details }
+                        }
                     }.frame(maxWidth: .infinity).padding(.vertical, 4)
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier("connection-progress-status")
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
                             statusHeight = $0; reportHeight()
                         }
@@ -202,7 +296,51 @@ struct DirectConnectionProgress: View {
             }
         }.onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top + $0.safeAreaInsets.bottom } action: {
             safeAreaHeight = $0; reportHeight()
-        }.directAppearance()
+        }.onChange(of: progress.attempt) { detailsExpanded = false }
+            .directAppearance()
+    }
+    private func stepRow(_ step: DirectConnectionProgressState.Step) -> some View {
+        HStack(spacing: 14) {
+            Group {
+                switch step.status {
+                case .complete: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).font(.title3)
+                case .active: ProgressView().tint(.blue)
+                case .pending: Image(systemName: "circle").foregroundStyle(.tertiary).font(.title3)
+                }
+            }.frame(width: 24).accessibilityHidden(true)
+            Text(step.title).font(.body.weight(step.status == .active ? .medium : .regular))
+                .foregroundStyle(step.status == .pending ? Color.secondary : Color.primary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }.padding(.horizontal, 16).padding(.vertical, 14)
+            .accessibilityElement(children: .combine)
+            .accessibilityValue(step.status == .complete ? "Complete" : step.status == .active ? "In progress" : "Pending")
+            .accessibilityIdentifier("connection-progress-step-\(step.id)")
+    }
+    private var details: some View {
+        VStack(spacing: 0) {
+            if let first = addresses.first { detailRow("Configured address", value: first) }
+            if addresses.count > 1 { detailRow("Other addresses", value: addresses.dropFirst().joined(separator: ", ")) }
+            detailRow("Remote Login", value: "SSH · \(sshPort)")
+            if let screenSharingPort { detailRow("Screen Sharing", value: "Port \(screenSharingPort)") }
+            detailRow("Encryption", value: progress.encrypted ? "Encrypted" : "Establishing…", last: true)
+        }.background(Color(uiColor: DirectConnectionStyle.field), in: RoundedRectangle(cornerRadius: 16))
+    }
+    private func detailRow(_ label: String, value: String, last: Bool = false) -> some View {
+        VStack(spacing: 0) {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline, spacing: 16) {
+                    Text(label).foregroundStyle(.secondary).fixedSize()
+                    Spacer(minLength: 0)
+                    Text(value).multilineTextAlignment(.trailing).fixedSize(horizontal: true, vertical: false)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(label).foregroundStyle(.secondary)
+                    Text(value).fixedSize(horizontal: false, vertical: true)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }.font(.subheadline).padding(14)
+            if !last { Divider().padding(.leading, 14) }
+        }.accessibilityElement(children: .combine)
     }
 }
 
@@ -288,11 +426,11 @@ struct DirectConnectionCredentialField: UIViewRepresentable {
 }
 
 @objc(DirectConnectionBridge) @MainActor final class DirectConnectionBridge: NSObject {
-    @objc(updateProgress:name:inputOnly:desktopSize:message:cancel:heightChanged:) static func updateProgress(_ controller: UIViewController?, name: String, inputOnly: Bool, desktopSize: Int, message: String, cancel: @escaping () -> Void, heightChanged: @escaping (CGFloat) -> Void) -> UIViewController {
+    @objc(updateProgress:name:inputOnly:desktopSize:message:progress:addresses:sshPort:screenSharingPort:cancel:heightChanged:) static func updateProgress(_ controller: UIViewController?, name: String, inputOnly: Bool, desktopSize: Int, message: String, progress: DirectConnectionProgressState, addresses: [String], sshPort: Int, screenSharingPort: Int, cancel: @escaping () -> Void, heightChanged: @escaping (CGFloat) -> Void) -> UIViewController {
         let view = DirectConnectionProgress(name: name, service: inputOnly ? "Trackpad & Keyboard" : "Screen Sharing",
-            symbol: inputOnly ? "rectangle.and.hand.point.up.left" : "desktopcomputer",
+            symbol: inputOnly ? "rectangle.and.hand.point.up.left" : "desktopcomputer", progress: progress,
             displayMode: inputOnly ? nil : desktopSize == 0 ? "Mirror Mac Screen" : "Virtual Display",
-            message: message, cancel: cancel, contentHeightChanged: heightChanged)
+            message: message, addresses: addresses, sshPort: sshPort, screenSharingPort: screenSharingPort, cancel: cancel, contentHeightChanged: heightChanged)
         if let host = controller as? UIHostingController<DirectConnectionProgress> {
             host.rootView = view; return host
         }

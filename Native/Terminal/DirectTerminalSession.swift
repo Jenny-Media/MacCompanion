@@ -29,6 +29,21 @@ final class TerminalSocketOwner: @unchecked Sendable {
     deinit { cancel() }
 }
 
+/// Runs on the SSH event loop and forwards the original authentication offer
+/// unchanged. UI observation never blocks login or owns its promise.
+final class TerminalAuthenticationProgress: NIOSSHClientUserAuthenticationDelegate {
+    let authentication: SSHAuthenticationMethod
+    let started: @MainActor @Sendable () -> Void
+    init(authentication: SSHAuthenticationMethod, started: @escaping @MainActor @Sendable () -> Void) {
+        self.authentication = authentication; self.started = started
+    }
+    func nextAuthenticationType(availableMethods: NIOSSHAvailableUserAuthenticationMethods,
+                                nextChallengePromise: EventLoopPromise<NIOSSHUserAuthenticationOffer?>) {
+        Task { @MainActor [started] in started() }
+        authentication.nextAuthenticationType(availableMethods: availableMethods, nextChallengePromise: nextChallengePromise)
+    }
+}
+
 final class TerminalHostValidator: NIOSSHClientServerAuthenticationDelegate, @unchecked Sendable {
     let validate: @MainActor @Sendable (String) async throws -> Void
     init(validate: @escaping @MainActor @Sendable (String) async throws -> Void) { self.validate = validate }
@@ -113,6 +128,9 @@ private enum TerminalPTY {
     private(set) var macRemoved = false
     @ObservationIgnored private var removalObserver: DirectMacRemovalObservation?
     var status = "Sign in to Remote Login"
+    #if os(iOS)
+    let connectionProgress = DirectConnectionProgressState()
+    #endif
     var connecting = false
     var connected = false
     private(set) var completedNormally = false
@@ -274,6 +292,9 @@ private enum TerminalPTY {
         #endif
         identityDetails = []; installedKey = nil; recovery = nil; phase = "Contacting Mac"; setupPhase = .notSent; settingUp = installation != nil; let id = UUID(); generation = id
         let owner = TerminalSocketOwner(); socketOwner = owner
+        #if os(iOS)
+        connectionProgress.begin(waitingForDisplays: false)
+        #endif
         connecting = true; phase = "Finding a reachable address"; status = "Contacting Remote Login…"
         let addresses = mac.addresses, port = mac.sshPort
         work = Task {
@@ -340,6 +361,9 @@ private enum TerminalPTY {
                     else if remember { try TerminalSecretStore.save(.init(username: username, password: password), id: mac.id) }
                     #endif
                 }
+                #if os(iOS)
+                self.connectionProgress.advance(to: .startingSession)
+                #endif
                 self.phase = "Opening a new shell"
                 let exitStatus = try await TerminalPTY.run(client: client, columns: columns, rows: rows, ready: { writer in
                     guard self.generation == id, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { throw CancellationError() }
@@ -402,6 +426,9 @@ private enum TerminalPTY {
         }
         let fd = socket
         phase = "SSH handshake"
+        #if os(iOS)
+        connectionProgress.advance(to: .securing)
+        #endif
         if owner.isCancelled || generation != id { Darwin.close(fd); throw CancellationError() }
         // The server can send its banner as soon as this socket is registered.
         // Keep it queued until Citadel has installed its SSH parser.
@@ -426,8 +453,18 @@ private enum TerminalPTY {
             try TerminalSecretStore.approveHostKey(key, id: self.mac.id)
             self.phase = "Signing in"
         }
+        #if os(iOS)
+        let observedAuthentication: @Sendable () -> SSHAuthenticationMethod = { [weak self] in
+            .custom(TerminalAuthenticationProgress(authentication: authentication(), started: { [weak self] in
+                guard let self, self.generation == id, self.connecting else { return }
+                self.connectionProgress.recordTransportMessage("Signing in to Remote Login…")
+            }))
+        }
+        #else
+        let observedAuthentication = authentication
+        #endif
         var settings = SSHClientSettings(host: addresses.first ?? mac.address, port: port,
-            authenticationMethod: authentication, hostKeyValidator: .custom(validator))
+            authenticationMethod: observedAuthentication, hostKeyValidator: .custom(validator))
         settings.connectTimeout = .seconds(60)
         let client = try await SSHClient.connect(on: channel, settings: settings)
         guard generation == id, !Task.isCancelled else { try? await client.close(); throw CancellationError() }

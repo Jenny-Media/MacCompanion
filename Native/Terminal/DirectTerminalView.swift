@@ -258,7 +258,7 @@ struct DirectTerminalView: View {
     }
     @ViewBuilder private var nativeLoginContent: some View {
         if session.connecting {
-            DirectConnectionProgress(name: mac.name, service: "Terminal", symbol: "terminal", cancel: { session.stop(); exit() }, contentHeightChanged: { if session.connecting { nativeProgressHeight = $0 } })
+            DirectConnectionProgress(name: mac.name, service: "Terminal", symbol: "terminal", progress: session.connectionProgress, addresses: mac.addresses, sshPort: mac.sshPort, cancel: { session.stop(); exit() }, contentHeightChanged: { if session.connecting { nativeProgressHeight = $0 } })
         } else {
             ScrollView {
                 VStack(spacing: 18) {

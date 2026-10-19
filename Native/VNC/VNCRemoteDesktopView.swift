@@ -462,7 +462,7 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
                 guard accepted else { throw TerminalSecretStore.Failure.rejectedKey }
                 try TerminalSecretStore.approveHostKey(key, id: mac.id)
             }
-            viewer?.showConnectionProgress("Signing in to Remote Login…")
+            viewer?.showConnectionProgress("Verifying SSH server…")
         }
         func answerTrust(_ accepted: Bool) {
             let reply = trustReply; trustReply = nil
