@@ -48,8 +48,11 @@ Established sessions pause input/frame processing while retaining the socket;
 foreground checks it, then makes one replacement attempt if needed, preserving
 valid viewport settings. Dynamic Island/Lock Screen session status is optional
 (default on), and its toggle does not change connection recovery. The compact
-island identifies the Mac with a bounded one-line name and status symbol. Expanded
-and Lock Screen views offer Resume and End Session. End Session uses the activity's
+island identifies the Mac with a bounded one-line name and a persistent session
+icon: a monitor for Screen Sharing/Trackpad & Keyboard, or a Terminal window for
+Terminal. The minimal island uses the same icon. Pause, reconnect and stale status
+updates do not change these icons; status details stay in the expanded and Lock
+Screen views, which consistently offer Open and Disconnect. Disconnect uses the activity's
 unique ID to stop only its matching viewer, retire recovery and remove the island;
 it works through an app-process Live Activity intent without opening the app.
 No indefinite
@@ -83,6 +86,19 @@ accounts, helper installation and audio are outside this MVP. File transfer is
 an approved follow-up described below.
 Permanent Apple identities/signing, dependency admission, licensing delivery,
 packaging and physical reliability gates in `docs/execution-status.md` remain.
+
+## Adaptive connection forms
+
+iPhone, iPad and narrow/resized windows share the same connection form, field
+order, status and actions. The system form-sheet presenter uses a bounded
+preferred width and adapts to the available window and keyboard. It requests
+native centered placement where supported; it does not branch by device model.
+Connection and display-switch progress keep Cancel outside scrolling content.
+Quick Connect options and SSH trust keep their main actions above the keyboard;
+Files connection and SSH key setup retain a stable bottom action region.
+Settings editors retain navigation Save/Cancel, including Create for new keys.
+These are presentation changes only: authentication, trust approval, cancellation
+and connection ownership keep their existing behavior.
 
 ## Session controls follow-up
 
@@ -215,8 +231,8 @@ connection explanations live in Connection Details. Login failures appear inline
 above retained fields; detailed explanations and fixed diagnostics remain available
 under Connection Details. Confirmed SSH-key rejection offers Set Up Key and Use
 Password without claiming that a missing public key is the only possible cause.
-The layout scrolls for the keyboard or large text and retains compact landscape
-credential columns. SSH identity verification still
+The layout scrolls for the keyboard or large text and keeps the same grouped
+credential rows across compact and roomy layouts. SSH identity verification still
 precedes authentication. Entry and trust-sheet dismissal never retry a failure
 automatically.
 
@@ -450,7 +466,8 @@ profile stores only a key reference and account. Differing legacy SSH logins
 are preserved as overrides before old password items are cleaned up. An empty
 canonical profile never falls back to stale legacy data.
 
-Mac Settings has one Login & Access entry. Login, authentication method and key
+Mac Settings has one Saved Login entry. The Mac account stays on the first page;
+Terminal sign-in alternatives are in a secondary page of the same editor. Login, authentication method and key
 selection are read-only while this Mac is connecting, connected, reconnecting or
 closing. Disconnect & Edit warns about transfers and waits for teardown. Other
 Macs stay editable. Global key management permits cosmetic renames and unrelated
@@ -524,3 +541,43 @@ changes keep the saved mode, retain their specific error and allow explicit retr
 Choose Display requests a host-selected stream using validated IDs. It retains the
 monitor catalogue, requires fresh matching layout/pixels, and never saves a failed
 selection. UDP/video transport and codec negotiation are unchanged and deferred.
+
+### iOS unlock and connection presentation
+
+The app-lock cover is a quiet full-screen page with a reachable bottom unlock
+button. The button reflects an in-flight authentication attempt; successful
+local authentication still reveals prepared local UI and enables its controls
+together, independently of the remote foreground/session readiness checks.
+iOS owns Face ID failure alerts.
+
+Showing the privacy cover first resigns input in the covered windows. Its layout
+ignores keyboard avoidance, uses the official app mark, and keeps authentication
+progress readable without changing authentication or remote admission policy.
+
+Sign-in and connecting panels sit near the bottom of the available region,
+above the keyboard. Compact, folded and accessibility layouts can scroll.
+Connecting keeps the Mac identity, progress and Cancel, without credential
+management or a competing Trackpad action. Failed display-mode recovery keeps
+its independent Trackpad & Keyboard action. Saved Login is managed in Mac
+Settings; opening Terminal sign-in settings preserves the unsaved shared draft,
+and cancelling or entering the background clears it without saving.
+
+### iOS quick connection and saved Macs
+
+The native Connect to Mac sheet stays over the real My Macs page through login, server trust and progress. Its presentation never owns or recreates a transport. Connection Options follows an entered address or selected nearby Mac. Discovery is presentation metadata, never trusted server identity. A single exact endpoint match reuses the existing saved Mac ID and preferences; an ambiguous match never borrows credentials.
+
+Connection panels use a content-height resting position and can expand to full
+height. Keyboard entry expands the panel and dismissal restores its previous
+position. Login identity, field colors and content insets stay consistent across
+heights; Terminal preserves the real list behind its panel. Connecting uses one
+simple progress label and Cancel treatment. Quick Connect displays its effective
+connection mode before submission. Remote Mac credential fields opt out of
+app-account AutoFill suggestions; manual Passwords/Paste and per-Mac Save Login
+remain available.
+
+Nearby discovery publishes provisional rows as services resolve and keeps the
+last completed results during a refresh. Only a completed scan updates saved
+Mac metadata; cancellation discards provisional results without changing trust,
+saved addresses or credentials.
+
+Save to My Macs and Save Login are separate choices. A new Mac is added only after a usable desktop/input session or shell opens. If saving the Mac fails, its login must not be retained. A one-time connection keeps only the credentials required by its active recovery owner and removes its temporary trust/profile after all scoped connection owners stop; it never removes shared private keys or completed downloads. Temporary identities are journaled before connecting. If teardown or protected storage is unavailable, cleanup remains pending across launches and retries after unlock or foreground entry. Cleanup waits for all scoped owners, cancels when the Mac becomes saved, and deletes only that temporary identity’s access records and preferences. Completed downloads remain reachable from My Macs until exported or discarded. A temporary connection is subject to the same multi-Mac entitlement and foreground checks as a saved connection.

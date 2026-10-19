@@ -66,6 +66,9 @@ private enum TerminalPTY {
 }
 
 @MainActor @Observable final class DirectTerminalSession {
+    @ObservationIgnored var connectionEstablished: (@MainActor () -> Bool)?
+    /// False for an intentional temporary Quick Connect session.
+    @ObservationIgnored var saveMacRequested = true
     static let maximumPausedOutputBytes = 1_048_576
     // Native windows admit input independently of other active scenes.
     var inputAvailable: @MainActor () -> Bool = { true }
@@ -328,7 +331,7 @@ private enum TerminalPTY {
                 #endif
                 if !savedFileReference {
                     #if os(iOS)
-                    if let owner = accessLease {
+                    if connectionEstablished == nil, let owner = accessLease {
                         if key != nil { try DirectMacAccessStore.retainKeyAccount(username, macID: mac.id, keyID: authenticatedKeyID, owner: owner) }
                         else if remember { try DirectMacAccessStore.retain(.init(username: username, password: password), macID: mac.id, ssh: true, owner: owner) }
                     }
@@ -340,6 +343,18 @@ private enum TerminalPTY {
                 self.phase = "Opening a new shell"
                 let exitStatus = try await TerminalPTY.run(client: client, columns: columns, rows: rows, ready: { writer in
                     guard self.generation == id, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { throw CancellationError() }
+                    #if os(iOS)
+                    if let establish = self.connectionEstablished {
+                        let canRetain = establish()
+                        if !canRetain && self.saveMacRequested {
+                            self.textSendNotice = .macSaveFailed(loginRequested: remember)
+                        }
+                        if canRetain, let owner = self.accessLease {
+                            if key != nil { try DirectMacAccessStore.retainKeyAccount(username, macID: self.mac.id, keyID: self.authenticatedKeyID, owner: owner) }
+                            else if remember { try DirectMacAccessStore.retain(.init(username: username, password: password), macID: self.mac.id, ssh: true, owner: owner) }
+                        }
+                    }
+                    #endif
                     self.writer = writer; self.connected = true; self.connecting = false; self.status = "Connected"; self.phase = "Shell open"; self.recovery = nil
                     self.activity = VNCSessionActivityController(mac: self.mac, kind: .terminal, defaults: self.activityDefaults, backend: self.activityBackend)
                     self.activity?.setPhase("connected")

@@ -432,9 +432,16 @@ import StoreKitTest
         let viewer = CompanionVNCViewer(); viewer.loadViewIfNeeded()
         let controls = try XCTUnwrap(viewer.value(forKey: "controls") as? CompanionVNCControls)
         let owner = viewer.session
+        // An established input-only owner admits video only for bounded geometry.
+        // Seed a normal desktop so each requested transition can actually occur.
+        owner.setValue(800, forKey: "framebufferWidth"); owner.setValue(600, forKey: "framebufferHeight")
+        XCTAssertTrue(owner.desktopFramebufferAvailable)
+        XCTAssertNil(viewer.quickActionsProvider, "Exercise standalone native defaults without a SwiftUI profile provider")
         defer { owner.setValue(false, forKey: "running") }
         for ready in [false, true] { for onlyInput in [false, true, false, true] {
             controls.close(); viewer.inputOnly = onlyInput
+            XCTAssertEqual(viewer.inputOnly, onlyInput, "Assert that the requested mode was admitted before checking its controls")
+            if ready { XCTAssertEqual(owner.inputOnly, onlyInput) }
             for key in ["running", "inputReady", "established", "baselinePresented"] { owner.setValue(ready, forKey: key) }
             owner.setValue(false, forKey: "awaitingResumeFrame") // Simulate completion of the mode's fresh baseline.
             XCTAssertEqual(owner.composedTextReady, ready)
@@ -442,9 +449,9 @@ import StoreKitTest
             let choices = try XCTUnwrap(controls.value(forKey: "choices") as? [UIButton])
             let compose = try XCTUnwrap(choices.first { $0.accessibilityIdentifier == "session-action-composeText" })
             XCTAssertEqual(compose.isEnabled, ready, "Keep Compose discoverable while disabled until the session is ready")
-            XCTAssertEqual(choices.first?.accessibilityIdentifier, "session-action-composeText")
             let expected = (onlyInput ? DirectControlMode.trackpad : .desktop).defaults.map { $0.kind.rawValue }
             XCTAssertEqual(controls.quickActions.compactMap { $0["kind"] as? String }, expected)
+            XCTAssertEqual(choices.prefix(expected.count).compactMap(\.accessibilityIdentifier), expected.map { "session-action-" + $0 })
             XCTAssertEqual(expected.contains("copyText"), !onlyInput)
         } }
         controls.close()
@@ -840,10 +847,19 @@ import StoreKitTest
         let window = UIWindow(windowScene: scene), root = UIViewController()
         window.rootViewController = root; window.makeKeyAndVisible()
         defer { root.dismiss(animated: false); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        func waitForPresentation(_ condition: () -> Bool) async throws {
+            let end = Date().addingTimeInterval(5)
+            while !condition() {
+                guard Date() < end else { throw POSIXError(.ETIMEDOUT) }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+        }
         for mode in DirectControlMode.allCases {
+            try await waitForPresentation { root.presentedViewController == nil && root.view.window === window }
+            XCTAssertTrue(DirectAppLockV1.shared.canAccess)
             let composer = DirectTextComposer(macName: "Synthetic Mac", mode: mode.rawValue)
             composer.present(from: root, available: { true }, send: { _, _ in XCTFail("Editing must not send input") })
-            try await Task.sleep(for: .milliseconds(400))
+            try await waitForPresentation { root.presentedViewController != nil && root.presentedViewController?.isBeingPresented == false }
             let host = try XCTUnwrap(root.presentedViewController)
             func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
             let editor = try XCTUnwrap(descendants(host.view).compactMap { $0 as? UITextView }.first)
@@ -862,13 +878,14 @@ import StoreKitTest
             try await Task.sleep(for: .milliseconds(100))
             XCTAssertEqual(composer.draft.text, retained)
             XCTAssertEqual(editor.text, retained, "The editor must not display a rejected paste as though it can be sent")
-            root.dismiss(animated: false); try await Task.sleep(for: .milliseconds(50))
+            await withCheckedContinuation { continuation in root.dismiss(animated: false) { continuation.resume() } }
+            try await waitForPresentation { root.presentedViewController == nil }
             composer.present(from: root, available: { true }, send: { _, _ in XCTFail("Returning to session must not send input") })
             XCTAssertEqual(composer.draft.text, retained)
-            try await Task.sleep(for: .milliseconds(350))
+            try await waitForPresentation { root.presentedViewController != nil && root.presentedViewController?.isBeingPresented == false }
             NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
             XCTAssertEqual(composer.draft.text, ""); XCTAssertFalse(composer.draft.active)
-            try await Task.sleep(for: .milliseconds(350))
+            try await waitForPresentation { root.presentedViewController == nil }
         }
     }
     func testDesktopAndTrackpadEntryUseOnlyTheirCurrentViewerAndClearAtEnd() async throws {

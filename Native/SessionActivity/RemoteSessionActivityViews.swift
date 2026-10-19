@@ -1,31 +1,46 @@
 import AppIntents
 import SwiftUI
 
+/// Compact and minimal presentations identify the return shortcut, not socket health.
+/// Only expanded and Lock Screen content depend on phase and status freshness.
+struct RemoteSessionActivityCompactSymbol: View {
+    let attributes: RemoteSessionActivityAttributes
+
+    var body: some View {
+        Image(systemName: attributes.symbol)
+            .accessibilityLabel("Return to \(attributes.macName)")
+    }
+}
+
 struct RemoteSessionActivityActionsView: View {
     let resumeURL: URL
     let activityID: String
     var compact = false
-    var isStale = false
 
     var body: some View {
         HStack(spacing: compact ? 8 : 12) {
             Link(destination: resumeURL) {
-                Label(isStale ? "Open to Check" : "Open", systemImage: "arrow.up.forward.app")
-                    .lineLimit(1).minimumScaleFactor(0.8)
-                    .frame(maxWidth: .infinity, minHeight: compact ? 28 : 32)
+                actionLabel("Open", systemImage: "arrow.up.forward.app")
             }
             .buttonStyle(.bordered).tint(.blue)
+            .accessibilityLabel("Open")
             Button(intent: EndRemoteSessionIntent(activityID: activityID)) {
-                Label(compact ? "End" : "End Session", systemImage: "xmark.circle")
-                    .lineLimit(1).minimumScaleFactor(0.8)
-                    .frame(maxWidth: .infinity, minHeight: compact ? 28 : 32)
+                actionLabel("Disconnect", systemImage: "xmark.circle")
             }
             .buttonStyle(.bordered).tint(.red)
-            .accessibilityLabel("End Session")
+            .accessibilityLabel("Disconnect")
         }
         .font(.subheadline.weight(.semibold))
         .controlSize(compact ? .small : .regular)
         .buttonBorderShape(.capsule)
+    }
+    private func actionLabel(_ title: LocalizedStringKey, systemImage: String) -> some View {
+        Group {
+            // Preserve readable action names in the narrow expanded island.
+            if compact { Text(title) }
+            else { Label(title, systemImage: systemImage) }
+        }.lineLimit(1).minimumScaleFactor(0.8)
+            .frame(maxWidth: .infinity, minHeight: compact ? 28 : 32)
     }
 }
 
@@ -56,7 +71,7 @@ struct RemoteSessionExpandedContent: View {
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             RemoteSessionActivityActionsView(resumeURL: attributes.resumeURL,
-                activityID: activityID, compact: true, isStale: isStale)
+                activityID: activityID, compact: true)
         }
         // Keep every expanded element below the camera and inset from the curved mask.
         .padding(.top, 8)
@@ -86,7 +101,7 @@ struct RemoteSessionActivityCard: View {
                 }
                 Spacer(minLength: 0)
             }
-            RemoteSessionActivityActionsView(resumeURL: attributes.resumeURL, activityID: activityID, isStale: isStale)
+            RemoteSessionActivityActionsView(resumeURL: attributes.resumeURL, activityID: activityID)
         }
         .padding(16)
     }

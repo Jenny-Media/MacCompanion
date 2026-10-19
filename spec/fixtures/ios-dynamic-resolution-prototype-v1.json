@@ -693,7 +693,7 @@
       4
     ],
     "temporaryInactivityRetainsPrivateRecovery": true,
-    "pendingNoFrameInputOnlyAction": true
+    "pendingNoFrameInputOnlyAction": false
   },
   "virtualLayoutDeadlineCases": [
     {

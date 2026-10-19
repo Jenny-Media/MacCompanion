@@ -143,14 +143,15 @@ struct VNCQuickAction: Codable, Identifiable, Equatable, Sendable {
     static func display(_ id: UUID) -> NSNumber? { UserDefaults.standard.object(forKey: prefix(id) + "display") as? NSNumber }
     static func setDisplay(_ value: NSNumber?, mac id: UUID) { UserDefaults.standard.set(value, forKey: prefix(id) + "display"); changed(id) }
     // Device-local mode: zero mirrors the Mac; 1–3 choose a virtual landscape size.
+    static func desktopSizeKey(_ id: UUID) -> String { prefix(id) + "desktop-size" }
     static func desktopSize(_ id: UUID) -> Int {
-        guard let value = UserDefaults.standard.object(forKey: prefix(id) + "desktop-size") as? Int,
+        guard let value = UserDefaults.standard.object(forKey: desktopSizeKey(id)) as? Int,
               (0...3).contains(value) else { return 2 }
         return value
     }
     static func setDesktopSize(_ value: Int, mac id: UUID) {
         guard (0...3).contains(value) else { return }
-        UserDefaults.standard.set(value, forKey: prefix(id) + "desktop-size")
+        UserDefaults.standard.set(value, forKey: desktopSizeKey(id))
     }
     static func fullscreen(_ id: UUID) -> Bool { UserDefaults.standard.bool(forKey: prefix(id) + "fullscreen") }
     static func setFullscreen(_ value: Bool, mac id: UUID) { UserDefaults.standard.set(value, forKey: prefix(id) + "fullscreen"); changed(id) }
@@ -210,6 +211,11 @@ struct VNCQuickAction: Codable, Identifiable, Equatable, Sendable {
         if status == errSecItemNotFound {
             guard SecItemAdd(query(id).merging(attributes) { _, new in new } as CFDictionary, nil) == errSecSuccess else { throw CocoaError(.fileWriteUnknown) }
         } else if status != errSecSuccess { throw CocoaError(.fileWriteUnknown) }
+    }
+    static func clearTemporary(_ id: UUID) throws {
+        let status = SecItemDelete(query(id) as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else { throw CocoaError(.fileWriteUnknown) }
+        clear(id)
     }
     static func clear(_ id: UUID) {
         for suffix in ["speed", "display", "trackpad", "follow-cursor", "fullscreen", "desktop-size"] { UserDefaults.standard.removeObject(forKey: prefix(id) + suffix) }

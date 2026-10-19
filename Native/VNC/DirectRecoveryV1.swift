@@ -18,6 +18,12 @@ struct DirectRecoveryNotice: Equatable, Sendable {
     let message: String
     var severity: Severity = .warning
     var details: [Detail] = []
+    static func macSaveFailed(loginRequested: Bool) -> Self {
+        .init(reason: .saveFailed, title: "Mac wasn’t saved",
+            message: "Your connection is open, but this Mac couldn’t be added to My Macs."
+                + (loginRequested ? " Your login wasn’t saved." : "")
+                + " You can keep using this session.")
+    }
     static func make(_ reason: Reason, message: String? = nil, details: [Detail] = []) -> Self {
         let copy: (String, String, Severity)
         switch reason {
@@ -478,27 +484,55 @@ struct TerminalServerTrustView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
+                    #if os(iOS)
+                    DirectConnectionIdentity(name: macName, service: "Verify Mac", symbol: "lock.shield")
+                    #else
                     Image(systemName: "lock.shield").font(.largeTitle).foregroundStyle(.blue)
+                    #endif
                     Text("Is this your Mac?").font(.title.bold())
                     Text("You’re connecting to \(macName). Independently check this SSH server fingerprint on your Mac before trusting it.")
                     Text(fingerprint).font(.footnote.monospaced()).textSelection(.enabled).padding(16)
                         .frame(maxWidth: .infinity, alignment: .leading).background(.quaternary, in: RoundedRectangle(cornerRadius: 14))
                     Text("On the Mac, compare the matching server key with ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub. If the server uses another key type, compare that matching host key instead.")
                         .font(.footnote).foregroundStyle(.secondary)
-                    Button("Trust & Connect") { answer(true) }.buttonStyle(.borderedProminent).controlSize(.large).frame(minHeight: 44)
+                    #if !os(iOS)
+                    Button("Trust & Connect") { answer(true) }.buttonStyle(.borderedProminent).controlSize(.large).frame(maxWidth: .infinity, minHeight: 44)
+                    #endif
                     Text("No login is sent until you approve.").font(.footnote).foregroundStyle(.secondary)
-                }.padding(24).frame(maxWidth: 520)
-            }.navigationTitle("Verify This Mac")
+                }.padding(24).frame(maxWidth: 520).frame(maxWidth: .infinity)
+            }
+            #if os(iOS)
+            .background(Color(uiColor: DirectConnectionStyle.panel))
+            .toolbarBackground(Color(uiColor: DirectConnectionStyle.panel), for: .navigationBar)
+            #endif
+            .navigationTitle("Verify This Mac")
             #if os(iOS) || os(visionOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
-                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { answer(false) } } }
+            #if os(iOS)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                DirectConnectionFooter {
+                    Button { answer(true) } label: { Text("Trust & Connect").font(.headline).frame(maxWidth: .infinity, minHeight: 32) }
+                        .buttonStyle(.borderedProminent).controlSize(.large).accessibilityIdentifier("server-trust-approve")
+                    Button("Cancel") { answer(false) }.font(.headline).foregroundStyle(.blue).frame(maxWidth: .infinity, minHeight: 48).buttonStyle(.plain)
+                        .accessibilityIdentifier("server-trust-cancel")
+                }
+            }
+            #else
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { answer(false) } } }
+            #endif
         }.interactiveDismissDisabled()
+        #if os(iOS)
+        .presentationSizing(.form)
+        #endif
     }
 }
 #if os(iOS)
 /// UIKit Desktop uses the same copy and actions as the SwiftUI recovery screens.
 @objc(DirectRecoveryBridgeV1) @MainActor final class DirectRecoveryBridgeV1: NSObject {
+    @objc(canOfferInputOnlyRecoveryAtStage:) static func canOfferInputOnlyRecovery(stage: Int) -> Bool {
+        [9, 103, 116, 117, 118].contains(stage)
+    }
     static func desktopReason(stage: Int, hadFrame: Bool) -> DirectRecoveryNotice.Reason {
         switch stage {
         case 10: return .addressNotFound
@@ -542,6 +576,7 @@ struct TerminalServerTrustView: View {
         desktop(stage: stage, hadFrame: hadFrame, port: port, textInterrupted: textInterrupted, retry: retry, edit: edit, inputOnly: nil)
     }
     @objc static func desktop(stage: Int, hadFrame: Bool, port: Int, textInterrupted: Bool, retry: @escaping @MainActor @Sendable () -> Void, edit: @escaping @MainActor @Sendable () -> Void, inputOnly: (@MainActor @Sendable () -> Void)?) -> UIViewController {
+        let inputOnly = canOfferInputOnlyRecovery(stage: stage) ? inputOnly : nil
         let modeFailure = (116...118).contains(stage)
         let base = desktopNotice(stage: stage, hadFrame: hadFrame, port: port)
         let original = modeFailure ? DirectRecoveryNotice(reason: base.reason, title: "Couldn’t switch display mode", message: base.message, details: base.details) : base
@@ -572,6 +607,12 @@ struct TerminalServerTrustView: View {
         let notice = DirectRecoveryNotice(reason: .inputPaused, title: "Check the sent text",
             message: "Sending text was interrupted. It may have been partially sent. Check your Mac before sending it again; input won’t be replayed.")
         let controller = UIHostingController(rootView: DirectRecoveryCard(notice: notice,
+            primary: .init(title: "Continue", perform: done), secondary: nil).directAppearance())
+        controller.sizingOptions = .intrinsicContentSize; controller.view.backgroundColor = .clear
+        return controller
+    }
+    @objc static func macSaveFailed(loginRequested: Bool, done: @escaping @MainActor @Sendable () -> Void) -> UIViewController {
+        let controller = UIHostingController(rootView: DirectRecoveryCard(notice: .macSaveFailed(loginRequested: loginRequested),
             primary: .init(title: "Continue", perform: done), secondary: nil).directAppearance())
         controller.sizingOptions = .intrinsicContentSize; controller.view.backgroundColor = .clear
         return controller

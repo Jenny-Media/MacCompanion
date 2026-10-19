@@ -99,6 +99,20 @@ enum TerminalSecretStore {
         try MacSSHKeyFileStore.forgetSelection(id)
         #endif
     }
+    #if os(iOS)
+    /// A never-saved identity has no migration authority to preserve. Delete its
+    /// legacy inputs first, then the canonical profile; retries are idempotent.
+    /// The caller journals the ID and waits for all scoped connection owners.
+    @MainActor static func removeTemporaryIdentity(_ id: UUID) throws {
+        guard !DirectMacConnections.shared.isActive(id) else { throw DirectMacAccessStore.Failure.busy }
+        try DesktopCredentialStoreV1.removeLegacy(id)
+        try removeLegacyLogin(id)
+        try removeLegacyKey(id)
+        try remove(id, kind: "host-key")
+        try remove(id, kind: "terminal-keyboard-v1")
+        try remove(id, kind: DirectMacAccessStore.kind)
+    }
+    #endif
     @MainActor static func remove(_ id: UUID) throws {
         #if os(iOS)
         // Mac removal has its own persisted-library invalidation; it is not an

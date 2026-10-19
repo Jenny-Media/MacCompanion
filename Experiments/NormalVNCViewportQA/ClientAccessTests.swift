@@ -1,5 +1,6 @@
 import XCTest
 import LocalAuthentication
+import UIKit
 @testable import Mac_Companion
 
 private final class ControlledLAContext: LAContext, @unchecked Sendable {
@@ -8,6 +9,23 @@ private final class ControlledLAContext: LAContext, @unchecked Sendable {
     override func evaluatePolicy(_ policy: LAPolicy, localizedReason: String, reply: @escaping @Sendable (Bool, (any Error)?) -> Void) { self.reply = reply }
 }
 @MainActor final class ClientAccessTests: XCTestCase {
+    func testPrivacyCoverResignsTheCredentialResponderBeforeAuthentication() throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene), controller = UIViewController(), field = UITextField()
+        window.rootViewController = controller; window.makeKeyAndVisible()
+        controller.view.addSubview(field); field.frame = CGRect(x: 20, y: 100, width: 240, height: 44)
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        defaults.set(true, forKey: DirectAppLockV1.preferenceKey)
+        let context = ControlledLAContext()
+        let lock = DirectAppLockV1(contextFactory: { context }, defaults: defaults, isActive: { true }, protectedDataAvailable: { true })
+        defer { lock.setEnabled(false); window.isHidden = true; previous?.makeKeyAndVisible() }
+        XCTAssertTrue(field.becomeFirstResponder())
+        lock.authenticate()
+        XCTAssertFalse(field.isFirstResponder)
+        XCTAssertTrue(lock.privacyCoverVisible)
+        XCTAssertTrue(lock.authenticating)
+    }
     func testUnlockLoadsUnderlyingStateButGatesCredentialsUntilSuccessAndRelocksOnBackground() async throws {
         let old = UserDefaults.standard.bool(forKey: DirectAppLockV1.preferenceKey)
         UserDefaults.standard.set(false,forKey: DirectAppLockV1.preferenceKey)
@@ -22,6 +40,7 @@ private final class ControlledLAContext: LAContext, @unchecked Sendable {
         lock.install(); XCTAssertTrue(lock.authenticating) // prompt inactive does not create another context
         context.reply?(false,nil); try await Task.sleep(for:.milliseconds(30))
         XCTAssertFalse(lock.canAccess); XCTAssertFalse(lock.authenticating)
+        XCTAssertEqual(lock.message, "Unlock to access your Macs.")
         lock.authenticate(); context.reply?(true,nil); try await Task.sleep(for:.milliseconds(30))
         XCTAssertTrue(lock.canAccess)
         lock.background(); XCTAssertFalse(lock.canAccess)

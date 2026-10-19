@@ -176,7 +176,10 @@
 }
 - (void)testInputOnlyDisablesAutomaticPixelsAndCapabilityRefreshStaysEmpty {
     CompanionVNCSession *s=[CompanionVNCSession new];int peer;rfbClient *c=[self clientFor:s peer:&peer];
-    [self prepareLayout:s client:c peer:peer];s.inputOnly=YES;
+    // The real Desktop handshake admits framebuffer geometry before an established
+    // owner can switch back from input-only; client dimensions alone do not do so.
+    XCTAssertTrue([s allocate:c]);XCTAssertTrue(s.desktopFramebufferAvailable);
+    [self prepareLayout:s client:c peer:peer];s.inputOnly=YES;XCTAssertTrue(s.inputOnly);
     XCTAssertTrue([s configureDesktopUpdates:c]);[self assertControl:peer enabled:NO width:100 height:100];
     XCTAssertTrue([s requestFullDesktop:c]);[self assertNoBytes:peer];
     c->supportedMessages.client2server[0]|=1<<rfbFramebufferUpdateRequest;
@@ -187,7 +190,8 @@
     XCTAssertTrue([s configureDesktopUpdates:c]);[self assertNoBytes:peer];
     [self layout:c peer:peer valid:YES];[self assertNoBytes:peer];
     XCTAssertTrue([s configureDesktopUpdates:c]);[self assertNoBytes:peer];
-    s.inputOnly=NO;XCTAssertTrue([s configureDesktopUpdates:c]);[self assertControl:peer enabled:YES width:100 height:100];
+    s.inputOnly=NO;XCTAssertFalse(s.inputOnly);
+    XCTAssertTrue([s configureDesktopUpdates:c]);[self assertControl:peer enabled:YES width:100 height:100];
     [self finish:s client:c peer:peer];
 }
 - (void)testPauseDisablesBeforeCompletionAndResumeRearmsTheRetainedOwner {

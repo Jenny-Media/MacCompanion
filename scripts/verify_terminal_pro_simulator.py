@@ -156,6 +156,7 @@ def execute(args, parser, compiler):
         cold = copy.deepcopy(app)
         cold['sources'] = [row for row in cold['sources'] if not row['path'].startswith(str(ROOT / 'Apps/MacCompanionIOS'))]
         cold['sources'].append({'path': str(ROOT / 'Experiments/ColdStartQA/ColdStartApplication.swift')})
+        cold['sources'].append({'path': str(ROOT / 'Apps/MacCompanionIOS/Assets.xcassets')})
         cold['settings']['base'].update({'PRODUCT_BUNDLE_IDENTIFIER': 'dev.maccompanion.coldstartqa.ios',
                                         'PRODUCT_NAME': 'ColdStartQA', 'PRODUCT_MODULE_NAME': 'Mac_Companion'})
         cold['dependencies'] = [row for row in cold['dependencies'] if row.get('target') != 'MacCompanionSessionActivity']

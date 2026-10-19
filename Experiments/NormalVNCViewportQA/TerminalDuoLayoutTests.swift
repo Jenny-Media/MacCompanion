@@ -342,20 +342,33 @@ import UIKit
         func fields(_ view: UIView) -> [UITextField] { (view as? UITextField).map { [$0] } ?? view.subviews.flatMap(fields) }
         host.view.frame = CGRect(x: 0, y: 0, width: 900, height: 660)
         for _ in 0..<100 where fields(host.view).count != 2 { try await Task.sleep(for: .milliseconds(25)) }
-        let original = fields(host.view); XCTAssertEqual(original.count, 2)
-        XCTAssertLessThan(try XCTUnwrap(original.last).bounds.height, 64, "The password field must use its text height, not stretch the connection sheet")
-        let account = try XCTUnwrap(original.first)
+        func assertGroupedRows(_ current: [UITextField], file: StaticString = #filePath, line: UInt = #line) throws {
+            XCTAssertEqual(current.count, 2, file: file, line: line)
+            let account = try XCTUnwrap(current.first), password = try XCTUnwrap(current.last)
+            let accountFrame = account.convert(account.bounds, to: host.view)
+            let passwordFrame = password.convert(password.bounds, to: host.view)
+            XCTAssertEqual(accountFrame.minX, passwordFrame.minX, accuracy: 2, "Grouped credential rows share one leading edge", file: file, line: line)
+            XCTAssertGreaterThan(passwordFrame.minY, accountFrame.maxY, "Username stays above Password in every layout", file: file, line: line)
+        }
+        let original = fields(host.view)
+        try assertGroupedRows(original)
+        let account = try XCTUnwrap(original.first), password = try XCTUnwrap(original.last)
+        XCTAssertLessThan(password.bounds.height, 64, "The password field must use its text height, not stretch the connection sheet")
+        account.text = "synthetic-account"; account.sendActions(for: .editingChanged)
+        password.text = "synthetic-only"; password.sendActions(for: .editingChanged)
         XCTAssertTrue(account.becomeFirstResponder())
         host.view.frame.size.height = 400; host.view.setNeedsLayout(); host.view.layoutIfNeeded()
         try await Task.sleep(for: .milliseconds(250))
         let compact = fields(host.view)
-        XCTAssertEqual(compact.count, 2); XCTAssertTrue(compact.first === account); XCTAssertTrue(account.isFirstResponder)
-        XCTAssertEqual(compact[0].convert(compact[0].bounds, to: host.view).midY, compact[1].convert(compact[1].bounds, to: host.view).midY, accuracy: 2)
+        try assertGroupedRows(compact)
+        XCTAssertTrue(compact.first === account); XCTAssertTrue(compact.last === password); XCTAssertTrue(account.isFirstResponder)
+        XCTAssertEqual(account.text, "synthetic-account"); XCTAssertEqual(password.text, "synthetic-only")
         host.traitOverrides.preferredContentSizeCategory = .accessibilityExtraLarge
         try await Task.sleep(for: .milliseconds(250))
         let large = fields(host.view)
-        XCTAssertTrue(large.first === account); XCTAssertTrue(account.isFirstResponder)
-        XCTAssertGreaterThan(large[1].convert(large[1].bounds, to: host.view).minY, large[0].convert(large[0].bounds, to: host.view).maxY)
+        try assertGroupedRows(large)
+        XCTAssertTrue(large.first === account); XCTAssertTrue(large.last === password); XCTAssertTrue(account.isFirstResponder)
+        XCTAssertEqual(account.text, "synthetic-account"); XCTAssertEqual(password.text, "synthetic-only")
     }
 
     func testTerminalUsesLowerRegionWithClosedKeyboardAndPreservesSessionAndBuffer() throws {

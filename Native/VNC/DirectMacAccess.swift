@@ -30,6 +30,7 @@ struct DirectMacAccessProfile: Codable, Equatable {
 @MainActor enum DirectMacAccessStore {
     enum Failure: Error { case busy, invalid, changed, storage }
     static let changed = Notification.Name("DirectMacAccessChangedV1")
+    static let forgotten = Notification.Name("DirectMacAccessForgottenV1")
     static let kind = "mac-access-v1"
     struct Repository {
         var read: () throws -> Data?
@@ -141,10 +142,30 @@ struct DirectMacAccessProfile: Codable, Equatable {
         profile.keyUsername = account; try write(profile, id: macID)
         DirectMacConnections.shared.retained(owner)
     }
-    static func forget(_ id: UUID) throws {
+    static func forget(_ id: UUID, replacing expected: DirectMacAccessProfile? = nil) throws {
+        guard !DirectMacConnections.shared.isActive(id) else { throw Failure.busy }
         let current = try load(id)
-        try save(.init(), id: id, replacing: current)
+        let empty = DirectMacAccessProfile()
+        guard expected == nil || current == expected || current == empty else { throw Failure.changed }
+        if current != empty { try save(empty, id: id, replacing: current) }
+        guard try load(id) == empty else { throw Failure.storage }
+        // Commit the empty authority before revoking all staged credentials.
+        // An idempotent retry must also clear a retained form's old copy.
+        NotificationCenter.default.post(name: forgotten, object: id)
     }
+}
+
+/// Credential owners can outlive their visible form, so revocation is observed
+/// by the owner and scoped to the Mac. No credential data enters notifications.
+final class DirectMacAccessForgetObservation: @unchecked Sendable {
+    private let token: NSObjectProtocol
+    @MainActor init(macID: UUID, forgotten: @escaping @MainActor () -> Void) {
+        token = NotificationCenter.default.addObserver(forName: DirectMacAccessStore.forgotten, object: nil, queue: .main) { notification in
+            guard notification.object as? UUID == macID else { return }
+            MainActor.assumeIsolated { forgotten() }
+        }
+    }
+    deinit { NotificationCenter.default.removeObserver(token) }
 }
 
 /// Records network ownership, including teardown. UI visibility is not activity.
@@ -191,6 +212,71 @@ struct DirectMacAccessProfile: Codable, Equatable {
     }
 }
 
+/// Only UUIDs enter the durable journal. In-process temporary sessions are held
+/// until exit; after a process restart they have no surviving network owners.
+@MainActor final class DirectTemporaryMacCleanup {
+    static let shared = DirectTemporaryMacCleanup()
+    private let defaults: UserDefaults
+    private let key: String
+    private let canAccess: @MainActor () -> Bool
+    private let disconnect: @MainActor (UUID) async -> Bool
+    private let erase: @MainActor (UUID) throws -> Void
+    private let clearPreferences: @MainActor (UUID) throws -> Void
+    private var savedIDs: Set<UUID>?
+    private var active: Set<UUID> = []
+    private var processing = false
+    private var retryRequested = false
+    private(set) var pending: Set<UUID>
+    init(defaults: UserDefaults = .standard, key: String = "DirectTemporaryMacCleanupV1",
+         canAccess: @escaping @MainActor () -> Bool = { DirectAppLockV1.shared.canAccess },
+         disconnect: @escaping @MainActor (UUID) async -> Bool = { await DirectMacConnections.shared.disconnect($0) },
+         erase: @escaping @MainActor (UUID) throws -> Void = TerminalSecretStore.removeTemporaryIdentity,
+         clearPreferences: @escaping @MainActor (UUID) throws -> Void = VNCSessionPreferences.clearTemporary) {
+        self.defaults = defaults; self.key = key; self.canAccess = canAccess
+        self.disconnect = disconnect; self.erase = erase; self.clearPreferences = clearPreferences
+        pending = Set((defaults.stringArray(forKey: key) ?? []).compactMap(UUID.init(uuidString:)))
+    }
+    func begin(_ id: UUID) {
+        active.insert(id); pending.insert(id); persist()
+    }
+    func end(_ id: UUID) {
+        active.remove(id); retry()
+    }
+    func updateSavedMacs(_ ids: Set<UUID>?) {
+        savedIDs = ids
+        if let ids { pending.subtract(ids); active.subtract(ids); persist() }
+        retry()
+    }
+    func retry() {
+        if processing { retryRequested = true; return }
+        guard savedIDs != nil, canAccess(), !pending.subtracting(active).isEmpty else { return }
+        processing = true; retryRequested = false
+        Task {
+            defer {
+                processing = false
+                if retryRequested { retryRequested = false; retry() }
+            }
+            for id in pending.subtracting(active) {
+                guard savedIDs != nil, canAccess() else { return }
+                guard !active.contains(id), savedIDs?.contains(id) == false,
+                      await disconnect(id), !active.contains(id),
+                      savedIDs?.contains(id) == false, canAccess() else { continue }
+                do {
+                    try erase(id)
+                    try clearPreferences(id)
+                    pending.remove(id); persist()
+                } catch {
+                    // Keep the durable intent. Unlock, foreground entry and
+                    // connection-owner changes retry without retaining secrets.
+                }
+            }
+        }
+    }
+    private func persist() {
+        defaults.set(pending.map(\.uuidString).sorted(), forKey: key)
+    }
+}
+
 @MainActor enum DirectFilesWorkspace {
     private struct Key: Hashable { let macID: UUID; let library: URL }
     @MainActor @Observable fileprivate final class Signals { var revision = 0 }
@@ -201,6 +287,11 @@ struct DirectMacAccessProfile: Codable, Equatable {
         return owners.values.filter {
             $0.libraryURL.standardizedFileURL == libraryURL.standardizedFileURL && $0.macRemoved && $0.hasUnsavedDownloads
         }.sorted { $0.mac.name == $1.mac.name ? $0.mac.id.uuidString < $1.mac.id.uuidString : $0.mac.name < $1.mac.name }
+    }
+    static func endTemporarySession(_ id: UUID, libraryURL: URL) {
+        let key = Key(macID: id, library: libraryURL.standardizedFileURL)
+        owners[key]?.endTemporarySession()
+        signals.revision &+= 1
     }
     static func session(_ mac: DirectMacRecordV1, libraryURL: URL = DirectMacLibraryV1.defaultURL) -> DirectFilesSession {
         let key = Key(macID: mac.id, library: libraryURL.standardizedFileURL)

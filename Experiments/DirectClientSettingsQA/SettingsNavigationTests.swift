@@ -20,36 +20,22 @@ import UIKit
     func testAddMacShowsFullPortLabelsAndConsistentModeRows() {
         continueAfterFailure = false
         let app = app(); app.launch(); defer { app.terminate() }
-        XCTAssertTrue(app.buttons["Add Mac"].firstMatch.waitForExistence(timeout: 10)); app.buttons["Add Mac"].firstMatch.tap()
-        let shortcuts = app.buttons["mac-shortcuts-open"]
-        for _ in 0..<4 where !shortcuts.isHittable { app.swipeUp() }
-        XCTAssertTrue(shortcuts.isHittable); shortcuts.tap()
-        let row = app.buttons["mac-open-on-tap"]
-        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        let add = app.buttons["macs-add"]
+        XCTAssertTrue(add.waitForExistence(timeout: 10)); add.tap()
+        let host = app.textFields["quick-connect-host"]
+        XCTAssertTrue(host.waitForExistence(timeout: 5)); host.tap(); host.typeText("synthetic.invalid")
+        app.buttons["quick-connect-options"].tap()
+        XCTAssertTrue(app.navigationBars["Connection Options"].waitForExistence(timeout: 5))
         for title in ["Screen Sharing", "Trackpad & Keyboard", "Terminal"] {
-            row.tap()
-            XCTAssertTrue(app.buttons[title].firstMatch.waitForExistence(timeout: 5))
-            app.buttons[title].firstMatch.tap()
-            XCTAssertEqual(row.value as? String, title)
-            XCTAssertGreaterThanOrEqual(row.frame.height, 44)
-            XCTAssertLessThanOrEqual(row.frame.maxX, app.frame.maxX)
-            capture("ios-open-on-tap-" + title.lowercased().replacingOccurrences(of: " ", with: "-"), app: app)
+            let row = app.buttons[title].firstMatch
+            for _ in 0..<4 where !row.isHittable { app.swipeUp() }
+            XCTAssertTrue(row.isHittable); row.tap()
         }
-        app.buttons["mac-shortcut-done"].tap()
-        let ports = app.buttons["Service Ports"]
-        let form = app.descendants(matching: .any)["mac-editor-form"].firstMatch
-        for _ in 0..<4 where !ports.isHittable { form.swipeUp() }
-        XCTAssertTrue(ports.isHittable); ports.tap()
-        let sshPort = app.textFields["mac-ssh-port"]
-        // Expanding below the new shortcuts section can put SSH just below
-        // the viewport; verify it remains reachable, not pre-rendered offscreen.
-        for _ in 0..<8 where !sshPort.isHittable {
-            let start = form.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8))
-            start.press(forDuration: 0.15, thenDragTo: form.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3)))
-        }
-        XCTAssertTrue(sshPort.isHittable)
-        capture("ios-add-mac-ports", app: app)
-        app.buttons["Cancel"].firstMatch.tap()
+        let port = app.textFields["quick-connect-ssh-port"]
+        for _ in 0..<4 where !port.isHittable { app.swipeUp() }
+        XCTAssertTrue(port.isHittable); capture("ios-connection-options", app: app)
+        app.navigationBars["Connection Options"].buttons.firstMatch.tap()
+        app.buttons["quick-connect-cancel"].tap()
     }
     func testSyncDeletionCanBeCancelledAtBothConfirmationSteps() {
         continueAfterFailure = false

@@ -13,6 +13,7 @@
 - (void)publishFrame:(rfbClient *)client;
 - (void)processConnectedClient:(rfbClient *)client;
 - (BOOL)registerSocket:(int)socket;
+- (BOOL)requestFullDesktop:(rfbClient *)client;
 - (BOOL)writeKeyEvent:(uint32_t)key down:(BOOL)down client:(rfbClient *)client;
 @end
 @interface StalledComposerSession : CompanionVNCSession
@@ -284,18 +285,33 @@
     CompanionVNCSession *session=[CompanionVNCSession new];rfbClient *client=rfbGetClient(8,3,4);
     client->sock=pair[0];client->width=2;client->height=2;[session configureClient:client];XCTAssertTrue([session allocate:client]);
     client->supportedMessages.client2server[0]|=(1<<rfbFramebufferUpdateRequest)|(1<<rfbPointerEvent);
-    [session setValue:@YES forKey:@"running"];[session setValue:@YES forKey:@"inputReady"];[session registerSocket:pair[0]];
+    // Baseline maintenance belongs to an authenticated owner. Model the
+    // successful handshake, including its initial full request, before retries.
+    for(NSString *key in @[@"running",@"established",@"inputReady"]) [session setValue:@YES forKey:key];
+    XCTAssertTrue(session.established);XCTAssertTrue([session registerSocket:pair[0]]);
+    const uint8_t expectedRequest[]={3,0,0,0,0,0,0,2,0,2};
+    XCTAssertTrue([session requestFullDesktop:client]);
+    uint8_t initial[sizeof(expectedRequest)]={0};
+    XCTAssertEqual(recv(pair[1],initial,sizeof(initial),MSG_WAITALL),sizeof(initial));
+    XCTAssertEqual(memcmp(initial,expectedRequest,sizeof(initial)),0);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"fullRefreshRequests"],@1);
     XCTestExpectation *ended=[self expectationWithDescription:@"Incomplete baseline ends within deadline"];
+    __weak CompanionVNCSession *weakSession=session;
     session.stateHandler=^(NSString *state,NSDictionary *stats){
-        if(!session.running){XCTAssertEqualObjects(stats[@"failureStage"],@102);XCTAssertEqualObjects(stats[@"fullRefreshRetries"],@2);[ended fulfill];}
+        if(!weakSession.running){XCTAssertEqualObjects(stats[@"failureStage"],@102);XCTAssertEqualObjects(stats[@"fullRefreshRetries"],@2);XCTAssertEqualObjects(stats[@"baselineReady"],@NO);[ended fulfill];}
     };
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{[session processConnectedClient:client];});
     for(NSUInteger i=0;i<2;i++){
-        uint8_t request[10];XCTAssertEqual(recv(pair[1],request,10,MSG_WAITALL),10);
-        XCTAssertEqual(request[0],rfbFramebufferUpdateRequest);XCTAssertEqual(request[1],0);
+        uint8_t request[sizeof(expectedRequest)]={0};
+        XCTAssertEqual(recv(pair[1],request,sizeof(request),MSG_WAITALL),sizeof(request));
+        XCTAssertEqual(memcmp(request,expectedRequest,sizeof(request)),0);
     }
     [self waitForExpectations:@[ended] timeout:8];
-    uint8_t release[6];XCTAssertEqual(recv(pair[1],release,6,MSG_WAITALL),6);XCTAssertEqual(release[0],rfbPointerEvent);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"fullRefreshRequests"],@3);
+    const uint8_t expectedRelease[]={5,0,0,0,0,0};uint8_t release[sizeof(expectedRelease)]={0};
+    XCTAssertEqual(recv(pair[1],release,sizeof(release),MSG_WAITALL),sizeof(release));
+    XCTAssertEqual(memcmp(release,expectedRelease,sizeof(release)),0);
+    uint8_t extra;XCTAssertEqual(recv(pair[1],&extra,1,0),0,@"No third retry may precede socket retirement");
     session.stateHandler=nil;close(pair[1]);
 }
 @end

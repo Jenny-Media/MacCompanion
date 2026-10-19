@@ -1,11 +1,39 @@
 #if os(iOS)
 import XCTest
+import UIKit
 import Security
 import NIO
 @preconcurrency @testable import Citadel
 @testable import Mac_Companion
 
 @MainActor final class DirectMacAccessTests: XCTestCase {
+    func testConfirmedForgetRevokesStagedDesktopAndRetainedTerminalAndFilesDrafts() async throws {
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Forgotten Login", addresses: ["forgotten.invalid"])
+        defer { removeFixtureProfile(mac.id) }
+        let saved = TerminalSecretStore.Login(username: "synthetic", password: "synthetic-only")
+        try DirectMacAccessStore.write(.init(login: .init(username: saved.username, password: saved.password)), id: mac.id)
+        let files = DirectFilesSession(mac: mac); defer { files.close() }
+        files.loginDraft.initialize(saved: saved)
+        let form = DirectTerminalLoginForm(); form.draft.initialize(saved: saved)
+        let terminal = DirectTerminalSession(mac: mac); defer { terminal.stop() }
+        _ = DirectTerminalView(mac: mac, session: terminal, files: files, autoConnect: false, loginForm: form, exit: {})
+        let viewer = CompanionVNCViewer()
+        let coordinator = VNCRemoteDesktopView.Coordinator(mac: mac, files: files)
+        coordinator.viewer = viewer
+        viewer.preferenceID = mac.id.uuidString
+        viewer.savedUsername = saved.username; viewer.savedPassword = saved.password
+        var automaticAttempts = 0
+        viewer.connectHandler = { _, _, _ in automaticAttempts += 1 }
+        viewer.loadViewIfNeeded()
+        defer { coordinator.stopObserving(); viewer.stop() }
+        try DirectMacAccessStore.forget(mac.id)
+        XCTAssertNil(try DirectMacAccessStore.load(mac.id).login)
+        await Task.yield(); await Task.yield()
+        XCTAssertEqual(automaticAttempts, 0, "A queued auto-login must not use a forgotten credential")
+        XCTAssertEqual((viewer.value(forKey: "password") as? UITextField)?.text, "")
+        XCTAssertEqual(form.draft.password, "", "Retained Terminal forms must discard the saved copy")
+        XCTAssertEqual(files.loginDraft.password, "", "Hidden Files owners must discard their saved copy")
+    }
     func testOnlySuccessfulManagementSaveNotifiesTheSessionForm() throws {
         let mac = UUID()
         defer { try? TerminalSecretStore.remove(mac) }
@@ -22,6 +50,47 @@ import NIO
         first.value.login = nil; XCTAssertTrue(first.save())
         stale.value.login = .init(username: "synthetic-other", password: "synthetic-only")
         XCTAssertFalse(stale.save(onSaved: { updates += 1 })); XCTAssertEqual(updates, 1)
+    }
+    func testForgetCommitsBeforeRevocationAndRejectsBusyOrStaleEditors() throws {
+        let mac = UUID(), other = UUID()
+        defer { removeFixtureProfile(mac); removeFixtureProfile(other); try? TerminalSecretStore.forgetHostKey(mac) }
+        let login = DirectMacAccessProfile.Password(username: "synthetic", password: "synthetic-only")
+        let profile = DirectMacAccessProfile(login: login, sshMethod: .password,
+                                            sshPassword: .init(username: "different", password: "synthetic-ssh-only"), keyID: UUID(), keyUsername: "synthetic-key")
+        try DirectMacAccessStore.write(profile, id: mac)
+        try DirectMacAccessStore.write(.init(login: login), id: other)
+        let pin = "ssh-ed25519 " + Data(repeating: 3, count: 32).base64EncodedString()
+        try TerminalSecretStore.approveHostKey(pin, id: mac)
+        let otherForm = DirectTerminalLoginForm(); otherForm.bind(to: other)
+        otherForm.draft.initialize(saved: .init(username: login.username, password: login.password))
+        var notifications = 0
+        let observation = DirectMacAccessForgetObservation(macID: mac) {
+            notifications += 1
+            XCTAssertEqual(try? DirectMacAccessStore.load(mac), DirectMacAccessProfile(), "Revocation follows a verified empty commit")
+        }
+        let editor = DirectMacAccessDraft(macID: mac); editor.load()
+        editor.value.login?.username = "unsaved-draft"
+        let lease = DirectMacConnections.shared.begin(macID: mac, kind: "pending", disconnect: {})
+        XCTAssertFalse(editor.forget()); XCTAssertEqual(notifications, 0)
+        XCTAssertEqual(try DirectMacAccessStore.load(mac), profile)
+        XCTAssertEqual(editor.value.login?.username, "unsaved-draft", "A failed Forget must keep the editor draft")
+        DirectMacConnections.shared.end(lease)
+        var newer = profile; newer.login?.username = "changed-elsewhere"
+        try DirectMacAccessStore.write(newer, id: mac)
+        XCTAssertFalse(editor.forget()); XCTAssertEqual(notifications, 0)
+        XCTAssertEqual(try DirectMacAccessStore.load(mac), newer)
+        let current = DirectMacAccessDraft(macID: mac); current.load()
+        var callbacks = 0
+        XCTAssertTrue(current.forget(onForgotten: { callbacks += 1 }))
+        XCTAssertEqual(callbacks, 1); XCTAssertEqual(notifications, 1)
+        XCTAssertEqual(try DirectMacAccessStore.load(mac), DirectMacAccessProfile())
+        XCTAssertEqual(try DirectMacAccessStore.load(other).login, login)
+        XCTAssertEqual(otherForm.draft.password, login.password)
+        XCTAssertEqual(try TerminalSecretStore.hostKey(mac), pin)
+        XCTAssertThrowsError(try DirectMacAccessStore.retain(login, macID: mac, ssh: false, owner: lease))
+        XCTAssertEqual(try DirectMacAccessStore.load(mac), DirectMacAccessProfile(), "A retired owner cannot save the forgotten password again")
+        XCTAssertTrue(current.forget(), "Retrying an already empty profile is idempotent")
+        withExtendedLifetime(observation) { XCTAssertEqual(notifications, 2) }
     }
     func testIndexedMigrationPreservesSharedAndDifferentCredentials() throws {
         struct Row: Decodable { let id: String; let desktop: [String]?; let ssh: [String]?; let key: Bool; let `default`: [String]?; let override: String }

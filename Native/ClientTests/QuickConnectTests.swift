@@ -1,0 +1,551 @@
+#if os(iOS)
+import XCTest
+import UIKit
+import SwiftUI
+import LocalAuthentication
+@testable import Mac_Companion
+
+@MainActor final class QuickConnectTests: XCTestCase {
+    func testUnlockLabelsFollowAvailableAuthenticationAndPasscodeFallback() {
+        let context = AvailableAuthenticationContext()
+        context.kind = .faceID
+        XCTAssertEqual(DirectUnlockMethod.current(context: context).buttonTitle, "Unlock with Face ID")
+        context.kind = .touchID
+        XCTAssertEqual(DirectUnlockMethod.current(context: context).buttonTitle, "Unlock with Touch ID")
+        context.biometrics = false
+        XCTAssertEqual(DirectUnlockMethod.current(context: context), .passcode)
+        context.deviceAuthentication = false
+        XCTAssertEqual(DirectUnlockMethod.current(context: context), .unavailable)
+        context.biometrics = true; context.deviceAuthentication = true; context.kind = .faceID
+        XCTAssertEqual(DirectUnlockMethod.current(context: context), .faceID, "Availability can recover after Settings or biometric lockout")
+    }
+    func testTrackpadRecoveryOnlyAppliesToDisplayFailures() {
+        for stage in [7, 8, 10, 11, 110, 111, 112, 113, 114, 115] {
+            XCTAssertFalse(DirectRecoveryBridgeV1.canOfferInputOnlyRecovery(stage: stage), "stage \(stage)")
+        }
+        for stage in [9, 103, 116, 117, 118] {
+            XCTAssertTrue(DirectRecoveryBridgeV1.canOfferInputOnlyRecovery(stage: stage), "stage \(stage)")
+        }
+    }
+    func testDraftValidatesWithoutSavingAndKeepsAStableIdentity() throws {
+        var draft = DirectQuickConnectDraft(); draft.host = " EXAMPLE.local "
+        let id = draft.id
+        XCTAssertEqual(draft.record?.address, "example.local")
+        XCTAssertEqual(draft.record?.id, id)
+        draft.port = "0"; XCTAssertNil(draft.record)
+        draft.port = "5900"; draft.sshPort = "65536"; XCTAssertNil(draft.record)
+        draft.sshPort = "22"; draft.host = "https://example.local"; XCTAssertNil(draft.record)
+        draft.host = "example.local"; draft.additionalAddresses = "backup.local\n192.0.2.1"
+        XCTAssertEqual(draft.record?.addresses, ["example.local", "backup.local", "192.0.2.1"])
+    }
+    func testLongTypedHostProducesAValidAutomaticLabelForTemporaryAndSavedConnections() throws {
+        let host = longQuickConnectHost
+        XCTAssertEqual(host.count, 87)
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for saveMac in [false, true] {
+            var draft = DirectQuickConnectDraft(); draft.host = " \(host.uppercased()) "; draft.saveMac = saveMac
+            let request = try XCTUnwrap(draft.request(in: []))
+            XCTAssertEqual(request.saveMac, saveMac)
+            XCTAssertEqual(request.mac.addresses, [host], "Generating a display label must preserve the entire normalized endpoint")
+            XCTAssertFalse(request.mac.name.isEmpty); XCTAssertLessThanOrEqual(request.mac.name.count, 80)
+            XCTAssertTrue(request.mac.usesAutomaticName)
+            XCTAssertEqual(try request.mac.validated(), request.mac)
+            if saveMac {
+                let url = directory.appending(path: "macs.json")
+                let library = DirectMacLibraryV1(url: url, removeLogin: { _ in })
+                XCTAssertTrue(library.save(id: request.mac.id, name: request.mac.name, addresses: request.mac.addresses,
+                    port: request.mac.port, sshPort: request.mac.sshPort, usesAutomaticName: request.mac.usesAutomaticName))
+                let saved = try XCTUnwrap(DirectMacLibraryV1(url: url, removeLogin: { _ in }).macs.first)
+                XCTAssertEqual(saved, request.mac)
+            }
+        }
+    }
+    func testLongTypedHostPreservesExplicitNameAndItsValidation() throws {
+        var draft = DirectQuickConnectDraft(); draft.host = longQuickConnectHost; draft.name = "My Long Host"
+        let request = try XCTUnwrap(draft.request(in: []))
+        XCTAssertEqual(request.mac.name, "My Long Host"); XCTAssertFalse(request.mac.usesAutomaticName)
+        XCTAssertEqual(request.mac.address, longQuickConnectHost)
+        draft.name = String(repeating: "n", count: 80)
+        XCTAssertEqual(draft.record?.name, draft.name)
+        draft.name += "n"
+        XCTAssertNil(draft.record, "An explicit name must be validated, never silently shortened")
+        XCTAssertNil(draft.request(in: []))
+        draft.name = ""
+        XCTAssertNotNil(draft.record, "Clearing the custom label restores the bounded automatic fallback")
+        draft.host = String(repeating: "a", count: 256)
+        XCTAssertNil(draft.record, "Bounding the label must not relax endpoint validation")
+    }
+    func testLongDiscoveredHostKeepsItsAutomaticDiscoveredName() throws {
+        let detected = DirectMacDetectedIdentity(name: "Nearby Long Host", host: longQuickConnectHost, addresses: [], port: 5900, connection: .desktop)
+        let draft = DirectQuickConnectDraft(item: try XCTUnwrap(DirectMacDiscoveryItem.group([detected]).first))
+        let record = try XCTUnwrap(draft.record)
+        XCTAssertEqual(record.name, detected.name); XCTAssertTrue(record.usesAutomaticName)
+        XCTAssertEqual(record.address, longQuickConnectHost)
+        let later = DirectMacDetectedIdentity(name: "Renamed Nearby Mac", host: longQuickConnectHost, addresses: [], port: 5900, connection: .desktop)
+        XCTAssertEqual(record.applying(later).name, later.name)
+    }
+    func testLongHostReusesOnlyItsExactSavedEndpoint() throws {
+        let host = longQuickConnectHost
+        let otherHost = String(repeating: "a", count: 63) + "." + String(repeating: "b", count: 16) + "c.local"
+        XCTAssertEqual(host.prefix(80), otherHost.prefix(80), "The hosts intentionally share their generated label prefix")
+        var saved = try DirectMacRecordV1.normalized(name: "Saved Long Host", address: host)
+        saved.preferredConnection = .trackpad
+        let other = try DirectMacRecordV1.normalized(name: "Other Long Host", address: otherHost)
+        var draft = DirectQuickConnectDraft(); draft.host = host.uppercased() + "."
+        let reused = try XCTUnwrap(draft.request(in: [other, saved]))
+        XCTAssertEqual(reused.mac, saved); XCTAssertEqual(reused.connection, .trackpad)
+        XCTAssertNil(draft.savedMac(in: [other]), "A shortened label must never become the endpoint match key")
+        let new = try XCTUnwrap(draft.request(in: [other]))
+        XCTAssertEqual(new.mac.id, draft.id); XCTAssertEqual(new.mac.address, host + ".")
+        draft.name = "Quick Connect Custom Name"
+        XCTAssertEqual(draft.request(in: [saved])?.mac, saved)
+    }
+    private var longQuickConnectHost: String {
+        String(repeating: "a", count: 63) + "." + String(repeating: "b", count: 17) + ".local"
+    }
+    func testExplicitQuickConnectNameSurvivesCompletedAndLaterDiscovery() throws {
+        var draft = DirectQuickConnectDraft(); draft.host = "example.local"; draft.name = " My Work Mac "
+        let request = try XCTUnwrap(draft.request(in: []))
+        XCTAssertEqual(request.mac.name, "My Work Mac")
+        XCTAssertFalse(request.mac.usesAutomaticName)
+        let detected = DirectMacDetectedIdentity(name: "Detected Mac", host: "example.local", addresses: [], port: 5900, connection: .desktop)
+        let completed = request.mac.applying(detected)
+        XCTAssertEqual(completed.name, "My Work Mac", "A completed scan cannot replace an explicit Quick Connect name")
+        XCTAssertEqual(completed.detectedName, "Detected Mac")
+
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appending(path: "macs.json")
+        let library = DirectMacLibraryV1(url: url, removeLogin: { _ in })
+        XCTAssertTrue(library.save(id: request.mac.id, name: request.mac.name, addresses: request.mac.addresses,
+            port: request.mac.port, sshPort: request.mac.sshPort, usesAutomaticName: request.mac.usesAutomaticName))
+        library.updateDetectedMetadata([detected])
+        let later = DirectMacDetectedIdentity(name: "Renamed Detected Mac", host: "example.local", addresses: [], port: 5900,
+            connection: .desktop, modelIdentifier: "MacBookPro18,1")
+        library.updateDetectedMetadata([later])
+        let saved = try XCTUnwrap(DirectMacLibraryV1(url: url, removeLogin: { _ in }).macs.first)
+        XCTAssertEqual(saved.name, "My Work Mac")
+        XCTAssertFalse(saved.usesAutomaticName)
+        XCTAssertEqual(saved.detectedName, later.name)
+        XCTAssertEqual(saved.modelIdentifier, later.modelIdentifier, "Custom names must still accept detected metadata")
+    }
+    func testTypedQuickConnectHostUsesAutomaticNamingUntilEdited() throws {
+        var draft = DirectQuickConnectDraft(); draft.host = "example.local"
+        let initial = try XCTUnwrap(draft.record)
+        XCTAssertEqual(initial.name, "example.local"); XCTAssertTrue(initial.usesAutomaticName)
+        let detected = DirectMacDetectedIdentity(name: "Detected Mac", host: "example.local", addresses: [], port: 5900, connection: .desktop)
+        XCTAssertEqual(initial.applying(detected).name, "Detected Mac")
+        draft.name = "My Work Mac"
+        let edited = try XCTUnwrap(draft.record)
+        XCTAssertFalse(edited.usesAutomaticName)
+        XCTAssertEqual(edited.applying(detected).name, "My Work Mac")
+    }
+    func testScannedQuickConnectNameRemainsAutomaticUntilEdited() throws {
+        let detected = DirectMacDetectedIdentity(name: "Nearby Mac", host: "example.local", addresses: [], port: 5900, connection: .desktop)
+        var draft = DirectQuickConnectDraft(item: try XCTUnwrap(DirectMacDiscoveryItem.group([detected]).first))
+        let initial = try XCTUnwrap(draft.record)
+        XCTAssertEqual(initial.name, "Nearby Mac"); XCTAssertTrue(initial.usesAutomaticName)
+        let later = DirectMacDetectedIdentity(name: "Renamed Nearby Mac", host: "example.local", addresses: [], port: 5900, connection: .desktop)
+        XCTAssertEqual(initial.applying(later).name, "Renamed Nearby Mac")
+        draft.name = "My Nearby Mac"
+        let edited = try XCTUnwrap(draft.record)
+        XCTAssertFalse(edited.usesAutomaticName)
+        XCTAssertEqual(edited.applying(later).name, "My Nearby Mac")
+    }
+    func testClearingQuickConnectCustomNameRestoresAutomaticNaming() throws {
+        let detected = DirectMacDetectedIdentity(name: "Detected Mac", host: "example.local", addresses: [], port: 5900, connection: .desktop)
+        for cleared in ["", " \n "] {
+            var draft = DirectQuickConnectDraft(item: try XCTUnwrap(DirectMacDiscoveryItem.group([detected]).first))
+            draft.name = "Custom Name"; XCTAssertFalse(try XCTUnwrap(draft.record).usesAutomaticName)
+            draft.name = cleared
+            let record = try XCTUnwrap(draft.record)
+            XCTAssertEqual(record.name, "example.local"); XCTAssertTrue(record.usesAutomaticName)
+            XCTAssertEqual(record.applying(detected).name, "Detected Mac")
+        }
+    }
+    func testSavedEndpointReusesUUIDAndItsPreferences() throws {
+        var saved = try DirectMacRecordV1.normalized(name: "My Mac", addresses: ["example.local"], port: 5901, sshPort: 2222)
+        saved.preferredConnection = .trackpad; saved.swipeLeft = .disabled
+        var draft = DirectQuickConnectDraft(); draft.host = "EXAMPLE.LOCAL."; draft.port = "5901"; draft.sshPort = "2222"
+        draft.name = "Quick Connect Name"
+        let request = try XCTUnwrap(draft.request(in: [saved]))
+        XCTAssertEqual(request.mac, saved); XCTAssertEqual(request.mac.id, saved.id)
+        for automatic in [false, true] {
+            var existing = saved; existing.usesAutomaticName = automatic
+            let reused = try XCTUnwrap(draft.request(in: [existing]))
+            XCTAssertEqual(reused.mac.name, saved.name)
+            XCTAssertEqual(reused.mac.usesAutomaticName, automatic, "Reusing an endpoint preserves its saved name policy")
+        }
+        XCTAssertEqual(request.connection, .trackpad)
+        draft.connection = .terminal; draft.choseConnection = true
+        XCTAssertEqual(draft.request(in: [saved])?.connection, .terminal)
+        draft.connection = .desktop
+        draft.port = "5900"; XCTAssertNil(draft.savedMac(in: [saved]))
+    }
+    func testDuplicateEndpointNeverChoosesAnArbitrarySavedLogin() throws {
+        let one = try DirectMacRecordV1.normalized(name: "One", addresses: ["example.local"])
+        let two = try DirectMacRecordV1.normalized(name: "Two", addresses: ["example.local"])
+        var draft = DirectQuickConnectDraft(); draft.host = "example.local"
+        XCTAssertNil(draft.savedMac(in: [one, two]))
+        XCTAssertEqual(draft.request(in: [one, two])?.mac.id, draft.id)
+    }
+    func testNearbyServicesShareOneMacAndPreserveServicePorts() throws {
+        let services = [DirectMacDetectedIdentity(name: "Synthetic Mac", host: "Example.local.", addresses: [], port: 5901, connection: .desktop),
+                        DirectMacDetectedIdentity(name: "Synthetic Mac", host: "example.local", addresses: [], port: 2222, connection: .terminal)]
+        let items = DirectMacDiscoveryItem.group(services)
+        XCTAssertEqual(items.count, 1)
+        let draft = DirectQuickConnectDraft(item: try XCTUnwrap(items.first))
+        XCTAssertEqual(draft.port, "5901"); XCTAssertEqual(draft.sshPort, "2222"); XCTAssertEqual(draft.connection, .desktop)
+        let sshOnly = DirectQuickConnectDraft(item: try XCTUnwrap(DirectMacDiscoveryItem.group([services[1]]).first))
+        XCTAssertEqual(sshOnly.connection, .terminal)
+    }
+    func testDiscoveryShowsNewResultsImmediatelyWithoutCommittingPartialMetadata() {
+        let old = DirectMacDetectedIdentity(name: "Previous Mac", host: "previous.local", addresses: [], port: 5900, connection: .desktop)
+        let new = DirectMacDetectedIdentity(name: "New Mac", host: "new.local", addresses: [], port: 22, connection: .terminal)
+        var results = DirectMacDiscoveryResults()
+        results.finish([old]); results.preview([new])
+        XCTAssertEqual(Set(results.visible.map(\.host)), [old.host, new.host])
+        XCTAssertEqual(results.completed.map(\.host), [old.host], "Only a completed scan may update saved Mac metadata")
+        results.cancel()
+        XCTAssertEqual(results.visible.map(\.host), [old.host])
+        results.preview([new]); results.finish([new])
+        XCTAssertEqual(results.visible.map(\.host), [new.host])
+        XCTAssertEqual(results.completed.map(\.host), [new.host])
+    }
+    func testVisibleConnectionModeAlwaysMatchesTheSubmittedMode() throws {
+        var saved = try DirectMacRecordV1.normalized(name: "My Mac", addresses: ["example.local"])
+        saved.preferredConnection = .trackpad
+        var draft = DirectQuickConnectDraft(); draft.host = "example.local"
+        XCTAssertEqual(draft.effectiveConnection(in: [saved]), draft.request(in: [saved])?.connection)
+        draft.connection = .terminal; draft.choseConnection = true
+        XCTAssertEqual(draft.effectiveConnection(in: [saved]), draft.request(in: [saved])?.connection)
+    }
+    func testFieldsKeepTheirFillAcrossSheetElevationAndAvoidAppAccountAutoFill() {
+        let base = UITraitCollection(userInterfaceStyle: .light)
+        let elevated = UITraitCollection(traitsFrom: [base, UITraitCollection(userInterfaceLevel: .elevated)])
+        XCTAssertEqual(DirectConnectionStyle.field.resolvedColor(with: base), DirectConnectionStyle.field.resolvedColor(with: elevated))
+        XCTAssertEqual(DirectConnectionStyle.remoteCredentialContentType.rawValue, "")
+    }
+    func testNativeFormSizingIgnoresStaleMeasurementsAndKeepsItsIdentityAcrossKeyboard() async throws {
+        let mount = try PanelMount(); defer { mount.close() }
+        let owner = NSObject(), retired = NSObject()
+        mount.host.show(UIViewController(), owner: owner, cancel: {})
+        try await eventually { mount.anchor.presentedViewController != nil }
+        let controller = try XCTUnwrap(mount.anchor.presentedViewController)
+        let sheet = try XCTUnwrap(controller.sheetPresentationController)
+        XCTAssertEqual(controller.modalPresentationStyle, .formSheet)
+        XCTAssertFalse(sheet.prefersPageSizing)
+        XCTAssertEqual(controller.preferredContentSize.width, 560)
+        if #available(iOS 27.0, *) { XCTAssertEqual(sheet.preferredPlacement, .center) }
+        mount.host.setContentHeight(300, owner: owner)
+        XCTAssertEqual(controller.preferredContentSize.height, 300)
+        mount.host.setContentHeight(800, owner: retired)
+        XCTAssertEqual(controller.preferredContentSize.height, 300)
+        let nativeDetents = sheet.detents.map(\.identifier)
+        NotificationCenter.default.post(name: UIResponder.keyboardWillShowNotification, object: nil)
+        NotificationCenter.default.post(name: UIResponder.keyboardWillHideNotification, object: nil)
+        XCTAssertEqual(sheet.detents.map(\.identifier), nativeDetents)
+        XCTAssertTrue(mount.anchor.presentedViewController === controller)
+        XCTAssertEqual(controller.preferredContentSize.height, 300)
+    }
+    func testOptionsExpansionKeepsABoundedFormThroughKeyboardDismissal() async throws {
+        let mount = try PanelMount(); defer { mount.close() }
+        let owner = NSObject()
+        mount.host.show(UIViewController(), owner: owner, cancel: {})
+        try await eventually { mount.anchor.presentedViewController != nil }
+        let sheet = try XCTUnwrap(mount.anchor.presentedViewController?.sheetPresentationController)
+        NotificationCenter.default.post(name: UIResponder.keyboardWillShowNotification, object: nil)
+        mount.host.expand()
+        mount.host.setContentHeight(300, owner: owner)
+        NotificationCenter.default.post(name: UIResponder.keyboardWillHideNotification, object: nil)
+        XCTAssertEqual(mount.anchor.presentedViewController?.preferredContentSize.height, 620)
+        XCTAssertEqual(sheet.detents.count, 1)
+        mount.host.compact()
+        XCTAssertEqual(mount.anchor.presentedViewController?.preferredContentSize.height, 300)
+    }
+    func testTrustSizingReturnsToTheUnderlyingFormWithoutReplacingIt() async throws {
+        let mount = try PanelMount(); defer { mount.close() }
+        let owner = NSObject(), content = UIViewController(), trust = UIViewController()
+        mount.host.show(content, owner: owner, cancel: {})
+        try await eventually { mount.anchor.presentedViewController != nil }
+        let panel = try XCTUnwrap(mount.anchor.presentedViewController)
+        mount.host.setContentHeight(360, owner: owner)
+        mount.host.showTrust(trust)
+        XCTAssertEqual(panel.preferredContentSize.height, 620)
+        mount.host.setContentHeight(400, owner: owner)
+        XCTAssertEqual(panel.preferredContentSize.height, 620)
+        mount.host.finishTrust(trust)
+        XCTAssertEqual(panel.preferredContentSize.height, 400)
+        XCTAssertTrue(panel.children.first === content)
+    }
+    func testDesktopQuickConnectPassesTemporarySavePolicyToTheNativeOwner() throws {
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic Save Policy", address: "save-policy.invalid")
+        let files = DirectFilesSession(mac: mac); defer { files.close() }
+        for requested in [false, true] {
+            let view = VNCRemoteDesktopView(mac: mac, files: files, showMacs: {}, loginRetentionAllowed: requested,
+                connectionEstablished: { false })
+            XCTAssertEqual(view.makeCoordinator().saveMacRequested, requested)
+        }
+    }
+    func testSavingMacAndLoginAreIndependentChoices() throws {
+        var draft = DirectQuickConnectDraft(); draft.host = "example.local"; draft.saveMac = false
+        let request = try XCTUnwrap(draft.request(in: []))
+        XCTAssertFalse(request.saveMac)
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let library = DirectMacLibraryV1(url: directory.appending(path: "macs.json"), removeLogin: { _ in })
+        XCTAssertTrue(library.macs.isEmpty, "Constructing and cancelling a request must not save a Mac")
+        draft.saveMac = true
+        let connected = try XCTUnwrap(draft.request(in: []))
+        XCTAssertTrue(library.save(id: connected.mac.id, name: connected.mac.name, addresses: connected.mac.addresses))
+        XCTAssertNil(DesktopCredentialStoreV1.read(connected.mac.id), "Saving a Mac must not manufacture a login")
+        XCTAssertEqual(library.macs.map(\.id), [draft.id])
+    }
+    func testQuickConnectionSaveRechecksCurrentLibraryAndExpiredTrial() async throws {
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let suite = "QuickConnectAdmissionTests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite)); defer { defaults.removePersistentDomain(forName: suite) }
+        var now = Date(timeIntervalSince1970: 1_800_000_000)
+        let start = now
+        let trial = DirectProTrial(entitlement: .init(verified: true, matchingProduct: true, nonConsumable: true, revoked: false), originalPurchaseDate: start)
+        var snapshot = DirectProSnapshot()
+        let pro = DirectProAccess(defaults: defaults, now: { now }, readEntitlements: { snapshot })
+        await pro.refresh()
+        let library = DirectMacLibraryV1(url: directory.appending(path: "macs.json"), removeLogin: { _ in })
+        let proposed = try DirectMacRecordV1.normalized(name: "Synthetic Quick Mac", addresses: ["quick.invalid"])
+        let other = try DirectMacRecordV1.normalized(name: "Synthetic Synced Mac", addresses: ["synced.invalid"])
+        XCTAssertTrue(pro.canAddMac(count: library.macs.count))
+        try library.applyCloud([other]) // Arrived while the initial login/trust prompt was open.
+        XCTAssertFalse(library.saveQuickConnection(proposed, connection: .terminal, pro: pro))
+        XCTAssertEqual(library.macs.map(\.id), [other.id])
+        snapshot.trial = trial; await pro.refresh()
+        XCTAssertTrue(pro.canAddMac(count: library.macs.count))
+        now = start.addingTimeInterval(DirectProTrial.duration)
+        XCTAssertFalse(library.saveQuickConnection(proposed, connection: .terminal, pro: pro))
+        XCTAssertEqual(library.macs.map(\.id), [other.id])
+        snapshot.lifetime = true; await pro.refresh()
+        XCTAssertTrue(library.saveQuickConnection(proposed, connection: .terminal, pro: pro))
+        XCTAssertEqual(library.macs.last?.preferredConnection, .terminal)
+        XCTAssertNil(DesktopCredentialStoreV1.read(proposed.id))
+    }
+    func testNativeSheetReplacesContentWithoutAnotherPresentationAndRejectsOldHide() async throws {
+        let mount = try PanelMount(); defer { mount.close() }
+        let first = UIViewController(), second = UIViewController(), firstOwner = NSObject(), secondOwner = NSObject()
+        mount.host.show(first, owner: firstOwner, cancel: {})
+        try await eventually { mount.anchor.presentedViewController != nil }
+        let sheet = try XCTUnwrap(mount.anchor.presentedViewController)
+        mount.host.hide(firstOwner)
+        mount.host.show(second, owner: secondOwner, cancel: {})
+        await Task.yield(); await Task.yield()
+        XCTAssertTrue(mount.anchor.presentedViewController === sheet)
+        XCTAssertTrue(second.parent === sheet); XCTAssertNil(first.parent)
+        mount.host.close(); try await eventually { mount.anchor.presentedViewController == nil }
+    }
+    func testInteractiveDismissalRejectsCancelledOwnerUpdatesAndStaleCallbacks() async throws {
+        let mount = try PanelMount(); defer { mount.close() }
+        let owner = NSObject(), content = UIViewController()
+        var cancellations = 0
+        mount.host.show(content, owner: owner, cancel: {
+            cancellations += 1
+            // Cancelling native/SwiftUI content can synchronously redraw it.
+            mount.host.show(content, owner: owner, cancel: {})
+        })
+        try await eventually { content.parent != nil }
+        let sheet = try XCTUnwrap(content.parent)
+        let presentation = try XCTUnwrap(sheet.presentationController)
+        let count = mount.anchor.presentations
+        sheet.dismiss(animated: false)
+        try await eventually { mount.anchor.presentedViewController == nil }
+        mount.host.presentationControllerDidDismiss(presentation)
+        await Task.yield(); await Task.yield()
+        XCTAssertEqual(cancellations, 1)
+        XCTAssertEqual(mount.anchor.presentations, count, "Cancel must not flash another sheet")
+        XCTAssertFalse(mount.host.isVisible)
+        mount.host.show(content, owner: owner, cancel: {})
+        XCTAssertEqual(mount.anchor.presentations, count, "A late update from the dismissed login remains retired")
+        let nextOwner = NSObject(), next = UIViewController()
+        mount.host.show(next, owner: nextOwner, cancel: { cancellations += 1 })
+        try await eventually { next.parent != nil }
+        mount.host.presentationControllerDidDismiss(presentation)
+        XCTAssertTrue(mount.host.isVisible, "The old sheet cannot dismiss a new login")
+        XCTAssertEqual(cancellations, 1)
+    }
+
+    func testSheetDismissalLockFollowsTheCurrentOwnerAndPreservesTrustProtection() async throws {
+        let mount = try PanelMount(); defer { mount.close() }
+        let content = UIViewController(), owner = NSObject(), retired = NSObject(), trust = UIViewController()
+        mount.host.show(content, owner: owner, cancel: {})
+        try await eventually { content.parent != nil }
+        let sheet = try XCTUnwrap(content.parent)
+        XCTAssertFalse(sheet.isModalInPresentation)
+        mount.host.setDismissalLocked(true, owner: owner)
+        XCTAssertTrue(sheet.isModalInPresentation)
+        mount.host.show(content, owner: owner, cancel: {})
+        XCTAssertTrue(sheet.isModalInPresentation)
+        mount.host.setDismissalLocked(false, owner: retired)
+        XCTAssertTrue(sheet.isModalInPresentation)
+        mount.host.showTrust(trust)
+        mount.host.setDismissalLocked(false, owner: owner)
+        XCTAssertTrue(sheet.isModalInPresentation)
+        mount.host.finishTrust(trust)
+        XCTAssertFalse(sheet.isModalInPresentation, "Returning to an idle form restores dismissal")
+        mount.host.setDismissalLocked(true, owner: owner)
+        mount.host.show(UIViewController(), owner: retired, cancel: {})
+        XCTAssertFalse(sheet.isModalInPresentation, "An old connection cannot lock its replacement")
+        mount.host.setDismissalLocked(true, owner: owner)
+        XCTAssertFalse(sheet.isModalInPresentation)
+        mount.host.close()
+        try await eventually { mount.anchor.presentedViewController == nil }
+    }
+    func testTrustTemporarilyReplacesContentAndProgrammaticCloseDoesNotCancel() async throws {
+        let mount = try PanelMount(); defer { mount.close() }
+        let content = UIViewController(), owner = NSObject(), trust = UIViewController()
+        var cancelled = false
+        mount.host.show(content, owner: owner, cancel: { cancelled = true })
+        try await eventually { content.parent != nil }
+        let sheet = try XCTUnwrap(content.parent)
+        mount.host.showTrust(trust)
+        XCTAssertTrue(trust.parent === sheet); XCTAssertTrue(sheet.isModalInPresentation)
+        // Progress updates cannot override the active fingerprint prompt.
+        mount.host.show(content, owner: owner, cancel: { cancelled = true })
+        XCTAssertTrue(trust.parent === sheet)
+        mount.host.finishTrust(trust)
+        XCTAssertTrue(content.parent === sheet); XCTAssertFalse(sheet.isModalInPresentation)
+        mount.host.close(); try await eventually { mount.anchor.presentedViewController == nil }
+        XCTAssertFalse(cancelled)
+    }
+    func testNativeDesktopSheetKeepsItsFieldsAndResignsKeyboardBeforeConnecting() throws {
+        let mount = try PanelMount(); defer { mount.close() }
+        let viewer = CompanionVNCViewer(); viewer.connectionPanelHost = mount.host; viewer.preventsLoginRetention = true
+        viewer.loadViewIfNeeded(); viewer.view.frame = mount.window.bounds
+        mount.anchor.addChild(viewer); mount.anchor.view.addSubview(viewer.view); viewer.didMove(toParent: mount.anchor)
+        defer { viewer.stop(); viewer.willMove(toParent: nil); viewer.view.removeFromSuperview(); viewer.removeFromParent() }
+        viewer.foregrounded()
+        let username = try XCTUnwrap(viewer.value(forKey: "username") as? UITextField)
+        let password = try XCTUnwrap(viewer.value(forKey: "password") as? UITextField)
+        XCTAssertEqual(username.textContentType?.rawValue, "")
+        XCTAssertEqual(password.textContentType?.rawValue, "")
+        XCTAssertEqual(username.placeholder, "Username"); XCTAssertEqual(password.placeholder, "Password")
+        let connect = try XCTUnwrap(viewer.value(forKey: "connect") as? UIButton)
+        let fields = try XCTUnwrap(viewer.value(forKey: "loginFields") as? UIView)
+        let footer = try XCTUnwrap(viewer.value(forKey: "loginActions") as? UIView)
+        let scroll = try XCTUnwrap(viewer.value(forKey: "loginScroll") as? UIView)
+        let attached = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in password.window != nil }, object: nil)
+        wait(for: [attached], timeout: 3)
+        XCTAssertFalse(footer.isDescendant(of: scroll), "Login actions stay outside the scrolling fields")
+        XCTAssertTrue((viewer.value(forKey: "saveLoginRow") as? UIView)?.isHidden == true)
+        username.text = "synthetic"; password.text = "synthetic-only"
+        XCTAssertTrue(password.becomeFirstResponder()); XCTAssertTrue(password.isFirstResponder)
+        var attempts = 0
+        viewer.connectHandler = { _, _, remember in
+            attempts += 1; XCTAssertFalse(password.isFirstResponder); XCTAssertFalse(remember)
+        }
+        connect.sendActions(for: .touchUpInside)
+        XCTAssertEqual(attempts, 1); XCTAssertTrue(fields.isHidden)
+        viewer.showInvalidLogin()
+        XCTAssertTrue(viewer.value(forKey: "password") as? UITextField === password)
+        XCTAssertEqual(password.text, "synthetic-only"); XCTAssertFalse(fields.isHidden)
+    }
+    func testCredentialCaptionsKeepTheirHeightAndEditorAcrossFocusValueAndReveal() throws {
+        let mount = try PanelMount(); defer { mount.close() }
+        for title in ["Username", "Password"] {
+            let field = UITextField(); field.isSecureTextEntry = title == "Password"
+            let input = DirectCredentialInput(field: field, title: title)
+            mount.anchor.view.addSubview(input); defer { input.removeFromSuperview() }
+            for category in [UIContentSizeCategory.large, .accessibilityExtraExtraExtraLarge] {
+                input.traitOverrides.preferredContentSizeCategory = category
+                input.setNeedsLayout(); input.layoutIfNeeded()
+                let size = input.intrinsicContentSize
+                input.frame = CGRect(x: 10, y: 80, width: 210, height: size.height)
+                field.text = ""; field.resignFirstResponder(); input.refresh(); input.layoutIfNeeded()
+                XCTAssertTrue(input.caption.isHidden); XCTAssertEqual(field.placeholder, title)
+                XCTAssertEqual(field.accessibilityLabel, title)
+                XCTAssertFalse(input.caption.isAccessibilityElement)
+                XCTAssertTrue(field.becomeFirstResponder()); input.layoutIfNeeded()
+                XCTAssertFalse(input.caption.isHidden); XCTAssertNil(field.placeholder)
+                XCTAssertEqual(input.intrinsicContentSize.height, size.height)
+                let editorFrame = field.frame
+                field.text = "synthetic-value"; field.sendActions(for: .editingChanged); input.layoutIfNeeded()
+                field.isSecureTextEntry.toggle(); input.refresh(); input.layoutIfNeeded()
+                XCTAssertTrue(field.isFirstResponder); XCTAssertEqual(field.text, "synthetic-value")
+                XCTAssertEqual(field.frame, editorFrame); XCTAssertEqual(input.intrinsicContentSize.height, size.height)
+                field.resignFirstResponder(); input.layoutIfNeeded()
+                XCTAssertFalse(input.caption.isHidden, "A filled row keeps its label after focus leaves")
+                XCTAssertEqual(field.frame, editorFrame)
+                field.text = ""; input.refresh(); input.layoutIfNeeded()
+                XCTAssertTrue(input.caption.isHidden); XCTAssertEqual(field.placeholder, title)
+                XCTAssertEqual(input.intrinsicContentSize.height, size.height)
+                XCTAssertGreaterThanOrEqual(field.frame.maxY, input.caption.frame.maxY)
+                XCTAssertLessThanOrEqual(field.frame.maxY, input.bounds.maxY)
+            }
+        }
+    }
+    func testGroupedRowKeepsItsEditorAndDraftAcrossNarrowWidthsAndLargeText() async throws {
+        let mount = try PanelMount(); defer { mount.close() }
+        let content = UIHostingController(rootView: DirectCredentialRow {
+            DirectConnectionCredentialField(text: .constant("synthetic-password"), secure: false, identifier: "grouped-test-password") {}
+        })
+        mount.anchor.addChild(content); mount.anchor.view.addSubview(content.view); content.didMove(toParent: mount.anchor)
+        func fields(_ view: UIView) -> [UITextField] {
+            (view as? UITextField).map { [$0] } ?? view.subviews.flatMap(fields)
+        }
+        content.view.frame = CGRect(x: 0, y: 80, width: 520, height: 130)
+        try await eventually { fields(content.view).count == 1 }
+        let editor = try XCTUnwrap(fields(content.view).first)
+        XCTAssertTrue(editor.becomeFirstResponder())
+        for category in [UIContentSizeCategory.large, .accessibilityExtraExtraExtraLarge] {
+            content.traitOverrides.preferredContentSizeCategory = category
+            for width in [CGFloat(520), 280, 210, 520] {
+                content.view.frame.size.width = width
+                content.view.setNeedsLayout(); content.view.layoutIfNeeded()
+                await Task.yield()
+                XCTAssertTrue(fields(content.view).first === editor)
+                XCTAssertEqual(editor.text, "synthetic-password")
+                XCTAssertTrue(editor.isFirstResponder)
+                let frame = editor.convert(editor.bounds, to: content.view)
+                XCTAssertGreaterThan(frame.width, 100)
+                XCTAssertGreaterThanOrEqual(frame.minX, 0)
+                XCTAssertLessThanOrEqual(frame.maxX, width + 1)
+            }
+        }
+    }
+    private func eventually(_ predicate: () -> Bool) async throws {
+        for _ in 0..<150 { if predicate() { return }; try await Task.sleep(for: .milliseconds(20)) }
+        XCTFail("Native panel did not settle")
+    }
+}
+
+private final class AvailableAuthenticationContext: LAContext, @unchecked Sendable {
+    var kind: LABiometryType = .none
+    var biometrics = true
+    var deviceAuthentication = true
+    override var biometryType: LABiometryType { kind }
+    override func canEvaluatePolicy(_ policy: LAPolicy, error: NSErrorPointer) -> Bool {
+        policy == .deviceOwnerAuthenticationWithBiometrics ? biometrics : deviceAuthentication
+    }
+}
+
+@MainActor private final class PanelPresentationAnchor: UIViewController {
+    var presentations = 0
+    override func present(_ viewControllerToPresent: UIViewController, animated flag: Bool, completion: (() -> Void)? = nil) {
+        presentations += 1
+        super.present(viewControllerToPresent, animated: flag, completion: completion)
+    }
+}
+
+@MainActor private final class PanelMount {
+    let window: UIWindow
+    let anchor = PanelPresentationAnchor()
+    let host = DirectConnectionPanelHost()
+    private weak var previous: UIWindow?
+    init() throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        previous = scene.windows.first(where: \.isKeyWindow)
+        window = UIWindow(windowScene: scene); window.rootViewController = anchor
+        window.makeKeyAndVisible(); anchor.loadViewIfNeeded(); host.attach(anchor)
+    }
+    func close() { host.close(); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+}
+#endif

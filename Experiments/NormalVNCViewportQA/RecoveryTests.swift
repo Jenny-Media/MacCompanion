@@ -32,6 +32,22 @@ import Citadel
         }
 
     }
+    func testMacSaveFailureNoticeDescribesTheMacAndOnlyRequestedLoginRetention() {
+        for remember in [false, true] {
+            let notice = DirectRecoveryNotice.macSaveFailed(loginRequested: remember)
+            XCTAssertEqual(notice.reason, .saveFailed); XCTAssertEqual(notice.title, "Mac wasn’t saved")
+            XCTAssertTrue(notice.message.contains("couldn’t be added to My Macs"))
+            XCTAssertTrue(notice.message.contains("You can keep using this session."))
+            XCTAssertEqual(notice.message.contains("Your login wasn’t saved."), remember)
+        }
+        let viewer = CompanionVNCViewer(); viewer.loadViewIfNeeded()
+        defer { viewer.stop() }
+        let owner = viewer.session
+        viewer.showMacSaveFailure(false)
+        XCTAssertTrue((viewer.value(forKey: "recoveryController") as? UIViewController)?.parent === viewer)
+        XCTAssertNotNil(viewer.value(forKey: "recoveryPanel"), "Mac-save feedback uses the existing live-session overlay")
+        XCTAssertTrue(viewer.session === owner, "Showing save feedback must not replace the native owner")
+    }
     func testSavedLoginWriteFailureLeavesEditableFieldsAndStopsProgress() {
         let viewer = CompanionVNCViewer(); viewer.loadViewIfNeeded()
         viewer.setValue(true, forKey: "starting")
@@ -57,6 +73,10 @@ import Citadel
         defer { viewer.stop() }
         let detail = try XCTUnwrap(viewer.value(forKey: "loginDetailsText") as? UILabel)
         XCTAssertTrue(detail.isHidden)
+        let action = try XCTUnwrap(viewer.value(forKey: "loginDetails") as? UIButton)
+        XCTAssertTrue(action.isHidden)
+        viewer.showRecoveryStage(7)
+        XCTAssertFalse(action.isHidden)
         _ = viewer.perform(NSSelectorFromString("showLoginDetails"))
         XCTAssertFalse(detail.isHidden); XCTAssertNil(viewer.presentedViewController)
         for expected in ["synthetic.local", "100.64.0.12", "5901", "2222"] { XCTAssertTrue(detail.text?.contains(expected) == true) }

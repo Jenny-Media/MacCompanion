@@ -2,6 +2,9 @@ import UIKit
 import SwiftUI
 import Observation
 import LocalAuthentication
+import NIO
+import NIOSSH
+import Crypto
 
 // Disposable simulator entry point; never linked into a release target.
 @main final class ColdStartApplication: UIResponder, UIApplicationDelegate {
@@ -21,9 +24,9 @@ final class ColdStartScene: UIResponder, UIWindowSceneDelegate {
         self.window = window; window.makeKeyAndVisible()
         let controls = ColdStartControlWindow(windowScene: scene)
         controls.windowLevel = .alert + 2; controls.backgroundColor = .clear
-        let host = UIHostingController(rootView: ColdStartControls(model: model))
+        let host = UIHostingController(rootView: ColdStartControls(model: model).dynamicTypeSize(.medium))
         host.view.backgroundColor = .clear; controls.rootViewController = host
-        self.controls = controls; controls.isHidden = false
+        self.controls = controls; controls.isHidden = ProcessInfo.processInfo.arguments.contains("--unlock-layout") || ProcessInfo.processInfo.arguments.contains("--connect-flow")
     }
 }
 final class ColdStartAuthentication: LAContext {
@@ -58,6 +61,7 @@ final class ColdStartLibraryReadGate: @unchecked Sendable {
     let timeout: Duration
     let libraryRead = ColdStartLibraryReadGate()
     var stage = "Starting"
+    private var sessionPeer: Channel?
     init() {
         let arguments = ProcessInfo.processInfo.arguments
         let activity = ColdStartActivity(), authentication = ColdStartAuthentication(), store = ColdStartStore()
@@ -67,7 +71,7 @@ final class ColdStartLibraryReadGate: @unchecked Sendable {
         let defaults = UserDefaults(suiteName: "dev.maccompanion.coldstartqa")!
         defaults.removePersistentDomain(forName: "dev.maccompanion.coldstartqa")
         defaults.set(needsAuthentication, forKey: DirectAppLockV1.preferenceKey)
-        lock = DirectAppLockV1(contextFactory: { authentication }, defaults: defaults,
+        lock = DirectAppLockV1(contextFactory: { authentication }, defaults: defaults, unlockMethod: { .passcode },
                                isActive: { activity.active }, isBackground: { false }, protectedDataAvailable: { true })
         pro = DirectProAccess(defaults: defaults, readEntitlements: { await store.read() })
         let url = URL.cachesDirectory.appending(path: "cold-start-synthetic-\(UUID()).json")
@@ -75,14 +79,48 @@ final class ColdStartLibraryReadGate: @unchecked Sendable {
         if !arguments.contains("--empty-library") {
             _ = seeded.save(id: nil, name: "Free Mac", address: "127.0.0.1")
             _ = seeded.save(id: nil, name: "Second Mac", address: "127.0.0.1")
+            if arguments.contains("--row-modes-review") {
+                VNCSessionPreferences.setDesktopSize(0, mac: seeded.macs[1].id)
+                _ = seeded.save(id: nil, name: "Terminal Mac", addresses: ["terminal-fixture.local"], preferredConnection: .terminal)
+                _ = seeded.save(id: nil, name: "Trackpad Mac", addresses: ["trackpad-fixture.local"], preferredConnection: .trackpad)
+            }
+        }
+        if arguments.contains("--saved-login-tests"), let mac = seeded.macs.first {
+            // Test-only credentials in the QA app's Keychain, never real accounts.
+            try? DirectMacAccessStore.write(.init(login: .init(username: "synthetic-account", password: "synthetic-password")), id: mac.id)
         }
         let gate = libraryRead
         if !arguments.contains("--held-library") { gate.release() }
-        library = DirectMacLibraryV1(url: url, loadInBackground: true, readInitialRecords: {
+        library = DirectMacLibraryV1(url: url, loadInBackground: !arguments.contains("--progress-review"), readInitialRecords: {
             gate.wait(); return try DirectMacLibraryV1.readRecords(at: $0)
         })
     }
     func begin() async {
+        if ProcessInfo.processInfo.arguments.contains("--connected-session-review") {
+            do {
+                while library.loading { try await Task.sleep(for: .milliseconds(10)) }
+                let key = NIOSSHPrivateKey(ed25519Key: .init())
+                sessionPeer = try await ColdStartSSHFixture.start(key: key)
+                guard let mac = library.macs.first, let port = sessionPeer?.localAddress?.port else { return }
+                guard library.save(id: mac.id, name: mac.name, addresses: mac.addresses, sshPort: port, preferredConnection: .terminal) else {
+                    throw CocoaError(.fileWriteUnknown)
+                }
+                try DirectMacAccessStore.write(.init(login: .init(username: "synthetic", password: "synthetic-only")), id: mac.id)
+                try TerminalSecretStore.approveHostKey(String(openSSHPublicKey: key.publicKey), id: mac.id)
+                if needsAuthentication {
+                    while authentication.reply == nil { try await Task.sleep(for: .milliseconds(10)) }
+                    activity.active = false; lock.becameInactive()
+                    await completeAuthentication(); activate()
+                }
+                stage = "Connected-session fixture ready"
+            } catch {
+                stage = "Connected-session fixture failed"
+                // The fixture contains synthetic data only; keep failure
+                // diagnostics bounded to the error type, never the credentials.
+                NSLog("COLDSTART_CONNECTED_FIXTURE failure=%@", String(reflecting: type(of: error)))
+            }
+            return
+        }
         guard needsAuthentication else { stage = "Active; purchases pending"; return }
         for _ in 0..<100 {
             if authentication.reply != nil { break }
@@ -143,9 +181,100 @@ struct ColdStartControls: View {
 struct ColdStartShell: View {
     @State var model: ColdStartProbe
     var body: some View {
-        DirectMacLibraryRootV1(library: model.library, appLock: model.lock, pro: model.pro, accessTimeout: model.timeout)
-            .padding(.bottom, 130)
-            .environment(\.scenePhase, .inactive)
-            .task { await model.begin() }
+        if ProcessInfo.processInfo.arguments.contains("--progress-review") {
+            PresentationProgressReview(model: model)
+        } else if ProcessInfo.processInfo.arguments.contains("--unlock-layout") {
+            // Render the actual cover without QA controls obscuring its bottom action.
+            DirectUnlockCover(lock: model.lock)
+        } else {
+            DirectMacLibraryRootV1(library: model.library, appLock: model.lock, pro: model.pro, accessTimeout: model.timeout)
+                .padding(.bottom, ProcessInfo.processInfo.arguments.contains("--connect-flow") ? 0 : 130)
+                .environment(\.scenePhase, .inactive)
+                .task { await model.begin() }
+        }
     }
+}
+
+// Real connection views with a held, synthetic progress state. No socket,
+// credentials or remote input is used for presentation screenshots.
+struct PresentationProgressReview: View {
+    let model: ColdStartProbe
+    @State private var panel = DirectConnectionPanelHost()
+    @State private var terminal: DirectTerminalSession
+    @State private var showing = true
+    init(model: ColdStartProbe) {
+        self.model = model
+        let terminal = DirectTerminalSession(mac: model.library.macs.first!)
+        terminal.connecting = true
+        _terminal = State(initialValue: terminal)
+    }
+    var body: some View {
+        DirectMacLibraryRootV1(library: model.library, appLock: model.lock, pro: model.pro)
+            .background(DirectConnectionPanelAnchor(host: panel).frame(width: 0, height: 0))
+            .overlay {
+                if showing {
+                    if ProcessInfo.processInfo.arguments.contains("--trust-review") {
+                        DirectConnectionPanelContent(host: panel, cancel: cancel, preferredHeight: 620, preventsDismissal: true) {
+                            TerminalServerTrustView(macName: "Free Mac", fingerprint: "SHA256:synthetic-simulator-fingerprint", answer: { _ in cancel() }).directAppearance()
+                        }
+                    } else if ProcessInfo.processInfo.arguments.contains("--terminal-review") {
+                        DirectTerminalView(mac: model.library.macs.first!, session: terminal, autoConnect: false, connectionPanel: panel, exit: cancel)
+                    } else { PresentationDesktopProgress(panel: panel, cancel: cancel) }
+                }
+            }
+
+    }
+    private func cancel() { panel.close(); showing = false }
+}
+struct PresentationDesktopProgress: UIViewControllerRepresentable {
+    let panel: DirectConnectionPanelHost
+    let cancel: () -> Void
+    func makeUIViewController(context: Context) -> CompanionVNCViewer {
+        let viewer = CompanionVNCViewer(); viewer.macName = "Free Mac"; viewer.connectionPanelHost = panel
+        viewer.restoredDesktopSizePreset = ProcessInfo.processInfo.arguments.contains("--mirror-review") ? 0 : 2
+        viewer.macsHandler = cancel
+        viewer.loadViewIfNeeded(); viewer.setValue(true, forKey: "starting")
+        viewer.showConnectionProgress("Opening encrypted connection…")
+        return viewer
+    }
+    func updateUIViewController(_ controller: CompanionVNCViewer, context: Context) {}
+    static func dismantleUIViewController(_ controller: CompanionVNCViewer, coordinator: ()) { controller.stop() }
+}
+
+// Loopback-only SSH peer for the production-root accessibility journey. The
+// normal handshake, host pin, password authentication and shell still run.
+private enum ColdStartSSHFixture {
+    static func start(key: NIOSSHPrivateKey) async throws -> Channel {
+        try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton).childChannelInitializer { channel in
+            channel.pipeline.addHandler(NIOSSHHandler(role: .server(.init(hostKeys: [key], userAuthDelegate: ColdStartSSHAuthentication())),
+                allocator: channel.allocator, inboundChildChannelInitializer: { child, _ in
+                    child.pipeline.addHandler(ColdStartSSHShell())
+                }))
+        }.bind(host: "127.0.0.1", port: 0).get()
+    }
+}
+private final class ColdStartSSHAuthentication: NIOSSHServerUserAuthenticationDelegate, @unchecked Sendable {
+    var supportedAuthenticationMethods: NIOSSHAvailableUserAuthenticationMethods { .password }
+    func requestReceived(request: NIOSSHUserAuthenticationRequest, responsePromise: EventLoopPromise<NIOSSHUserAuthenticationOutcome>) {
+        if case .password(let login) = request.request, request.username == "synthetic", login.password == "synthetic-only" {
+            responsePromise.succeed(.success)
+        } else { responsePromise.succeed(.failure) }
+    }
+}
+private final class ColdStartSSHShell: ChannelDuplexHandler, @unchecked Sendable {
+    typealias InboundIn = SSHChannelData
+    typealias OutboundIn = SSHChannelData
+    typealias OutboundOut = SSHChannelData
+    func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+        if event is SSHChannelRequestEvent.PseudoTerminalRequest {
+            context.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil)
+        } else if event is SSHChannelRequestEvent.ShellRequest {
+            context.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil)
+            context.writeAndFlush(wrapOutboundOut(.init(type: .channel, data: .byteBuffer(ByteBuffer(string: "synthetic-ready\r\n")))), promise: nil)
+        } else { context.fireUserInboundEventTriggered(event) }
+    }
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        context.writeAndFlush(wrapOutboundOut(unwrapInboundIn(data)), promise: nil)
+    }
+    func errorCaught(context: ChannelHandlerContext, error: Error) { context.close(promise: nil) }
 }

@@ -28,18 +28,12 @@ struct RemoteSessionLiveActivity: Widget {
                     .lineLimit(1).truncationMode(.tail).frame(maxWidth: 72)
                     .accessibilityLabel(context.attributes.macName)
             } compactTrailing: {
-                phaseSymbol(context.state.phase, isStale: context.isStale)
+                RemoteSessionActivityCompactSymbol(attributes: context.attributes)
             } minimal: {
-                phaseSymbol(context.state.phase, isStale: context.isStale)
+                RemoteSessionActivityCompactSymbol(attributes: context.attributes)
             }
             .widgetURL(context.attributes.resumeURL)
             .keylineTint(.blue)
         }
-    }
-
-    private func phaseSymbol(_ phase: RemoteSessionActivityAttributes.Phase, isStale: Bool) -> some View {
-        Image(systemName: isStale ? "questionmark.circle" : phase == .paused ? "arrow.up.forward.app" :
-            phase == .reconnecting ? "arrow.triangle.2.circlepath" : "link")
-            .accessibilityLabel(isStale ? "Open to check connection" : phase == .paused ? "Return to session" : phase.title)
     }
 }

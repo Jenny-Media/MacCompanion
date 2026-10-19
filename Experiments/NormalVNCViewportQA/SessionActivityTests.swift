@@ -9,14 +9,19 @@ import XCTest
     var ids: [String] = []
     var events: [String] = []
     var nextID = "new"
+    var attributes: RemoteSessionActivityAttributes?
+    var content: ActivityContent<RemoteSessionActivityAttributes.ContentState>?
     var blockedEnds: Set<String> = []
     var waitingEnds: [String: CheckedContinuation<Void, Never>] = [:]
     func releaseEnd(_ id: String) { waitingEnds.removeValue(forKey: id)?.resume() }
     func existingIDs() -> [String] { ids }
     func start(_ attributes: RemoteSessionActivityAttributes, content: ActivityContent<RemoteSessionActivityAttributes.ContentState>) throws -> String {
+        self.attributes = attributes; self.content = content
         ids.append(nextID); events.append("start:" + content.state.phase.rawValue); return nextID
     }
-    func update(_ id: String, content: ActivityContent<RemoteSessionActivityAttributes.ContentState>) async { events.append("update:" + content.state.phase.rawValue) }
+    func update(_ id: String, content: ActivityContent<RemoteSessionActivityAttributes.ContentState>) async {
+        self.content = content; events.append("update:" + content.state.phase.rawValue)
+    }
     func end(_ id: String) async {
         if blockedEnds.contains(id) { await withCheckedContinuation { waitingEnds[id] = $0 } }
         events.append("end:" + id); ids.removeAll { $0 == id }
@@ -32,6 +37,49 @@ private final class ActivityActionTestSession: CompanionVNCSession {
 }
 @MainActor final class SessionActivityTests: XCTestCase {
     private func defaults() -> UserDefaults { UserDefaults(suiteName: "session-qa-" + UUID().uuidString)! }
+    private func compactImage(_ attributes: RemoteSessionActivityAttributes) throws -> Data {
+        let renderer = ImageRenderer(content: RemoteSessionActivityCompactSymbol(attributes: attributes)
+            .font(.system(size: 20)).foregroundStyle(.white)
+            .frame(width: 44, height: 32).background(.black))
+        renderer.scale = 1
+        return try XCTUnwrap(try XCTUnwrap(renderer.uiImage).pngData())
+    }
+    func testCompactIdentitySurvivesPauseReconnectStalenessAndEndsWithSession() async throws {
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic Island Mac", address: "test.local")
+        var images: [Data] = []
+        for kind in [RemoteSessionActivityAttributes.Kind.desktop, .terminal] {
+            var date = Date(timeIntervalSince1970: 1_000)
+            let backend = RecordingActivityBackend()
+            let owner = VNCSessionActivityController(mac: mac, kind: kind, defaults: defaults(), backend: backend, now: { date })
+            defer { owner.finish() }
+            owner.setPhase("connected"); await owner.waitForUpdates()
+            let initial = try compactImage(try XCTUnwrap(backend.attributes))
+            images.append(initial)
+            for phase in [RemoteSessionActivityAttributes.Phase.paused, .reconnecting, .connected] {
+                date = date.addingTimeInterval(1)
+                owner.setPhase(phase.rawValue); await owner.waitForUpdates()
+                XCTAssertEqual(backend.content?.state.phase, phase)
+                XCTAssertEqual(try compactImage(try XCTUnwrap(backend.attributes)), initial)
+            }
+            owner.setForeground(false); await owner.waitForUpdates()
+            XCTAssertEqual(backend.content?.state.phase, .paused)
+            date = date.addingTimeInterval(61)
+            XCTAssertLessThan(try XCTUnwrap(backend.content?.staleDate), date)
+            XCTAssertEqual(try compactImage(try XCTUnwrap(backend.attributes)), initial)
+            XCTAssertEqual(backend.attributes?.resumeURL, RemoteSessionActivityAttributes(macID: mac.id, macName: mac.name, kind: kind).resumeURL)
+            owner.finish(); await owner.waitForUpdates()
+            XCTAssertTrue(backend.ids.isEmpty)
+            XCTAssertEqual(backend.events.last, "end:new")
+        }
+        XCTAssertNotEqual(images[0], images[1], "Screen Sharing and Terminal must remain distinguishable")
+    }
+    func testLegacyActivityRetainsDesktopCompactIdentity() throws {
+        let id = UUID()
+        let legacy = RemoteSessionActivityAttributes(macID: id, macName: "Legacy Mac")
+        let desktop = RemoteSessionActivityAttributes(macID: id, macName: "Legacy Mac", kind: .desktop)
+        XCTAssertEqual(try compactImage(legacy), try compactImage(desktop))
+        XCTAssertEqual(legacy.resumeURL, desktop.resumeURL)
+    }
     private func startupRetirementCase(_ name: String) throws -> [String: Any] {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-screen-sharing-v1", withExtension: "json"))
         let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
@@ -162,12 +210,14 @@ private final class ActivityActionTestSession: CompanionVNCSession {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
         let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
         defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
-        for kind in [RemoteSessionActivityAttributes.Kind.desktop, .terminal] {
+        for kind: RemoteSessionActivityAttributes.Kind? in [nil, .desktop, .terminal] {
+        for phase in [RemoteSessionActivityAttributes.Phase.connected, .paused, .reconnecting] {
+        for stale in [false, true] {
         for width: CGFloat in [280, 320, 368] {
             for size in [DynamicTypeSize.large, .xxxLarge, .accessibility3] {
                 let content = RemoteSessionExpandedContent(
                     attributes: .init(macID: UUID(), macName: "A Mac With A Very Long User Assigned Name", kind: kind),
-                    phase: kind == .terminal ? .paused : .reconnecting, isStale: false, activityID: "synthetic")
+                    phase: phase, isStale: stale, activityID: "synthetic")
                     .foregroundStyle(.white).preferredColorScheme(.dark)
                     .environment(\.dynamicTypeSize, size)
                 let controller = UIHostingController(rootView: content)
@@ -183,9 +233,11 @@ private final class ActivityActionTestSession: CompanionVNCSession {
                     controller.view.drawHierarchy(in: controller.view.bounds, afterScreenUpdates: true)
                 }
                 let attachment = XCTAttachment(image: image)
-                attachment.name = "Expanded island \(kind) \(Int(width)) \(size)"
+                attachment.name = "Expanded island \(kind?.rawValue ?? "legacy") \(phase.rawValue) stale=\(stale) \(Int(width)) \(size)"
                 attachment.lifetime = .keepAlways; add(attachment)
             }
+        }
+        }
         }
         }
     }

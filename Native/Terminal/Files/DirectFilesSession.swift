@@ -81,6 +81,9 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     private(set) var macRemoved = false
     var shouldCloseAfterRemoval: Bool { macRemoved && !hasUnsavedDownloads }
     @ObservationIgnored private var removalObserver: DirectMacRemovalObservation?
+    #if os(iOS)
+    @ObservationIgnored private var forgetObserver: DirectMacAccessForgetObservation?
+    #endif
     private let canAccess: @MainActor () -> Bool
     private let saveLogin: @MainActor (TerminalSecretStore.Login, UUID) throws -> Void
     private let idleTimeout: Duration
@@ -91,6 +94,9 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         self.mac = mac; self.canAccess = canAccess; self.idleTimeout = idleTimeout
         self.libraryURL = libraryURL
         self.saveLogin = saveLogin
+        #if os(iOS)
+        forgetObserver = DirectMacAccessForgetObservation(macID: mac.id) { [weak self] in self?.loginDraft = .init() }
+        #endif
         removalObserver = DirectMacRemovalObservation(macID: mac.id, libraryURL: libraryURL) { [weak self] in self?.removedFromLibrary() }
     }
     private func observeLifecycle() {
@@ -575,13 +581,19 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         directory = nil; results = []; resultsAccount = ""; account = ""; home = ""
         if let temporaryRoot { try? FileManager.default.removeItem(at: temporaryRoot) }; temporaryRoot = nil
     }
+    func endTemporarySession() {
+        retireForDownloadRecovery(message: "This temporary connection ended. Save or discard your downloads to close Files.")
+    }
     private func removedFromLibrary() {
+        retireForDownloadRecovery(message: "This Mac was removed. Save or discard your downloads to close Files.")
+    }
+    private func retireForDownloadRecovery(message: String) {
         guard !closed, !macRemoved else { return }
         macRemoved = true
         backgroundObserver = nil
         removalObserver = nil
         loginDraft.invalidate()
-        disconnect(message: "This Mac was removed. Save or discard your downloads to close Files.")
+        disconnect(message: message)
         directory = nil
         if !hasUnsavedDownloads { close() }
     }
