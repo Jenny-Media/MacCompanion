@@ -278,10 +278,44 @@ import LocalAuthentication
         XCTAssertTrue(viewer.value(forKey: "password") as? UITextField === password)
         XCTAssertEqual(password.text, "synthetic-only"); XCTAssertFalse(fields.isHidden)
     }
+    func testCredentialCaptionsKeepTheirHeightAndEditorAcrossFocusValueAndReveal() throws {
+        let mount = try PanelMount(); defer { mount.close() }
+        for title in ["Username", "Password"] {
+            let field = UITextField(); field.isSecureTextEntry = title == "Password"
+            let input = DirectCredentialInput(field: field, title: title)
+            mount.anchor.view.addSubview(input); defer { input.removeFromSuperview() }
+            for category in [UIContentSizeCategory.large, .accessibilityExtraExtraExtraLarge] {
+                input.traitOverrides.preferredContentSizeCategory = category
+                input.setNeedsLayout(); input.layoutIfNeeded()
+                let size = input.intrinsicContentSize
+                input.frame = CGRect(x: 10, y: 80, width: 210, height: size.height)
+                field.text = ""; field.resignFirstResponder(); input.refresh(); input.layoutIfNeeded()
+                XCTAssertTrue(input.caption.isHidden); XCTAssertEqual(field.placeholder, title)
+                XCTAssertEqual(field.accessibilityLabel, title)
+                XCTAssertFalse(input.caption.isAccessibilityElement)
+                XCTAssertTrue(field.becomeFirstResponder()); input.layoutIfNeeded()
+                XCTAssertFalse(input.caption.isHidden); XCTAssertNil(field.placeholder)
+                XCTAssertEqual(input.intrinsicContentSize.height, size.height)
+                let editorFrame = field.frame
+                field.text = "synthetic-value"; field.sendActions(for: .editingChanged); input.layoutIfNeeded()
+                field.isSecureTextEntry.toggle(); input.refresh(); input.layoutIfNeeded()
+                XCTAssertTrue(field.isFirstResponder); XCTAssertEqual(field.text, "synthetic-value")
+                XCTAssertEqual(field.frame, editorFrame); XCTAssertEqual(input.intrinsicContentSize.height, size.height)
+                field.resignFirstResponder(); input.layoutIfNeeded()
+                XCTAssertFalse(input.caption.isHidden, "A filled row keeps its label after focus leaves")
+                XCTAssertEqual(field.frame, editorFrame)
+                field.text = ""; input.refresh(); input.layoutIfNeeded()
+                XCTAssertTrue(input.caption.isHidden); XCTAssertEqual(field.placeholder, title)
+                XCTAssertEqual(input.intrinsicContentSize.height, size.height)
+                XCTAssertGreaterThanOrEqual(field.frame.maxY, input.caption.frame.maxY)
+                XCTAssertLessThanOrEqual(field.frame.maxY, input.bounds.maxY)
+            }
+        }
+    }
     func testGroupedRowKeepsItsEditorAndDraftAcrossNarrowWidthsAndLargeText() async throws {
         let mount = try PanelMount(); defer { mount.close() }
         let content = UIHostingController(rootView: DirectCredentialRow {
-            DirectConnectionPasswordField(text: .constant("synthetic-password"), secure: false, identifier: "grouped-test-password") {}
+            DirectConnectionCredentialField(text: .constant("synthetic-password"), secure: false, identifier: "grouped-test-password") {}
         })
         mount.anchor.addChild(content); mount.anchor.view.addSubview(content.view); content.didMove(toParent: mount.anchor)
         func fields(_ view: UIView) -> [UITextField] {

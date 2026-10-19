@@ -339,15 +339,17 @@
     UIStackView *saveRow = [[UIStackView alloc] initWithArrangedSubviews:@[rememberLabel, self.remember]];
     saveRow.alignment = UIStackViewAlignmentCenter; self.saveLoginRow = saveRow;
     rememberLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
-    UIStackView *account = [[UIStackView alloc] initWithArrangedSubviews:@[self.username]];
+    UIView *usernameInput = [DirectConnectionBridge credentialInputForField:self.username title:@"Username"];
+    UIView *passwordInput = [DirectConnectionBridge credentialInputForField:self.password title:@"Password"];
+    UIStackView *account = [[UIStackView alloc] initWithArrangedSubviews:@[usernameInput]];
     account.axis = UILayoutConstraintAxisHorizontal; account.alignment = UIStackViewAlignmentCenter;
     account.layoutMarginsRelativeArrangement = YES; account.layoutMargins = UIEdgeInsetsMake(4,14,4,14); account.backgroundColor = DirectConnectionBridge.fieldColor;
-    UIStackView *passwordRow = [[UIStackView alloc] initWithArrangedSubviews:@[self.password, visibility]]; passwordRow.spacing = 4;
+    UIStackView *passwordRow = [[UIStackView alloc] initWithArrangedSubviews:@[passwordInput, visibility]]; passwordRow.spacing = 4;
     UIStackView *password = [[UIStackView alloc] initWithArrangedSubviews:@[passwordRow]];
     password.axis = UILayoutConstraintAxisHorizontal; password.alignment = UIStackViewAlignmentCenter;
     password.layoutMarginsRelativeArrangement = YES; password.layoutMargins = UIEdgeInsetsMake(4,14,4,14); password.backgroundColor = DirectConnectionBridge.fieldColor;
-    [self.username setContentCompressionResistancePriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
-    [self.password setContentCompressionResistancePriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
+    [usernameInput setContentCompressionResistancePriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
+    [passwordInput setContentCompressionResistancePriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
     UIView *separatorRow = [UIView new], *separator = [UIView new]; separator.backgroundColor = UIColor.separatorColor;
     separator.translatesAutoresizingMaskIntoConstraints = NO; [separatorRow addSubview:separator];
     [NSLayoutConstraint activateConstraints:@[[separatorRow.heightAnchor constraintEqualToConstant:1.0 / MAX(1, self.traitCollection.displayScale)],
@@ -715,6 +717,8 @@
 - (void)renderCredentialForm {
     self.username.text = self.credentialState.username;
     self.password.text = self.credentialState.password;
+    [DirectConnectionBridge refreshCredentialInputForField:self.username];
+    [DirectConnectionBridge refreshCredentialInputForField:self.password];
     self.remember.on = !self.preventsLoginRetention && self.credentialState.remember;
 }
 - (void)finishCredentialSession {

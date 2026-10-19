@@ -413,13 +413,13 @@ struct DirectTerminalView: View {
     }
     private var accountField: some View {
         DirectCredentialRow {
-            TextField("Username", text: Binding(get: { username }, set: { username = $0; session.clearRecovery() })).textContentType(DirectConnectionStyle.remoteCredentialContentType).textInputAutocapitalization(.never).autocorrectionDisabled().privacySensitive().frame(minHeight: 44).accessibilityLabel("Username").accessibilityIdentifier("terminal-login-username")
+            DirectConnectionCredentialField(text: Binding(get: { username }, set: { username = $0; session.clearRecovery() }), secure: false, title: "Username", returnKey: .default, identifier: "terminal-login-username") {}.privacySensitive()
         }
     }
     private var passwordField: some View {
         DirectCredentialRow {
             HStack(spacing: 4) {
-                DirectConnectionPasswordField(text: Binding(get: { password }, set: { password = $0; session.clearRecovery() }), secure: !passwordVisible, submit: connect).privacySensitive().frame(minHeight: 44)
+                DirectConnectionCredentialField(text: Binding(get: { password }, set: { password = $0; session.clearRecovery() }), secure: !passwordVisible, submit: connect).privacySensitive().frame(minHeight: 44)
                 Button { passwordVisible.toggle() } label: { Image(systemName: passwordVisible ? "eye.slash" : "eye").font(.system(size: 20)).foregroundStyle(.secondary).frame(width: 44, height: 44) }
                     .buttonStyle(.plain).accessibilityLabel(passwordVisible ? "Hide Password" : "Show Password")
             }

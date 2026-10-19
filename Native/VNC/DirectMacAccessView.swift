@@ -168,14 +168,13 @@ struct DirectMacAccessView: View {
     }
     private func usernameRow(_ text: Binding<String>, identifier: String) -> some View {
         DirectCredentialRow {
-            TextField("Username", text: text).font(.body).textContentType(DirectConnectionStyle.remoteCredentialContentType)
-                .textInputAutocapitalization(.never).autocorrectionDisabled().accessibilityLabel("Username").accessibilityIdentifier(identifier)
+            DirectConnectionCredentialField(text: text, secure: false, title: "Username", returnKey: .default, identifier: identifier) {}
         }.listRowInsets(EdgeInsets()).listRowBackground(Color(uiColor: DirectConnectionStyle.field))
     }
     private func passwordField(_ text: Binding<String>, visible: Binding<Bool>, identifier: String) -> some View {
         DirectCredentialRow {
           HStack(spacing: 4) {
-            DirectConnectionPasswordField(text: text, secure: !visible.wrappedValue,
+            DirectConnectionCredentialField(text: text, secure: !visible.wrappedValue,
                 identifier: identifier) {}
                 .accessibilityIdentifier(identifier)
             Button { visible.wrappedValue.toggle() } label: {

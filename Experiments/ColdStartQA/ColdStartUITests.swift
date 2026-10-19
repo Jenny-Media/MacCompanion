@@ -123,8 +123,9 @@ import XCTest
     }
 
     func testLoginFooterStaysAboveKeyboardForBothConnectionModes() {
-        let app = launch(["--connect-flow"]); defer { app.terminate() }
         for terminal in [false, true] {
+            // Isolate keyboard/rotation state between native and hosted forms.
+            let app = launch(["--connect-flow"]); defer { app.terminate() }
             if terminal { app.buttons["Manage Free Mac"].tap(); app.buttons["Terminal"].tap() }
             else { connect("Free Mac", in: app) }
             let username = app.textFields[terminal ? "terminal-login-username" : "mac-login-username"]
@@ -136,17 +137,23 @@ import XCTest
             assertEmptyInput(password, placeholder: "Password")
             XCTAssertEqual(username.label, "Username")
             XCTAssertEqual(password.label, "Password")
-            // Full-width placeholders share the same leading edge and compact rows.
+            // Placeholders share the same leading edge; captions reserve their height.
             XCTAssertEqual(username.frame.minX, password.frame.minX, accuracy: 2)
             XCTAssertGreaterThan(password.frame.midY - username.frame.midY, 40)
-            XCTAssertLessThan(password.frame.midY - username.frame.midY, 72)
+            XCTAssertLessThan(password.frame.midY - username.frame.midY, 80)
             XCTAssertGreaterThan(password.frame.width, 60)
             XCTAssertTrue(cancel.isHittable)
             let panel = app.otherElements["connection-sheet"].firstMatch
             XCTAssertLessThan(panel.frame.maxY - cancel.frame.maxY, 60)
             capture(terminal ? "terminal-login-footer-empty" : "screen-login-footer-empty", app)
-            username.tap(); username.typeText("synthetic-account")
+            username.tap()
+            XCTAssertTrue(username.placeholderValue == nil || username.placeholderValue == "", "The focused caption replaces its placeholder")
+            capture(terminal ? "terminal-login-caption-focused" : "screen-login-caption-focused", app)
+            let focusedHeight = username.frame.height
+            username.typeText("synthetic-account")
+            XCTAssertEqual(username.frame.height, focusedHeight, accuracy: 1)
             password.tap(); password.typeText("synthetic-password")
+            XCTAssertTrue(username.placeholderValue == nil || username.placeholderValue == "", "Filled rows retain their caption after leaving focus")
             let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
                 connect.isEnabled && cancel.isHittable && app.keyboards.firstMatch.exists && cancel.frame.maxY <= app.keyboards.firstMatch.frame.minY + 2
             }, object: nil)
@@ -264,7 +271,7 @@ import XCTest
     }
 
     func testSavedLoginGroupedFieldsSupportMacAndSeparateTerminalAccounts() {
-        let app = launch(["--saved-login-tests"]); defer { app.terminate() }
+        let app = launch(["--saved-login-tests", "--connect-flow"]); defer { app.terminate() }
         XCTAssertTrue(app.buttons["Manage Free Mac"].waitForExistence(timeout: 5)); openSavedLogin(in: app)
         let username = app.textFields["access-account"]
         XCTAssertEqual(username.value as? String, "synthetic-account")
