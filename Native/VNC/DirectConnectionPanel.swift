@@ -101,58 +101,6 @@ import UIKit
     }
 }
 
-/// Own the whole native library subtree so its navigation bar, list and bottom
-/// controls share one reliable interaction/accessibility gate. The hosting
-/// controller remains mounted while session and sheet owners come and go.
-struct DirectLibraryContainer<Content: View>: UIViewControllerRepresentable {
-    let blocked: Bool
-    let content: Content
-    init(blocked: Bool, @ViewBuilder content: () -> Content) {
-        self.blocked = blocked; self.content = content()
-    }
-    final class Controller: UIViewController {
-        let host: UIHostingController<AnyView>
-        init(content: AnyView) { host = UIHostingController(rootView: content); super.init(nibName: nil, bundle: nil) }
-        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-        override func viewDidLoad() {
-            super.viewDidLoad(); view.backgroundColor = .clear
-            addChild(host); host.view.backgroundColor = .clear; host.view.translatesAutoresizingMaskIntoConstraints = false
-            view.addSubview(host.view)
-            NSLayoutConstraint.activate([
-                host.view.topAnchor.constraint(equalTo: view.topAnchor), host.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-                host.view.leadingAnchor.constraint(equalTo: view.leadingAnchor), host.view.trailingAnchor.constraint(equalTo: view.trailingAnchor)
-            ])
-            host.didMove(toParent: self)
-        }
-    }
-    func makeUIViewController(context: Context) -> Controller {
-        let controller = Controller(content: hosted(context.environment))
-        controller.loadViewIfNeeded(); apply(controller)
-        return controller
-    }
-    func updateUIViewController(_ controller: Controller, context: Context) {
-        controller.host.rootView = hosted(context.environment)
-        apply(controller)
-    }
-    private func hosted(_ environment: EnvironmentValues) -> AnyView {
-        // Forward public presentation inputs, never the outer host's private
-        // rendering environment or its sheet-specific dismissal action.
-        AnyView(content.directAppearance()
-            .environment(\.scenePhase, environment.scenePhase)
-            .environment(\.dynamicTypeSize, environment.dynamicTypeSize)
-            .environment(\.colorScheme, environment.colorScheme)
-            .environment(\.locale, environment.locale)
-            .environment(\.layoutDirection, environment.layoutDirection)
-            .environment(\.horizontalSizeClass, environment.horizontalSizeClass)
-            .environment(\.verticalSizeClass, environment.verticalSizeClass)
-            .environment(\.openURL, environment.openURL))
-    }
-    private func apply(_ controller: UIViewController) {
-        controller.view.accessibilityElementsHidden = blocked
-        controller.view.isUserInteractionEnabled = !blocked
-    }
-}
-
 struct DirectConnectionPanelAnchor: UIViewControllerRepresentable {
     let host: DirectConnectionPanelHost
     final class Anchor: UIViewController {

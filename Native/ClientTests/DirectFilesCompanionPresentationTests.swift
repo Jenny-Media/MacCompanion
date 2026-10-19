@@ -83,6 +83,64 @@ import UIKit
         XCTAssertTrue(files.shouldCloseAfterRemoval)
         XCTAssertTrue(DirectFilesWorkspace.recoverableDownloads(libraryURL: library.storageURL).isEmpty)
     }
+    func testRemovedMacDownloadsReplaceNativeTerminalLoginUntilSavedOrDiscarded() async throws {
+        for save in [false, true] {
+            let probe = FilesDirectoryTestProbe(), bytes = Data([7, 8, 9])
+            let server = try await filesDirectoryTestServer(probe: probe, downloadBytes: bytes)
+            defer { Task { await probe.shutdown(); try? await server.close() } }
+            let root = try DirectFilesLocalStore.root(); defer { try? FileManager.default.removeItem(at: root) }
+            let library = DirectMacLibraryV1(url: root.appendingPathComponent("macs.json"), removeLogin: { _ in })
+            let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Terminal Download Recovery", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+            XCTAssertTrue(library.save(id: mac.id, name: mac.name, addresses: mac.addresses, sshPort: mac.sshPort))
+            let client = try await SSHClient.connect(to: .init(host: "127.0.0.1", port: mac.sshPort,
+                authenticationMethod: { .passwordBased(username: "synthetic", password: "synthetic-only") }, hostKeyValidator: .acceptAnything()))
+            defer { Task { try? await client.close() } }
+            let files = DirectFilesWorkspace.session(mac, libraryURL: library.storageURL)
+            let terminal = DirectTerminalSession(mac: mac, libraryURL: library.storageURL)
+            defer { files.close(); terminal.stop(); try? TerminalSecretStore.remove(mac.id) }
+            let context = DirectFilesConnectionContext(client: client, macID: mac.id, account: "synthetic", keyID: nil, generation: UUID())
+            files.connectBorrowed(context); try await wait { !files.busy }
+            XCTAssertEqual(files.phase, .ready)
+            files.download(.init(name: "sample.bin", kind: .file, size: UInt64(bytes.count)))
+            try await wait { !files.busy }
+            let result = try XCTUnwrap(files.results.first), download = try XCTUnwrap(result.localDownload)
+            // Completed downloads can outlive their original shell. Reopening
+            // Terminal must not let its native login portal cover removal recovery.
+            files.disconnectBorrowed(context.generation)
+            let panel = DirectConnectionPanelHost()
+            var exits = 0
+            let mount = try CompanionFilesMount(DirectTerminalView(mac: mac, macLibrary: library, session: terminal,
+                files: files, autoConnect: false, connectionPanel: panel, exit: { exits += 1 }).directAppearance()
+                .background(DirectConnectionPanelAnchor(host: panel).frame(width: 0, height: 0)))
+            defer { panel.close(); mount.close() }
+            try await wait { panel.isVisible && mount.window.rootViewController?.presentedViewController != nil }
+            try library.applyCloud([])
+            try await wait {
+                terminal.macRemoved && files.macRemoved && !panel.isVisible &&
+                mount.window.rootViewController?.presentedViewController == nil &&
+                mount.visibleNavigationBar(titled: "Files") != nil
+            }
+            XCTAssertFalse(terminal.connected); XCTAssertFalse(terminal.connecting)
+            XCTAssertEqual(exits, 0, "Removal keeps the recovery owner until its downloads are handled")
+            XCTAssertTrue(files.hasUnsavedDownloads); XCTAssertFalse(files.isClosed)
+            XCTAssertEqual(try Data(contentsOf: download), bytes)
+            XCTAssertFalse(mount.fields.contains { $0.accessibilityIdentifier == "terminal-login-username" || $0.accessibilityIdentifier == "terminal-login-password" })
+            let attachment = XCTAttachment(image: UIGraphicsImageRenderer(bounds: mount.window.bounds).image { _ in
+                mount.window.drawHierarchy(in: mount.window.bounds, afterScreenUpdates: true)
+            })
+            attachment.name = "terminal-native-panel-download-recovery-" + (save ? "export" : "discard")
+            attachment.lifetime = .keepAlways; add(attachment)
+            if save {
+                let exported = root.appendingPathComponent("exported.bin")
+                try FileManager.default.copyItem(at: download, to: exported)
+                files.markSaved(result.id)
+                XCTAssertEqual(try Data(contentsOf: exported), bytes)
+            } else { files.discardResults() }
+            try await wait { exits > 0 }
+            XCTAssertTrue(files.shouldCloseAfterRemoval)
+            try await wait { !FileManager.default.fileExists(atPath: download.path) }
+        }
+    }
     func testUnsavedQuickConnectDownloadsRemainReachableAfterParentExit() async throws {
         for export in [false, true] {
             let probe = FilesDirectoryTestProbe(), bytes = Data([4, 5, 6])
@@ -144,6 +202,18 @@ import UIKit
     var fields: [UITextField] {
         func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
         return descendants(window).compactMap { $0 as? UITextField }
+    }
+    func visibleNavigationBar(titled title: String) -> UINavigationBar? {
+        func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+        return descendants(window).compactMap { $0 as? UINavigationBar }.first { bar in
+            guard bar.topItem?.title == title, bar.window === window, !bar.bounds.isEmpty else { return false }
+            var ancestor: UIView? = bar
+            while let view = ancestor {
+                guard !view.isHidden, view.alpha > 0.99, view.layer.opacity > 0.99 else { return false }
+                ancestor = view.superview
+            }
+            return true
+        }
     }
     func show(_ view: some View) { window.rootViewController = UIHostingController(rootView: view) }
     func hide() { window.endEditing(true); window.rootViewController = nil }

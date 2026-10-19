@@ -402,7 +402,6 @@ struct DirectMacLibraryRootV1: View {
 
     var body: some View {
         ZStack {
-        DirectLibraryContainer(blocked: session != nil || !appLock.canInteract) {
         NavigationStack {
             DirectMacDiscoveryList(refresh: refreshNearbyMacs) {
                 let downloads = DirectFilesWorkspace.recoverableDownloads(libraryURL: library.storageURL)
@@ -559,7 +558,8 @@ struct DirectMacLibraryRootV1: View {
             }
 
         }
-        }.ignoresSafeArea()
+            .accessibilityHidden(session != nil || !appLock.canInteract)
+            .allowsHitTesting(session == nil && appLock.canInteract)
             .background(DirectConnectionPanelAnchor(host: connectionPanel).frame(width: 0, height: 0))
             Group {
                 if quickConnect && session == nil {

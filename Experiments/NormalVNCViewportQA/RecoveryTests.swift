@@ -32,6 +32,22 @@ import Citadel
         }
 
     }
+    func testMacSaveFailureNoticeDescribesTheMacAndOnlyRequestedLoginRetention() {
+        for remember in [false, true] {
+            let notice = DirectRecoveryNotice.macSaveFailed(loginRequested: remember)
+            XCTAssertEqual(notice.reason, .saveFailed); XCTAssertEqual(notice.title, "Mac wasn’t saved")
+            XCTAssertTrue(notice.message.contains("couldn’t be added to My Macs"))
+            XCTAssertTrue(notice.message.contains("You can keep using this session."))
+            XCTAssertEqual(notice.message.contains("Your login wasn’t saved."), remember)
+        }
+        let viewer = CompanionVNCViewer(); viewer.loadViewIfNeeded()
+        defer { viewer.stop() }
+        let owner = viewer.session
+        viewer.showMacSaveFailure(false)
+        XCTAssertTrue((viewer.value(forKey: "recoveryController") as? UIViewController)?.parent === viewer)
+        XCTAssertNotNil(viewer.value(forKey: "recoveryPanel"), "Mac-save feedback uses the existing live-session overlay")
+        XCTAssertTrue(viewer.session === owner, "Showing save feedback must not replace the native owner")
+    }
     func testSavedLoginWriteFailureLeavesEditableFieldsAndStopsProgress() {
         let viewer = CompanionVNCViewer(); viewer.loadViewIfNeeded()
         viewer.setValue(true, forKey: "starting")

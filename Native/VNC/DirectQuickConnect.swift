@@ -30,7 +30,11 @@ struct DirectQuickConnectDraft: Equatable {
     }
     var record: DirectMacRecordV1? {
         guard let port = Int(port), let sshPort = Int(sshPort) else { return nil }
-        guard var record = try? DirectMacRecordV1.normalized(id: id, name: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? host : name,
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayName = trimmedName.isEmpty ? host.trimmingCharacters(in: .whitespacesAndNewlines) : trimmedName
+        // The full hostname remains an endpoint even when its automatic label is shorter.
+        let label = usesAutomaticName ? String(displayName.prefix(80)) : displayName
+        guard var record = try? DirectMacRecordV1.normalized(id: id, name: label,
             addresses: [host] + additionalAddresses.split(separator: "\n").map(String.init), port: port, sshPort: sshPort) else { return nil }
         record.usesAutomaticName = usesAutomaticName
         return record

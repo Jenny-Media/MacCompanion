@@ -18,6 +18,12 @@ struct DirectRecoveryNotice: Equatable, Sendable {
     let message: String
     var severity: Severity = .warning
     var details: [Detail] = []
+    static func macSaveFailed(loginRequested: Bool) -> Self {
+        .init(reason: .saveFailed, title: "Mac wasn’t saved",
+            message: "Your connection is open, but this Mac couldn’t be added to My Macs."
+                + (loginRequested ? " Your login wasn’t saved." : "")
+                + " You can keep using this session.")
+    }
     static func make(_ reason: Reason, message: String? = nil, details: [Detail] = []) -> Self {
         let copy: (String, String, Severity)
         switch reason {
@@ -601,6 +607,12 @@ struct TerminalServerTrustView: View {
         let notice = DirectRecoveryNotice(reason: .inputPaused, title: "Check the sent text",
             message: "Sending text was interrupted. It may have been partially sent. Check your Mac before sending it again; input won’t be replayed.")
         let controller = UIHostingController(rootView: DirectRecoveryCard(notice: notice,
+            primary: .init(title: "Continue", perform: done), secondary: nil).directAppearance())
+        controller.sizingOptions = .intrinsicContentSize; controller.view.backgroundColor = .clear
+        return controller
+    }
+    @objc static func macSaveFailed(loginRequested: Bool, done: @escaping @MainActor @Sendable () -> Void) -> UIViewController {
+        let controller = UIHostingController(rootView: DirectRecoveryCard(notice: .macSaveFailed(loginRequested: loginRequested),
             primary: .init(title: "Continue", perform: done), secondary: nil).directAppearance())
         controller.sizingOptions = .intrinsicContentSize; controller.view.backgroundColor = .clear
         return controller

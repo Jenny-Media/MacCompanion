@@ -65,6 +65,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)showRecoveryStage:(NSInteger)stage;
 - (void)showInvalidLogin;
 - (void)showLoginRetentionFailure;
+- (void)showMacSaveFailure:(BOOL)loginRequested;
 - (void)background;
 - (void)becameInactive;
 - (void)backgroundWithCompletion:(nullable void (^)(void))completion;

@@ -90,6 +90,7 @@ struct DirectTerminalView: View {
         }
         loginIssue = nil
         session.connectionEstablished = connectionEstablished
+        session.saveMacRequested = loginRetentionAllowed
         if !loginRetentionAllowed { remember = false }
         loginAttempt = draft.authenticationAttempt(account: username, password: useKey ? nil : password, remember: remember)
         session.connect(username: username, password: useKey ? "" : password, remember: !useKey && remember, key: useKey ? key : nil)
@@ -154,7 +155,7 @@ struct DirectTerminalView: View {
                 TerminalSurface(session: session, style: appearance.terminal.style(app: appearance.app), customize: { sheet = .keyboard }, filesStatus: files.transferActive ? files.activityTitle : "", action: handleControls)
                     .ignoresSafeArea(.container, edges: session.connected ? .top : [])
                     .opacity(session.connected ? 1 : 0).allowsHitTesting(session.connected).accessibilityHidden(!session.connected)
-                if !session.connected && !session.completedNormally {
+                if !session.macRemoved && !session.connected && !session.completedNormally {
                     if let connectionPanel {
                         DirectConnectionPanelContent(host: connectionPanel, cancel: { session.stop(); exit() }, preferredHeight: session.connecting ? nativeProgressHeight : nativeFormHeight + nativeFooterHeight, preventsDismissal: session.connecting) {
                             nativeLoginContent
@@ -187,8 +188,9 @@ struct DirectTerminalView: View {
             }
         }
         // Keep the mounted session owner, but let the real Mac list show through
-        // while its login/progress content lives in the native sheet.
-        .opacity(connectionPanel != nil && !session.connected ? 0 : 1)
+        // while its login/progress content lives in the native sheet. Removed-Mac
+        // downloads stay visible in this owner until they are saved or discarded.
+        .opacity(connectionPanel != nil && !session.connected && !session.macRemoved ? 0 : 1)
         // The native terminal owns keyboard avoidance through its layout guide.
         // Keep SwiftUI from shrinking the same connected surface a second time;
         // the sign-in card still uses SwiftUI's normal keyboard avoidance.

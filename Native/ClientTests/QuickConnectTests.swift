@@ -38,6 +38,72 @@ import LocalAuthentication
         draft.host = "example.local"; draft.additionalAddresses = "backup.local\n192.0.2.1"
         XCTAssertEqual(draft.record?.addresses, ["example.local", "backup.local", "192.0.2.1"])
     }
+    func testLongTypedHostProducesAValidAutomaticLabelForTemporaryAndSavedConnections() throws {
+        let host = longQuickConnectHost
+        XCTAssertEqual(host.count, 87)
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for saveMac in [false, true] {
+            var draft = DirectQuickConnectDraft(); draft.host = " \(host.uppercased()) "; draft.saveMac = saveMac
+            let request = try XCTUnwrap(draft.request(in: []))
+            XCTAssertEqual(request.saveMac, saveMac)
+            XCTAssertEqual(request.mac.addresses, [host], "Generating a display label must preserve the entire normalized endpoint")
+            XCTAssertFalse(request.mac.name.isEmpty); XCTAssertLessThanOrEqual(request.mac.name.count, 80)
+            XCTAssertTrue(request.mac.usesAutomaticName)
+            XCTAssertEqual(try request.mac.validated(), request.mac)
+            if saveMac {
+                let url = directory.appending(path: "macs.json")
+                let library = DirectMacLibraryV1(url: url, removeLogin: { _ in })
+                XCTAssertTrue(library.save(id: request.mac.id, name: request.mac.name, addresses: request.mac.addresses,
+                    port: request.mac.port, sshPort: request.mac.sshPort, usesAutomaticName: request.mac.usesAutomaticName))
+                let saved = try XCTUnwrap(DirectMacLibraryV1(url: url, removeLogin: { _ in }).macs.first)
+                XCTAssertEqual(saved, request.mac)
+            }
+        }
+    }
+    func testLongTypedHostPreservesExplicitNameAndItsValidation() throws {
+        var draft = DirectQuickConnectDraft(); draft.host = longQuickConnectHost; draft.name = "My Long Host"
+        let request = try XCTUnwrap(draft.request(in: []))
+        XCTAssertEqual(request.mac.name, "My Long Host"); XCTAssertFalse(request.mac.usesAutomaticName)
+        XCTAssertEqual(request.mac.address, longQuickConnectHost)
+        draft.name = String(repeating: "n", count: 80)
+        XCTAssertEqual(draft.record?.name, draft.name)
+        draft.name += "n"
+        XCTAssertNil(draft.record, "An explicit name must be validated, never silently shortened")
+        XCTAssertNil(draft.request(in: []))
+        draft.name = ""
+        XCTAssertNotNil(draft.record, "Clearing the custom label restores the bounded automatic fallback")
+        draft.host = String(repeating: "a", count: 256)
+        XCTAssertNil(draft.record, "Bounding the label must not relax endpoint validation")
+    }
+    func testLongDiscoveredHostKeepsItsAutomaticDiscoveredName() throws {
+        let detected = DirectMacDetectedIdentity(name: "Nearby Long Host", host: longQuickConnectHost, addresses: [], port: 5900, connection: .desktop)
+        let draft = DirectQuickConnectDraft(item: try XCTUnwrap(DirectMacDiscoveryItem.group([detected]).first))
+        let record = try XCTUnwrap(draft.record)
+        XCTAssertEqual(record.name, detected.name); XCTAssertTrue(record.usesAutomaticName)
+        XCTAssertEqual(record.address, longQuickConnectHost)
+        let later = DirectMacDetectedIdentity(name: "Renamed Nearby Mac", host: longQuickConnectHost, addresses: [], port: 5900, connection: .desktop)
+        XCTAssertEqual(record.applying(later).name, later.name)
+    }
+    func testLongHostReusesOnlyItsExactSavedEndpoint() throws {
+        let host = longQuickConnectHost
+        let otherHost = String(repeating: "a", count: 63) + "." + String(repeating: "b", count: 16) + "c.local"
+        XCTAssertEqual(host.prefix(80), otherHost.prefix(80), "The hosts intentionally share their generated label prefix")
+        var saved = try DirectMacRecordV1.normalized(name: "Saved Long Host", address: host)
+        saved.preferredConnection = .trackpad
+        let other = try DirectMacRecordV1.normalized(name: "Other Long Host", address: otherHost)
+        var draft = DirectQuickConnectDraft(); draft.host = host.uppercased() + "."
+        let reused = try XCTUnwrap(draft.request(in: [other, saved]))
+        XCTAssertEqual(reused.mac, saved); XCTAssertEqual(reused.connection, .trackpad)
+        XCTAssertNil(draft.savedMac(in: [other]), "A shortened label must never become the endpoint match key")
+        let new = try XCTUnwrap(draft.request(in: [other]))
+        XCTAssertEqual(new.mac.id, draft.id); XCTAssertEqual(new.mac.address, host + ".")
+        draft.name = "Quick Connect Custom Name"
+        XCTAssertEqual(draft.request(in: [saved])?.mac, saved)
+    }
+    private var longQuickConnectHost: String {
+        String(repeating: "a", count: 63) + "." + String(repeating: "b", count: 17) + ".local"
+    }
     func testExplicitQuickConnectNameSurvivesCompletedAndLaterDiscovery() throws {
         var draft = DirectQuickConnectDraft(); draft.host = "example.local"; draft.name = " My Work Mac "
         let request = try XCTUnwrap(draft.request(in: []))
@@ -212,6 +278,15 @@ import LocalAuthentication
         mount.host.finishTrust(trust)
         XCTAssertEqual(panel.preferredContentSize.height, 400)
         XCTAssertTrue(panel.children.first === content)
+    }
+    func testDesktopQuickConnectPassesTemporarySavePolicyToTheNativeOwner() throws {
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic Save Policy", address: "save-policy.invalid")
+        let files = DirectFilesSession(mac: mac); defer { files.close() }
+        for requested in [false, true] {
+            let view = VNCRemoteDesktopView(mac: mac, files: files, showMacs: {}, loginRetentionAllowed: requested,
+                connectionEstablished: { false })
+            XCTAssertEqual(view.makeCoordinator().saveMacRequested, requested)
+        }
     }
     func testSavingMacAndLoginAreIndependentChoices() throws {
         var draft = DirectQuickConnectDraft(); draft.host = "example.local"; draft.saveMac = false

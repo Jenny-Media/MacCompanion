@@ -48,7 +48,11 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
     var loginRetentionAllowed = true
     var connectionEstablished: @MainActor () -> Bool = { true }
     var chromeChanged: @MainActor (Bool) -> Void = { _ in }
-    func makeCoordinator() -> Coordinator { let coordinator = Coordinator(mac: mac, files: files, showMacs: showMacs); coordinator.connectionEstablished = connectionEstablished; return coordinator }
+    func makeCoordinator() -> Coordinator {
+        let coordinator = Coordinator(mac: mac, files: files, showMacs: showMacs)
+        coordinator.connectionEstablished = connectionEstablished; coordinator.saveMacRequested = loginRetentionAllowed
+        return coordinator
+    }
     func makeUIViewController(context: Context) -> CompanionVNCTextNavigation {
         let viewer = CompanionVNCViewer()
         viewer.connectionPanelHost = connectionPanel; viewer.preventsLoginRetention = !loginRetentionAllowed
@@ -159,6 +163,9 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         private var inputReleaseCompleted = false
         private let showMacs: @MainActor () -> Void
         var connectionEstablished: @MainActor () -> Bool = { true }
+        /// False for an intentional temporary Quick Connect session.
+        var saveMacRequested = true
+        private var macSaveFailureReported = false
         private var removed = false
         private var removalObserver: DirectMacRemovalObservation?
         private var forgetObserver: DirectMacAccessForgetObservation?
@@ -266,9 +273,17 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         func saveSuccessfulLogin() {
             guard !removed else { return }
             let canRetain = connectionEstablished()
+            guard canRetain else {
+                let loginRequested = remember
+                self.login = nil; remember = false
+                if saveMacRequested && !macSaveFailureReported {
+                    macSaveFailureReported = true
+                    viewer?.showMacSaveFailure(loginRequested)
+                }
+                return
+            }
             guard remember, let login, let owner = accessLease else { return }
             remember = false
-            guard canRetain else { self.login = nil; viewer?.showLoginRetentionFailure(); return }
             do { try DirectMacAccessStore.retain(.init(username: login.username, password: login.password), macID: mac.id, ssh: false, owner: owner) }
             catch { viewer?.showLoginRetentionFailure() }
             self.login = nil
@@ -290,7 +305,7 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
             accessLease = DirectMacConnections.shared.begin(macID: mac.id, kind: "desktop", ownerID: accessOwnerID,
                 pendingAccessChange: DirectMacAccessStore.willRetainChange(macID: mac.id, username: user, password: password, key: nil, ssh: false, remember: remember), disconnect: { [weak self] in self?.disconnect() })
             login = remember ? .init(username: user, password: password) : nil
-            self.remember = remember
+            self.remember = remember; macSaveFailureReported = false
             let previous = viewer?.session
             previous?.stop()
             let retiring = retirement

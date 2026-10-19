@@ -67,6 +67,8 @@ private enum TerminalPTY {
 
 @MainActor @Observable final class DirectTerminalSession {
     @ObservationIgnored var connectionEstablished: (@MainActor () -> Bool)?
+    /// False for an intentional temporary Quick Connect session.
+    @ObservationIgnored var saveMacRequested = true
     static let maximumPausedOutputBytes = 1_048_576
     // Native windows admit input independently of other active scenes.
     var inputAvailable: @MainActor () -> Bool = { true }
@@ -344,8 +346,8 @@ private enum TerminalPTY {
                     #if os(iOS)
                     if let establish = self.connectionEstablished {
                         let canRetain = establish()
-                        if !canRetain && remember {
-                            self.textSendNotice = .init(reason: .saveFailed, title: "Login wasn’t saved", message: "Your connection is open, but this Mac couldn’t be saved. You can keep using this session.")
+                        if !canRetain && self.saveMacRequested {
+                            self.textSendNotice = .macSaveFailed(loginRequested: remember)
                         }
                         if canRetain, let owner = self.accessLease {
                             if key != nil { try DirectMacAccessStore.retainKeyAccount(username, macID: self.mac.id, keyID: self.authenticatedKeyID, owner: owner) }

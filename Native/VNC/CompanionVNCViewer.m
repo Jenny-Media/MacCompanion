@@ -30,6 +30,7 @@
 @property UITextField *host, *username, *password;
 @property DirectDesktopLoginState *credentialState;
 @property UIViewController *recoveryController;
+@property BOOL macSaveFailureVisible;
 @property(nonatomic, copy) void (^recoveryInputOnlyAction)(void);
 @property(nonatomic, copy) NSString *loginIssueDetails;
 @property UIViewController *loginBackdrop;
@@ -664,7 +665,7 @@
         if (connected) {
             strong.session.inputOnly = strong.inputOnly;
             if (strong.textSendInterrupted) [strong showTextSendWarning];
-            else { [strong clearRecovery]; strong.image.alpha = 1; }
+            else if (!strong.macSaveFailureVisible) { [strong clearRecovery]; strong.image.alpha = 1; }
             [strong completeResumeReadiness];
             [strong updateCursor];
             if (strong.sessionPhaseHandler) strong.sessionPhaseHandler(@"connected");
@@ -812,6 +813,7 @@
     UIApplication.sharedApplication.idleTimerDisabled = NO;
 }
 - (void)clearRecovery {
+    self.macSaveFailureVisible = NO;
     self.recoveryInputOnlyAction = nil; self.loginIssueDetails = nil;
     if (!self.recoveryController) return;
     [self.recoveryController willMoveToParentViewController:nil];
@@ -912,6 +914,11 @@
     __weak CompanionVNCViewer *weak = self;
     if (!self.session.connected) { self.starting = NO; self.connect.enabled = YES; }
     [self showRecoveryController:[DirectRecoveryBridgeV1 savedLoginWithConnected:self.session.connected done:^{ [weak clearRecovery]; weak.image.alpha = 1; [weak updateConnectionChrome]; }] overFrame:self.session.connected];
+}
+- (void)showMacSaveFailure:(BOOL)loginRequested {
+    __weak CompanionVNCViewer *weak = self;
+    [self showRecoveryController:[DirectRecoveryBridgeV1 macSaveFailedWithLoginRequested:loginRequested done:^{ [weak clearRecovery]; weak.image.alpha = 1; [weak updateConnectionChrome]; }] overFrame:YES];
+    self.macSaveFailureVisible = YES;
 }
 - (void)rememberViewport {
     if (self.changingDisplayMode) {

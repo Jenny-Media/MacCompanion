@@ -472,6 +472,67 @@ private func desktopWriterFinished(_ group: DispatchGroup) -> Bool { group.wait(
         XCTAssertEqual(Darwin.read(socket, &byte, 1), 0); Darwin.close(socket)
         await other.close(); try await next.close()
     }
+    func testDesktopQuickConnectMacSaveFailureWarnsWithoutRetainingLogin() async throws {
+        for (saveMacRequested, remember) in [(true, false), (true, true), (false, false)] {
+            let server = DesktopSSHServer(.rfb); try await server.start()
+            let mac = try DirectMacRecordV1.normalized(name: "Synthetic Desktop Save", addresses: ["127.0.0.1"], sshPort: server.port)
+            try TerminalSecretStore.approveHostKey(server.hostKey, id: mac.id)
+            let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+            let prior = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+            let viewer = CompanionVNCViewer(), coordinator = VNCRemoteDesktopView.Coordinator(mac: mac)
+            viewer.macName = mac.name; viewer.preferenceID = mac.id.uuidString
+            viewer.preventsLoginRetention = !saveMacRequested
+            viewer.sshPort = mac.sshPort; viewer.servicePort = mac.port; coordinator.viewer = viewer
+            coordinator.saveMacRequested = saveMacRequested
+            var commits = 0
+            coordinator.connectionEstablished = { commits += 1; return false }
+            viewer.connectHandler = { user, password, retain in MainActor.assumeIsolated { coordinator.connect(user: user, password: password, remember: retain) } }
+            viewer.connectedHandler = { MainActor.assumeIsolated { coordinator.saveSuccessfulLogin() } }
+            viewer.disconnectHandler = { MainActor.assumeIsolated { coordinator.disconnect() } }
+            window.rootViewController = viewer; window.makeKeyAndVisible(); viewer.loadViewIfNeeded()
+            defer {
+                coordinator.disconnect(); viewer.stop(); coordinator.stopObserving()
+                window.isHidden = true; window.rootViewController = nil; prior?.makeKeyAndVisible()
+                try? TerminalSecretStore.remove(mac.id)
+            }
+            do {
+                viewer.reloadAccessUsername("synthetic", password: "synthetic-only")
+                let toggle = try XCTUnwrap(viewer.value(forKey: "remember") as? UISwitch)
+                toggle.isOn = remember; toggle.sendActions(for: .valueChanged)
+                _ = viewer.perform(NSSelectorFromString("start"))
+                try await wait("save decision follows a complete native desktop") { commits > 0 && viewer.session.desktopFrameReady }
+                XCTAssertNil(DesktopCredentialStoreV1.read(mac.id), "A failed or intentionally omitted Mac save must not retain the login")
+                XCTAssertEqual(viewer.value(forKey: "recoveryController") != nil, saveMacRequested,
+                    "Requested saves must report failure even with Save Login off; intentional temporary sessions stay quiet")
+                XCTAssertTrue(viewer.session.connected)
+                if saveMacRequested {
+                    let warning = try XCTUnwrap(viewer.value(forKey: "recoveryController") as? UIViewController)
+                    viewer.session.stateHandler?("Connected", viewer.session.diagnosticCounters)
+                    XCTAssertTrue((viewer.value(forKey: "recoveryController") as? UIViewController) === warning,
+                        "Routine Connected reports must keep the existing warning until Continue")
+                    _ = viewer.perform(NSSelectorFromString("clearRecovery"))
+                    coordinator.saveSuccessfulLogin()
+                    XCTAssertNil(viewer.value(forKey: "recoveryController"), "Continue must remain dismissed for this authenticated attempt")
+                }
+                viewer.session.key(0x61, down: true); viewer.session.key(0x61, down: false)
+                try await wait("save failure leaves remote input usable") { server.record.count("keyDown") > 0 }
+                if saveMacRequested && !remember {
+                    let authentications = server.record.count("auth")
+                    coordinator.disconnect()
+                    try await wait("the first authenticated native owner retires") { !viewer.session.running }
+                    viewer.reloadAccessUsername("synthetic", password: "synthetic-only")
+                    toggle.isOn = false; toggle.sendActions(for: .valueChanged)
+                    _ = viewer.perform(NSSelectorFromString("start"))
+                    try await wait("a new authenticated attempt can report its own save failure") {
+                        server.record.count("auth") == authentications + 1 && viewer.session.desktopFrameReady
+                            && viewer.value(forKey: "recoveryController") != nil
+                    }
+                    XCTAssertNil(DesktopCredentialStoreV1.read(mac.id))
+                }
+                coordinator.disconnect(); viewer.stop(); try await server.close()
+            } catch { coordinator.disconnect(); viewer.stop(); try? await server.close(); throw error }
+        }
+    }
     func testFirstUseTrustAppearsInsideTheExistingConnectionSheetBeforeLogin() async throws {
         try await checkFirstUseTrustInConnectionSheet(action: "approve")
     }

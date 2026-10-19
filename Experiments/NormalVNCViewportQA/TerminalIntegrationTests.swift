@@ -145,6 +145,7 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         try await wait { String(decoding: record.received, as: UTF8.self).contains("native-sheet-owner-survived") }
         XCTAssertEqual(record.passwordRequests, 1); XCTAssertEqual(record.shellRequests, 1)
         XCTAssertNil(try TerminalSecretStore.login(mac.id))
+        XCTAssertFalse(session.saveMacRequested); XCTAssertNil(session.textSendNotice, "An intentional temporary session has no save failure")
     }
 
     func testQuickConnectionCommitsMacOnlyAfterShellIsReadyAndControlsLoginRetention() async throws {
@@ -159,6 +160,7 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
             let session = DirectTerminalSession(mac: mac)
             defer { session.stop(); try? TerminalSecretStore.remove(mac.id); try? FileManager.default.removeItem(at: directory) }
             var commits = 0
+            session.saveMacRequested = saveMac
             session.connectionEstablished = {
                 XCTAssertEqual(record.passwordRequests, 1, "Saving cannot precede successful SSH authentication and PTY channel creation")
                 XCTAssertNil(DesktopCredentialStoreV1.read(mac.id), "Login retention follows the Mac save decision")
@@ -171,6 +173,7 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
             try await wait { session.connected && record.shellRequests == 1 }
             XCTAssertEqual(commits, 1); XCTAssertEqual(library.macs.count, saveMac ? 1 : 0)
             XCTAssertEqual(try TerminalSecretStore.login(mac.id)?.password, saveMac ? "synthetic-only" : nil)
+            XCTAssertNil(session.textSendNotice, "Successful saves and intentional temporary sessions must remain quiet")
             session.background(); await session.waitForLifecycleUpdates(); session.foreground()
             try await wait { !session.suspended }
             session.send(Array("quick-connection-pause-recovery".utf8))
@@ -179,18 +182,27 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         }
     }
     func testFailedQuickConnectionMacSaveDoesNotRetainLoginOrCloseWorkingShell() async throws {
-        let record = SSHTestRecord(), hostKey = NIOSSHPrivateKey(ed25519Key: .init())
-        let peer = try await server(record: record, key: hostKey)
-        defer { _ = peer.close() }
-        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic save failure", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(peer.localAddress?.port))
-        try TerminalSecretStore.approveHostKey(String(openSSHPublicKey: hostKey.publicKey), id: mac.id)
-        let session = DirectTerminalSession(mac: mac)
-        defer { session.stop(); try? TerminalSecretStore.remove(mac.id) }
-        session.connectionEstablished = { false }
-        session.connect(username: "synthetic", password: "synthetic-only", remember: true)
-        try await wait { session.connected }
-        XCTAssertNil(try TerminalSecretStore.login(mac.id)); XCTAssertEqual(session.textSendNotice?.reason, .saveFailed)
-        XCTAssertNil(session.recovery); XCTAssertTrue(session.connected)
+        for remember in [false, true] {
+            let record = SSHTestRecord(), hostKey = NIOSSHPrivateKey(ed25519Key: .init())
+            let peer = try await server(record: record, key: hostKey)
+            defer { _ = peer.close() }
+            let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic save failure", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(peer.localAddress?.port))
+            try TerminalSecretStore.approveHostKey(String(openSSHPublicKey: hostKey.publicKey), id: mac.id)
+            let session = DirectTerminalSession(mac: mac)
+            defer { session.stop(); try? TerminalSecretStore.remove(mac.id) }
+            var commits = 0
+            session.saveMacRequested = true
+            session.connectionEstablished = { commits += 1; return false }
+            session.connect(username: "synthetic", password: "synthetic-only", remember: remember)
+            try await wait { session.connected }
+            XCTAssertEqual(commits, 1)
+            XCTAssertNil(try TerminalSecretStore.login(mac.id)); XCTAssertEqual(session.textSendNotice?.reason, .saveFailed)
+            XCTAssertEqual(session.textSendNotice?.title, "Mac wasn’t saved")
+            XCTAssertEqual(session.textSendNotice?.message.contains("Your login wasn’t saved."), remember)
+            XCTAssertNil(session.recovery); XCTAssertTrue(session.connected)
+            session.send(Array("working-after-save-failure".utf8))
+            try await wait { String(decoding: record.received, as: UTF8.self).contains("working-after-save-failure") }
+        }
     }
 
     func testHostedCredentialReturnAfterUnexpectedEndKeepsPauseRecoveryAndDoesNotReconnect() async throws {
