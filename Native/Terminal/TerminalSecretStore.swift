@@ -109,6 +109,7 @@ enum TerminalSecretStore {
         try removeLegacyLogin(id)
         try removeLegacyKey(id)
         try remove(id, kind: "host-key")
+        try remove(id, kind: "terminal-keyboard-v1")
         try remove(id, kind: DirectMacAccessStore.kind)
     }
     #endif

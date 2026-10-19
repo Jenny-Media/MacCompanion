@@ -55,6 +55,28 @@ import XCTest
         capture("mac-row-saved-mode-after-cancel", app)
     }
 
+    func testConnectedSessionHidesLibraryAccessibilityAndRestoresItAfterDisconnect() {
+        let app = launch(["--connect-flow", "--connected-session-review"]); defer { app.terminate() }
+        let row = app.buttons["Connect to Free Mac using Terminal"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10)); row.tap()
+        let controls = app.buttons["terminal-controls"]
+        let connected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            controls.exists && controls.isHittable && !app.descendants(matching: .any)["connection-sheet"].firstMatch.exists
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [connected], timeout: 10), .completed)
+        for id in ["macs-add", "macs-search", "macs-edit-order", "open-app-settings"] {
+            XCTAssertFalse(app.descendants(matching: .any)[id].firstMatch.exists, id)
+        }
+        XCTAssertFalse(row.exists)
+        XCTAssertFalse(app.buttons["Manage Second Mac"].exists)
+        capture("connected-terminal-hides-library", app)
+        controls.tap(); app.buttons["Session"].tap(); app.buttons["Disconnect"].tap()
+        XCTAssertTrue(app.buttons["macs-add"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["open-app-settings"].exists)
+        XCTAssertTrue(row.exists)
+        capture("disconnected-restores-library", app)
+    }
+
     func testSearchCanDismissKeyboardWithoutClearingTheFilter() {
         let app = launch(["--connect-flow"]); defer { app.terminate() }
         let search = app.textFields["macs-search"]

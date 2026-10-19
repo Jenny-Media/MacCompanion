@@ -212,6 +212,11 @@ struct VNCQuickAction: Codable, Identifiable, Equatable, Sendable {
             guard SecItemAdd(query(id).merging(attributes) { _, new in new } as CFDictionary, nil) == errSecSuccess else { throw CocoaError(.fileWriteUnknown) }
         } else if status != errSecSuccess { throw CocoaError(.fileWriteUnknown) }
     }
+    static func clearTemporary(_ id: UUID) throws {
+        let status = SecItemDelete(query(id) as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else { throw CocoaError(.fileWriteUnknown) }
+        clear(id)
+    }
     static func clear(_ id: UUID) {
         for suffix in ["speed", "display", "trackpad", "follow-cursor", "fullscreen", "desktop-size"] { UserDefaults.standard.removeObject(forKey: prefix(id) + suffix) }
         SecItemDelete(query(id) as CFDictionary)

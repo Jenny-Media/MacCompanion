@@ -847,10 +847,19 @@ import StoreKitTest
         let window = UIWindow(windowScene: scene), root = UIViewController()
         window.rootViewController = root; window.makeKeyAndVisible()
         defer { root.dismiss(animated: false); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        func waitForPresentation(_ condition: () -> Bool) async throws {
+            let end = Date().addingTimeInterval(5)
+            while !condition() {
+                guard Date() < end else { throw POSIXError(.ETIMEDOUT) }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+        }
         for mode in DirectControlMode.allCases {
+            try await waitForPresentation { root.presentedViewController == nil && root.view.window === window }
+            XCTAssertTrue(DirectAppLockV1.shared.canAccess)
             let composer = DirectTextComposer(macName: "Synthetic Mac", mode: mode.rawValue)
             composer.present(from: root, available: { true }, send: { _, _ in XCTFail("Editing must not send input") })
-            try await Task.sleep(for: .milliseconds(400))
+            try await waitForPresentation { root.presentedViewController != nil && root.presentedViewController?.isBeingPresented == false }
             let host = try XCTUnwrap(root.presentedViewController)
             func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
             let editor = try XCTUnwrap(descendants(host.view).compactMap { $0 as? UITextView }.first)
@@ -869,13 +878,14 @@ import StoreKitTest
             try await Task.sleep(for: .milliseconds(100))
             XCTAssertEqual(composer.draft.text, retained)
             XCTAssertEqual(editor.text, retained, "The editor must not display a rejected paste as though it can be sent")
-            root.dismiss(animated: false); try await Task.sleep(for: .milliseconds(50))
+            await withCheckedContinuation { continuation in root.dismiss(animated: false) { continuation.resume() } }
+            try await waitForPresentation { root.presentedViewController == nil }
             composer.present(from: root, available: { true }, send: { _, _ in XCTFail("Returning to session must not send input") })
             XCTAssertEqual(composer.draft.text, retained)
-            try await Task.sleep(for: .milliseconds(350))
+            try await waitForPresentation { root.presentedViewController != nil && root.presentedViewController?.isBeingPresented == false }
             NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
             XCTAssertEqual(composer.draft.text, ""); XCTAssertFalse(composer.draft.active)
-            try await Task.sleep(for: .milliseconds(350))
+            try await waitForPresentation { root.presentedViewController == nil }
         }
     }
     func testDesktopAndTrackpadEntryUseOnlyTheirCurrentViewerAndClearAtEnd() async throws {

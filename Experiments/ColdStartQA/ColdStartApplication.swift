@@ -2,6 +2,9 @@ import UIKit
 import SwiftUI
 import Observation
 import LocalAuthentication
+import NIO
+import NIOSSH
+import Crypto
 
 // Disposable simulator entry point; never linked into a release target.
 @main final class ColdStartApplication: UIResponder, UIApplicationDelegate {
@@ -58,6 +61,7 @@ final class ColdStartLibraryReadGate: @unchecked Sendable {
     let timeout: Duration
     let libraryRead = ColdStartLibraryReadGate()
     var stage = "Starting"
+    private var sessionPeer: Channel?
     init() {
         let arguments = ProcessInfo.processInfo.arguments
         let activity = ColdStartActivity(), authentication = ColdStartAuthentication(), store = ColdStartStore()
@@ -92,6 +96,19 @@ final class ColdStartLibraryReadGate: @unchecked Sendable {
         })
     }
     func begin() async {
+        if ProcessInfo.processInfo.arguments.contains("--connected-session-review") {
+            do {
+                while library.loading { try await Task.sleep(for: .milliseconds(10)) }
+                let key = NIOSSHPrivateKey(ed25519Key: .init())
+                sessionPeer = try await ColdStartSSHFixture.start(key: key)
+                guard let mac = library.macs.first, let port = sessionPeer?.localAddress?.port else { return }
+                _ = library.save(id: mac.id, name: mac.name, addresses: mac.addresses, sshPort: port, preferredConnection: .terminal)
+                try DirectMacAccessStore.write(.init(login: .init(username: "synthetic", password: "synthetic-only")), id: mac.id)
+                try TerminalSecretStore.approveHostKey(String(openSSHPublicKey: key.publicKey), id: mac.id)
+                stage = "Connected-session fixture ready"
+            } catch { stage = "Connected-session fixture failed" }
+            return
+        }
         guard needsAuthentication else { stage = "Active; purchases pending"; return }
         for _ in 0..<100 {
             if authentication.reply != nil { break }
@@ -210,4 +227,42 @@ struct PresentationDesktopProgress: UIViewControllerRepresentable {
     }
     func updateUIViewController(_ controller: CompanionVNCViewer, context: Context) {}
     static func dismantleUIViewController(_ controller: CompanionVNCViewer, coordinator: ()) { controller.stop() }
+}
+
+// Loopback-only SSH peer for the production-root accessibility journey. The
+// normal handshake, host pin, password authentication and shell still run.
+private enum ColdStartSSHFixture {
+    static func start(key: NIOSSHPrivateKey) async throws -> Channel {
+        try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton).childChannelInitializer { channel in
+            channel.pipeline.addHandler(NIOSSHHandler(role: .server(.init(hostKeys: [key], userAuthDelegate: ColdStartSSHAuthentication())),
+                allocator: channel.allocator, inboundChildChannelInitializer: { child, _ in
+                    child.pipeline.addHandler(ColdStartSSHShell())
+                }))
+        }.bind(host: "127.0.0.1", port: 0).get()
+    }
+}
+private final class ColdStartSSHAuthentication: NIOSSHServerUserAuthenticationDelegate, @unchecked Sendable {
+    var supportedAuthenticationMethods: NIOSSHAvailableUserAuthenticationMethods { .password }
+    func requestReceived(request: NIOSSHUserAuthenticationRequest, responsePromise: EventLoopPromise<NIOSSHUserAuthenticationOutcome>) {
+        if case .password(let login) = request.request, request.username == "synthetic", login.password == "synthetic-only" {
+            responsePromise.succeed(.success)
+        } else { responsePromise.succeed(.failure) }
+    }
+}
+private final class ColdStartSSHShell: ChannelDuplexHandler, @unchecked Sendable {
+    typealias InboundIn = SSHChannelData
+    typealias OutboundIn = SSHChannelData
+    typealias OutboundOut = SSHChannelData
+    func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+        if event is SSHChannelRequestEvent.PseudoTerminalRequest {
+            context.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil)
+        } else if event is SSHChannelRequestEvent.ShellRequest {
+            context.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil)
+            context.writeAndFlush(wrapOutboundOut(.init(type: .channel, data: .byteBuffer(ByteBuffer(string: "synthetic-ready\r\n")))), promise: nil)
+        } else { context.fireUserInboundEventTriggered(event) }
+    }
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        context.writeAndFlush(wrapOutboundOut(unwrapInboundIn(data)), promise: nil)
+    }
+    func errorCaught(context: ChannelHandlerContext, error: Error) { context.close(promise: nil) }
 }

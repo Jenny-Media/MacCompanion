@@ -259,6 +259,16 @@ enum DesktopCredentialStoreV1 {
             try write(next); localChange?(record.id); return true
         } catch { failure = "Could not save this Mac. Use a name, unique local/VPN addresses and a port from 1 to 65535."; return false }
     }
+    #if os(iOS)
+    func saveQuickConnection(_ mac: DirectMacRecordV1, connection: DirectMacConnection, pro: DirectProAccess) -> Bool {
+        if macs.contains(where: { $0.id == mac.id }) { return true }
+        // Login/trust may have waited while cloud sync or trial expiry changed
+        // the admission checked when Quick Connect first opened.
+        guard readable, pro.canAddMac(count: macs.count) else { return false }
+        return save(id: mac.id, name: mac.name, addresses: mac.addresses, port: mac.port, sshPort: mac.sshPort,
+            usesAutomaticName: mac.usesAutomaticName, preferredConnection: connection)
+    }
+    #endif
     func updateDetectedMetadata(_ identities: [DirectMacDetectedIdentity]) {
         guard readable else { return }
         let next = macs.map { mac in
@@ -548,6 +558,8 @@ struct DirectMacLibraryRootV1: View {
             .onOpenURL { openRoute($0) }
 
         }
+            .accessibilityHidden(session != nil)
+            .allowsHitTesting(session == nil)
             .background(DirectConnectionPanelAnchor(host: connectionPanel).frame(width: 0, height: 0))
             .overlay {
                 if quickConnect && session == nil {
@@ -591,9 +603,7 @@ struct DirectMacLibraryRootV1: View {
         guard session?.id == selection.id else { return false }
         if library.macs.contains(where: { $0.id == selection.mac.id }) { return true }
         guard selection.saveAfterConnect, library.readable else { return false }
-        let mac = selection.mac
-        return library.save(id: mac.id, name: mac.name, addresses: mac.addresses, port: mac.port, sshPort: mac.sshPort,
-            usesAutomaticName: mac.usesAutomaticName, preferredConnection: selection.connection)
+        return library.saveQuickConnection(selection.mac, connection: selection.connection, pro: pro)
     }
     private func endSession(_ selection: DirectMacSessionSelection) {
         guard session?.id == selection.id else { return }
@@ -658,6 +668,7 @@ struct DirectMacLibraryRootV1: View {
     // after the current verified lookup has published its result.
     private func performIfResolved(_ action: LibraryAction) -> Bool {
         guard admits(action) else { return false }
+        guard session == nil else { return true }
         switch action {
         case .edit(let mac):
             guard library.readable else { return true }

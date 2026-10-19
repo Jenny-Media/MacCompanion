@@ -221,7 +221,7 @@ final class DirectMacAccessForgetObservation: @unchecked Sendable {
     private let canAccess: @MainActor () -> Bool
     private let disconnect: @MainActor (UUID) async -> Bool
     private let erase: @MainActor (UUID) throws -> Void
-    private let clearPreferences: @MainActor (UUID) -> Void
+    private let clearPreferences: @MainActor (UUID) throws -> Void
     private var savedIDs: Set<UUID>?
     private var active: Set<UUID> = []
     private var processing = false
@@ -231,7 +231,7 @@ final class DirectMacAccessForgetObservation: @unchecked Sendable {
          canAccess: @escaping @MainActor () -> Bool = { DirectAppLockV1.shared.canAccess },
          disconnect: @escaping @MainActor (UUID) async -> Bool = { await DirectMacConnections.shared.disconnect($0) },
          erase: @escaping @MainActor (UUID) throws -> Void = TerminalSecretStore.removeTemporaryIdentity,
-         clearPreferences: @escaping @MainActor (UUID) -> Void = VNCSessionPreferences.clear) {
+         clearPreferences: @escaping @MainActor (UUID) throws -> Void = VNCSessionPreferences.clearTemporary) {
         self.defaults = defaults; self.key = key; self.canAccess = canAccess
         self.disconnect = disconnect; self.erase = erase; self.clearPreferences = clearPreferences
         pending = Set((defaults.stringArray(forKey: key) ?? []).compactMap(UUID.init(uuidString:)))
@@ -263,7 +263,7 @@ final class DirectMacAccessForgetObservation: @unchecked Sendable {
                       savedIDs?.contains(id) == false, canAccess() else { continue }
                 do {
                     try erase(id)
-                    clearPreferences(id)
+                    try clearPreferences(id)
                     pending.remove(id); persist()
                 } catch {
                     // Keep the durable intent. Unlock, foreground entry and

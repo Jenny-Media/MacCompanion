@@ -227,6 +227,34 @@ import LocalAuthentication
         XCTAssertNil(DesktopCredentialStoreV1.read(connected.mac.id), "Saving a Mac must not manufacture a login")
         XCTAssertEqual(library.macs.map(\.id), [draft.id])
     }
+    func testQuickConnectionSaveRechecksCurrentLibraryAndExpiredTrial() async throws {
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let suite = "QuickConnectAdmissionTests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite)); defer { defaults.removePersistentDomain(forName: suite) }
+        var now = Date(timeIntervalSince1970: 1_800_000_000)
+        let start = now
+        let trial = DirectProTrial(entitlement: .init(verified: true, matchingProduct: true, nonConsumable: true, revoked: false), originalPurchaseDate: start)
+        var snapshot = DirectProSnapshot()
+        let pro = DirectProAccess(defaults: defaults, now: { now }, readEntitlements: { snapshot })
+        await pro.refresh()
+        let library = DirectMacLibraryV1(url: directory.appending(path: "macs.json"), removeLogin: { _ in })
+        let proposed = try DirectMacRecordV1.normalized(name: "Synthetic Quick Mac", addresses: ["quick.invalid"])
+        let other = try DirectMacRecordV1.normalized(name: "Synthetic Synced Mac", addresses: ["synced.invalid"])
+        XCTAssertTrue(pro.canAddMac(count: library.macs.count))
+        try library.applyCloud([other]) // Arrived while the initial login/trust prompt was open.
+        XCTAssertFalse(library.saveQuickConnection(proposed, connection: .terminal, pro: pro))
+        XCTAssertEqual(library.macs.map(\.id), [other.id])
+        snapshot.trial = trial; await pro.refresh()
+        XCTAssertTrue(pro.canAddMac(count: library.macs.count))
+        now = start.addingTimeInterval(DirectProTrial.duration)
+        XCTAssertFalse(library.saveQuickConnection(proposed, connection: .terminal, pro: pro))
+        XCTAssertEqual(library.macs.map(\.id), [other.id])
+        snapshot.lifetime = true; await pro.refresh()
+        XCTAssertTrue(library.saveQuickConnection(proposed, connection: .terminal, pro: pro))
+        XCTAssertEqual(library.macs.last?.preferredConnection, .terminal)
+        XCTAssertNil(DesktopCredentialStoreV1.read(proposed.id))
+    }
     func testNativeSheetReplacesContentWithoutAnotherPresentationAndRejectsOldHide() async throws {
         let mount = try PanelMount(); defer { mount.close() }
         let first = UIViewController(), second = UIViewController(), firstOwner = NSObject(), secondOwner = NSObject()

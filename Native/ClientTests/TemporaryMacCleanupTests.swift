@@ -73,11 +73,28 @@ import XCTest
         try await wait { cleanup.pending.isEmpty }
         XCTAssertEqual(attempts, 2)
     }
+    func testPreferenceDeletionFailureKeepsJournalUntilItsOwnRetrySucceeds() async throws {
+        let (defaults, suite) = try defaults(); defer { defaults.removePersistentDomain(forName: suite) }
+        let id = UUID(); var available = false, erased = 0, clears = 0
+        enum Failure: Error { case storage }
+        let cleanup = DirectTemporaryMacCleanup(defaults: defaults, canAccess: { true }, disconnect: { _ in true },
+            erase: { _ in erased += 1 }, clearPreferences: { _ in
+                clears += 1
+                if !available { throw Failure.storage }
+            })
+        cleanup.updateSavedMacs([]); cleanup.begin(id); cleanup.end(id)
+        try await wait { clears == 1 }; await Task.yield()
+        XCTAssertEqual(cleanup.pending, [id]); XCTAssertEqual(erased, 1)
+        available = true; cleanup.retry(); try await wait { cleanup.pending.isEmpty }
+        XCTAssertEqual(erased, 2); XCTAssertEqual(clears, 2)
+    }
     func testTemporaryEraseDeletesAllScopedItemsAndPreservesOtherMac() throws {
         let id = UUID(), other = UUID()
         defer {
             try? TerminalSecretStore.removeTemporaryIdentity(id)
             try? TerminalSecretStore.removeTemporaryIdentity(other)
+            try? VNCSessionPreferences.clearTemporary(id)
+            try? VNCSessionPreferences.clearTemporary(other)
         }
         let profile = DirectMacAccessProfile(login: .init(username: "synthetic", password: "synthetic-only"))
         let pin = "ssh-ed25519 " + Data(repeating: 7, count: 32).base64EncodedString()
@@ -86,6 +103,8 @@ import XCTest
             try TerminalSecretStore.write(Data("legacy-test-only".utf8), id: value, kind: "login")
             try TerminalSecretStore.write(Data("legacy-test-only".utf8), id: value, kind: "private-key")
             try TerminalSecretStore.approveHostKey(pin, id: value)
+            try TerminalKeyboardPreferences(snippets: [.init(name: "Synthetic", text: "synthetic-only")]).save(value)
+            try VNCSessionPreferences.saveActions([.composeText], mac: value)
         }
         let owner = DirectMacConnections.shared.begin(macID: id, kind: "synthetic", disconnect: {})
         XCTAssertThrowsError(try TerminalSecretStore.removeTemporaryIdentity(id))
@@ -93,10 +112,13 @@ import XCTest
         DirectMacConnections.shared.end(owner)
         try TerminalSecretStore.removeTemporaryIdentity(id)
         try TerminalSecretStore.removeTemporaryIdentity(id)
-        for kind in [DirectMacAccessStore.kind, "login", "private-key", "host-key"] {
+        for kind in [DirectMacAccessStore.kind, "login", "private-key", "host-key", "terminal-keyboard-v1"] {
             XCTAssertNil(try TerminalSecretStore.read(id, kind: kind), kind)
             XCTAssertNotNil(try TerminalSecretStore.read(other, kind: kind), kind)
         }
+        try VNCSessionPreferences.clearTemporary(id)
+        XCTAssertNil(try VNCSessionPreferences.readActions(id))
+        XCTAssertEqual(try VNCSessionPreferences.readActions(other)?.map(\.kind), [.composeText])
         XCTAssertEqual(try DirectMacAccessStore.load(other), profile)
     }
     private func wait(_ condition: () -> Bool) async throws {
