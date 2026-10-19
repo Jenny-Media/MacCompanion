@@ -38,12 +38,79 @@ import LocalAuthentication
         draft.host = "example.local"; draft.additionalAddresses = "backup.local\n192.0.2.1"
         XCTAssertEqual(draft.record?.addresses, ["example.local", "backup.local", "192.0.2.1"])
     }
+    func testExplicitQuickConnectNameSurvivesCompletedAndLaterDiscovery() throws {
+        var draft = DirectQuickConnectDraft(); draft.host = "example.local"; draft.name = " My Work Mac "
+        let request = try XCTUnwrap(draft.request(in: []))
+        XCTAssertEqual(request.mac.name, "My Work Mac")
+        XCTAssertFalse(request.mac.usesAutomaticName)
+        let detected = DirectMacDetectedIdentity(name: "Detected Mac", host: "example.local", addresses: [], port: 5900, connection: .desktop)
+        let completed = request.mac.applying(detected)
+        XCTAssertEqual(completed.name, "My Work Mac", "A completed scan cannot replace an explicit Quick Connect name")
+        XCTAssertEqual(completed.detectedName, "Detected Mac")
+
+        let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appending(path: "macs.json")
+        let library = DirectMacLibraryV1(url: url, removeLogin: { _ in })
+        XCTAssertTrue(library.save(id: request.mac.id, name: request.mac.name, addresses: request.mac.addresses,
+            port: request.mac.port, sshPort: request.mac.sshPort, usesAutomaticName: request.mac.usesAutomaticName))
+        library.updateDetectedMetadata([detected])
+        let later = DirectMacDetectedIdentity(name: "Renamed Detected Mac", host: "example.local", addresses: [], port: 5900,
+            connection: .desktop, modelIdentifier: "MacBookPro18,1")
+        library.updateDetectedMetadata([later])
+        let saved = try XCTUnwrap(DirectMacLibraryV1(url: url, removeLogin: { _ in }).macs.first)
+        XCTAssertEqual(saved.name, "My Work Mac")
+        XCTAssertFalse(saved.usesAutomaticName)
+        XCTAssertEqual(saved.detectedName, later.name)
+        XCTAssertEqual(saved.modelIdentifier, later.modelIdentifier, "Custom names must still accept detected metadata")
+    }
+    func testTypedQuickConnectHostUsesAutomaticNamingUntilEdited() throws {
+        var draft = DirectQuickConnectDraft(); draft.host = "example.local"
+        let initial = try XCTUnwrap(draft.record)
+        XCTAssertEqual(initial.name, "example.local"); XCTAssertTrue(initial.usesAutomaticName)
+        let detected = DirectMacDetectedIdentity(name: "Detected Mac", host: "example.local", addresses: [], port: 5900, connection: .desktop)
+        XCTAssertEqual(initial.applying(detected).name, "Detected Mac")
+        draft.name = "My Work Mac"
+        let edited = try XCTUnwrap(draft.record)
+        XCTAssertFalse(edited.usesAutomaticName)
+        XCTAssertEqual(edited.applying(detected).name, "My Work Mac")
+    }
+    func testScannedQuickConnectNameRemainsAutomaticUntilEdited() throws {
+        let detected = DirectMacDetectedIdentity(name: "Nearby Mac", host: "example.local", addresses: [], port: 5900, connection: .desktop)
+        var draft = DirectQuickConnectDraft(item: try XCTUnwrap(DirectMacDiscoveryItem.group([detected]).first))
+        let initial = try XCTUnwrap(draft.record)
+        XCTAssertEqual(initial.name, "Nearby Mac"); XCTAssertTrue(initial.usesAutomaticName)
+        let later = DirectMacDetectedIdentity(name: "Renamed Nearby Mac", host: "example.local", addresses: [], port: 5900, connection: .desktop)
+        XCTAssertEqual(initial.applying(later).name, "Renamed Nearby Mac")
+        draft.name = "My Nearby Mac"
+        let edited = try XCTUnwrap(draft.record)
+        XCTAssertFalse(edited.usesAutomaticName)
+        XCTAssertEqual(edited.applying(later).name, "My Nearby Mac")
+    }
+    func testClearingQuickConnectCustomNameRestoresAutomaticNaming() throws {
+        let detected = DirectMacDetectedIdentity(name: "Detected Mac", host: "example.local", addresses: [], port: 5900, connection: .desktop)
+        for cleared in ["", " \n "] {
+            var draft = DirectQuickConnectDraft(item: try XCTUnwrap(DirectMacDiscoveryItem.group([detected]).first))
+            draft.name = "Custom Name"; XCTAssertFalse(try XCTUnwrap(draft.record).usesAutomaticName)
+            draft.name = cleared
+            let record = try XCTUnwrap(draft.record)
+            XCTAssertEqual(record.name, "example.local"); XCTAssertTrue(record.usesAutomaticName)
+            XCTAssertEqual(record.applying(detected).name, "Detected Mac")
+        }
+    }
     func testSavedEndpointReusesUUIDAndItsPreferences() throws {
         var saved = try DirectMacRecordV1.normalized(name: "My Mac", addresses: ["example.local"], port: 5901, sshPort: 2222)
         saved.preferredConnection = .trackpad; saved.swipeLeft = .disabled
         var draft = DirectQuickConnectDraft(); draft.host = "EXAMPLE.LOCAL."; draft.port = "5901"; draft.sshPort = "2222"
+        draft.name = "Quick Connect Name"
         let request = try XCTUnwrap(draft.request(in: [saved]))
         XCTAssertEqual(request.mac, saved); XCTAssertEqual(request.mac.id, saved.id)
+        for automatic in [false, true] {
+            var existing = saved; existing.usesAutomaticName = automatic
+            let reused = try XCTUnwrap(draft.request(in: [existing]))
+            XCTAssertEqual(reused.mac.name, saved.name)
+            XCTAssertEqual(reused.mac.usesAutomaticName, automatic, "Reusing an endpoint preserves its saved name policy")
+        }
         XCTAssertEqual(request.connection, .trackpad)
         draft.connection = .terminal; draft.choseConnection = true
         XCTAssertEqual(draft.request(in: [saved])?.connection, .terminal)

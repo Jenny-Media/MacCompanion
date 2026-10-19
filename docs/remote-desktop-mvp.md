@@ -231,8 +231,8 @@ connection explanations live in Connection Details. Login failures appear inline
 above retained fields; detailed explanations and fixed diagnostics remain available
 under Connection Details. Confirmed SSH-key rejection offers Set Up Key and Use
 Password without claiming that a missing public key is the only possible cause.
-The layout scrolls for the keyboard or large text and retains compact landscape
-credential columns. SSH identity verification still
+The layout scrolls for the keyboard or large text and keeps the same grouped
+credential rows across compact and roomy layouts. SSH identity verification still
 precedes authentication. Entry and trust-sheet dismissal never retry a failure
 automatically.
 
@@ -580,4 +580,4 @@ last completed results during a refresh. Only a completed scan updates saved
 Mac metadata; cancellation discards provisional results without changing trust,
 saved addresses or credentials.
 
-Save to My Macs and Save Login are separate choices. A new Mac is added only after a usable desktop/input session or shell opens. If saving the Mac fails, its login must not be retained. A one-time connection keeps only the credentials required by its active recovery owner and removes its temporary trust/profile after all scoped connection owners stop; it never removes shared private keys or completed downloads. A temporary connection is subject to the same multi-Mac entitlement and foreground checks as a saved connection.
+Save to My Macs and Save Login are separate choices. A new Mac is added only after a usable desktop/input session or shell opens. If saving the Mac fails, its login must not be retained. A one-time connection keeps only the credentials required by its active recovery owner and removes its temporary trust/profile after all scoped connection owners stop; it never removes shared private keys or completed downloads. Temporary identities are journaled before connecting. If teardown or protected storage is unavailable, cleanup remains pending across launches and retries after unlock or foreground entry. Cleanup waits for all scoped owners, cancels when the Mac becomes saved, and deletes only that temporary identity’s access records and preferences. Completed downloads remain reachable from My Macs until exported or discarded. A temporary connection is subject to the same multi-Mac entitlement and foreground checks as a saved connection.

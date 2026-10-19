@@ -76,7 +76,7 @@ struct DirectFilesView: View {
                 identity
                 Divider()
                 if session.macRemoved {
-                    Label("Mac removed", systemImage: "info.circle").font(.headline).padding(.top)
+                    Label("Connection ended", systemImage: "info.circle").font(.headline).padding(.top)
                     Text("Save or discard your downloads to close Files.").font(.subheadline).foregroundStyle(.secondary).padding()
                 }
                 else if session.phase == .ready {

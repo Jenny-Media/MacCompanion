@@ -10,7 +10,10 @@ struct DirectQuickConnectRequest {
 
 struct DirectQuickConnectDraft: Equatable {
     var id = UUID()
-    var name = ""
+    var name = "" {
+        didSet { usesAutomaticName = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+    private(set) var usesAutomaticName = true
     var host = ""
     var additionalAddresses = ""
     var port = "5900"
@@ -20,15 +23,17 @@ struct DirectQuickConnectDraft: Equatable {
     var choseConnection = false
     init() {}
     init(item: DirectMacDiscoveryItem) {
-        name = item.name; host = item.host
+        name = item.name; host = item.host; usesAutomaticName = true
         if let desktop = item.services.first(where: { $0.connection == .desktop }) { port = String(desktop.port) }
         if let terminal = item.services.first(where: { $0.connection == .terminal }) { sshPort = String(terminal.port) }
         if !item.services.contains(where: { $0.connection == .desktop }) { connection = .terminal }
     }
     var record: DirectMacRecordV1? {
         guard let port = Int(port), let sshPort = Int(sshPort) else { return nil }
-        return try? .normalized(id: id, name: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? host : name,
-            addresses: [host] + additionalAddresses.split(separator: "\n").map(String.init), port: port, sshPort: sshPort)
+        guard var record = try? DirectMacRecordV1.normalized(id: id, name: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? host : name,
+            addresses: [host] + additionalAddresses.split(separator: "\n").map(String.init), port: port, sshPort: sshPort) else { return nil }
+        record.usesAutomaticName = usesAutomaticName
+        return record
     }
     /// Only an unambiguous endpoint match reuses a saved identity. A Bonjour
     /// name is never enough to select credentials or bypass host verification.

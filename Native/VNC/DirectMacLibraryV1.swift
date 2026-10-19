@@ -508,6 +508,7 @@ struct DirectMacLibraryRootV1: View {
                 attachLoadedServices()
             }
             .onChange(of: library.loading) { _, loading in
+                updateTemporaryCleanup()
                 if !loading, library.readable {
                     attachLoadedServices()
                     if let route = loadingRoute { loadingRoute = nil; openRoute(route) }
@@ -515,6 +516,7 @@ struct DirectMacLibraryRootV1: View {
             }
             .onChange(of: appLock.canAccess) { _, unlocked in
                 if !unlocked { library.discovery.stop(); cancelAccess(); deferredRoute = nil; loadingRoute = nil }
+                else { updateTemporaryCleanup() }
             }
             .onChange(of: appLock.canInteract) { _, admitted in
                 if !admitted { cancelAccess() }
@@ -524,11 +526,13 @@ struct DirectMacLibraryRootV1: View {
             }
             .onChange(of: pro.ready) { _, ready in if ready { completePendingAccess() } }
             .onChange(of: library.macs.map(\.id)) { _, ids in
+                updateTemporaryCleanup()
                 guard let pending = pendingAccess else { return }
                 if case .open(let mac, _, _) = pending.action, !ids.contains(mac.id) { cancelAccess() }
             }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active {
+                    updateTemporaryCleanup()
                     if pro.ready { Task { await pro.refresh() } } else { pro.start() }
                 } else {
                     library.discovery.stop(); cancelAccess()
@@ -576,7 +580,10 @@ struct DirectMacLibraryRootV1: View {
         .opacity(appLock.contentVisible ? 1 : 0)
         .allowsHitTesting(appLock.canInteract)
         .accessibilityHidden(!appLock.canInteract)
-        .onAppear { appLock.install() }
+        .onAppear { appLock.install(); updateTemporaryCleanup() }
+        .onReceive(NotificationCenter.default.publisher(for: DirectMacConnections.changed)) { _ in
+            DirectTemporaryMacCleanup.shared.retry()
+        }
     }
     private func beginQuickConnect() { searchFocused = false; quickConnect = true }
     private func cancelQuickConnect() { quickConnect = false; library.discovery.stop(); cancelAccess(); deferredRoute = nil }
@@ -586,26 +593,25 @@ struct DirectMacLibraryRootV1: View {
         guard selection.saveAfterConnect, library.readable else { return false }
         let mac = selection.mac
         return library.save(id: mac.id, name: mac.name, addresses: mac.addresses, port: mac.port, sshPort: mac.sshPort,
-            usesAutomaticName: true, preferredConnection: selection.connection)
+            usesAutomaticName: mac.usesAutomaticName, preferredConnection: selection.connection)
     }
     private func endSession(_ selection: DirectMacSessionSelection) {
         guard session?.id == selection.id else { return }
         connectionPanel.close(); session = nil; quickConnect = false
         guard selection.temporary, !library.macs.contains(where: { $0.id == selection.mac.id }) else { return }
-        Task {
-            // Stop and join only this temporary Mac's owners before forgetting
-            // its session-scoped trust/login. Never rewrite the saved-Mac list.
-            guard await DirectMacConnections.shared.disconnect(selection.mac.id) else { return }
-            try? TerminalSecretStore.remove(selection.mac.id)
-            VNCSessionPreferences.clear(selection.mac.id)
-        }
+        DirectFilesWorkspace.endTemporarySession(selection.mac.id, libraryURL: library.storageURL)
+        DirectTemporaryMacCleanup.shared.end(selection.mac.id)
     }
     private func refreshNearbyMacs() async {
         guard library.readable else { return }
         library.discovery.start()
         while library.discovery.scanning && !Task.isCancelled { try? await Task.sleep(for: .milliseconds(100)) }
     }
+    private func updateTemporaryCleanup() {
+        DirectTemporaryMacCleanup.shared.updateSavedMacs(library.readable && !library.loading ? Set(library.macs.map(\.id)) : nil)
+    }
     private func attachLoadedServices() {
+        updateTemporaryCleanup()
         guard library.readable, !library.loading, !servicesAttached else { return }
         servicesAttached = true
         let keys = TerminalKeyLibrary(); keys.reload(macs: library.macs)
@@ -670,6 +676,7 @@ struct DirectMacLibraryRootV1: View {
             if pro.canAddMac(count: library.macs.count) {
                 library.discovery.stop(); quickConnect = false
                 CompanionVNCPlayInterfaceFeedback("open")
+                DirectTemporaryMacCleanup.shared.begin(proposal.mac.id)
                 session = DirectMacSessionSelection(mac: proposal.mac, connection: proposal.connection,
                     saveAfterConnect: proposal.saveMac, temporary: true)
                 return true

@@ -496,9 +496,7 @@
     "scrollInputReplayedAfterGesture": false,
     "desktopDefaultQuickActionKinds": [
       "composeText",
-      "mode",
       "copyText",
-      "fit",
       "rightClick"
     ],
     "defaultQuickActionPlatform": "ios"

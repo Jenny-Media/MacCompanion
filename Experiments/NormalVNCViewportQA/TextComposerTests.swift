@@ -432,9 +432,16 @@ import StoreKitTest
         let viewer = CompanionVNCViewer(); viewer.loadViewIfNeeded()
         let controls = try XCTUnwrap(viewer.value(forKey: "controls") as? CompanionVNCControls)
         let owner = viewer.session
+        // An established input-only owner admits video only for bounded geometry.
+        // Seed a normal desktop so each requested transition can actually occur.
+        owner.setValue(800, forKey: "framebufferWidth"); owner.setValue(600, forKey: "framebufferHeight")
+        XCTAssertTrue(owner.desktopFramebufferAvailable)
+        XCTAssertNil(viewer.quickActionsProvider, "Exercise standalone native defaults without a SwiftUI profile provider")
         defer { owner.setValue(false, forKey: "running") }
         for ready in [false, true] { for onlyInput in [false, true, false, true] {
             controls.close(); viewer.inputOnly = onlyInput
+            XCTAssertEqual(viewer.inputOnly, onlyInput, "Assert that the requested mode was admitted before checking its controls")
+            if ready { XCTAssertEqual(owner.inputOnly, onlyInput) }
             for key in ["running", "inputReady", "established", "baselinePresented"] { owner.setValue(ready, forKey: key) }
             owner.setValue(false, forKey: "awaitingResumeFrame") // Simulate completion of the mode's fresh baseline.
             XCTAssertEqual(owner.composedTextReady, ready)
@@ -442,9 +449,9 @@ import StoreKitTest
             let choices = try XCTUnwrap(controls.value(forKey: "choices") as? [UIButton])
             let compose = try XCTUnwrap(choices.first { $0.accessibilityIdentifier == "session-action-composeText" })
             XCTAssertEqual(compose.isEnabled, ready, "Keep Compose discoverable while disabled until the session is ready")
-            XCTAssertEqual(choices.first?.accessibilityIdentifier, "session-action-composeText")
             let expected = (onlyInput ? DirectControlMode.trackpad : .desktop).defaults.map { $0.kind.rawValue }
             XCTAssertEqual(controls.quickActions.compactMap { $0["kind"] as? String }, expected)
+            XCTAssertEqual(choices.prefix(expected.count).compactMap(\.accessibilityIdentifier), expected.map { "session-action-" + $0 })
             XCTAssertEqual(expected.contains("copyText"), !onlyInput)
         } }
         controls.close()

@@ -1756,8 +1756,9 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     }
     XCTAssertNotNil(action); if (!action) { [viewer stopViewer]; return; }
     XCTAssertTrue(action.hidden);
-    [viewer showConnectionFailureStage:0];
+    [viewer showConnectionFailureStage:117]; // Only a display failure offers video-free recovery.
     void (^fallback)(void)=[viewer valueForKey:@"recoveryInputOnlyAction"]; XCTAssertNotNil(fallback);
+    if (!fallback) { [viewer stopViewer]; return; }
     CompanionVNCSession *old=viewer.session; __block NSUInteger connects=0,retires=0,saves=0;
     __weak CompanionVNCViewer *weak=viewer;
     viewer.connectHandler=^(NSString *u,NSString *p,BOOL remember){ connects++; XCTAssertEqualObjects(u,@"synthetic"); XCTAssertEqualObjects(p,@"transient"); XCTAssertFalse(remember); [weak prepareConnection]; };
@@ -1774,14 +1775,26 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
 - (void)testInputOnlyRecoveryWithoutSessionCredentialsShowsItsOwnLogin {
     CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
     [viewer setValue:@YES forKey:@"changingDisplayMode"]; [viewer setValue:@2 forKey:@"modeTargetPreset"];
-    [viewer showConnectionFailureStage:111]; // Rejected login cannot be silently recovered.
+    [viewer showConnectionFailureStage:118]; // No retained login; input-only must show its own fields.
     __block NSUInteger connects=0; viewer.connectHandler=^(NSString *u,NSString *p,BOOL remember){ connects++; };
-    void (^fallback)(void)=[viewer valueForKey:@"recoveryInputOnlyAction"]; XCTAssertNotNil(fallback); fallback();
+    void (^fallback)(void)=[viewer valueForKey:@"recoveryInputOnlyAction"]; XCTAssertNotNil(fallback);
+    if (!fallback) { [viewer stopViewer]; return; }
+    fallback();
     XCTAssertEqual(connects,0); XCTAssertTrue(viewer.inputOnly); XCTAssertNil([viewer valueForKey:@"failedDisplayModePreset"]);
     XCTAssertFalse(((UIView *)[viewer valueForKey:@"login"]).hidden); XCTAssertNil([viewer valueForKey:@"recoveryInputOnlyAction"]);
     XCTAssertEqualObjects(((UITextField *)[viewer valueForKey:@"username"]).text,@"");
     XCTAssertEqualObjects(((UITextField *)[viewer valueForKey:@"password"]).text,@"");
     viewer.connectHandler=nil; [viewer stopViewer];
+}
+
+- (void)testNonDisplayFailuresDoNotOfferInputOnlyAsAnAuthenticationBypass {
+    for (NSNumber *stage in @[@0,@111,@112,@113,@114,@115]) {
+        CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
+        [viewer setValue:@YES forKey:@"changingDisplayMode"]; [viewer setValue:@2 forKey:@"modeTargetPreset"];
+        [viewer showConnectionFailureStage:stage.integerValue];
+        XCTAssertNil([viewer valueForKey:@"recoveryInputOnlyAction"],@"stage %@",stage);
+        XCTAssertFalse(viewer.inputOnly); [viewer stopViewer];
+    }
 }
 
 - (void)testDisplayRecoveryDoesNotPermanentlyDisableInputOnly {

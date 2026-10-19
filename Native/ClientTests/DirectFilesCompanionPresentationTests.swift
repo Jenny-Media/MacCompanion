@@ -83,6 +83,49 @@ import UIKit
         XCTAssertTrue(files.shouldCloseAfterRemoval)
         XCTAssertTrue(DirectFilesWorkspace.recoverableDownloads(libraryURL: library.storageURL).isEmpty)
     }
+    func testUnsavedQuickConnectDownloadsRemainReachableAfterParentExit() async throws {
+        for export in [false, true] {
+            let probe = FilesDirectoryTestProbe(), bytes = Data([4, 5, 6])
+            let server = try await filesDirectoryTestServer(probe: probe, downloadBytes: bytes)
+            defer { Task { await probe.shutdown(); try? await server.close() } }
+            let root = try DirectFilesLocalStore.root(); defer { try? FileManager.default.removeItem(at: root) }
+            let libraryURL = root.appendingPathComponent("macs.json")
+            let library = DirectMacLibraryV1(url: libraryURL, removeLogin: { _ in })
+            let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Unsaved Quick Connect", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+            let client = try await SSHClient.connect(to: .init(host: "127.0.0.1", port: mac.sshPort,
+                authenticationMethod: { .passwordBased(username: "synthetic", password: "synthetic-only") }, hostKeyValidator: .acceptAnything()))
+            defer { Task { try? await client.close() } }
+            let files = DirectFilesWorkspace.session(mac, libraryURL: libraryURL); defer { files.close() }
+            files.connectBorrowed(.init(client: client, macID: mac.id, account: "synthetic", keyID: nil, generation: UUID()))
+            try await wait { !files.busy }; XCTAssertEqual(files.phase, .ready)
+            files.download(.init(name: "sample.bin", kind: .file, size: UInt64(bytes.count)))
+            try await wait { !files.busy }
+            let result = try XCTUnwrap(files.results.first), download = try XCTUnwrap(result.localDownload)
+            XCTAssertTrue(library.macs.isEmpty)
+            XCTAssertTrue(DirectFilesWorkspace.recoverableDownloads(libraryURL: libraryURL).isEmpty)
+            DirectFilesWorkspace.endTemporarySession(mac.id, libraryURL: libraryURL)
+            try await wait { !DirectMacConnections.shared.isActive(mac.id) }
+            XCTAssertFalse(files.isClosed); XCTAssertTrue(files.macRemoved)
+            XCTAssertEqual(DirectFilesWorkspace.recoverableDownloads(libraryURL: libraryURL).map(\.mac.id), [mac.id])
+            XCTAssertTrue(DirectFilesWorkspace.session(mac, libraryURL: libraryURL) === files)
+            XCTAssertEqual(try Data(contentsOf: download), bytes)
+            // A new quick connection has a different UUID and cannot claim the download.
+            let next = DirectMacRecordV1(id: UUID(), name: mac.name, addresses: mac.addresses, sshPort: mac.sshPort)
+            let nextFiles = DirectFilesWorkspace.session(next, libraryURL: libraryURL); defer { nextFiles.close() }
+            XCTAssertTrue(nextFiles.results.isEmpty)
+            if export {
+                let saved = root.appendingPathComponent("exported.bin")
+                try FileManager.default.copyItem(at: download, to: saved)
+                files.markSaved(result.id)
+                XCTAssertEqual(try Data(contentsOf: saved), bytes)
+            } else { files.discardResults() }
+            XCTAssertTrue(files.shouldCloseAfterRemoval)
+            XCTAssertTrue(DirectFilesWorkspace.recoverableDownloads(libraryURL: libraryURL).isEmpty)
+            files.close(); XCTAssertFalse(FileManager.default.fileExists(atPath: download.path))
+            DirectFilesWorkspace.endTemporarySession(next.id, libraryURL: libraryURL)
+            XCTAssertTrue(nextFiles.isClosed, "An ended temporary session with no downloads needs no recovery owner")
+        }
+    }
     private func wait(_ condition: () -> Bool) async throws {
         let end = Date().addingTimeInterval(8)
         while !condition() { guard Date() < end else { throw DirectFilesFailure.timedOut }; try await Task.sleep(for: .milliseconds(20)) }
