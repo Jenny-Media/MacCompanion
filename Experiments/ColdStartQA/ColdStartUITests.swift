@@ -59,7 +59,9 @@ import XCTest
         for locked in [false, true] {
         let app = launch(["--connect-flow", "--connected-session-review"] + (locked ? ["--inactive-auth"] : [])); defer { app.terminate() }
         let row = app.buttons["Connect to Free Mac using Terminal"]
-        XCTAssertTrue(row.waitForExistence(timeout: 10)); row.tap()
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in row.isHittable }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 30), .completed)
+        row.tap()
         let controls = app.buttons["terminal-controls"]
         let connected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             controls.exists && controls.isHittable && !app.descendants(matching: .any)["connection-sheet"].firstMatch.exists
@@ -74,7 +76,9 @@ import XCTest
         XCTAssertFalse(row.isHittable)
         XCTAssertFalse(app.buttons["Manage Second Mac"].isHittable)
         capture("connected-terminal-blocks-library-" + (locked ? "locked-start" : "unlocked-start"), app)
-        controls.tap(); app.buttons["Session"].tap(); app.buttons["Disconnect"].tap()
+        controls.tap(); app.buttons["Session"].tap()
+        let disconnect = app.descendants(matching: .any)["session-menu-exit"].firstMatch
+        XCTAssertTrue(disconnect.waitForExistence(timeout: 5)); disconnect.tap()
         let restored = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             app.buttons["macs-add"].isHittable && app.buttons["open-app-settings"].isHittable && row.isHittable
         }, object: nil)
@@ -503,7 +507,11 @@ import XCTest
         for _ in 0..<5 where !ssh.isHittable { app.swipeUp() }
         XCTAssertTrue(ssh.isHittable)
         let options = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); options.name = "quick-connect-options"; options.lifetime = .keepAlways; self.add(options)
-        app.navigationBars["Connection Options"].buttons.firstMatch.tap()
+        // Newer native glass toolbars may expose the back control outside the
+        // navigation bar's accessibility subtree while keeping its stable ID.
+        let nativeBack = app.buttons["BackButton"].firstMatch
+        if nativeBack.exists { nativeBack.tap() }
+        else { app.navigationBars["Connection Options"].buttons.firstMatch.tap() }
         XCTAssertEqual(host.value as? String, "synthetic.invalid")
         app.buttons["quick-connect-cancel"].tap()
         XCTAssertTrue(app.buttons["Add your first Mac"].waitForExistence(timeout: 5))
@@ -660,7 +668,13 @@ import XCTest
                 else { connect("Free Mac", in: app) }
                 XCTAssertTrue(app.textFields[terminal ? "terminal-login-username" : "mac-login-username"].waitForExistence(timeout: 5))
                 let panel = app.otherElements["connection-sheet"].firstMatch
-                dragSheetDown(panel)
+                // Edge-attached compact sheets support a pull-down. Native
+                // centered/full-height forms retain their explicit Cancel action.
+                if app.frame.width < 600 && panel.frame.minY > app.frame.minY + 20 {
+                    dragSheetDown(panel)
+                } else {
+                    app.buttons[terminal ? "terminal-login-cancel" : "mac-login-cancel"].tap()
+                }
                 XCTAssertTrue(panel.waitForNonExistence(timeout: 5), "Idle credentials remain dismissible")
                 XCTAssertTrue(app.buttons["macs-add"].isHittable)
             }

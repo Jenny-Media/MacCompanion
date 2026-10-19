@@ -2,6 +2,7 @@
 import XCTest
 import SwiftUI
 import UIKit
+import Vision
 @preconcurrency @testable import Citadel
 @testable import Mac_Companion
 
@@ -85,6 +86,7 @@ import UIKit
     }
     func testRemovedMacDownloadsReplaceNativeTerminalLoginUntilSavedOrDiscarded() async throws {
         for save in [false, true] {
+            let outcome = save ? "export" : "discard"
             let probe = FilesDirectoryTestProbe(), bytes = Data([7, 8, 9])
             let server = try await filesDirectoryTestServer(probe: probe, downloadBytes: bytes)
             defer { Task { await probe.shutdown(); try? await server.close() } }
@@ -99,46 +101,62 @@ import UIKit
             let terminal = DirectTerminalSession(mac: mac, libraryURL: library.storageURL)
             defer { files.close(); terminal.stop(); try? TerminalSecretStore.remove(mac.id) }
             let context = DirectFilesConnectionContext(client: client, macID: mac.id, account: "synthetic", keyID: nil, generation: UUID())
-            files.connectBorrowed(context); try await wait { !files.busy }
+            files.connectBorrowed(context)
+            try await waitForRecovery(outcome + ": borrowed Files ready", diagnostics: { files.message ?? files.phase.rawValue }) { !files.busy }
             XCTAssertEqual(files.phase, .ready)
             files.download(.init(name: "sample.bin", kind: .file, size: UInt64(bytes.count)))
-            try await wait { !files.busy }
+            try await waitForRecovery(outcome + ": completed download", diagnostics: { files.message ?? files.phase.rawValue }) { !files.busy }
             let result = try XCTUnwrap(files.results.first), download = try XCTUnwrap(result.localDownload)
             // Completed downloads can outlive their original shell. Reopening
             // Terminal must not let its native login portal cover removal recovery.
             files.disconnectBorrowed(context.generation)
             let panel = DirectConnectionPanelHost()
             var exits = 0
-            let mount = try CompanionFilesMount(DirectTerminalView(mac: mac, macLibrary: library, session: terminal,
-                files: files, autoConnect: false, connectionPanel: panel, exit: { exits += 1 }).directAppearance()
-                .background(DirectConnectionPanelAnchor(host: panel).frame(width: 0, height: 0)))
-            defer { panel.close(); mount.close() }
-            try await wait { panel.isVisible && mount.window.rootViewController?.presentedViewController != nil }
-            try library.applyCloud([])
-            try await wait {
-                terminal.macRemoved && files.macRemoved && !panel.isVisible &&
-                mount.window.rootViewController?.presentedViewController == nil &&
-                mount.visibleNavigationBar(titled: "Files") != nil
+            let mount = try CompanionFilesMount(TerminalDownloadRecoveryHarness(mac: mac, library: library,
+                terminal: terminal, files: files, panel: panel, exited: { exits += 1 }).directAppearance())
+            do {
+                try await waitForRecovery(outcome + ": native login panel presented") {
+                    panel.isVisible && mount.window.rootViewController?.presentedViewController != nil
+                }
+                try library.applyCloud([])
+                try await waitForRecovery(outcome + ": owners observe cloud removal") { terminal.macRemoved && files.macRemoved }
+                try await waitForRecovery(outcome + ": native login panel dismissed", diagnostics: {
+                    "visible=\(panel.isVisible), presented=\(String(describing: mount.window.rootViewController?.presentedViewController))"
+                }) { !panel.isVisible && mount.window.rootViewController?.presentedViewController == nil }
+                var recoveryImage: UIImage?, recoveryText = ""
+                try await waitForRecovery(outcome + ": recovery message visibly rendered", diagnostics: { recoveryText }) {
+                    let image = mount.snapshot()
+                    do { recoveryText = try mount.recognizedText(in: image).lowercased() }
+                    catch { recoveryText = "OCR failed: \(error)" }
+                    let visible = recoveryText.contains("save or discard your downloads") && recoveryText.contains("close files")
+                    if visible { recoveryImage = image }
+                    return visible
+                }
+                XCTAssertFalse(terminal.connected); XCTAssertFalse(terminal.connecting)
+                XCTAssertEqual(exits, 0, "Removal keeps the recovery owner until its downloads are handled")
+                XCTAssertTrue(files.hasUnsavedDownloads); XCTAssertFalse(files.isClosed)
+                XCTAssertEqual(try Data(contentsOf: download), bytes)
+                XCTAssertFalse(mount.fields.contains { $0.accessibilityIdentifier == "terminal-login-username" || $0.accessibilityIdentifier == "terminal-login-password" })
+                let attachment = XCTAttachment(image: try XCTUnwrap(recoveryImage))
+                attachment.name = "terminal-native-panel-download-recovery-" + outcome
+                attachment.lifetime = .keepAlways; add(attachment)
+                if save {
+                    let exported = root.appendingPathComponent("exported.bin")
+                    try FileManager.default.copyItem(at: download, to: exported)
+                    files.markSaved(result.id)
+                    XCTAssertEqual(try Data(contentsOf: exported), bytes)
+                } else { files.discardResults() }
+                try await waitForRecovery(outcome + ": parent exits after download handled") { exits > 0 }
+                XCTAssertTrue(files.shouldCloseAfterRemoval)
+                try await waitForRecovery(outcome + ": unmounted owner clears staged download") { !FileManager.default.fileExists(atPath: download.path) }
+                await mount.close(afterDismissing: panel)
+            } catch {
+                let attachment = XCTAttachment(image: mount.snapshot())
+                attachment.name = "terminal-native-panel-download-recovery-failure-" + outcome
+                attachment.lifetime = .keepAlways; add(attachment)
+                await mount.close(afterDismissing: panel)
+                throw error
             }
-            XCTAssertFalse(terminal.connected); XCTAssertFalse(terminal.connecting)
-            XCTAssertEqual(exits, 0, "Removal keeps the recovery owner until its downloads are handled")
-            XCTAssertTrue(files.hasUnsavedDownloads); XCTAssertFalse(files.isClosed)
-            XCTAssertEqual(try Data(contentsOf: download), bytes)
-            XCTAssertFalse(mount.fields.contains { $0.accessibilityIdentifier == "terminal-login-username" || $0.accessibilityIdentifier == "terminal-login-password" })
-            let attachment = XCTAttachment(image: UIGraphicsImageRenderer(bounds: mount.window.bounds).image { _ in
-                mount.window.drawHierarchy(in: mount.window.bounds, afterScreenUpdates: true)
-            })
-            attachment.name = "terminal-native-panel-download-recovery-" + (save ? "export" : "discard")
-            attachment.lifetime = .keepAlways; add(attachment)
-            if save {
-                let exported = root.appendingPathComponent("exported.bin")
-                try FileManager.default.copyItem(at: download, to: exported)
-                files.markSaved(result.id)
-                XCTAssertEqual(try Data(contentsOf: exported), bytes)
-            } else { files.discardResults() }
-            try await wait { exits > 0 }
-            XCTAssertTrue(files.shouldCloseAfterRemoval)
-            try await wait { !FileManager.default.fileExists(atPath: download.path) }
         }
     }
     func testUnsavedQuickConnectDownloadsRemainReachableAfterParentExit() async throws {
@@ -184,9 +202,49 @@ import UIKit
             XCTAssertTrue(nextFiles.isClosed, "An ended temporary session with no downloads needs no recovery owner")
         }
     }
+    private func waitForRecovery(_ label: String, file: StaticString = #filePath, line: UInt = #line,
+                                 diagnostics: () -> String = { "" }, _ condition: () -> Bool) async throws {
+        let end = Date().addingTimeInterval(8)
+        while !condition() {
+            guard Date() < end else {
+                XCTFail("Timed out waiting for " + label + ". " + diagnostics(), file: file, line: line)
+                throw DirectFilesFailure.timedOut
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+    }
     private func wait(_ condition: () -> Bool) async throws {
         let end = Date().addingTimeInterval(8)
         while !condition() { guard Date() < end else { throw DirectFilesFailure.timedOut }; try await Task.sleep(for: .milliseconds(20)) }
+    }
+}
+
+/// Match the library's exit ownership: handling the last download removes the
+/// whole Terminal subtree, rather than merely recording an exit callback.
+@MainActor private struct TerminalDownloadRecoveryHarness: View {
+    let mac: DirectMacRecordV1
+    let library: DirectMacLibraryV1
+    let terminal: DirectTerminalSession
+    let files: DirectFilesSession
+    let panel: DirectConnectionPanelHost
+    let exited: @MainActor () -> Void
+    @State private var showingTerminal = true
+    init(mac: DirectMacRecordV1, library: DirectMacLibraryV1, terminal: DirectTerminalSession,
+         files: DirectFilesSession, panel: DirectConnectionPanelHost, exited: @escaping @MainActor () -> Void) {
+        self.mac = mac; self.library = library; self.terminal = terminal
+        self.files = files; self.panel = panel; self.exited = exited
+    }
+    var body: some View {
+        ZStack {
+            // An opacity-zero recovery surface must not pass as visible content.
+            Color(uiColor: .magenta).ignoresSafeArea()
+            if showingTerminal {
+                DirectTerminalView(mac: mac, macLibrary: library, session: terminal, files: files,
+                    autoConnect: false, connectionPanel: panel, exit: {
+                        panel.close(); showingTerminal = false; exited()
+                    })
+            }
+        }.background(DirectConnectionPanelAnchor(host: panel).frame(width: 0, height: 0))
     }
 }
 
@@ -203,17 +261,29 @@ import UIKit
         func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
         return descendants(window).compactMap { $0 as? UITextField }
     }
-    func visibleNavigationBar(titled title: String) -> UINavigationBar? {
-        func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
-        return descendants(window).compactMap { $0 as? UINavigationBar }.first { bar in
-            guard bar.topItem?.title == title, bar.window === window, !bar.bounds.isEmpty else { return false }
-            var ancestor: UIView? = bar
-            while let view = ancestor {
-                guard !view.isHidden, view.alpha > 0.99, view.layer.opacity > 0.99 else { return false }
-                ancestor = view.superview
-            }
-            return true
+    func snapshot() -> UIImage {
+        layout()
+        return UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
         }
+    }
+    func recognizedText(in image: UIImage) throws -> String {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate; request.usesLanguageCorrection = false
+        request.recognitionLanguages = ["en-US"]
+        try VNImageRequestHandler(cgImage: try XCTUnwrap(image.cgImage)).perform([request])
+        return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+    }
+    func close(afterDismissing panel: DirectConnectionPanelHost) async {
+        // Do not deinitialize SwiftUI's sheet host during UIKit's animated
+        // dismissal; otherwise a timeout's real failure can be masked by deinit.
+        panel.close()
+        for _ in 0..<100 {
+            if window.rootViewController?.presentedViewController == nil { break }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        await Task.yield()
+        close()
     }
     func show(_ view: some View) { window.rootViewController = UIHostingController(rootView: view) }
     func hide() { window.endEditing(true); window.rootViewController = nil }

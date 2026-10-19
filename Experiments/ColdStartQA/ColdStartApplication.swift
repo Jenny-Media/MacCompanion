@@ -102,7 +102,9 @@ final class ColdStartLibraryReadGate: @unchecked Sendable {
                 let key = NIOSSHPrivateKey(ed25519Key: .init())
                 sessionPeer = try await ColdStartSSHFixture.start(key: key)
                 guard let mac = library.macs.first, let port = sessionPeer?.localAddress?.port else { return }
-                _ = library.save(id: mac.id, name: mac.name, addresses: mac.addresses, sshPort: port, preferredConnection: .terminal)
+                guard library.save(id: mac.id, name: mac.name, addresses: mac.addresses, sshPort: port, preferredConnection: .terminal) else {
+                    throw CocoaError(.fileWriteUnknown)
+                }
                 try DirectMacAccessStore.write(.init(login: .init(username: "synthetic", password: "synthetic-only")), id: mac.id)
                 try TerminalSecretStore.approveHostKey(String(openSSHPublicKey: key.publicKey), id: mac.id)
                 if needsAuthentication {
@@ -111,7 +113,12 @@ final class ColdStartLibraryReadGate: @unchecked Sendable {
                     await completeAuthentication(); activate()
                 }
                 stage = "Connected-session fixture ready"
-            } catch { stage = "Connected-session fixture failed" }
+            } catch {
+                stage = "Connected-session fixture failed"
+                // The fixture contains synthetic data only; keep failure
+                // diagnostics bounded to the error type, never the credentials.
+                NSLog("COLDSTART_CONNECTED_FIXTURE failure=%@", String(reflecting: type(of: error)))
+            }
             return
         }
         guard needsAuthentication else { stage = "Active; purchases pending"; return }
