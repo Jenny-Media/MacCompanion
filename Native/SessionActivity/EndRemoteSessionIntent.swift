@@ -3,7 +3,7 @@ import AppIntents
 import Foundation
 
 struct EndRemoteSessionIntent: LiveActivityIntent {
-    static let title: LocalizedStringResource = "End Session"
+    static let title: LocalizedStringResource = "Disconnect"
     static let isDiscoverable = false
     static var supportedModes: IntentModes { .background }
 

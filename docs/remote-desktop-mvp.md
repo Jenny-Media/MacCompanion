@@ -48,8 +48,11 @@ Established sessions pause input/frame processing while retaining the socket;
 foreground checks it, then makes one replacement attempt if needed, preserving
 valid viewport settings. Dynamic Island/Lock Screen session status is optional
 (default on), and its toggle does not change connection recovery. The compact
-island identifies the Mac with a bounded one-line name and status symbol. Expanded
-and Lock Screen views offer Resume and End Session. End Session uses the activity's
+island identifies the Mac with a bounded one-line name and a persistent session
+icon: a monitor for Screen Sharing/Trackpad & Keyboard, or a Terminal window for
+Terminal. The minimal island uses the same icon. Pause, reconnect and stale status
+updates do not change these icons; status details stay in the expanded and Lock
+Screen views, which consistently offer Open and Disconnect. Disconnect uses the activity's
 unique ID to stop only its matching viewer, retire recovery and remove the island;
 it works through an app-process Live Activity intent without opening the app.
 No indefinite
