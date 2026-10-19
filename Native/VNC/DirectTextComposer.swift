@@ -163,6 +163,9 @@ struct DirectComposedText: Equatable {
         guard !draft.sending, DirectAppLockV1.shared.canAccess, available(), controller.presentedViewController == nil else { return }
         draft.configure(available: { DirectAppLockV1.shared.canAccess && DirectClientPlatformV1.sessionAvailable && available() }, send: send)
         let host = DirectTextComposerPanel(draft: draft)
+        // Session chrome owns this presentation's appearance independently of My Macs.
+        // Terminal already applies its selected palette to the presenting controller.
+        host.overrideUserInterfaceStyle = draft.mode == .terminal ? controller.traitCollection.userInterfaceStyle : .dark
         host.shortcutBar = shortcutBar
         host.visibilityChanged = { [weak self, weak host] visible in
             guard let self, let host, self.host === host else { return }
@@ -261,6 +264,7 @@ struct DirectComposerPlacement {
     private var editorHost: UIHostingController<AnyView>?
     private var card: UIView?
     private var sendBounds = CGRect.zero
+    private var expansionBounds = CGRect.zero
     private var draggingHeight: CGFloat?
     private var initialFrame = CGRect.zero
     private var initialAnchor = CGPoint(x: 0.5, y: 1)
@@ -268,6 +272,7 @@ struct DirectComposerPlacement {
     private var dragging = false
     var deliveryActionFrame: CGRect { editorHost?.view.convert(sendBounds, to: view) ?? .zero }
     var panelFrame: CGRect { card?.frame ?? .zero }
+    var expansionActionFrame: CGRect { editorHost?.view.convert(expansionBounds, to: view) ?? .zero }
     var closeActionFrame: CGRect { closeButton?.convert(closeButton?.bounds ?? .zero, to: view) ?? .zero }
     #if DEBUG
     // Controlled Simulator keyboard geometry; absent from release builds.
@@ -288,7 +293,11 @@ struct DirectComposerPlacement {
         } else { bar = .null }
         return DirectComposerPlacement.area(safe: view.safeAreaLayoutGuide.layoutFrame, keyboard: keyboardFrame, shortcutBar: bar)
     }
-    init(draft: DirectTextComposerDraft) { self.draft = draft; presentationEpoch = draft.presentationEpoch; super.init(nibName: nil, bundle: nil) }
+    init(draft: DirectTextComposerDraft) {
+        self.draft = draft; presentationEpoch = draft.presentationEpoch
+        super.init(nibName: nil, bundle: nil)
+        overrideUserInterfaceStyle = draft.mode == .terminal ? .unspecified : .dark
+    }
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -331,7 +340,9 @@ struct DirectComposerPlacement {
         let host = UIHostingController(rootView: AnyView(DirectTextComposerView(draft: draft,
             isCurrent: { [weak self] in self?.usable == true },
             requestLayout: { [weak self] in self?.view.setNeedsLayout() },
-            reportSendBounds: { [weak self] in self?.sendBounds = $0 }).directAppearance()))
+            reportSendBounds: { [weak self] in self?.sendBounds = $0 },
+            toggleExpansion: { [weak self] in self?.toggleExpansion() },
+            reportExpansionBounds: { [weak self] in self?.expansionBounds = $0 })))
         editorHost = host; addChild(host); card.contentView.addSubview(host.view); host.didMove(toParent: self)
         host.view.translatesAutoresizingMaskIntoConstraints = false; host.view.backgroundColor = .clear
         host.view.accessibilityIdentifier = "compose-panel"
@@ -373,7 +384,7 @@ struct DirectComposerPlacement {
     private var compactHeight: CGFloat {
         let preferred = UIFont.preferredFont(forTextStyle: .body, compatibleWith: traitCollection)
         let font = draft.mode == .terminal ? UIFont.monospacedSystemFont(ofSize: preferred.pointSize, weight: .regular) : preferred
-        let width = max(1, min(traitCollection.preferredContentSizeCategory.isAccessibilityCategory ? 360 : 284, placementArea.width) - 30)
+        let width = max(1, min(traitCollection.preferredContentSizeCategory.isAccessibilityCategory ? 360 : 284, placementArea.width) - 74)
         let category = traitCollection.preferredContentSizeCategory
         if measuredText != draft.text || measuredWidth != width || measuredCategory != category {
             // Trailing line breaks need one final insertion line. Nothing leaves this owner.
@@ -482,6 +493,8 @@ private struct DirectTextComposerView: View {
     var isCurrent: () -> Bool
     var requestLayout: () -> Void
     var reportSendBounds: (CGRect) -> Void
+    var toggleExpansion: () -> Void
+    var reportExpansionBounds: (CGRect) -> Void
     @FocusState private var editing: Bool
     @State private var showIssue = false
     private var issue: String? { draft.issue ?? (draft.text.isEmpty ? nil : draft.validationIssue) }
@@ -493,16 +506,29 @@ private struct DirectTextComposerView: View {
     }
     var body: some View {
         VStack(spacing: 0) {
-            TextEditor(text: Binding(get: { draft.text }, set: draft.edit))
-                .font(draft.mode == .terminal ? .body.monospaced() : .body)
-                .frame(minHeight: 36, maxHeight: .infinity)
-                .scrollContentBackground(.hidden)
-                .padding(.horizontal, 4).padding(.top, 4)
-                .autocorrectionDisabled(draft.mode == .terminal).textInputAutocapitalization(draft.mode == .terminal ? .never : .sentences)
-                .focused($editing).disabled(draft.sending).scrollDismissesKeyboard(.never)
-                .accessibilityLabel("Text to Send · " + draft.macName + " · " + draft.mode.title)
-                .accessibilityHint(issue ?? "Nothing is sent until you choose Send Text")
-                .accessibilityIdentifier("compose-text").privacySensitive()
+            HStack(alignment: .top, spacing: 0) {
+                TextEditor(text: Binding(get: { draft.text }, set: draft.edit))
+                    .font(draft.mode == .terminal ? .body.monospaced() : .body)
+                    .frame(minHeight: 36, maxHeight: .infinity)
+                    .scrollContentBackground(.hidden)
+                    .padding(.horizontal, 4).padding(.top, 4)
+                    .autocorrectionDisabled(draft.mode == .terminal).textInputAutocapitalization(draft.mode == .terminal ? .never : .sentences)
+                    .focused($editing).disabled(draft.sending).scrollDismissesKeyboard(.never)
+                    .accessibilityLabel("Text to Send · " + draft.macName + " · " + draft.mode.title)
+                    .accessibilityHint(issue ?? "Nothing is sent until you choose Send Text")
+                    .accessibilityIdentifier("compose-text").privacySensitive()
+                // A reserved column keeps the toggle out of the editor without
+                // adding a header that would squeeze short keyboard layouts.
+                Button { if isCurrent() { toggleExpansion() } } label: {
+                    Image(systemName: draft.expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 18, weight: .medium)).foregroundStyle(.secondary)
+                        .frame(width: 44, height: 44).contentShape(Rectangle())
+                }.buttonStyle(.plain).disabled(!isCurrent())
+                    .accessibilityLabel(draft.expanded ? "Collapse composer" : "Expand composer")
+                    .accessibilityValue(draft.expanded ? "Expanded" : "Collapsed")
+                    .accessibilityIdentifier("compose-expand")
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("composer-panel")) } action: { reportExpansionBounds($0) }
+            }
             HStack(spacing: 0) {
                 // Native Close occupies the first 44pt; its drag grip occupies this spacer.
                 Color.clear.frame(width: 44, height: 44).accessibilityHidden(true)

@@ -13,12 +13,16 @@ import XCTest
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         let keyboard = app.keyboards.firstMatch, panel = app.otherElements["compose-panel"].firstMatch
         var previous: [CGRect]?
+        var stableSince: ContinuousClock.Instant?
         repeat {
             let frames = [keyboard.frame, panel.frame]
             let docked = keyboard.exists && frames[0].height > 100 && frames[0].intersects(app.frame)
                 && frames[0].maxY <= app.frame.maxY + 2 && frames[1].height > 35
                 && frames[1].maxY <= frames[0].minY + 2
-            if docked, previous == frames { return }
+            if docked, previous == frames {
+                if let stableSince, stableSince.duration(to: .now) >= .milliseconds(400) { return }
+                if stableSince == nil { stableSince = .now }
+            } else { stableSince = nil }
             previous = docked ? frames : nil
             try? await Task.sleep(for: .milliseconds(50))
         } while ContinuousClock.now < deadline
@@ -27,6 +31,61 @@ import XCTest
     private func grabber(_ app: XCUIApplication) -> XCUICoordinate {
         let button = app.buttons["compose-grabber"]
         return button.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+    }
+
+    private func capture(_ name: String, app: XCUIApplication) {
+        let proof = XCTAttachment(screenshot: app.screenshot()); proof.name = name; proof.lifetime = .keepAlways; add(proof)
+    }
+    func testExpandAndCollapsePreserveTypingAndReturnToTheFloatingPosition() async {
+        let app = open(shortcutBar: true); defer { app.terminate() }
+        let editor = app.textViews["compose-text"], panel = app.otherElements["compose-panel"].firstMatch
+        let expand = app.buttons["compose-expand"]
+        editor.typeText("A draft to keep")
+        await waitForKeyboardAndPanel(app)
+        let grip = grabber(app)
+        grip.press(forDuration: 0.15, thenDragTo: grip.withOffset(CGVector(dx: -25, dy: -40)))
+        await waitForKeyboardAndPanel(app)
+        let floating = panel.frame
+        XCTAssertTrue(expand.isHittable); XCTAssertEqual(expand.value as? String, "Collapsed")
+        XCTAssertFalse(editor.frame.intersects(expand.frame)); XCTAssertGreaterThanOrEqual(expand.frame.width, 44)
+        capture("composer-dark-floating", app: app)
+        expand.tap(); await waitForKeyboardAndPanel(app)
+        XCTAssertEqual(expand.value as? String, "Expanded")
+        XCTAssertGreaterThan(panel.frame.height, floating.height + 40)
+        XCTAssertGreaterThanOrEqual(panel.frame.width, floating.width)
+        XCTAssertFalse(panel.frame.intersects(app.otherElements["qa-shortcut-bar"].frame))
+        // Use a real software key, without refocusing the editor, to verify
+        // both retained focus and a usable keyboard after the resize.
+        XCTAssertTrue(app.keys["space"].isHittable); app.keys["space"].tap()
+        XCTAssertEqual(editor.value as? String, "A draft to keep ")
+        capture("composer-dark-expanded", app: app)
+        expand.tap(); await waitForKeyboardAndPanel(app)
+        XCTAssertEqual(expand.value as? String, "Collapsed")
+        // The unsent draft grows as it is edited, but its saved anchor stays put.
+        XCTAssertEqual(panel.frame.minX, floating.minX, accuracy: 2)
+        XCTAssertLessThan(panel.frame.height, 200)
+        XCTAssertTrue(app.keys["delete"].isHittable); app.keys["delete"].tap()
+        XCTAssertEqual(editor.value as? String, "A draft to keep")
+        XCTAssertTrue(app.buttons["compose-send"].isHittable); XCTAssertTrue(app.buttons["compose-back"].isHittable)
+        capture("composer-dark-collapsed", app: app)
+    }
+    func testTerminalPaletteAndKeyboardRemainUsableAcrossExpansion() async {
+        for dark in [false, true] {
+            let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.sheetqa.ios")
+            app.launchArguments = ["--qa-terminal", "--qa-shortcut-bar"] + (dark ? ["--qa-terminal-dark"] : ["--qa-dark"])
+            app.launch()
+            XCTAssertTrue(app.buttons["qa-compose"].waitForExistence(timeout: 10)); app.buttons["qa-compose"].tap()
+            let editor = app.textViews["compose-text"], expand = app.buttons["compose-expand"]
+            XCTAssertTrue(editor.waitForExistence(timeout: 5)); editor.typeText("terminal draft")
+            await waitForKeyboardAndPanel(app)
+            capture("composer-terminal-" + (dark ? "dark" : "light"), app: app)
+            expand.tap(); await waitForKeyboardAndPanel(app)
+            XCTAssertTrue(app.keys["x"].isHittable); app.keys["x"].tap()
+            XCTAssertEqual(editor.value as? String, "terminal draftx")
+            capture("composer-terminal-expanded-" + (dark ? "dark" : "light"), app: app)
+            XCTAssertTrue(app.buttons["compose-back"].isHittable)
+            app.terminate()
+        }
     }
 
     func testBubbleSitsAboveShortcutBarAndStillDragsTypesAndSends() async {
@@ -66,8 +125,8 @@ import XCTest
         let close = app.buttons["compose-back"], grip = app.buttons["compose-grabber"], send = app.buttons["compose-send"]
         XCTAssertEqual(close.frame.midY, send.frame.midY, accuracy: 2)
         XCTAssertEqual(grip.frame.midY, send.frame.midY, accuracy: 2)
-        XCTAssertGreaterThanOrEqual(editor.frame.width, panel.frame.width - 24)
-        for control in [close, grip, send] {
+        XCTAssertGreaterThanOrEqual(editor.frame.width, panel.frame.width - 68)
+        for control in [close, grip, send, app.buttons["compose-expand"]] {
             XCTAssertTrue(control.isHittable)
             XCTAssertGreaterThanOrEqual(control.frame.width, 44); XCTAssertGreaterThanOrEqual(control.frame.height, 44)
             XCTAssertFalse(editor.frame.intersects(control.frame))
@@ -85,7 +144,7 @@ import XCTest
         await waitForKeyboardAndPanel(app)
         let panel = app.otherElements["compose-panel"].firstMatch, start = panel.frame
         XCTAssertLessThan(start.height, 200); XCTAssertLessThanOrEqual(start.width, 284)
-        for id in ["compose-expand", "compose-dock", "compose-more", "compose-discard", "compose-destination"] { XCTAssertFalse(app.descendants(matching: .any)[id].exists) }
+        for id in ["compose-dock", "compose-more", "compose-discard", "compose-destination"] { XCTAssertFalse(app.descendants(matching: .any)[id].exists) }
         grabber(app).press(forDuration: 0.15, thenDragTo: grabber(app).withOffset(CGVector(dx: -200, dy: -140)))
         let moved = panel.frame
         XCTAssertLessThan(moved.minY, start.minY - 20); XCTAssertEqual(moved.minX, app.frame.minX + 8, accuracy: 2)
@@ -160,7 +219,7 @@ import XCTest
         XCTAssertFalse(send.isEnabled); XCTAssertFalse(app.buttons["compose-more"].exists)
         let draft = app.textViews["compose-text"].value as? String
         app.buttons["compose-error"].tap()
-        XCTAssertTrue(app.staticTexts["Desktop input can send up to 256 Unicode characters at once."].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Screen Sharing input can send up to 256 Unicode characters at once."].waitForExistence(timeout: 5))
         app.buttons["compose-error-done"].tap()
         XCTAssertEqual(app.textViews["compose-text"].value as? String, draft)
         app.buttons["compose-back"].tap(); XCTAssertTrue(app.buttons["qa-compose"].isHittable)

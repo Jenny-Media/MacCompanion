@@ -14,24 +14,26 @@ final class ComposerSheetScene: UIResponder, UIWindowSceneDelegate {
         guard let scene = scene as? UIWindowScene else { return }
         let window = UIWindow(windowScene: scene)
         let arguments = ProcessInfo.processInfo.arguments
-        DirectAppearanceV1.shared.app = arguments.contains("--qa-glass-background")
-            ? (arguments.contains("--qa-dark") ? .dark : .light) : .system
+        DirectAppearanceV1.shared.app = arguments.contains("--qa-dark") ? .dark : .light
         window.rootViewController = ComposerSheetRoot(); self.window = window; window.makeKeyAndVisible()
     }
 }
 final class ComposerSheetRoot: UIViewController {
-    let composer = DirectTextComposer(macName: "Synthetic Mac", mode: "desktop")
+    private var terminalMode: Bool { ProcessInfo.processInfo.arguments.contains("--qa-terminal") }
+    lazy var composer = DirectTextComposer(macName: "Synthetic Mac", mode: terminalMode ? "terminal" : "desktop")
     private var sends = 0
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .systemBlue
+        if terminalMode { overrideUserInterfaceStyle = ProcessInfo.processInfo.arguments.contains("--qa-terminal-dark") ? .dark : .light }
+        view.backgroundColor = terminalMode ? .systemBackground : .black
         if ProcessInfo.processInfo.arguments.contains("--qa-glass-background") {
             let desktop = SyntheticGlassDesktop(); desktop.isUserInteractionEnabled = false
             desktop.frame = view.bounds; desktop.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             view.addSubview(desktop)
         }
         if ProcessInfo.processInfo.arguments.contains("--qa-shortcut-bar") {
-            let bar = UIView(); bar.backgroundColor = .secondarySystemBackground
+            let bar = UIView(); bar.backgroundColor = terminalMode ? .secondarySystemBackground
+                : UIColor.secondarySystemBackground.resolvedColor(with: UITraitCollection(userInterfaceStyle: .dark))
             bar.accessibilityIdentifier = "qa-shortcut-bar"; bar.isAccessibilityElement = true
             bar.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(bar)
             NSLayoutConstraint.activate([bar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
