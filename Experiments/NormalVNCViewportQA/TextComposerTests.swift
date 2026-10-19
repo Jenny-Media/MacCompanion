@@ -46,7 +46,7 @@ import StoreKitTest
                 try await Task.sleep(for: .milliseconds(20))
             }
             let editor = try XCTUnwrap(descendants(panel.view).compactMap { $0 as? UITextView }.first)
-            XCTAssertEqual(panel.overrideUserInterfaceStyle, expected)
+            XCTAssertEqual(panel.traitCollection.userInterfaceStyle, expected)
             XCTAssertEqual(editor.traitCollection.userInterfaceStyle, expected)
             XCTAssertEqual(DirectAppearanceV1.shared.app, .light, "Session chrome must not rewrite the app setting")
             composer.draft.edit("selection stays local")
@@ -67,6 +67,56 @@ import StoreKitTest
                 if root.presentedViewController == nil { break }
                 try await Task.sleep(for: .milliseconds(20))
             }
+        }
+    }
+
+    func testTerminalComposerFollowsLiveAppearanceChangesWithoutReplacingItsEditor() async throws {
+        let appearance = DirectAppearanceV1.shared, originalApp = DirectAppearanceV1.shared.app
+        let originalTerminal = appearance.terminal
+        appearance.app = .system; appearance.terminal = .app
+        defer { appearance.app = originalApp; appearance.terminal = originalTerminal }
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic", address: "synthetic.invalid")
+        let session = DirectTerminalSession(mac: mac), controller = TerminalController(session: session, customize: {})
+        window.overrideUserInterfaceStyle = .light
+        window.rootViewController = controller; window.makeKeyAndVisible(); controller.applyAppearance(.unspecified)
+        let composer = controller.textComposer
+        defer {
+            composer.invalidate(); session.stop(); window.isHidden = true; window.rootViewController = nil
+            previous?.makeKeyAndVisible()
+        }
+        composer.present(from: controller, available: { true }, send: { _, _ in XCTFail("Appearance changes must not send input") })
+        let panel = try XCTUnwrap(controller.presentedViewController as? DirectTextComposerPanel)
+        func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+        for _ in 0..<150 {
+            if !panel.isBeingPresented, descendants(panel.view).contains(where: { ($0 as? UITextView)?.isFirstResponder == true }) { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let editor = try XCTUnwrap(descendants(panel.view).compactMap { $0 as? UITextView }.first)
+        XCTAssertEqual(editor.traitCollection.userInterfaceStyle, .light)
+        composer.draft.edit("selection follows the theme")
+        try await Task.sleep(for: .milliseconds(80)); editor.selectedRange = NSRange(location: 3, length: 4)
+        let selection = editor.selectedRange
+        // Window changes model an automatic system transition while the app stays
+        // in the foreground. Explicit Terminal palettes must still take precedence.
+        for (windowStyle, terminalStyle, expected) in [
+            (UIUserInterfaceStyle.dark, UIUserInterfaceStyle.unspecified, UIUserInterfaceStyle.dark),
+            (.light, .unspecified, .light), (.light, .dark, .dark),
+            (.dark, .light, .light), (.dark, .unspecified, .dark)
+        ] {
+            window.overrideUserInterfaceStyle = windowStyle; controller.applyAppearance(terminalStyle)
+            for _ in 0..<100 {
+                if editor.traitCollection.userInterfaceStyle == expected,
+                   controller.terminal.traitCollection.userInterfaceStyle == expected { break }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            XCTAssertEqual(controller.terminal.traitCollection.userInterfaceStyle, expected)
+            XCTAssertEqual(panel.traitCollection.userInterfaceStyle, expected)
+            XCTAssertEqual(editor.traitCollection.userInterfaceStyle, expected, "The open composer must follow Terminal's live appearance")
+            XCTAssertTrue(descendants(panel.view).contains(where: { $0 === editor }))
+            XCTAssertTrue(editor.isFirstResponder); XCTAssertEqual(editor.selectedRange, selection)
+            XCTAssertEqual(composer.draft.text, "selection follows the theme")
         }
     }
 

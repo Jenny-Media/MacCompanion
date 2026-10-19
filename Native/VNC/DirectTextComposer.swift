@@ -163,9 +163,7 @@ struct DirectComposedText: Equatable {
         guard !draft.sending, DirectAppLockV1.shared.canAccess, available(), controller.presentedViewController == nil else { return }
         draft.configure(available: { DirectAppLockV1.shared.canAccess && DirectClientPlatformV1.sessionAvailable && available() }, send: send)
         let host = DirectTextComposerPanel(draft: draft)
-        // Session chrome owns this presentation's appearance independently of My Macs.
-        // Terminal already applies its selected palette to the presenting controller.
-        host.overrideUserInterfaceStyle = draft.mode == .terminal ? controller.traitCollection.userInterfaceStyle : .dark
+        if draft.mode == .terminal { host.followAppearance(from: controller) }
         host.shortcutBar = shortcutBar
         host.visibilityChanged = { [weak self, weak host] visible in
             guard let self, let host, self.host === host else { return }
@@ -262,6 +260,8 @@ struct DirectComposerPlacement {
     private var grabber: UIButton?
     private var closeButton: UIButton?
     private var editorHost: UIHostingController<AnyView>?
+    private weak var appearancePresenter: UIViewController?
+    private var appearanceObservation: (any UITraitChangeRegistration)?
     private var card: UIView?
     private var sendBounds = CGRect.zero
     private var expansionBounds = CGRect.zero
@@ -299,6 +299,23 @@ struct DirectComposerPlacement {
         overrideUserInterfaceStyle = draft.mode == .terminal ? .unspecified : .dark
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+    fileprivate func followAppearance(from presenter: UIViewController) {
+        if let appearancePresenter, let appearanceObservation {
+            appearancePresenter.unregisterForTraitChanges(appearanceObservation)
+        }
+        appearancePresenter = presenter
+        // The overlay must follow both inherited system changes and explicit
+        // Terminal palettes, which do not automatically reach this presentation.
+        overrideUserInterfaceStyle = presenter.traitCollection.userInterfaceStyle
+        appearanceObservation = presenter.registerForTraitChanges([UITraitUserInterfaceStyle.self]) { [weak self] (presenter: UIViewController, _: UITraitCollection) in
+            self?.overrideUserInterfaceStyle = presenter.traitCollection.userInterfaceStyle
+        }
+    }
+    isolated deinit {
+        if let appearancePresenter, let appearanceObservation {
+            appearancePresenter.unregisterForTraitChanges(appearanceObservation)
+        }
+    }
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .clear; view.accessibilityViewIsModal = true
