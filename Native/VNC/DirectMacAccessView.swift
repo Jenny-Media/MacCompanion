@@ -27,6 +27,21 @@ import SwiftUI
         return false
     }
     func clear() { value = .init(); original = nil; message = nil }
+    func forget(onForgotten: () -> Void = {}) -> Bool {
+        guard let original else { return false }
+        do {
+            try DirectMacAccessStore.forget(macID, replacing: original)
+            value = .init(); self.original = value; message = nil
+            onForgotten(); return true
+        } catch DirectMacAccessStore.Failure.busy {
+            message = "Disconnect this Mac before forgetting its login."
+        } catch DirectMacAccessStore.Failure.changed {
+            message = "Saved Login changed elsewhere. Reopen it before forgetting."
+        } catch {
+            message = "Couldn’t confirm the saved login was removed. Try again."
+        }
+        return false
+    }
 }
 
 struct DirectMacAccessView: View {
@@ -39,6 +54,8 @@ struct DirectMacAccessView: View {
     @State private var disconnecting = false
     @State private var keyLibrary = false
     @State private var forgetConfirmation = false
+    @State private var passwordVisible = false
+    @State private var sshPasswordVisible = false
     @Environment(\.dismiss) private var dismiss
     init(mac: DirectMacRecordV1, saved: @escaping () -> Void = {}) { self.saved = saved; self.mac = mac; _draft = State(initialValue: DirectMacAccessDraft(macID: mac.id)) }
     private var busy: Bool { connections.isActive(mac.id) }
@@ -62,54 +79,27 @@ struct DirectMacAccessView: View {
                 }
                 if let message = draft.message { Section { Text(message).foregroundStyle(.secondary); if draft.original == nil { Button("Retry") { load() } } } }
                 Section {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Username").font(.caption).foregroundStyle(.secondary)
-                        TextField("Username", text: username).textContentType(.username).textInputAutocapitalization(.never).autocorrectionDisabled().accessibilityIdentifier("access-account")
-                    }
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Password").font(.caption).foregroundStyle(.secondary)
-                        SecureField("Password", text: password).textContentType(.password).accessibilityIdentifier("access-password")
-                    }
+                    usernameRow(username, identifier: "access-account")
+                    passwordField(password, visible: $passwordVisible, identifier: "access-password")
                 } header: { Text("Mac Account") } footer: { Text("Saved securely on this device for future connections. This does not change your Mac’s password.") }
                     .disabled(!draft.editable).privacySensitive()
                 Section {
-                    Picker("Sign in with", selection: $draft.value.sshMethod) {
-                        Text("Use Mac Account").tag(DirectMacAccessProfile.SSHMethod.inherit)
-                        Text("SSH Key").tag(DirectMacAccessProfile.SSHMethod.key)
-                        Text("Different Account").tag(DirectMacAccessProfile.SSHMethod.password)
-                    }.accessibilityIdentifier("access-ssh-method")
-                    if draft.value.sshMethod == .key {
-                        if let selected = draft.value.keyID, !keys.contains(where: { $0.id == selected }) {
-                            Text("The selected key is unavailable. Choose another key or use the Mac account.").foregroundStyle(.secondary)
-                        }
-                        Picker("SSH Key", selection: $draft.value.keyID) {
-                            Text("Choose a key").tag(Optional<UUID>.none)
-                            ForEach(keys) { Text($0.name).tag(Optional($0.id)) }
-                        }.accessibilityIdentifier("access-ssh-key")
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Username").font(.caption).foregroundStyle(.secondary)
-                            TextField("Username", text: $draft.value.keyUsername).textInputAutocapitalization(.never).autocorrectionDisabled().textContentType(.username).accessibilityIdentifier("access-terminal-account")
-                        }
-                    } else if draft.value.sshMethod == .password {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Username").font(.caption).foregroundStyle(.secondary)
-                            TextField("Username", text: sshUsername).textInputAutocapitalization(.never).autocorrectionDisabled().textContentType(.username).accessibilityIdentifier("access-terminal-account")
-                        }
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Password").font(.caption).foregroundStyle(.secondary)
-                            SecureField("Password", text: sshPassword).textContentType(.password).accessibilityIdentifier("access-terminal-password")
-                        }
-                    }
-                } header: { Text("Terminal Sign-In") } footer: {
-                    Text(terminalDescription)
-                }.disabled(!draft.editable).privacySensitive()
+                    NavigationLink {
+                        terminalSettings
+                    } label: {
+                        LabeledContent("Sign in with", value: terminalMethodTitle)
+                    }.accessibilityIdentifier("access-terminal-settings")
+                } header: { Text("Terminal") } footer: { Text(terminalDescription) }
+                    .disabled(!draft.editable).privacySensitive()
                 Section {
                     Button("SSH Key Library", systemImage: "key") { keyLibrary = true }
-                    Button("Forget Saved Login", systemImage: "key.slash", role: .destructive) { forgetConfirmation = true }.disabled(!draft.editable)
+                    Button("Forget Saved Login", systemImage: "key.slash", role: .destructive) { forgetConfirmation = true }.disabled(!draft.editable).accessibilityIdentifier("access-forget-login")
                 }
                 Section { Text("Saved logins and SSH keys stay on this device and don’t sync with iCloud.").font(.footnote).foregroundStyle(.secondary) }
             }
-            .navigationTitle("Login & Access").navigationBarTitleDisplayMode(.inline)
+            .scrollDismissesKeyboard(.interactively)
+            .accessibilityIdentifier("access-login-form")
+            .navigationTitle("Saved Login").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) { Button("Save") { if draft.save(onSaved: saved) { dismiss() } }.disabled(!draft.editable).accessibilityIdentifier("access-save") }
@@ -132,19 +122,76 @@ struct DirectMacAccessView: View {
             } message: { Text(connections.hasTransfers(mac.id) ? "Active file transfers will be interrupted. Completed downloads are kept so you can save them." : "Screen Sharing, Terminal and Files connections to this Mac will close. Other Macs stay connected.") }
             .confirmationDialog("Forget this Mac’s saved login?", isPresented: $forgetConfirmation, titleVisibility: .visible) {
                 Button("Forget Saved Login", role: .destructive) {
-                    guard draft.editable else { return }; draft.value = .init()
-                    if draft.save(onSaved: saved) { dismiss() }
-                }
+                    if draft.forget(onForgotten: saved) { CompanionVNCPlayInterfaceFeedback("success"); dismiss() }
+                }.accessibilityIdentifier("access-confirm-forget-login")
             } message: { Text("Saved passwords and this Mac’s key selection are removed. Keys in the library and the verified SSH server identity are kept.") }
-            .onDisappear { draft.clear() }
-            .onReceive(NotificationCenter.default.publisher(for: DirectClientPlatformV1.didEnterBackground)) { _ in draft.clear(); dismiss() }
         }.directAppearance()
+            // Pushing Terminal settings must not clear the shared, unsaved draft.
+            .onDisappear { draft.clear(); passwordVisible = false; sshPasswordVisible = false }
+            .onReceive(NotificationCenter.default.publisher(for: DirectClientPlatformV1.didEnterBackground)) { _ in
+                draft.clear(); passwordVisible = false; sshPasswordVisible = false; dismiss()
+            }
+    }
+    private var terminalMethodTitle: String {
+        switch draft.value.sshMethod {
+        case .inherit: "Mac Account"
+        case .key: "SSH Key"
+        case .password: "Different Account"
+        }
+    }
+    private var terminalSettings: some View {
+        Form {
+            Section {
+                Picker("Sign in with", selection: $draft.value.sshMethod) {
+                    Text("Use Mac Account").tag(DirectMacAccessProfile.SSHMethod.inherit)
+                    Text("SSH Key").tag(DirectMacAccessProfile.SSHMethod.key)
+                    Text("Different Account").tag(DirectMacAccessProfile.SSHMethod.password)
+                }.accessibilityIdentifier("access-ssh-method")
+                if draft.value.sshMethod == .key {
+                    if let selected = draft.value.keyID, !keys.contains(where: { $0.id == selected }) {
+                        Text("The selected key is unavailable. Choose another key or use the Mac account.").foregroundStyle(.secondary)
+                    }
+                    Picker("SSH Key", selection: $draft.value.keyID) {
+                        Text("Choose a key").tag(Optional<UUID>.none)
+                        ForEach(keys) { Text($0.name).tag(Optional($0.id)) }
+                    }.accessibilityIdentifier("access-ssh-key")
+                    usernameRow($draft.value.keyUsername, identifier: "access-terminal-account")
+                } else if draft.value.sshMethod == .password {
+                    usernameRow(sshUsername, identifier: "access-terminal-account")
+                    passwordField(sshPassword, visible: $sshPasswordVisible, identifier: "access-terminal-password")
+                }
+            } header: { Text("Terminal Sign-In") } footer: {
+                Text(terminalDescription)
+            }.disabled(!draft.editable).privacySensitive()
+        }.navigationTitle("Terminal Sign-In").navigationBarTitleDisplayMode(.inline)
+            .accessibilityIdentifier("access-terminal-form")
+    }
+    private func usernameRow(_ text: Binding<String>, identifier: String) -> some View {
+        DirectCredentialRow {
+            TextField("Username", text: text).font(.body).textContentType(DirectConnectionStyle.remoteCredentialContentType)
+                .textInputAutocapitalization(.never).autocorrectionDisabled().accessibilityLabel("Username").accessibilityIdentifier(identifier)
+        }.listRowInsets(EdgeInsets()).listRowBackground(Color(uiColor: DirectConnectionStyle.field))
+    }
+    private func passwordField(_ text: Binding<String>, visible: Binding<Bool>, identifier: String) -> some View {
+        DirectCredentialRow {
+          HStack(spacing: 4) {
+            DirectConnectionPasswordField(text: text, secure: !visible.wrappedValue,
+                identifier: identifier) {}
+                .accessibilityIdentifier(identifier)
+            Button { visible.wrappedValue.toggle() } label: {
+                Image(systemName: visible.wrappedValue ? "eye.slash" : "eye")
+                    .foregroundStyle(.secondary).frame(minWidth: 44, minHeight: 44)
+            }.buttonStyle(.plain)
+                .accessibilityLabel(visible.wrappedValue ? "Hide Password" : "Show Password")
+                .accessibilityIdentifier(identifier + "-visibility")
+          }
+        }.listRowInsets(EdgeInsets()).listRowBackground(Color(uiColor: DirectConnectionStyle.field))
     }
     private var terminalDescription: String {
         switch draft.value.sshMethod {
         case .inherit: "Terminal uses your Mac account."
         case .key: "Terminal signs in using this SSH key. Screen Sharing still requires your Mac password."
-        case .password: "Terminal uses this account. Screen Sharing still uses the Mac account above."
+        case .password: "Terminal uses this account. Screen Sharing uses the Mac account in Saved Login."
         }
     }
     private func load() { draft.load(); loadKeys() }

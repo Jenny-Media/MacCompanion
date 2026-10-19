@@ -275,11 +275,11 @@
     [viewer showInvalidLogin]; [viewer.view layoutIfNeeded];
     XCTAssertTrue(((UIView *)[viewer valueForKey:@"progressRow"]).hidden);
     XCTAssertNotNil([viewer valueForKey:@"recoveryController"]);
-    XCTAssertFalse(connect.hidden); XCTAssertTrue(cancel.hidden);
-    XCTAssertFalse(((UIView *)[viewer valueForKey:@"loginClose"]).hidden);
+    XCTAssertFalse(connect.hidden); XCTAssertFalse(cancel.hidden);
+    XCTAssertTrue(((UIView *)[viewer valueForKey:@"loginClose"]).hidden);
     [viewer stopViewer];
 }
-- (void)testPortraitLoginAndProgressAreCenteredInTheAvailableRegion {
+- (void)testPortraitLoginAndCompactProgressStayAtTheBottomWithoutReplacingDraftOrSession {
     for (NSNumber *inputOnly in @[@NO, @YES]) {
         AdaptiveViewer *viewer = [AdaptiveViewer new]; viewer.division = CGRectNull; [viewer loadViewIfNeeded];
         viewer.inputOnly = inputOnly.boolValue;
@@ -288,11 +288,17 @@
         UITextField *password = [viewer valueForKey:@"password"]; password.text = @"synthetic-draft-only";
         CompanionVNCSession *owner = viewer.session;
         XCTAssertNotNil(card);
+        XCTAssertTrue(((UIView *)[viewer valueForKey:@"loginDetails"]).hidden);
+        XCTAssertFalse(((UIView *)[viewer valueForKey:@"loginCancel"]).hidden);
         XCTAssertEqualObjects(((UILabel *)[viewer valueForKey:@"loginSubtitle"]).text, inputOnly.boolValue ? @"Trackpad & Keyboard" : @"Screen Sharing");
         XCTAssertTrue(((UIView *)[viewer valueForKey:@"trackpadHelp"]).hidden);
-        XCTAssertEqualWithAccuracy(CGRectGetMidY(card.frame), CGRectGetMidY(scroll.bounds), 2);
+        XCTAssertEqualWithAccuracy(CGRectGetMaxY(card.frame), CGRectGetMaxY(scroll.bounds) - 12, 2);
+        CGFloat signInHeight = card.bounds.size.height;
         [viewer setValue:@YES forKey:@"starting"]; [viewer updateConnectionChrome]; [viewer.view layoutIfNeeded];
-        XCTAssertEqualWithAccuracy(CGRectGetMidY(card.frame), CGRectGetMidY(scroll.bounds), 2);
+        XCTAssertLessThan(card.bounds.size.height, signInHeight);
+        XCTAssertTrue(((UIView *)[viewer valueForKey:@"loginTrackpad"]).hidden);
+        XCTAssertTrue(((UIView *)[viewer valueForKey:@"loginPurpose"]).hidden);
+        XCTAssertEqualWithAccuracy(CGRectGetMaxY(card.frame), CGRectGetMaxY(scroll.bounds) - 12, 2);
         XCTAssertTrue(((UIView *)[viewer valueForKey:@"loginFields"]).hidden);
         XCTAssertFalse(((UIView *)[viewer valueForKey:@"loginCancel"]).hidden);
         [viewer showInvalidLogin]; [viewer.view layoutIfNeeded];

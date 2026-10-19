@@ -35,7 +35,7 @@ struct TerminalKeySettings: View {
                 if let mac {
                     Section {
                         #if os(iOS)
-                        NavigationLink("Login & Access", destination: DirectMacAccessView(mac: mac))
+                        NavigationLink("Saved Login", destination: DirectMacAccessView(mac: mac))
                         #else
                         Button("Use Password Login", systemImage: "person.badge.key") {
                             library.perform { try TerminalSecretStore.forgetKey(mac.id) }; changed()
@@ -43,7 +43,7 @@ struct TerminalKeySettings: View {
                         #endif
                     } footer: {
                         #if os(iOS)
-                        Text("Choose a key for \(mac.name) in Login & Access. Keys can be used with any of your Macs.")
+                        Text("Choose a key for \(mac.name) in Saved Login. Keys can be used with any of your Macs.")
                         #else
                         Text("Select a key below for \(mac.name). Keys can be used with any of your Macs.")
                         #endif
@@ -67,7 +67,7 @@ struct TerminalKeySettings: View {
                                 if selected { Label("Selected for \(mac.name)", systemImage: "checkmark").font(.subheadline).foregroundStyle(.secondary) }
                                 else {
                                     #if os(iOS)
-                                    NavigationLink("Configure in Login & Access", destination: DirectMacAccessView(mac: mac))
+                                    NavigationLink("Configure in Saved Login", destination: DirectMacAccessView(mac: mac))
                                     #else
                                     Button("Use for \(mac.name)") { select(entry, for: mac) }.buttonStyle(.borderless).disabled(!pro.ready)
                                     #endif
@@ -206,14 +206,24 @@ struct TerminalKeyComposer: View {
                         Text("Choose a private key such as id_ed25519, not its .pub file. Import saves a local Keychain copy; the original file is kept and future file edits won’t change the imported key.")
                         #endif
                     }
-                } else {
-                    Section { Button("Create Ed25519 Key") { if save(.create(), name) { dismiss() } else { issue = .make(.saveFailed, message: "The key couldn’t be saved. Keep this form open and try again.") } }.disabled(!valid || busy) }
                 }
+                #if !os(iOS)
+                if !importing {
+                    Section { Button("Create Ed25519 Key", action: createKey).disabled(!valid || busy) }
+                }
+                #endif
                 if busy { ProgressView("Importing…") }
                 if let issue { DirectRecoveryCard(notice: issue) }
             }
             .navigationTitle(importing ? "Import SSH Key" : "Create SSH Key").directInlineNavigationTitle()
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                #if os(iOS)
+                ToolbarItem(placement: .confirmationAction) {
+                    if !importing { Button("Create", action: createKey).disabled(!valid || busy).accessibilityIdentifier("ssh-create-key") }
+                }
+                #endif
+            }
             #if os(macOS)
             .background(MacWindowReader(handle: importWindow).frame(width: 0, height: 0))
             #elseif os(visionOS)
@@ -269,6 +279,10 @@ struct TerminalKeyComposer: View {
         }
     }
     private var valid: Bool { TerminalKeyLibraryStore.Library.validName(name) }
+    private func createKey() {
+        if save(.create(), name) { dismiss() }
+        else { issue = .make(.saveFailed, message: "The key couldn’t be saved. Keep this form open and try again.") }
+    }
     private func decode(_ text: String) {
         guard valid, !busy, sensitiveAvailable else { return }
         busy = true; let token = generation, secret = passphrase; passphrase = ""
@@ -346,11 +360,7 @@ struct TerminalKeyDetail: View {
                     if busy { ProgressView("Preparing encrypted key…") }
                 }
             } header: { Text("Private Key Backup") } footer: {
-                #if os(visionOS)
                 Text("Exports use passphrase-encrypted OpenSSH format and require device authentication. Keep the file and passphrase safe; a forgotten passphrase cannot be recovered.")
-                #else
-                Text("Exports use passphrase-encrypted OpenSSH format and require Face ID or your passcode. Keep the file and passphrase safe; a forgotten passphrase cannot be recovered.")
-                #endif
             }
             if let issue { DirectRecoveryCard(notice: issue) }
             Section {

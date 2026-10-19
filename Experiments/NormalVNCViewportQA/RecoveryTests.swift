@@ -57,6 +57,10 @@ import Citadel
         defer { viewer.stop() }
         let detail = try XCTUnwrap(viewer.value(forKey: "loginDetailsText") as? UILabel)
         XCTAssertTrue(detail.isHidden)
+        let action = try XCTUnwrap(viewer.value(forKey: "loginDetails") as? UIButton)
+        XCTAssertTrue(action.isHidden)
+        viewer.showRecoveryStage(7)
+        XCTAssertFalse(action.isHidden)
         _ = viewer.perform(NSSelectorFromString("showLoginDetails"))
         XCTAssertFalse(detail.isHidden); XCTAssertNil(viewer.presentedViewController)
         for expected in ["synthetic.local", "100.64.0.12", "5901", "2222"] { XCTAssertTrue(detail.text?.contains(expected) == true) }

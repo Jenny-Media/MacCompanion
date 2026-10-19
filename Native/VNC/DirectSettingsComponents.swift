@@ -328,30 +328,39 @@ struct DirectMacDetailsContent: View {
     }
 }
 
-enum DirectUnlockMethod {
-    case faceID, touchID, passcode
-    static func current() -> Self {
-        let context = LAContext()
-        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil) else { return .passcode }
+enum DirectUnlockMethod: Equatable, Sendable {
+    case faceID, touchID, passcode, unavailable
+    static func current(context: LAContext = LAContext()) -> Self {
+        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil) else {
+            return context.canEvaluatePolicy(.deviceOwnerAuthentication, error: nil) ? .passcode : .unavailable
+        }
         switch context.biometryType {
         case .faceID: return .faceID
         case .touchID: return .touchID
         default: return .passcode
         }
     }
-    var symbol: String { switch self { case .faceID: "faceid"; case .touchID: "touchid"; case .passcode: "lock.fill" } }
+    static func available() async -> Self {
+        // Capability discovery is presentation work, not authentication
+        // preflight. Keep LocalAuthentication's synchronous IPC off the UI actor.
+        await Task.detached(priority: .userInitiated) { current() }.value
+    }
+    var symbol: String { switch self { case .faceID: "faceid"; case .touchID: "touchid"; case .passcode, .unavailable: "lock.fill" } }
+    var buttonTitle: String { switch self { case .faceID: "Unlock with Face ID"; case .touchID: "Unlock with Touch ID"; case .passcode, .unavailable: "Unlock" } }
     var returningDescription: String {
         switch self {
         case .faceID: "Use Face ID or your device passcode when you return."
         case .touchID: "Use Touch ID or your device passcode when you return."
         case .passcode: "Enter your device passcode when you return."
+        case .unavailable: "Set up a device passcode to use app unlock."
         }
     }
 }
 
 struct DirectAppUnlockSection: View {
     @State private var lock: DirectAppLockV1
-    @State private var method = DirectUnlockMethod.current()
+    @State private var method = DirectUnlockMethod.passcode
+    @Environment(\.scenePhase) private var scenePhase
     init(lock: DirectAppLockV1 = .shared) { _lock = State(initialValue: lock) }
     var body: some View {
         Section {
@@ -372,7 +381,11 @@ struct DirectAppUnlockSection: View {
             #else
             Text("Unlock again after screen sleep or locking your Mac.")
             #endif
-        }.onAppear { method = .current() }
+        }.task(id: scenePhase) {
+            let refreshed = await DirectUnlockMethod.available()
+            guard !Task.isCancelled else { return }
+            method = refreshed
+        }
     }
 }
 

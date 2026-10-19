@@ -76,6 +76,13 @@ import AppKit
 }
 
 extension View {
+    @ViewBuilder func directRemoteCredential() -> some View {
+        #if os(iOS)
+        self.textContentType(UITextContentType(rawValue: ""))
+        #else
+        self
+        #endif
+    }
     @ViewBuilder func directInlineNavigationTitle() -> some View {
         #if os(iOS) || os(visionOS)
         navigationBarTitleDisplayMode(.inline)

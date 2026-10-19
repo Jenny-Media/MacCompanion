@@ -5,11 +5,18 @@ import UIKit
 /// Shared presentation only; connection ownership and server trust stay in their
 /// existing controllers. Names are a passive view of the saved Mac list.
 enum DirectConnectionStyle {
-    // Resolve an elevated system surface even inside our custom presentation.
+    // Keep the same grouped surface in native sheets and hosted presentations.
     static let panel = UIColor { traits in
-        UIColor.systemBackground.resolvedColor(with: traits.modifyingTraits { $0.userInterfaceLevel = .elevated })
+        UIColor.systemGroupedBackground.resolvedColor(with: traits.modifyingTraits { $0.userInterfaceLevel = .base })
     }
-    static let field = UIColor.tertiarySystemGroupedBackground
+    // Field fill is independent of the sheet's inherited elevation and tint.
+    static let field = UIColor { traits in
+        UIColor.secondarySystemGroupedBackground.resolvedColor(with: traits.modifyingTraits { $0.userInterfaceLevel = .base })
+    }
+    // A remote Mac account is not an account for this app's bundle identifier.
+    // An explicit empty type opts out of app-account QuickType suggestions;
+    // the system's manual AutoFill/Paste menu and per-Mac Save Login remain.
+    static let remoteCredentialContentType = UITextContentType(rawValue: "")
     static let border = UIColor { traits in
         traits.accessibilityContrast == .high
             ? UIColor.opaqueSeparator.resolvedColor(with: traits)
@@ -20,6 +27,16 @@ enum DirectConnectionStyle {
     static let shadowOffset = CGSize(width: 0, height: 10)
     static func shadowOpacity(dark: Bool) -> Float { dark ? 0.28 : 0.14 }
     static func dimmingOpacity(dark: Bool) -> Double { dark ? 0.32 : 0.16 }
+}
+
+/// A grouped input row keeps the full width available for its editable value.
+/// Each input retains its own persistent accessibility label.
+struct DirectCredentialRow<Input: View>: View {
+    @ViewBuilder let input: () -> Input
+    var body: some View {
+        input().frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .padding(.horizontal, 14).padding(.vertical, 4)
+    }
 }
 
 private struct DirectConnectionCardSurface: ViewModifier {
@@ -42,28 +59,7 @@ extension View {
 
 struct DirectConnectionBackdrop: View {
     let names: [String]
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    @Environment(\.colorScheme) private var colorScheme
-    var body: some View {
-        ZStack {
-            Color(uiColor: .systemGroupedBackground).ignoresSafeArea()
-            if !reduceTransparency {
-                VStack(alignment: .leading, spacing: 20) {
-                    HStack { Text("My Macs").font(.largeTitle.bold()); Spacer(); Image(systemName: "plus.circle.fill").font(.title).foregroundStyle(.blue) }
-                    ForEach(Array(names.prefix(8).enumerated()), id: \.offset) { _, name in
-                        HStack(spacing: 14) {
-                            Image(systemName: "desktopcomputer").font(.title2).foregroundStyle(.blue)
-                                .frame(width: 44, height: 44).background(.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-                            Text(name).font(.headline).lineLimit(2)
-                            Spacer()
-                        }.padding(16).background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
-                    }
-                    Spacer()
-                }.padding(.horizontal, 24).padding(.top, 30).blur(radius: 6)
-            }
-            Color.black.opacity(DirectConnectionStyle.dimmingOpacity(dark: colorScheme == .dark)).ignoresSafeArea()
-        }.allowsHitTesting(false).accessibilityHidden(true)
-    }
+    var body: some View { Color(uiColor: .systemGroupedBackground).ignoresSafeArea().allowsHitTesting(false).accessibilityHidden(true) }
 }
 
 struct DirectConnectionIdentity: View {
@@ -87,6 +83,73 @@ struct DirectConnectionIdentity: View {
                     .buttonStyle(.plain).accessibilityLabel("Cancel connection").accessibilityIdentifier("terminal-login-close")
             }
         }
+    }
+}
+
+/// Actions reserve their own space above the safe area or keyboard. The fields
+/// and status above them can scroll without moving the connection actions.
+struct DirectConnectionFooter<Actions: View>: View {
+    var contentHeightChanged: (CGFloat) -> Void = { _ in }
+    @ViewBuilder let actions: () -> Actions
+    var body: some View {
+        VStack(spacing: 8, content: actions)
+            .padding(.horizontal, 24).padding(.vertical, 8)
+            .frame(maxWidth: 520).frame(maxWidth: .infinity)
+            .background(Color(uiColor: DirectConnectionStyle.panel))
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeightChanged($0) }
+    }
+}
+
+struct DirectConnectionProgress: View {
+    let name: String
+    let service: String
+    let symbol: String
+    var displayMode: String? = nil
+    var message = "Connecting…"
+    let cancel: () -> Void
+    var contentHeightChanged: (CGFloat) -> Void = { _ in }
+    @State private var headerHeight: CGFloat = 0
+    @State private var statusHeight: CGFloat = 0
+    @State private var footerHeight: CGFloat = 0
+    @State private var safeAreaHeight: CGFloat = 0
+    private func reportHeight() {
+        // Report natural content, independently of the extra room used to
+        // center progress in a tall phone sheet. This keeps tablet forms fitted.
+        contentHeightChanged(headerHeight + statusHeight + 48 + 28 + footerHeight + safeAreaHeight)
+    }
+    var body: some View {
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(spacing: 0) {
+                    DirectConnectionIdentity(name: name, service: displayMode ?? service, symbol: symbol)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
+                            headerHeight = $0; reportHeight()
+                        }
+                    Spacer(minLength: 24)
+                    VStack(spacing: 12) {
+                        ProgressView().controlSize(.regular)
+                        Text(message).font(.subheadline.weight(.medium)).multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }.frame(maxWidth: .infinity).padding(.vertical, 4)
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
+                            statusHeight = $0; reportHeight()
+                        }
+                    Spacer(minLength: 24)
+                }.padding(.horizontal, 24).padding(.top, 20).padding(.bottom, 8)
+                    .frame(maxWidth: 520, minHeight: geometry.size.height)
+                    .frame(maxWidth: .infinity)
+            }.scrollBounceBehavior(.basedOnSize)
+        }.safeAreaInset(edge: .bottom, spacing: 0) {
+            DirectConnectionFooter(contentHeightChanged: {
+                footerHeight = $0; reportHeight()
+            }) {
+                Button("Cancel", action: cancel).font(.headline).foregroundStyle(.blue)
+                    .frame(maxWidth: .infinity, minHeight: 48).buttonStyle(.plain)
+                    .accessibilityIdentifier(service == "Terminal" ? "terminal-login-cancel" : "mac-login-cancel")
+            }
+        }.onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top + $0.safeAreaInsets.bottom } action: {
+            safeAreaHeight = $0; reportHeight()
+        }.directAppearance()
     }
 }
 
@@ -134,20 +197,24 @@ struct DirectConnectionNotice: View {
 struct DirectConnectionPasswordField: UIViewRepresentable {
     @Binding var text: String
     let secure: Bool
+    var placeholder = "Password"
+    var identifier = "terminal-login-password"
     let submit: () -> Void
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeUIView(context: Context) -> UITextField {
         let field = UITextField()
-        field.placeholder = "Mac account password"; field.textContentType = .password
+        field.placeholder = placeholder; field.textContentType = DirectConnectionStyle.remoteCredentialContentType
         field.autocapitalizationType = .none; field.autocorrectionType = .no; field.returnKeyType = .go
         field.font = .preferredFont(forTextStyle: .body); field.adjustsFontForContentSizeCategory = true
-        field.delegate = context.coordinator; field.accessibilityIdentifier = "terminal-login-password"
+        field.delegate = context.coordinator; field.accessibilityIdentifier = identifier
+        field.accessibilityLabel = "Password"
         field.addTarget(context.coordinator, action: #selector(Coordinator.edited(_:)), for: .editingChanged)
         field.setContentHuggingPriority(.defaultLow, for: .horizontal)
         return field
     }
     func updateUIView(_ field: UITextField, context: Context) {
         context.coordinator.parent = self
+        field.isEnabled = context.environment.isEnabled
         if field.isSecureTextEntry != secure { field.isSecureTextEntry = secure }
         if field.text != text { field.text = text }
     }
@@ -165,12 +232,23 @@ struct DirectConnectionPasswordField: UIViewRepresentable {
 }
 
 @objc(DirectConnectionBridge) @MainActor final class DirectConnectionBridge: NSObject {
+    @objc(updateProgress:name:inputOnly:desktopSize:message:cancel:heightChanged:) static func updateProgress(_ controller: UIViewController?, name: String, inputOnly: Bool, desktopSize: Int, message: String, cancel: @escaping () -> Void, heightChanged: @escaping (CGFloat) -> Void) -> UIViewController {
+        let view = DirectConnectionProgress(name: name, service: inputOnly ? "Trackpad & Keyboard" : "Screen Sharing",
+            symbol: inputOnly ? "rectangle.and.hand.point.up.left" : "desktopcomputer",
+            displayMode: inputOnly ? nil : desktopSize == 0 ? "Mirror Mac Screen" : "Virtual Display",
+            message: message, cancel: cancel, contentHeightChanged: heightChanged)
+        if let host = controller as? UIHostingController<DirectConnectionProgress> {
+            host.rootView = view; return host
+        }
+        let host = UIHostingController(rootView: view); host.view.backgroundColor = .clear; return host
+    }
     @objc(defaultQuickActionsForInputOnly:) static func defaultQuickActions(inputOnly: Bool) -> [[String: Any]] {
         (inputOnly ? DirectControlMode.trackpad : .desktop).defaults.map(\.native)
     }
 
     @objc static var panelColor: UIColor { DirectConnectionStyle.panel }
     @objc static var fieldColor: UIColor { DirectConnectionStyle.field }
+    @objc static var remoteCredentialContentType: UITextContentType { DirectConnectionStyle.remoteCredentialContentType }
     @objc static func styleCard(_ view: UIView) {
         let traits = view.traitCollection
         view.backgroundColor = DirectConnectionStyle.panel

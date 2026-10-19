@@ -7,8 +7,25 @@ import UIKit
 #endif
 
 /// Local advertisements supply presentation only. No discovered route is dialed.
+struct DirectMacDiscoveryResults {
+    private(set) var completed: [DirectMacDetectedIdentity] = []
+    private(set) var visible: [DirectMacDetectedIdentity] = []
+    mutating func preview(_ incoming: [DirectMacDetectedIdentity]) {
+        var rows = completed
+        for identity in incoming {
+            rows.removeAll { DirectMacDetectedIdentity.endpointKey($0.host) == DirectMacDetectedIdentity.endpointKey(identity.host) && $0.connection == identity.connection && $0.port == identity.port }
+            rows.append(identity)
+        }
+        visible = rows.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+    mutating func finish(_ incoming: [DirectMacDetectedIdentity]) { completed = incoming; visible = incoming }
+    mutating func cancel() { visible = completed }
+}
+
 @MainActor @Observable final class DirectMacDiscoveryV1: NSObject, @preconcurrency NetServiceBrowserDelegate, @preconcurrency NetServiceDelegate {
-    private(set) var identities: [DirectMacDetectedIdentity] = []
+    private var results = DirectMacDiscoveryResults()
+    var identities: [DirectMacDetectedIdentity] { results.completed }
+    var visibleIdentities: [DirectMacDetectedIdentity] { results.visible }
     private(set) var scanning = false
     private(set) var unavailable = false
     @ObservationIgnored var updated: (() -> Void)?
@@ -22,7 +39,7 @@ import UIKit
     @discardableResult func start() -> Bool {
         guard !scanning, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { return false }
         stop()
-        identities = []; resolved = [:]; models = [:]; unavailable = false; scanning = true
+        resolved = [:]; models = [:]; unavailable = false; scanning = true
         for type in ["_rfb._tcp.", "_ssh._tcp."] {
             let browser = NetServiceBrowser()
             browser.delegate = self; browsers.append(browser)
@@ -41,19 +58,24 @@ import UIKit
         for service in services.values { service.delegate = nil; service.stop() }
         for service in deviceInfo.values { service.delegate = nil; service.stopMonitoring(); service.stop() }
         browsers = []; services = [:]; deviceInfo = [:]
+        results.cancel()
         // Cancellation discards partial resolutions; only completed scans publish metadata.
     }
     private func key(_ service: NetService) -> String { service.domain + "|" + service.type + "|" + service.name }
     private func instance(_ service: NetService) -> String { service.domain + "|" + service.name }
     private func finish() {
         guard scanning, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { stop(); return }
-        identities = resolved.keys.sorted().compactMap { key in
+        let completed = resolvedIdentities()
+        stop()
+        results.finish(completed)
+        updated?()
+    }
+    private func resolvedIdentities() -> [DirectMacDetectedIdentity] {
+        resolved.keys.sorted().compactMap { key in
             guard var identity = resolved[key], let service = services[key] else { return nil }
             identity.modelIdentifier = models[instance(service)]
             return identity
         }
-        stop()
-        updated?()
     }
     func netServiceBrowser(_ browser: NetServiceBrowser, didFind service: NetService, moreComing: Bool) {
         guard scanning, browsers.contains(where: { $0 === browser }), services.count < 128,
@@ -98,6 +120,7 @@ import UIKit
         }
         resolved[key] = .init(name: name, host: host, addresses: addresses, port: sender.port,
             connection: sender.type == "_ssh._tcp." ? .terminal : .desktop)
+        results.preview(resolvedIdentities())
     }
     func netService(_ sender: NetService, didUpdateTXTRecord data: Data) {
         let instance = instance(sender)
@@ -106,6 +129,7 @@ import UIKit
               let text = String(data: bytes, encoding: .utf8),
               let model = DirectMacDetectedIdentity.cleanModel(text) else { return }
         models[instance] = model
+        results.preview(resolvedIdentities())
     }
 }
 #endif

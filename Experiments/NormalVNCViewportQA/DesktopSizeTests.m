@@ -1733,8 +1733,8 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
         viewer.disconnectHandler=nil; viewer.filesTransferActiveHandler=nil; [viewer stopViewer];
     }
 }
-- (void)testColdPendingDisplayVerificationOffersInputOnlyWithoutWaitingForFailure {
-    XCTAssertTrue([self.fixture[@"displayModeHandoffPolicy"][@"pendingNoFrameInputOnlyAction"] boolValue]);
+- (void)testPendingDisplayProgressKeepsOneActionAndFailureOffersIndependentInputOnly {
+    XCTAssertFalse([self.fixture[@"displayModeHandoffPolicy"][@"pendingNoFrameInputOnlyAction"] boolValue]);
     for (NSNumber *hadInitialFrame in @[@NO,@YES]) {
     CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
     id<DesktopLoginRecoveryTesting> login=[viewer valueForKey:@"credentialState"];
@@ -1755,12 +1755,14 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
         if ([view.accessibilityIdentifier isEqualToString:@"connection-inputOnly"] && [view isKindOfClass:UIButton.class]) action=(UIButton *)view;
     }
     XCTAssertNotNil(action); if (!action) { [viewer stopViewer]; return; }
-    XCTAssertFalse(action.hidden); XCTAssertTrue(action.enabled);
+    XCTAssertTrue(action.hidden);
+    [viewer showConnectionFailureStage:0];
+    void (^fallback)(void)=[viewer valueForKey:@"recoveryInputOnlyAction"]; XCTAssertNotNil(fallback);
     CompanionVNCSession *old=viewer.session; __block NSUInteger connects=0,retires=0,saves=0;
     __weak CompanionVNCViewer *weak=viewer;
     viewer.connectHandler=^(NSString *u,NSString *p,BOOL remember){ connects++; XCTAssertEqualObjects(u,@"synthetic"); XCTAssertEqualObjects(p,@"transient"); XCTAssertFalse(remember); [weak prepareConnection]; };
     viewer.disconnectHandler=^{retires++;}; viewer.desktopSizeSelectionHandler=^(NSInteger preset){saves++;};
-    [action sendActionsForControlEvents:UIControlEventTouchUpInside];
+    fallback();
     XCTAssertEqual(connects,1); XCTAssertEqual(retires,1); XCTAssertEqual(saves,0);
     XCTAssertNotEqual(viewer.session,old); XCTAssertTrue(viewer.session.inputOnly); XCTAssertTrue(viewer.inputOnly);
     XCTAssertNil(old.stateHandler); XCTAssertNil(old.frameHandler); XCTAssertNil(old.displayLayoutHandler);

@@ -194,6 +194,7 @@ struct DirectFilesView: View {
             #endif
         }
         #if os(iOS)
+        .presentationSizing(.form)
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         #endif
@@ -295,18 +296,26 @@ struct DirectFilesView: View {
             Section {
                 Label(session.busy ? "Opening Files…" : "Files for " + mac.name, systemImage: "folder")
                 if let message = session.message { Text(message).foregroundStyle(.secondary) }
-                else { Text(contextProvider == nil ? "Uses this Mac’s Login & Access settings and Remote Login." : "Uses your current session’s account. No additional sign-in is needed.").foregroundStyle(.secondary) }
+                else { Text(contextProvider == nil ? "Uses this Mac’s Saved Login settings and Remote Login." : "Uses your current session’s account. No additional sign-in is needed.").foregroundStyle(.secondary) }
                 if contextProvider == nil, hasMacLogin, hasSSHOverride {
                     Toggle("Use Terminal Sign-In", isOn: $standaloneSSH).disabled(session.busy)
                         .accessibilityIdentifier("files-ssh-override")
                 }
-                if session.busy { ProgressView(); Button("Cancel") { session.disconnect() } }
-                else {
-                    Button("Open Files", systemImage: "folder") { connectCompanion() }.accessibilityIdentifier("files-connect")
-                    if contextProvider == nil { Button("Login & Access", systemImage: "person.badge.key") { sheet = .access } }
-                }
+                if session.busy { ProgressView() }
+                else if contextProvider == nil { Button("Saved Login", systemImage: "person.badge.key") { sheet = .access } }
             }
         }.formStyle(.grouped)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                DirectConnectionFooter {
+                    if session.busy {
+                        Button("Cancel") { session.disconnect() }.font(.headline).frame(maxWidth: .infinity, minHeight: 48)
+                            .accessibilityIdentifier("files-cancel-connection")
+                    } else {
+                        Button { connectCompanion() } label: { Label("Open Files", systemImage: "folder").font(.headline).frame(maxWidth: .infinity, minHeight: 32) }
+                            .buttonStyle(.borderedProminent).controlSize(.large).accessibilityIdentifier("files-connect")
+                    }
+                }
+            }
         #else
         if contextProvider != nil {
             Form {
@@ -333,11 +342,11 @@ struct DirectFilesView: View {
                                     enabled: !session.busy && !preparingKey && accessAllowed(), prefix: "files", submit: connect)
                     .frame(height: draft.method == .password ? 104 : 45)
                 #else
-                TextField("Mac account", text: $session.loginDraft.username).textContentType(.username).directNoAutocapitalization().autocorrectionDisabled().accessibilityIdentifier("files-account")
+                TextField("Mac account", text: $session.loginDraft.username).textContentType(DirectConnectionStyle.remoteCredentialContentType).directNoAutocapitalization().autocorrectionDisabled().accessibilityIdentifier("files-account")
                 #endif
                 if draft.method == .password {
                     #if os(iOS)
-                    SecureField("Password", text: $session.loginDraft.password).textContentType(.password).accessibilityIdentifier("files-password")
+                    SecureField("Password", text: $session.loginDraft.password).textContentType(DirectConnectionStyle.remoteCredentialContentType).accessibilityIdentifier("files-password")
                     #endif
                     Toggle("Save SSH login on this device", isOn: $session.loginDraft.remember).accessibilityIdentifier("files-remember-login")
                 } else {
@@ -561,12 +570,12 @@ struct DirectFilesView: View {
             let useSSH = standaloneSSH || profile.login == nil
             if useSSH && profile.sshMethod == .key {
                 guard let selected = try TerminalKeyLibraryStore.selected(mac.id), try TerminalKeyLibraryStore.canUse(selected) else {
-                    session.message = "Choose an available SSH key in Login & Access."; return
+                    session.message = "Choose an available SSH key in Saved Login."; return
                 }
                 session.connect(username: profile.keyUsername, password: "", key: selected.key, remember: false)
             } else if let login = useSSH ? profile.passwordLogin : profile.login, login.valid {
                 session.connect(username: login.username, password: login.password, key: nil, remember: true, useMacLogin: !useSSH)
-            } else { session.message = "Add the Mac login in Login & Access to browse its files." }
+            } else { session.message = "Add the Mac login in Saved Login to browse its files." }
         } catch { session.message = "Saved access settings could not be read. Existing settings are kept." }
     }
     #endif

@@ -81,6 +81,9 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     private(set) var macRemoved = false
     var shouldCloseAfterRemoval: Bool { macRemoved && !hasUnsavedDownloads }
     @ObservationIgnored private var removalObserver: DirectMacRemovalObservation?
+    #if os(iOS)
+    @ObservationIgnored private var forgetObserver: DirectMacAccessForgetObservation?
+    #endif
     private let canAccess: @MainActor () -> Bool
     private let saveLogin: @MainActor (TerminalSecretStore.Login, UUID) throws -> Void
     private let idleTimeout: Duration
@@ -91,6 +94,9 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         self.mac = mac; self.canAccess = canAccess; self.idleTimeout = idleTimeout
         self.libraryURL = libraryURL
         self.saveLogin = saveLogin
+        #if os(iOS)
+        forgetObserver = DirectMacAccessForgetObservation(macID: mac.id) { [weak self] in self?.loginDraft = .init() }
+        #endif
         removalObserver = DirectMacRemovalObservation(macID: mac.id, libraryURL: libraryURL) { [weak self] in self?.removedFromLibrary() }
     }
     private func observeLifecycle() {

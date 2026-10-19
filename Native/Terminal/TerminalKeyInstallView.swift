@@ -48,6 +48,13 @@ struct TerminalKeyInstallView: View {
         }
         return .init(title: "Review Setup") { session.clearRecovery() }
     }
+    private var cardPrimary: DirectRecoveryAction? {
+        #if os(iOS)
+        nil // Connection recovery actions share the bottom action region.
+        #else
+        recoveryPrimary
+        #endif
+    }
     var body: some View {
         NavigationStack {
             Form {
@@ -60,7 +67,7 @@ struct TerminalKeyInstallView: View {
                     #endif
                 }.listRowBackground(Color.clear)
                 if let notice = session.recovery {
-                    Section { DirectRecoveryCard(notice: notice, primary: recoveryPrimary,
+                    Section { DirectRecoveryCard(notice: notice, primary: cardPrimary,
                         secondary: [.setupVerified, .serverChanged].contains(notice.reason) ? nil : .init(title: "Manual Steps") { manual = true }) }
                         .listRowInsets(EdgeInsets()).listRowBackground(Color.clear)
                 }
@@ -68,7 +75,7 @@ struct TerminalKeyInstallView: View {
                 Section("Target Account & Key") {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Mac account").font(.caption).foregroundStyle(.secondary)
-                        TextField("Mac account username", text: $username).textContentType(.username).directNoAutocapitalization().autocorrectionDisabled()
+                        TextField("Mac account username", text: $username).textContentType(.username).directRemoteCredential().directNoAutocapitalization().autocorrectionDisabled()
                     }
                     Picker("SSH Key", selection: $selectedKeyID) {
                         Text("Choose a Key").tag(nil as UUID?)
@@ -91,7 +98,7 @@ struct TerminalKeyInstallView: View {
                                 Text("Choose a Key").tag(nil as UUID?)
                                 ForEach(library.keys) { Text($0.name).tag(Optional($0.id)) }
                             }
-                        } else { SecureField("Password for this Mac account", text: $password).textContentType(.password).privacySensitive() }
+                        } else { SecureField("Password for this Mac account", text: $password).textContentType(.password).directRemoteCredential().privacySensitive() }
                     } header: { Text("Sign in Once to Install") } footer: {
                         Text("Use a login that already works for this account. This password is used only for setup and won’t be saved.")
                     }.disabled(session.connecting || uncertain)
@@ -106,13 +113,35 @@ struct TerminalKeyInstallView: View {
                         Text("Verify a fresh key-only login before making this key preferred.").font(.footnote).foregroundStyle(.secondary)
                         if session.connecting {
                             ProgressView(session.setupProgress).accessibilityIdentifier("ssh-install-status")
+                            #if !os(iOS)
                             Button("Cancel Setup") { session.cancelConnection(); password = "" }
+                            #endif
                         }
                     }.listRowBackground(Color.clear)
                 } else { Section { Text("Your preferred Terminal key is saved. Tap Done to return.").foregroundStyle(.secondary) } }
                 Section { Button("Manual Key Setup") { manual = true } }
             }
             .safeAreaInset(edge: .bottom) {
+                #if os(iOS)
+                if session.installedKey == nil {
+                    DirectConnectionFooter {
+                        if session.connecting {
+                            Button("Cancel Setup") { session.cancelConnection(); password = "" }
+                                .font(.headline).frame(maxWidth: .infinity, minHeight: 48)
+                                .accessibilityIdentifier("ssh-install-cancel")
+                        } else if let action = recoveryPrimary {
+                            Button(action: action.perform) { Text(action.title).frame(maxWidth: .infinity, minHeight: 32) }
+                                .buttonStyle(.borderedProminent).controlSize(.large)
+                        } else if !uncertain {
+                            Button(action: install) {
+                                HStack { Text("Install Public Key"); if !DirectProAccess.shared.hasPro { DirectProBadge() } }
+                                    .frame(maxWidth: .infinity, minHeight: 32)
+                            }.buttonStyle(.borderedProminent).controlSize(.large).disabled(!valid).accessibilityIdentifier("ssh-install-key")
+                            if !valid { Text("Choose a key, enter the Mac account, and provide a working setup login.").font(.caption).foregroundStyle(.secondary) }
+                        }
+                    }
+                }
+                #else
                 if session.installedKey == nil && !session.connecting && !uncertain {
                     VStack(spacing: 8) {
                         Button(action: install) { HStack { Text("Install Public Key"); if !DirectProAccess.shared.hasPro { DirectProBadge() } }.frame(maxWidth: .infinity, minHeight: 32) }
@@ -125,14 +154,16 @@ struct TerminalKeyInstallView: View {
                         if !valid { Text("Choose a key, enter the Mac account, and provide a working setup login.").font(.caption).foregroundStyle(.secondary) }
                     }.padding(16).background(.bar)
                 }
+                #endif
             }
             .navigationTitle("Set Up SSH Key").directInlineNavigationTitle()
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button(session.connecting ? "Cancel Setup" : "Done") {
-                password = ""
-                guard session.requestSetupDismissal() else { return }
-                if session.installedKey != nil { changed() }
-                dismiss()
-            } } }
+            .toolbar { ToolbarItem(placement: .cancellationAction) {
+                #if os(iOS)
+                if !session.connecting { Button("Done", action: finishSetup) }
+                #else
+                Button(session.connecting ? "Cancel Setup" : "Done", action: finishSetup)
+                #endif
+            } }
             .interactiveDismissDisabled(session.connecting)
             .sheet(isPresented: $identityGuide) { TerminalIdentityGuide(macName: mac.name) }
             .sheet(isPresented: $manual) { TerminalManualKeySetupView(mac: mac, keyID: selectedKeyID) }
@@ -142,6 +173,12 @@ struct TerminalKeyInstallView: View {
             .onDisappear { password = ""; if session.connecting { session.cancelConnection() } else { session.stop() } }
             .onReceive(NotificationCenter.default.publisher(for: DirectClientPlatformV1.didEnterBackground)) { _ in password = ""; session.background() }
         }
+    }
+    private func finishSetup() {
+        password = ""
+        guard session.requestSetupDismissal() else { return }
+        if session.installedKey != nil { changed() }
+        dismiss()
     }
     private func load() {
         library.reload(macs: [mac])

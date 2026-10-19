@@ -1,7 +1,10 @@
 #import <UIKit/UIKit.h>
 #import "CompanionVNCSession.h"
+@class DirectConnectionPanelHost;
 NS_ASSUME_NONNULL_BEGIN
 @interface CompanionVNCViewer : UIViewController
+@property(nonatomic, strong, nullable) DirectConnectionPanelHost *connectionPanelHost;
+@property(nonatomic) BOOL preventsLoginRetention;
 @property(nonatomic) NSInteger servicePort;
 @property(nonatomic) NSInteger sshPort;
 @property(nonatomic) BOOL fullscreen;

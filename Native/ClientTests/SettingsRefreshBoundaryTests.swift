@@ -37,7 +37,7 @@ import UIKit
         var filesView = DirectFilesView(mac: mac, session: files)
         filesView.sessionAvailable = { false }
         let screens: [(String, AnyView)] = [
-            ("Login & Access", AnyView(DirectMacAccessView(mac: mac))),
+            ("Saved Login", AnyView(DirectMacAccessView(mac: mac))),
             ("Mac Settings", AnyView(DirectMacEditorV1(mac: mac, library: library))),
             ("App Settings", AnyView(DirectSessionSettingsV1().directAppearance())),
             ("SSH Keys", AnyView(TerminalKeySettings())),

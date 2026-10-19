@@ -344,6 +344,8 @@ struct DirectMacSessionSelection: Identifiable {
     let mac: DirectMacRecordV1
     let connection: DirectMacConnection
     var autoConnect = true
+    var saveAfterConnect = false
+    var temporary = false
 }
 
 #if os(iOS)
@@ -358,6 +360,7 @@ struct DirectMacLibraryRootV1: View {
     private enum LibraryAction {
         case edit(DirectMacRecordV1?)
         case open(DirectMacRecordV1, DirectMacConnection, Bool)
+        case connect(DirectQuickConnectRequest)
     }
     private struct PendingAccess { let id = UUID(); let action: LibraryAction }
     @State private var pendingAccess: PendingAccess?
@@ -367,6 +370,8 @@ struct DirectMacLibraryRootV1: View {
     @State private var accessTimedOut = false
     @State private var accessDeadline: Task<Void, Never>?
 
+    @State private var connectionPanel = DirectConnectionPanelHost()
+    @State private var quickConnect = false
     @State private var files: DirectMacRecordV1?
     @State private var session: DirectMacSessionSelection?
     @State private var appLock = DirectAppLockV1.shared
@@ -376,6 +381,7 @@ struct DirectMacLibraryRootV1: View {
     @State private var setup = false
     @State private var settings = false
     @State private var search = ""
+    @FocusState private var searchFocused: Bool
     @State private var editMode: EditMode = .inactive
     @State private var pro = DirectProAccess.shared
     @State private var paywall = false
@@ -389,7 +395,7 @@ struct DirectMacLibraryRootV1: View {
             DirectMacDiscoveryList(refresh: refreshNearbyMacs) {
                 let downloads = DirectFilesWorkspace.recoverableDownloads(libraryURL: library.storageURL)
                 if !downloads.isEmpty {
-                    Section("Downloads from Removed Macs") {
+                    Section("Downloads from Other Macs") {
                         ForEach(downloads, id: \.mac.id) { owner in
                             Button("Save Downloads from " + owner.mac.name, systemImage: "folder.badge.questionmark") { files = owner.mac }
                                 .accessibilityIdentifier("recover-downloads-" + owner.mac.id.uuidString)
@@ -397,7 +403,7 @@ struct DirectMacLibraryRootV1: View {
                     }
                 }
 
-                if let pendingAccess {
+                if let pendingAccess, !quickConnect {
                     Section {
                         if accessTimedOut {
                             Text("Purchases couldn’t be checked. Try again when the App Store is available.")
@@ -427,7 +433,7 @@ struct DirectMacLibraryRootV1: View {
                             Text("Your Macs, within reach").font(.title3.bold())
                             Text("Add a Mac on your local network or private VPN. The setup guide shows which services to enable.")
                                 .foregroundStyle(.secondary).multilineTextAlignment(.center)
-                            Button("Add your first Mac", systemImage: "plus") { edit(nil) }
+                            Button("Add your first Mac", systemImage: "plus") { beginQuickConnect() }
                                 .buttonStyle(.borderedProminent).disabled(!library.readable)
                         }.frame(maxWidth: .infinity).padding(.vertical, 28)
                     }
@@ -449,8 +455,27 @@ struct DirectMacLibraryRootV1: View {
                 }
             }
             .navigationTitle("My Macs")
-            .searchable(text: $search, prompt: "Find a Mac")
+            .safeAreaInset(edge: .bottom) {
+                HStack(spacing: 12) {
+                    HStack {
+                        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                        TextField("Find a Mac", text: $search).focused($searchFocused)
+                            .submitLabel(.search).onSubmit { searchFocused = false }.accessibilityIdentifier("macs-search")
+                        if !search.isEmpty { Button("Clear search", systemImage: "xmark.circle.fill") { search = "" }.labelStyle(.iconOnly) }
+                    }.padding(14).glassEffect(in: .capsule)
+                    if searchFocused {
+                        Button("Done") { searchFocused = false }
+                            .font(.body.weight(.semibold)).padding(.horizontal, 16).frame(minWidth: 52, minHeight: 52)
+                            .glassEffect(.regular.interactive(), in: .capsule).accessibilityIdentifier("macs-search-done")
+                    } else {
+                        Button("Add Mac", systemImage: "plus") { beginQuickConnect() }.labelStyle(.iconOnly)
+                            .font(.title2).frame(width: 52, height: 52).glassEffect(.regular.interactive(), in: .circle)
+                            .disabled(!library.readable).accessibilityIdentifier("macs-add")
+                    }
+                }.padding(.horizontal, 16).padding(.vertical, 8)
+            }
             .onChange(of: search) { _, value in if !value.isEmpty { editMode = .inactive } }
+            .scrollDismissesKeyboard(.interactively)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     if library.readable && library.macs.count > 1 {
@@ -459,12 +484,9 @@ struct DirectMacLibraryRootV1: View {
                         }.disabled(!search.isEmpty).accessibilityIdentifier("macs-edit-order")
                     }
                 }
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .topBarTrailing) {
                     Button("Settings", systemImage: "gearshape") { settings = true }
                         .accessibilityIdentifier("open-app-settings")
-                }
-                ToolbarItem(placement: .primaryAction) {
-                    Button("Add Mac", systemImage: "plus") { edit(nil) }.disabled(!library.readable)
                 }
             }
             .environment(\.editMode, $editMode)
@@ -520,23 +542,33 @@ struct DirectMacLibraryRootV1: View {
                 Text("Related sessions will close and transfers will stop. Unsaved downloads stay available until you save or discard them.")
             }
             .onOpenURL { openRoute($0) }
-            .fullScreenCover(item: $session) { selection in
-                switch selection.connection {
-                case .terminal:
-                    DirectTerminalView(mac: selection.mac, macLibrary: library, autoConnect: selection.autoConnect, exit: { session = nil })
-                        #if DEBUG
-                        .background(DirectUnlockFrameProbe(lock: appLock, token: appLock.unlockTimingToken, phase: .terminalDisplayTick))
-                        #endif
-                case .desktop, .trackpad:
-                    DirectDesktopSessionView(mac: selection.mac, inputOnly: selection.connection.inputOnly,
-                                             connectionMacNames: library.macs.map(\.name), libraryURL: library.storageURL, showMacs: { session = nil })
-                        .ignoresSafeArea(.container, edges: .bottom)
-                        #if DEBUG
-                        .background(DirectUnlockFrameProbe(lock: appLock, token: appLock.unlockTimingToken, phase: .desktopDisplayTick))
-                        #endif
+
+        }
+            .background(DirectConnectionPanelAnchor(host: connectionPanel).frame(width: 0, height: 0))
+            .overlay {
+                if quickConnect && session == nil {
+                    DirectConnectionPanelContent(host: connectionPanel, cancel: cancelQuickConnect) {
+                        DirectQuickConnectView(library: library, panel: connectionPanel,
+                            checkingPurchases: pendingAccess != nil, timedOut: accessTimedOut,
+                            retry: { if let pendingAccess { request(pendingAccess.action); if !pro.ready { Task { await pro.refresh() } } } },
+                            cancel: cancelQuickConnect, connect: { request(.connect($0)) })
+                    }
+                }
+                if let selection = session {
+                    switch selection.connection {
+                    case .terminal:
+                        DirectTerminalView(mac: selection.mac, macLibrary: library, autoConnect: selection.autoConnect,
+                            connectionPanel: connectionPanel, loginRetentionAllowed: !selection.temporary || selection.saveAfterConnect,
+                            connectionEstablished: { saveConnectedMac(selection) }, exit: { endSession(selection) })
+                    case .desktop, .trackpad:
+                        DirectDesktopSessionView(mac: selection.mac, inputOnly: selection.connection.inputOnly,
+                            connectionMacNames: library.macs.map(\.name), libraryURL: library.storageURL,
+                            connectionPanel: connectionPanel, loginRetentionAllowed: !selection.temporary || selection.saveAfterConnect,
+                            connectionEstablished: { saveConnectedMac(selection) }, showMacs: { endSession(selection) })
+                            .ignoresSafeArea(.container, edges: .bottom)
+                    }
                 }
             }
-        }
         #if DEBUG
         .background(DirectUnlockFrameProbe(lock: appLock, token: appLock.unlockTimingToken, phase: .libraryDisplayTick,
             enabled: session == nil && !settings && editor == nil && files == nil && !setup && !paywall))
@@ -545,6 +577,28 @@ struct DirectMacLibraryRootV1: View {
         .allowsHitTesting(appLock.canInteract)
         .accessibilityHidden(!appLock.canInteract)
         .onAppear { appLock.install() }
+    }
+    private func beginQuickConnect() { searchFocused = false; quickConnect = true }
+    private func cancelQuickConnect() { quickConnect = false; library.discovery.stop(); cancelAccess(); deferredRoute = nil }
+    private func saveConnectedMac(_ selection: DirectMacSessionSelection) -> Bool {
+        guard session?.id == selection.id else { return false }
+        if library.macs.contains(where: { $0.id == selection.mac.id }) { return true }
+        guard selection.saveAfterConnect, library.readable else { return false }
+        let mac = selection.mac
+        return library.save(id: mac.id, name: mac.name, addresses: mac.addresses, port: mac.port, sshPort: mac.sshPort,
+            usesAutomaticName: true, preferredConnection: selection.connection)
+    }
+    private func endSession(_ selection: DirectMacSessionSelection) {
+        guard session?.id == selection.id else { return }
+        connectionPanel.close(); session = nil; quickConnect = false
+        guard selection.temporary, !library.macs.contains(where: { $0.id == selection.mac.id }) else { return }
+        Task {
+            // Stop and join only this temporary Mac's owners before forgetting
+            // its session-scoped trust/login. Never rewrite the saved-Mac list.
+            guard await DirectMacConnections.shared.disconnect(selection.mac.id) else { return }
+            try? TerminalSecretStore.remove(selection.mac.id)
+            VNCSessionPreferences.clear(selection.mac.id)
+        }
     }
     private func refreshNearbyMacs() async {
         guard library.readable else { return }
@@ -573,11 +627,11 @@ struct DirectMacLibraryRootV1: View {
     private func admits(_ action: LibraryAction) -> Bool {
         switch action {
         case .edit: appLock.canInteract
-        case .open: appLock.canResumeRemoteSession
+        case .open, .connect: appLock.canResumeRemoteSession
         }
     }
     private func request(_ action: LibraryAction, deferUntilActive: Bool = false) {
-        cancelAccess(); deferredRoute = nil
+        cancelAccess(); deferredRoute = nil; searchFocused = false
         guard appLock.canInteract else { if deferUntilActive { deferredRoute = action }; return }
         // Accept a local tap during the successful-authentication handoff, but
         // start its remote session only after the real activation event.
@@ -608,14 +662,30 @@ struct DirectMacLibraryRootV1: View {
             if pro.canAddMac(count: library.macs.count) { editor = EditorSelection(mac: nil); return true }
             guard pro.ready else { return false }
             paywall = true
+        case .connect(let proposal):
+            guard library.readable, session == nil else { return true }
+            if let current = library.macs.first(where: { $0.id == proposal.mac.id }) {
+                return performIfResolved(.open(current, proposal.connection, true))
+            }
+            if pro.canAddMac(count: library.macs.count) {
+                library.discovery.stop(); quickConnect = false
+                CompanionVNCPlayInterfaceFeedback("open")
+                session = DirectMacSessionSelection(mac: proposal.mac, connection: proposal.connection,
+                    saveAfterConnect: proposal.saveMac, temporary: true)
+                return true
+            }
+            guard pro.ready else { return false }
+            connectionPanel.presentSecondary(UIHostingController(rootView: DirectProView().directAppearance()))
         case .open(let mac, let connection, let autoConnect):
             guard let current = library.macs.first(where: { $0.id == mac.id }) else { return true }
             if pro.canUseMac(mac.id, among: library.macs.map(\.id)) {
                 CompanionVNCPlayInterfaceFeedback("open")
+                quickConnect = false; library.discovery.stop()
                 session = DirectMacSessionSelection(mac: current, connection: connection, autoConnect: autoConnect); return true
             }
             guard pro.ready else { return false }
-            paywall = true
+            if quickConnect { connectionPanel.presentSecondary(UIHostingController(rootView: DirectProView().directAppearance())) }
+            else { paywall = true }
         }
         return true
     }
@@ -777,7 +847,7 @@ struct DirectMacEditorV1: View {
                     Section {
                         Label(selectedKeyName, systemImage: "key").font(.headline)
                         LabeledContent("Account", value: selectedAccount.isEmpty ? "Choose during setup" : selectedAccount)
-                        Button("Login & Access", systemImage: "person.badge.key") { sshSheet = .login(.desktop) }
+                        Button("Saved Login", systemImage: "person.badge.key") { sshSheet = .login(.desktop) }
                         Button {
                             guard DirectProAccess.shared.hasPro else { sshSheet = .pro; return }
                             if let draft = draftMac { sshSheet = .install(draft) }
@@ -785,7 +855,7 @@ struct DirectMacEditorV1: View {
                             HStack { Label("Set Up Key on This Mac", systemImage: "key.horizontal"); Spacer(); DirectProBadge() }
                         }.disabled(!valid).accessibilityIdentifier("mac-install-ssh-key")
                         Button("Manual Key Setup", systemImage: "doc.text") { sshSheet = .manual(draftMac ?? mac) }
-                    } header: { Text("Login & Access") } footer: {
+                    } header: { Text("Saved Login") } footer: {
                         Text("Choose how to sign in to this Mac, or set up an SSH key for Terminal.")
                     }
                     Section {

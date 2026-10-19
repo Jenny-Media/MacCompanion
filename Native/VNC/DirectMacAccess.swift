@@ -30,6 +30,7 @@ struct DirectMacAccessProfile: Codable, Equatable {
 @MainActor enum DirectMacAccessStore {
     enum Failure: Error { case busy, invalid, changed, storage }
     static let changed = Notification.Name("DirectMacAccessChangedV1")
+    static let forgotten = Notification.Name("DirectMacAccessForgottenV1")
     static let kind = "mac-access-v1"
     struct Repository {
         var read: () throws -> Data?
@@ -141,10 +142,30 @@ struct DirectMacAccessProfile: Codable, Equatable {
         profile.keyUsername = account; try write(profile, id: macID)
         DirectMacConnections.shared.retained(owner)
     }
-    static func forget(_ id: UUID) throws {
+    static func forget(_ id: UUID, replacing expected: DirectMacAccessProfile? = nil) throws {
+        guard !DirectMacConnections.shared.isActive(id) else { throw Failure.busy }
         let current = try load(id)
-        try save(.init(), id: id, replacing: current)
+        let empty = DirectMacAccessProfile()
+        guard expected == nil || current == expected || current == empty else { throw Failure.changed }
+        if current != empty { try save(empty, id: id, replacing: current) }
+        guard try load(id) == empty else { throw Failure.storage }
+        // Commit the empty authority before revoking all staged credentials.
+        // An idempotent retry must also clear a retained form's old copy.
+        NotificationCenter.default.post(name: forgotten, object: id)
     }
+}
+
+/// Credential owners can outlive their visible form, so revocation is observed
+/// by the owner and scoped to the Mac. No credential data enters notifications.
+final class DirectMacAccessForgetObservation: @unchecked Sendable {
+    private let token: NSObjectProtocol
+    @MainActor init(macID: UUID, forgotten: @escaping @MainActor () -> Void) {
+        token = NotificationCenter.default.addObserver(forName: DirectMacAccessStore.forgotten, object: nil, queue: .main) { notification in
+            guard notification.object as? UUID == macID else { return }
+            MainActor.assumeIsolated { forgotten() }
+        }
+    }
+    deinit { NotificationCenter.default.removeObserver(token) }
 }
 
 /// Records network ownership, including teardown. UI visibility is not activity.

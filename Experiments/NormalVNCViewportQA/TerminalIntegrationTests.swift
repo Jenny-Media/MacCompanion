@@ -122,6 +122,77 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
     }
 }
 @MainActor final class TerminalIntegrationTests:XCTestCase {
+    func testNativeConnectionSheetKeepsTerminalOwnerThroughTrustAndShellHandoff() async throws {
+        let record = SSHTestRecord(), hostKey = NIOSSHPrivateKey(ed25519Key: .init())
+        let peer = try await server(record: record, key: hostKey)
+        defer { _ = peer.close() }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic native sheet", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(peer.localAddress?.port))
+        let session = DirectTerminalSession(mac: mac), panel = DirectConnectionPanelHost()
+        var draft = DirectFilesLoginDraft(); draft.username = "synthetic"; draft.password = "synthetic-only"; draft.remember = false
+        let form = DirectTerminalLoginForm(draft: draft)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first(where: { $0.activationState == .foregroundActive }))
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        let controller = UIHostingController(rootView: DirectTerminalView(mac: mac, session: session, loginForm: form,
+            connectionPanel: panel, loginRetentionAllowed: false, connectionEstablished: { false }, exit: {}).directAppearance()
+            .background(DirectConnectionPanelAnchor(host: panel)))
+        window.rootViewController = controller; window.makeKeyAndVisible()
+        defer { panel.close(); session.stop(); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible(); try? TerminalSecretStore.remove(mac.id) }
+        try await wait { session.trust != nil && panel.isVisible }
+        XCTAssertEqual(record.passwordRequests, 0, "No credentials precede explicit server trust")
+        session.answerTrust(true)
+        try await wait { session.connected && !panel.isVisible }
+        session.send(Array("native-sheet-owner-survived".utf8))
+        try await wait { String(decoding: record.received, as: UTF8.self).contains("native-sheet-owner-survived") }
+        XCTAssertEqual(record.passwordRequests, 1); XCTAssertEqual(record.shellRequests, 1)
+        XCTAssertNil(try TerminalSecretStore.login(mac.id))
+    }
+
+    func testQuickConnectionCommitsMacOnlyAfterShellIsReadyAndControlsLoginRetention() async throws {
+        for saveMac in [false, true] {
+            let record = SSHTestRecord(), hostKey = NIOSSHPrivateKey(ed25519Key: .init())
+            let peer = try await server(record: record, key: hostKey)
+            defer { _ = peer.close() }
+            let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic quick connection", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(peer.localAddress?.port))
+            try TerminalSecretStore.approveHostKey(String(openSSHPublicKey: hostKey.publicKey), id: mac.id)
+            let directory = URL.temporaryDirectory.appending(path: UUID().uuidString)
+            let library = DirectMacLibraryV1(url: directory.appending(path: "macs.json"), removeLogin: { _ in })
+            let session = DirectTerminalSession(mac: mac)
+            defer { session.stop(); try? TerminalSecretStore.remove(mac.id); try? FileManager.default.removeItem(at: directory) }
+            var commits = 0
+            session.connectionEstablished = {
+                XCTAssertEqual(record.passwordRequests, 1, "Saving cannot precede successful SSH authentication and PTY channel creation")
+                XCTAssertNil(DesktopCredentialStoreV1.read(mac.id), "Login retention follows the Mac save decision")
+                commits += 1
+                guard saveMac else { return false }
+                return library.save(id: mac.id, name: mac.name, addresses: mac.addresses, sshPort: mac.sshPort)
+            }
+            session.connect(username: "synthetic", password: "synthetic-only", remember: saveMac)
+            XCTAssertTrue(library.macs.isEmpty)
+            try await wait { session.connected && record.shellRequests == 1 }
+            XCTAssertEqual(commits, 1); XCTAssertEqual(library.macs.count, saveMac ? 1 : 0)
+            XCTAssertEqual(try TerminalSecretStore.login(mac.id)?.password, saveMac ? "synthetic-only" : nil)
+            session.background(); await session.waitForLifecycleUpdates(); session.foreground()
+            try await wait { !session.suspended }
+            session.send(Array("quick-connection-pause-recovery".utf8))
+            try await wait { String(decoding: record.received, as: UTF8.self).contains("quick-connection-pause-recovery") }
+            XCTAssertEqual(record.passwordRequests, 1); XCTAssertEqual(commits, 1)
+        }
+    }
+    func testFailedQuickConnectionMacSaveDoesNotRetainLoginOrCloseWorkingShell() async throws {
+        let record = SSHTestRecord(), hostKey = NIOSSHPrivateKey(ed25519Key: .init())
+        let peer = try await server(record: record, key: hostKey)
+        defer { _ = peer.close() }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic save failure", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(peer.localAddress?.port))
+        try TerminalSecretStore.approveHostKey(String(openSSHPublicKey: hostKey.publicKey), id: mac.id)
+        let session = DirectTerminalSession(mac: mac)
+        defer { session.stop(); try? TerminalSecretStore.remove(mac.id) }
+        session.connectionEstablished = { false }
+        session.connect(username: "synthetic", password: "synthetic-only", remember: true)
+        try await wait { session.connected }
+        XCTAssertNil(try TerminalSecretStore.login(mac.id)); XCTAssertEqual(session.textSendNotice?.reason, .saveFailed)
+        XCTAssertNil(session.recovery); XCTAssertTrue(session.connected)
+    }
+
     func testHostedCredentialReturnAfterUnexpectedEndKeepsPauseRecoveryAndDoesNotReconnect() async throws {
         for remember in [true, false] {
             let record = SSHTestRecord(), hostKey = NIOSSHPrivateKey(ed25519Key: .init())

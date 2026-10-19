@@ -472,6 +472,90 @@ private func desktopWriterFinished(_ group: DispatchGroup) -> Bool { group.wait(
         XCTAssertEqual(Darwin.read(socket, &byte, 1), 0); Darwin.close(socket)
         await other.close(); try await next.close()
     }
+    func testFirstUseTrustAppearsInsideTheExistingConnectionSheetBeforeLogin() async throws {
+        try await checkFirstUseTrustInConnectionSheet(action: "approve")
+    }
+    func testDecliningFirstUseTrustCanRetryInTheSameConnectionSheet() async throws {
+        try await checkFirstUseTrustInConnectionSheet(action: "reject-retry")
+    }
+    func testCancellingFirstUseTrustCannotApproveOrAuthenticateLater() async throws {
+        try await checkFirstUseTrustInConnectionSheet(action: "cancel")
+    }
+    private func checkFirstUseTrustInConnectionSheet(action: String) async throws {
+        let server = DesktopSSHServer(.rfb); try await server.start()
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic Quick Connect", addresses: ["127.0.0.1"], sshPort: server.port)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let prior = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        let root = UIViewController(), panel = DirectConnectionPanelHost()
+        let viewer = CompanionVNCViewer(), coordinator = VNCRemoteDesktopView.Coordinator(mac: mac)
+        viewer.connectionPanelHost = panel; viewer.macName = mac.name; viewer.sshPort = mac.sshPort
+        coordinator.viewer = viewer
+        viewer.connectHandler = { user, password, remember in MainActor.assumeIsolated { coordinator.connect(user: user, password: password, remember: remember) } }
+        viewer.disconnectHandler = { MainActor.assumeIsolated { coordinator.disconnect() } }
+        let navigation = CompanionVNCTextNavigation(rootViewController: viewer)
+        window.rootViewController = root; window.makeKeyAndVisible(); root.loadViewIfNeeded()
+        root.addChild(navigation); navigation.view.frame = root.view.bounds
+        root.view.addSubview(navigation.view); navigation.didMove(toParent: root)
+        panel.attach(root)
+        defer {
+            coordinator.disconnect(); coordinator.stopObserving(); viewer.stop(); panel.close()
+            window.isHidden = true; window.rootViewController = nil; prior?.makeKeyAndVisible()
+        }
+        do {
+            try await wait("initial login sheet is mounted") { root.presentedViewController != nil }
+            let sheet = try XCTUnwrap(root.presentedViewController)
+            let expectedTrust = UIHostingController(rootView: TerminalServerTrustView(macName: mac.name, fingerprint: "synthetic-only", answer: { _ in }).directAppearance())
+            let trustIsVisible = {
+                sheet.children.contains { ObjectIdentifier(type(of: $0)) == ObjectIdentifier(type(of: expectedTrust)) && $0.viewIfLoaded?.window != nil }
+            }
+            viewer.reloadAccessUsername("synthetic", password: "synthetic-only")
+            viewer.perform(NSSelectorFromString("start"))
+            try await wait("fingerprint or a premature rejection") {
+                trustIsVisible() ||
+                (viewer.value(forKey: "loginIssueDetails") as? String)?.contains("Stage:") == true
+            }
+            XCTAssertTrue(trustIsVisible(), "The existing login sheet must not be mistaken for an unrelated modal and reject first-use trust")
+            XCTAssertTrue(root.presentedViewController === sheet, "Trust reuses the connection sheet")
+            XCTAssertTrue(sheet.isModalInPresentation)
+            XCTAssertEqual(server.record.count("auth"), 0, "No login precedes explicit server trust")
+            XCTAssertNil(try TerminalSecretStore.hostKey(mac.id))
+            guard trustIsVisible() else { throw POSIXError(.ECONNREFUSED) }
+            window.layoutIfNeeded()
+            let attachment = XCTAttachment(image: UIGraphicsImageRenderer(size: window.bounds.size).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) })
+            attachment.name = "quick-connect-first-use-trust"; attachment.lifetime = .keepAlways; add(attachment)
+            if action == "cancel" {
+                coordinator.disconnect(); coordinator.answerTrust(true)
+                XCTAssertFalse(trustIsVisible()); XCTAssertNil(try TerminalSecretStore.hostKey(mac.id))
+                XCTAssertEqual(server.record.count("auth"), 0)
+            } else {
+                if action == "reject-retry" {
+                    coordinator.answerTrust(false)
+                    try await wait("declining trust returns to sign-in") {
+                        (viewer.value(forKey: "loginIssueDetails") as? String)?.contains("Stage: 113") == true
+                    }
+                    XCTAssertFalse(trustIsVisible()); XCTAssertFalse(sheet.isModalInPresentation)
+                    XCTAssertNil(try TerminalSecretStore.hostKey(mac.id)); XCTAssertEqual(server.record.count("auth"), 0)
+                    viewer.reloadAccessUsername("synthetic", password: "synthetic-only")
+                    viewer.perform(NSSelectorFromString("start"))
+                    try await wait("retry offers explicit verification again") { trustIsVisible() }
+                    XCTAssertEqual(server.record.count("auth"), 0)
+                    XCTAssertTrue(root.presentedViewController === sheet)
+                }
+                coordinator.answerTrust(true)
+                try await wait("approval starts the native desktop connection") { viewer.session.connected }
+                XCTAssertEqual(server.record.count("auth"), 1)
+                XCTAssertEqual(try TerminalSecretStore.hostKey(mac.id), server.hostKey)
+            }
+            coordinator.disconnect(); try await server.close()
+            _ = await DirectMacConnections.shared.disconnect(mac.id)
+            try TerminalSecretStore.remove(mac.id)
+        } catch {
+            coordinator.disconnect(); try? await server.close()
+            _ = await DirectMacConnections.shared.disconnect(mac.id)
+            try? TerminalSecretStore.remove(mac.id)
+            throw error
+        }
+    }
     func testFirstUseTrustApprovalCancellationAndChangedKeyInNormalCoordinator() async throws {
         for scenario in ["approve", "reject", "cancel", "lost", "changed"] {
             let server = DesktopSSHServer(.rfb); try await server.start()
