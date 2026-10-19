@@ -1,5 +1,6 @@
 #if os(iOS)
 import XCTest
+import Security
 @testable import Mac_Companion
 
 @MainActor final class TemporaryMacCleanupTests: XCTestCase {
@@ -117,8 +118,11 @@ import XCTest
             XCTAssertNotNil(try TerminalSecretStore.read(other, kind: kind), kind)
         }
         try VNCSessionPreferences.clearTemporary(id)
-        XCTAssertNil(try VNCSessionPreferences.readActions(id))
-        XCTAssertEqual(try VNCSessionPreferences.readActions(other)?.map(\.kind), [.composeText])
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "media.jenny.maccompanion.direct-actions.v1",
+            kSecAttrAccount as String: id.uuidString.lowercased(), kSecAttrSynchronizable as String: false]
+        XCTAssertEqual(SecItemCopyMatching(query as CFDictionary, nil), errSecItemNotFound)
+        XCTAssertEqual(try VNCSessionPreferences.readActions(other).map(\.kind), [.composeText])
         XCTAssertEqual(try DirectMacAccessStore.load(other), profile)
     }
     private func wait(_ condition: () -> Bool) async throws {
