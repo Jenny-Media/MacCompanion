@@ -121,7 +121,156 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         context.fireChannelRead(data)
     }
 }
+@MainActor private final class TerminalLoginFrameProbe: NSObject {
+    private let window: UIWindow
+    private var link: CADisplayLink?
+    private(set) var frames = 0
+    private(set) var credentialFrames = 0
+    init(window: UIWindow) {
+        self.window = window; super.init()
+        let link = CADisplayLink(target: self, selector: #selector(sample)); self.link = link
+        link.add(to: .main, forMode: .common)
+    }
+    func stop() { link?.invalidate(); link = nil }
+    @objc private func sample() {
+        frames += 1
+        func visible(_ view: UIView) -> Bool {
+            var parent: UIView? = view
+            while let current = parent {
+                if current.isHidden || current.alpha < 0.01 { return false }
+                parent = current.superview
+            }
+            return view.window === window && !view.convert(view.bounds, to: window).intersection(window.bounds).isEmpty
+        }
+        func containsField(_ view: UIView) -> Bool {
+            if view is UITextField, visible(view) { return true }
+            return view.subviews.contains(where: containsField)
+        }
+        if containsField(window) { credentialFrames += 1 }
+    }
+}
+
 @MainActor final class TerminalIntegrationTests:XCTestCase {
+    func testSavedTerminalLoginDoesNotRevealCredentialFieldsBeforeOrAfterProgress() async throws {
+        let record = SSHTestRecord(), hostKey = NIOSSHPrivateKey(ed25519Key: .init())
+        let peer = try await server(record: record, key: hostKey)
+        defer { _ = peer.close() }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic saved login", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(peer.localAddress?.port))
+        try TerminalSecretStore.save(.init(username: "synthetic", password: "synthetic-only"), id: mac.id)
+        try TerminalSecretStore.approveHostKey(String(openSSHPublicKey: hostKey.publicKey), id: mac.id)
+        let session = DirectTerminalSession(mac: mac), panel = DirectConnectionPanelHost()
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first(where: { $0.activationState == .foregroundActive }))
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        let controller = UIHostingController(rootView: DirectTerminalView(mac: mac, session: session, connectionPanel: panel, exit: {}).directAppearance()
+            .background(DirectConnectionPanelAnchor(host: panel)))
+        window.rootViewController = controller
+        let probe = TerminalLoginFrameProbe(window: window)
+        defer { probe.stop(); panel.close(); session.stop(); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible(); try? TerminalSecretStore.remove(mac.id) }
+        window.makeKeyAndVisible()
+        try await wait { session.connected }
+        try await wait { controller.presentedViewController == nil && !panel.isVisible }
+        XCTAssertGreaterThan(probe.frames, 0)
+        XCTAssertEqual(probe.credentialFrames, 0, "A saved auto-connect must not flash the username/password form, including while its progress sheet dismisses")
+        XCTAssertEqual(record.passwordRequests, 1); XCTAssertEqual(record.shellRequests, 1)
+    }
+
+    func testDisconnectNeverReopensTerminalLoginDuringDeparture() async throws {
+        for native in [true, false] { try await assertDepartureKeepsLoginHidden("disconnect", native: native) }
+    }
+    func testNormalShellExitNeverReopensTerminalLoginDuringDeparture() async throws {
+        for native in [true, false] { try await assertDepartureKeepsLoginHidden("normal", native: native) }
+    }
+    func testLiveActivityDisconnectNeverReopensTerminalLoginDuringDeparture() async throws {
+        for native in [true, false] { try await assertDepartureKeepsLoginHidden("activity", native: native) }
+    }
+    private func assertDepartureKeepsLoginHidden(_ departure: String, native: Bool) async throws {
+        let record = SSHTestRecord(), hostKey = NIOSSHPrivateKey(ed25519Key: .init())
+        let peer = try await server(record: record, key: hostKey)
+        defer { _ = peer.close() }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic departure", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(peer.localAddress?.port))
+        try TerminalSecretStore.save(.init(username: "synthetic", password: "synthetic-only"), id: mac.id)
+        try TerminalSecretStore.approveHostKey(String(openSSHPublicKey: hostKey.publicKey), id: mac.id)
+        let backend = TerminalActivityTestBackend()
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "terminal-departure-" + UUID().uuidString))
+        defaults.set(true, forKey: VNCSessionActivityController.preferenceKey)
+        let session = DirectTerminalSession(mac: mac, activityDefaults: defaults, activityBackend: backend)
+        let panel = DirectConnectionPanelHost()
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first(where: { $0.activationState == .foregroundActive }))
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        var exits = 0
+        let host = UIHostingController(rootView: DirectTerminalView(mac: mac, session: session, connectionPanel: native ? panel : nil, exit: {
+            panel.close(); exits += 1
+        }).directAppearance().background(DirectConnectionPanelAnchor(host: panel)))
+        window.rootViewController = host; window.makeKeyAndVisible()
+        let probe = TerminalLoginFrameProbe(window: window)
+        defer { probe.stop(); panel.close(); session.stop(); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible(); try? TerminalSecretStore.remove(mac.id) }
+        try await wait { session.connected && host.presentedViewController == nil && !panel.isVisible }
+        // Keep the outgoing SwiftUI owner mounted after its exit callback. Native
+        // dismissal and parent navigation can finish on a later render frame.
+        switch departure {
+        case "disconnect":
+            func terminal(in controller: UIViewController) -> TerminalController? {
+                if let terminal = controller as? TerminalController { return terminal }
+                return controller.children.compactMap { terminal(in: $0) }.first
+            }
+            let controller = try XCTUnwrap(terminal(in: host))
+            controller.controls.actionHandler?(["kind": "exit"])
+        case "normal": try await record.finish(status: 0)
+        default:
+            await session.waitForLifecycleUpdates()
+            XCTAssertEqual(backend.ids, ["terminal-synthetic"])
+            NotificationCenter.default.post(name: RemoteSessionActivityActions.endRequested, object: "terminal-synthetic")
+        }
+        try await wait { exits == 1 && !session.connected }
+        // A queued redraw, unlock or stale status action must not resurrect the form.
+        NotificationCenter.default.post(name: DirectAppLockV1.unlocked, object: nil)
+        NotificationCenter.default.post(name: RemoteSessionActivityActions.endRequested, object: "terminal-synthetic")
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(exits, 1, "Exit is delivered once: \(departure), native=\(native)")
+        XCTAssertGreaterThan(probe.frames, 0)
+        XCTAssertEqual(probe.credentialFrames, 0, "No username/password frames during \(departure), native=\(native)")
+        XCTAssertFalse(panel.isVisible, "An outgoing owner must not present another login sheet")
+        XCTAssertNil(host.presentedViewController)
+        XCTAssertEqual(record.passwordRequests, 1); XCTAssertEqual(record.shellRequests, 1)
+    }
+
+    func testNativeTerminalLoginStillAppearsForMissingOrRejectedCredentialsAndLossOffersRecovery() async throws {
+        for outcome in ["missing", "rejected", "lost"] {
+            let record = SSHTestRecord(), hostKey = NIOSSHPrivateKey(ed25519Key: .init())
+            let peer = try await server(record: record, key: hostKey)
+            defer { _ = peer.close() }
+            let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic login control", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(peer.localAddress?.port))
+            if outcome != "missing" {
+                try TerminalSecretStore.save(.init(username: "synthetic", password: outcome == "rejected" ? "wrong-synthetic" : "synthetic-only"), id: mac.id)
+            }
+            try TerminalSecretStore.approveHostKey(String(openSSHPublicKey: hostKey.publicKey), id: mac.id)
+            let session = DirectTerminalSession(mac: mac), panel = DirectConnectionPanelHost()
+            let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first(where: { $0.activationState == .foregroundActive }))
+            let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+            let host = UIHostingController(rootView: DirectTerminalView(mac: mac, session: session, connectionPanel: panel,
+                exit: { XCTFail("A genuine login/recovery state must remain available") }).directAppearance()
+                .background(DirectConnectionPanelAnchor(host: panel)))
+            window.rootViewController = host; window.makeKeyAndVisible()
+            let probe = TerminalLoginFrameProbe(window: window)
+            defer { probe.stop(); panel.close(); session.stop(); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible(); try? TerminalSecretStore.remove(mac.id) }
+            if outcome == "lost" {
+                try await wait { session.connected && !panel.isVisible && host.presentedViewController == nil }
+                try await record.finish(status: nil, transportFailed: true)
+                try await wait { session.recovery?.reason == .terminalEnded && panel.isVisible }
+                XCTAssertEqual(record.passwordRequests, 1); XCTAssertEqual(record.shellRequests, 1)
+            } else {
+                try await wait { panel.isVisible && probe.credentialFrames > 0 }
+                if outcome == "rejected" {
+                    XCTAssertEqual(session.recovery?.reason, .loginRejected)
+                    XCTAssertGreaterThan(record.passwordRequests, 0)
+                } else { XCTAssertEqual(record.passwordRequests, 0) }
+            }
+            XCTAssertNotNil(host.presentedViewController)
+            panel.close()
+            try await wait { host.presentedViewController == nil }
+        }
+    }
+
     func testNativeConnectionSheetKeepsTerminalOwnerThroughTrustAndShellHandoff() async throws {
         let record = SSHTestRecord(), hostKey = NIOSSHPrivateKey(ed25519Key: .init())
         let peer = try await server(record: record, key: hostKey)

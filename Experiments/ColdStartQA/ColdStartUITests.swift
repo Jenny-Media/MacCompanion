@@ -684,6 +684,41 @@ import XCTest
             app.terminate()
         }
     }
+    func testConnectionDetailsRepeatedMotionKeepsFooterAndReturnsToItsOriginalLayout() {
+        for terminal in [false, true] {
+            let app = launch(["--connect-flow", "--progress-review"] + (terminal ? ["--terminal-review"] : []))
+            let cancel = app.buttons[terminal ? "terminal-login-cancel" : "mac-login-cancel"]
+            XCTAssertTrue(cancel.waitForExistence(timeout: 8))
+            let details = app.buttons["connection-progress-details"], panel = app.otherElements["connection-sheet"].firstMatch
+            tapVisibleControl(details)
+            XCTAssertEqual(details.value as? String, "Expanded")
+            capture(terminal ? "terminal-details-expanded" : "desktop-details-expanded", app)
+            for _ in 0..<3 {
+                for _ in 0..<4 where !details.isHittable { app.scrollViews.firstMatch.swipeDown() }
+                tapVisibleControl(details)
+                let collapsed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                    details.value as? String == "Collapsed" && cancel.isHittable && panel.frame.contains(cancel.frame)
+                }, object: nil)
+                XCTAssertEqual(XCTWaiter.wait(for: [collapsed], timeout: 5), .completed)
+                let collapsedSize = panel.frame.size, footerGap = panel.frame.maxY - cancel.frame.maxY
+                tapVisibleControl(details)
+                let expanded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                    details.value as? String == "Expanded" && cancel.isHittable && abs(panel.frame.maxY - cancel.frame.maxY - footerGap) <= 4
+                }, object: nil)
+                XCTAssertEqual(XCTWaiter.wait(for: [expanded], timeout: 5), .completed)
+                for _ in 0..<4 where !details.isHittable { app.scrollViews.firstMatch.swipeDown() }
+                tapVisibleControl(details)
+                let restored = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                    details.value as? String == "Collapsed" && abs(panel.frame.width - collapsedSize.width) <= 2 && abs(panel.frame.height - collapsedSize.height) <= 2 && cancel.isHittable
+                }, object: nil)
+                XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 5), .completed)
+                tapVisibleControl(details)
+            }
+            capture(terminal ? "terminal-details-restored" : "desktop-details-restored", app)
+            cancel.tap(); XCTAssertTrue(panel.waitForNonExistence(timeout: 5)); app.terminate()
+        }
+    }
+
     func testConnectingSheetsRejectSwipeDismissalButExplicitCancelWorks() {
         for terminal in [false, true] {
             let app = launch(["--connect-flow", "--progress-review"] + (terminal ? ["--terminal-review"] : []))

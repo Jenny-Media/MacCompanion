@@ -769,8 +769,14 @@
     }
 }
 - (void)showLoginDetails {
-    self.loginDetailsExpanded = !self.loginDetailsExpanded;
-    [self updateConnectionChrome];
+    [self.loginPanelContent.view layoutIfNeeded]; [self.view layoutIfNeeded];
+    void (^update)(void) = ^{
+        self.loginDetailsExpanded = !self.loginDetailsExpanded;
+        [self updateConnectionChrome];
+        [self.loginPanelContent.view layoutIfNeeded]; [self.view layoutIfNeeded];
+    };
+    if (UIAccessibilityIsReduceMotionEnabled()) update();
+    else [UIView animateWithDuration:.22 delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut animations:update completion:nil];
 }
 - (NSString *)configuredConnectionDetails {
     NSMutableArray<NSString *> *lines = [NSMutableArray new];
@@ -1898,7 +1904,7 @@
     self.loginDetails.hidden = progress || !self.loginIssueDetails.length;
     self.loginDetailsText.text = self.loginIssueDetails.length ? [NSString stringWithFormat:@"%@\n\n%@", [self configuredConnectionDetails], self.loginIssueDetails] : [self configuredConnectionDetails];
     self.loginDetailsText.hidden = self.loginDetails.hidden || !self.loginDetailsExpanded;
-    [self.loginDetails setImage:[UIImage systemImageNamed:self.loginDetailsExpanded ? @"chevron.up" : @"chevron.down"] forState:UIControlStateNormal];
+    self.loginDetails.imageView.transform = CGAffineTransformMakeRotation(self.loginDetailsExpanded ? -M_PI : 0);
     self.loginDetails.accessibilityValue = self.loginDetailsExpanded ? @"Expanded" : @"Collapsed";
     self.connect.hidden = progress;
     self.loginClose.hidden = YES; self.loginCancel.hidden = NO;

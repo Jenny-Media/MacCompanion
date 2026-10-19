@@ -32,6 +32,26 @@ struct TerminalKeyboardState {
         if enhanced { return Array("\u{1b}[127;\(modifiers.rawValue + 1)u".utf8) }
         return (modifiers.contains(.alt) ? [0x1b] : []) + [controlH || modifiers.contains(.ctrl) ? 0x08 : 0x7f]
     }
+    /// Software Alt shortcuts have a known key even without a hardware UIKey.
+    /// SwiftTerm's text-only enhanced event loses that identity. Encode only
+    /// this shortcut case; leave IME commits and ordinary text to UITextInput.
+    static func altShortcut(_ value: String, modifiers: TerminalModifiers, flags: KittyKeyboardFlags) -> [UInt8]? {
+        guard modifiers.contains(.alt), value.unicodeScalars.count == 1,
+              let scalar = value.unicodeScalars.first, scalar.value >= 0x20, scalar.value != 0x7f else { return nil }
+        guard flags.contains(.disambiguate) || flags.contains(.reportAllKeys) else { return text(value, modifiers: modifiers) }
+        let lower = value.lowercased().unicodeScalars
+        let key = lower.count == 1 ? lower.first!.value : scalar.value
+        var keyModifiers = modifiers
+        // The software keyboard commits uppercase text without a UIKey carrying Shift.
+        if key != scalar.value { keyModifiers.insert(.shift) }
+        var identity = String(key)
+        if flags.contains(.reportAlternates), keyModifiers.contains(.shift),
+           let shifted = shifted(value).unicodeScalars.first, shifted.value != key {
+            identity += ":\(shifted.value)"
+        }
+        // Alt/Ctrl shortcuts never carry associated text, even in report-text mode.
+        return Array("\u{1b}[\(identity);\(keyModifiers.rawValue + 1)u".utf8)
+    }
     static func text(_ value: String, modifiers: TerminalModifiers) -> [UInt8] {
         let text = modifiers.contains(.shift) ? shifted(value) : value
         var result = [UInt8]()

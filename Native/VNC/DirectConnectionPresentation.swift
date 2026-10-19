@@ -154,6 +154,24 @@ struct DirectConnectionFooter<Actions: View>: View {
     }
 }
 
+/// Shared disclosure motion for login forms and connection progress. The
+/// chevron keeps its identity, and Reduce Motion removes layout animation.
+struct DirectConnectionDisclosure<Content: View>: View {
+    @Binding var isExpanded: Bool
+    let identifier: String
+    @ViewBuilder var content: () -> Content
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var body: some View {
+        DisclosureGroup(isExpanded: $isExpanded.animation(reduceMotion ? nil : .easeInOut(duration: 0.22))) {
+            content().padding(.top, 8)
+        } label: {
+            Text("Connection Details").frame(minHeight: 44)
+                .accessibilityIdentifier(identifier)
+                .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+        }.font(.subheadline).tint(.blue)
+    }
+}
+
 /// A connection attempt owns its clock and monotonic presentation milestones.
 /// This observes the existing transport; it never drives authentication or retry.
 @objc(DirectConnectionProgressState) @MainActor @Observable final class DirectConnectionProgressState: NSObject {
@@ -264,17 +282,7 @@ struct DirectConnectionProgress: View {
                                 .opacity(seconds >= 5 ? 1 : 0).accessibilityHidden(seconds < 5)
                                 .accessibilityIdentifier("connection-progress-elapsed")
                         }
-                        VStack(spacing: 12) {
-                            Button { detailsExpanded.toggle() } label: {
-                                HStack(spacing: 8) {
-                                    Text("Connection Details")
-                                    Image(systemName: detailsExpanded ? "chevron.up" : "chevron.down").font(.caption.weight(.semibold))
-                                }.frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
-                            }.font(.subheadline).foregroundStyle(.blue).buttonStyle(.plain)
-                                .accessibilityIdentifier("connection-progress-details")
-                                .accessibilityValue(detailsExpanded ? "Expanded" : "Collapsed")
-                            if detailsExpanded { details }
-                        }
+                        DirectConnectionDisclosure(isExpanded: $detailsExpanded, identifier: "connection-progress-details") { details }
                     }.frame(maxWidth: .infinity).padding(.vertical, 4)
                         .accessibilityElement(children: .contain)
                         .accessibilityIdentifier("connection-progress-status")

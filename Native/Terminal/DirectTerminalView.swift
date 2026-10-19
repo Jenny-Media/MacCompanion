@@ -43,6 +43,11 @@ struct DirectTerminalView: View {
     @State private var keyName = ""
     private var useKey: Bool { draft.method == .sshKey }
     @State private var loadedLogin = false
+    // Connection state describes the transport; departure belongs to this view.
+    // Preserve the outgoing panel's content until UIKit finishes dismissing it.
+    private enum ClosingContent { case login, progress }
+    @State private var closingContent: ClosingContent?
+    private var isClosing: Bool { closingContent != nil }
     private let autoConnect: Bool
     private let connectionPanel: DirectConnectionPanelHost?
     private let loginRetentionAllowed: Bool
@@ -66,6 +71,12 @@ struct DirectTerminalView: View {
         switch appearance.terminal { case .dark: .dark; case .light: .light; case .app: appearance.app.colorScheme }
     }
     private var terminalBackground: SwiftUI.Color { (terminalScheme ?? colorScheme) == .dark ? .black : .white }
+    // The outgoing sheet still observes this session while UIKit dismisses it.
+    // Keep its progress content through success instead of rebuilding the form.
+    private var showsConnectionProgress: Bool {
+        if let closingContent { return closingContent == .progress }
+        return session.connecting || session.connected || (autoConnect && !loadedLogin)
+    }
     private var canConnect: Bool {
         !username.isEmpty && username.utf8.count <= 255 && !username.contains("\0") &&
         (useKey ? key != nil : !password.isEmpty && password.utf8.count <= 4096 && !password.contains("\0"))
@@ -81,7 +92,7 @@ struct DirectTerminalView: View {
         self.autoConnect = autoConnect
     }
     private func connect() {
-        guard canConnect, !session.connecting, !session.connected else { return }
+        guard !isClosing, canConnect, !session.connecting, !session.connected else { return }
         if useKey {
             do {
                 let library = try TerminalKeyLibraryStore.load()
@@ -104,7 +115,7 @@ struct DirectTerminalView: View {
         } catch { loginIssue = .make(.savedDataUnavailable, message: "The selected SSH key couldn’t be read. Existing keys are kept.") }
     }
     private func loadLogin(reload: Bool = false) {
-        guard !session.connected, !session.connecting, !session.macRemoved,
+        guard !isClosing, !session.completedNormally, !session.connected, !session.connecting, !session.macRemoved,
               DirectAppLockV1.shared.canAccess, UIApplication.shared.applicationState == .active else { return }
         loginIssue = nil
         if reload { draft = DirectFilesLoginDraft() }
@@ -123,13 +134,24 @@ struct DirectTerminalView: View {
         draft.selectMethod(method)
         loadLogin(); session.clearRecovery()
     }
+    private func retirePresentation() {
+        guard !isClosing else { return }
+        closingContent = showsConnectionProgress ? .progress : .login
+        sheet = nil; loginAttempt = nil
+    }
+    private func closeSession() {
+        guard !isClosing else { return }
+        retirePresentation()
+        session.stop(); exit()
+    }
     private func returnAfterNormalExit() {
         guard session.completedNormally, DirectAppLockV1.shared.canAccess, UIApplication.shared.applicationState == .active else { return }
-        session.stop(); exit()
+        closeSession()
     }
     private func setupKey() {
         Task {
             if !DirectProAccess.shared.ready { await DirectProAccess.shared.refresh() }
+            guard !isClosing else { return }
             sheet = DirectProAccess.shared.hasPro ? .install : .pro
         }
     }
@@ -155,9 +177,9 @@ struct DirectTerminalView: View {
                 TerminalSurface(session: session, style: appearance.terminal.style(app: appearance.app), customize: { sheet = .keyboard }, filesStatus: files.transferActive ? files.activityTitle : "", action: handleControls)
                     .ignoresSafeArea(.container, edges: session.connected ? .top : [])
                     .opacity(session.connected ? 1 : 0).allowsHitTesting(session.connected).accessibilityHidden(!session.connected)
-                if !session.macRemoved && !session.connected && !session.completedNormally {
+                if !isClosing && !session.macRemoved && !session.connected && !session.completedNormally {
                     if let connectionPanel {
-                        DirectConnectionPanelContent(host: connectionPanel, cancel: { session.stop(); exit() }, preferredHeight: session.connecting ? nativeProgressHeight : nativeFormHeight + nativeFooterHeight, preventsDismissal: session.connecting) {
+                        DirectConnectionPanelContent(host: connectionPanel, cancel: closeSession, preferredHeight: showsConnectionProgress ? nativeProgressHeight : nativeFormHeight + nativeFooterHeight, preventsDismissal: showsConnectionProgress) {
                             nativeLoginContent
                                 .sheet(item: $sheet) { destination in secondarySheet(destination) }
                         }
@@ -176,7 +198,7 @@ struct DirectTerminalView: View {
                         secondary: .init(title: "Use Standard Controls", perform: { session.controlsRecovery = nil })).padding(12); Spacer() }
                 }
                 if session.macRemoved, files.hasUnsavedDownloads {
-                    DirectFilesView(mac: mac, session: files, closeOwnerWindow: exit)
+                    DirectFilesView(mac: mac, session: files, closeOwnerWindow: closeSession)
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
@@ -197,15 +219,15 @@ struct DirectTerminalView: View {
         .ignoresSafeArea(.keyboard, edges: session.connected ? .bottom : [])
         .preferredColorScheme(session.connected ? terminalScheme : appearance.app.colorScheme)
         .onAppear {
-            guard !loadedLogin else { return }
+            guard !isClosing, !loadedLogin else { return }
             loadLogin(); loadedLogin = true
             if autoConnect && loginIssue == nil && session.recovery == nil { connect() }
         }
         .confirmationDialog("End this session?", isPresented: $confirmingExit, titleVisibility: .visible) {
-            Button("End Session", role: .destructive) { CompanionVNCPlayInterfaceFeedback("end"); session.stop(); exit() }
+            Button("End Session", role: .destructive) { CompanionVNCPlayInterfaceFeedback("end"); closeSession() }
             Button("Keep Session", role: .cancel) {}
         } message: { Text("The active file transfer will be interrupted. Completed downloads are kept in Files.") }
-        .onDisappear { if let context = session.filesContext { files.disconnectBorrowed(context.generation) }; session.stop() }
+        .onDisappear { retirePresentation(); if let context = session.filesContext { files.disconnectBorrowed(context.generation) }; session.stop() }
         .onChange(of: session.connected) { _, connected in
             if connected {
                 draft.authenticationSucceeded(loginAttempt, retention: remember && !useKey ? .saved : .notRequested)
@@ -215,9 +237,9 @@ struct DirectTerminalView: View {
         .onChange(of: session.trust?.id) { _, _ in updateNativeTrust() }
         .onChange(of: session.completedNormally) { _, _ in returnAfterNormalExit() }
         .onChange(of: session.macRemoved) { _, removed in
-            if removed { sheet = nil; draft.invalidate(); key = nil; if !files.hasUnsavedDownloads { exit() } }
+            if removed { sheet = nil; draft.invalidate(); key = nil; if !files.hasUnsavedDownloads { closeSession() } }
         }
-        .onChange(of: files.shouldCloseAfterRemoval) { _, close in if close { exit() } }
+        .onChange(of: files.shouldCloseAfterRemoval) { _, close in if close { closeSession() } }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in session.becameInactive() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in draft.suspend(); session.background() }
         .onReceive(NotificationCenter.default.publisher(for: DirectAppLockV1.locked)) { _ in draft.suspend(); session.background() }
@@ -226,12 +248,12 @@ struct DirectTerminalView: View {
         .onReceive(NotificationCenter.default.publisher(for: VNCSessionPreferences.actionsChanged)) { _ in session.reloadKeyboard?() }
         .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in session.activity?.preferenceChanged() }
         .onReceive(NotificationCenter.default.publisher(for: RemoteSessionActivityActions.endRequested)) { notification in
-            if let id = notification.object as? String, session.endActivity(id) { exit() }
+            if let id = notification.object as? String, session.endActivity(id) { closeSession() }
         }
     }
     @State private var nativeTrustController: UIViewController?
     private func updateNativeTrust() {
-        guard let connectionPanel else { return }
+        guard !isClosing, let connectionPanel else { return }
         if let request = session.trust {
             let controller = UIHostingController(rootView: TerminalServerTrustView(macName: mac.name, fingerprint: request.fingerprint, answer: session.answerTrust).directAppearance())
             nativeTrustController = controller; connectionPanel.showTrust(controller)
@@ -257,8 +279,8 @@ struct DirectTerminalView: View {
                 }
     }
     @ViewBuilder private var nativeLoginContent: some View {
-        if session.connecting {
-            DirectConnectionProgress(name: mac.name, service: "Terminal", symbol: "terminal", progress: session.connectionProgress, addresses: mac.addresses, sshPort: mac.sshPort, cancel: { session.stop(); exit() }, contentHeightChanged: { if session.connecting { nativeProgressHeight = $0 } })
+        if showsConnectionProgress {
+            DirectConnectionProgress(name: mac.name, service: "Terminal", symbol: "terminal", progress: session.connectionProgress, addresses: mac.addresses, sshPort: mac.sshPort, cancel: closeSession, contentHeightChanged: { if showsConnectionProgress { nativeProgressHeight = $0 } })
         } else {
             ScrollView {
                 VStack(spacing: 18) {
@@ -274,7 +296,7 @@ struct DirectTerminalView: View {
                             let action = recoveryAction(notice)
                             connectionButton(action.title, symbol: action.symbol, perform: action.perform)
                         } else { formActions(notice: loginIssue ?? session.recovery) }
-                        Button("Cancel") { session.stop(); exit() }
+                        Button("Cancel", action: closeSession)
                             .font(.headline).foregroundStyle(.blue).buttonStyle(.plain)
                             .frame(maxWidth: .infinity, minHeight: 48).accessibilityIdentifier("terminal-login-cancel")
                     }.padding(.horizontal, 24).padding(.vertical, 4).frame(maxWidth: 520).frame(maxWidth: .infinity)
@@ -296,7 +318,7 @@ struct DirectTerminalView: View {
         case "customize": sheet = .keyboard
         case "exit":
             if files.isBorrowed && files.transferActive { confirmingExit = true }
-            else { if session.connected { CompanionVNCPlayInterfaceFeedback("end") }; session.stop(); exit() }
+            else { if session.connected { CompanionVNCPlayInterfaceFeedback("end") }; closeSession() }
         default: break
         }
     }
@@ -307,7 +329,7 @@ struct DirectTerminalView: View {
                 VStack(spacing: 0) {
                     VStack(spacing: compact ? 14 : 22) {
                         DirectConnectionIdentity(name: mac.name, service: "Terminal", symbol: "terminal", compact: compact,
-                            cancel: session.connecting ? nil : { session.stop(); exit() })
+                            cancel: session.connecting ? nil : { closeSession() })
                         loginForm(compact: compact)
                     }.padding(compact ? 16 : 22)
                         .directConnectionCardSurface()
@@ -331,7 +353,7 @@ struct DirectTerminalView: View {
                         .font(.subheadline.weight(.medium)).multilineTextAlignment(.center)
                         .accessibilityIdentifier("terminal-status")
                 }.frame(maxWidth: .infinity, minHeight: compact ? 84 : 124)
-                Button { session.stop(); exit() } label: {
+                Button(action: closeSession) {
                     Text("Cancel").font(.body.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 32)
                 }.buttonStyle(.plain).frame(minHeight: 48)
                     .tint(.blue).accessibilityIdentifier("terminal-login-cancel")
@@ -392,7 +414,7 @@ struct DirectTerminalView: View {
         } else { connectionButton("Connect", enabled: canConnect, perform: connect) }
     }
     private func detailsButton(notice: DirectRecoveryNotice?) -> some View {
-        DisclosureGroup("Connection Details", isExpanded: $detailsExpanded) {
+        DirectConnectionDisclosure(isExpanded: $detailsExpanded, identifier: "terminal-login-details") {
             DirectConnectionDetailsRows(mac: mac, desktop: false).padding(.top, 8)
             if let notice, !notice.details.isEmpty {
                 Divider().padding(.vertical, 4)
@@ -402,7 +424,7 @@ struct DirectTerminalView: View {
                         .accessibilityIdentifier("terminal-issue-detail-\(offset)")
                 }
             }
-        }.font(.subheadline).accessibilityIdentifier("terminal-login-details")
+        }
     }
     private func connectionButton(_ title: String, symbol: String? = nil, enabled: Bool = true, perform: @escaping () -> Void) -> some View {
         Button(action: perform) {
@@ -467,6 +489,8 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     weak var keyboardBar: TerminalKeyboardBar?
     private var deletingModifiers: TerminalModifiers?
     private var deletionEncoded = false
+    private var insertedShortcut: [UInt8]?
+    private var shortcutEncoded = false
     // SwiftTerm pins short buffers to zero. With a canvas extending behind the
     // status bar, that resting offset must include the leading scroll inset.
     // Leave finger-driven scrolling and deceleration owned by UIScrollView.
@@ -484,7 +508,14 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     func resetModifiers() { keyboardState.reset(); controlModifier = false; metaModifier = false; keyboardBar?.refresh() }
     override func insertText(_ text: String) {
         let modifiers = keyboardState.consume()
-        if modifiers.isEmpty { super.insertText(text) }
+        if markedTextRange == nil, let bytes = TerminalKeyboardState.altShortcut(text, modifiers: modifiers, flags: getTerminal().keyboardEnhancementFlags) {
+            insertedShortcut = bytes; shortcutEncoded = false
+            defer { insertedShortcut = nil; shortcutEncoded = false }
+            // Keep selection, input-buffer and IME bookkeeping in the existing
+            // editor; replace only this synchronous commit's outbound bytes.
+            controlModifier = false; metaModifier = false
+            super.insertText(modifiers.contains(.shift) ? TerminalKeyboardState.shifted(text) : text)
+        } else if modifiers.isEmpty { super.insertText(text) }
         else if getTerminal().keyboardEnhancementFlags.isEmpty { send(data: TerminalKeyboardState.text(text, modifiers: modifiers)[...]) }
         else { controlModifier = modifiers.contains(.ctrl); metaModifier = modifiers.contains(.alt); super.insertText(modifiers.contains(.shift) ? TerminalKeyboardState.shifted(text) : text) }
         keyboardBar?.refresh()
@@ -499,6 +530,10 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         super.deleteBackward()
     }
     func encodeOutput(_ bytes: ArraySlice<UInt8>) -> [UInt8] {
+        if let insertedShortcut {
+            guard !shortcutEncoded else { return [] }; shortcutEncoded = true
+            return insertedShortcut
+        }
         guard let deletingModifiers else { return Array(bytes) }
         // Native range deletion may emit several backspaces for one logical keypress.
         guard !deletionEncoded else { return [] }; deletionEncoded = true

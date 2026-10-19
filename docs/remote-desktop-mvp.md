@@ -269,6 +269,17 @@ installation may remain on the Mac. Nothing installs a Mac app or helper.
 The software keyboard includes an optional number row, enabled by default. Ctrl/Alt are one-shot on tap
 and explicitly locked on hold; Shift, navigation, function keys and common
 Ctrl-C/D/Z shortcuts are available in More. Modifiers reset on focus/session loss.
+Software Alt shortcuts retain their actual key identity in negotiated Kitty
+keyboard modes, including combined and locked modifiers. Plain text/IME input
+keeps the existing editor, and legacy terminals still receive Escape-prefixed Alt.
+Connection progress stays visible during the successful Terminal sheet handoff;
+login fields appear only when input is needed. Terminal departure retires its
+presentation before stopping the transport, covering Disconnect, normal shell
+exit, session-status Disconnect, cancellation and removal. The outgoing panel
+keeps its content through dismissal; foreground/unlock callbacks cannot reopen
+that retired owner. New connections and genuine failures retain login/recovery.
+Login/progress details use the
+same 0.22-second reveal and sheet resize, with animation disabled for Reduce Motion.
 Keys honor application-cursor mode. Pro adds a custom row and protected local
 snippets; snippets containing a newline can execute commands on explicit selection.
 
