@@ -39,6 +39,7 @@
 @property UIScrollView *loginScroll;
 @property UIViewController *loginPanelContent;
 @property UIViewController *loginProgressContent;
+@property DirectConnectionProgressState *connectionProgress;
 @property NSObject *loginPanelOwner;
 @property UIStackView *saveLoginRow;
 @property UIStackView *loginFields, *progressRow, *keyRow;
@@ -218,6 +219,7 @@
 }
 - (void)viewDidLoad {
     [super viewDidLoad];
+    self.connectionProgress = [DirectConnectionProgressState new];
     self.view.backgroundColor = UIColor.systemBackgroundColor; self.foreground = YES;
     self.modifiers = [NSMutableArray new];
     [self prepareConnection];
@@ -581,6 +583,7 @@
 }
 - (void)finishMirrorCleanup {
     self.mirrorRequiresCleanup = NO; self.mirrorCleanupRemaining = 0;
+    [self.connectionProgress finishedRestoringDisplays];
     [self showConnectionProgress:@"Switching display mode…"];
 }
 - (void)prepareConnection {
@@ -623,6 +626,7 @@
         CompanionVNCViewer *strong = weak; if (!strong || strong.session != owner) return;
         strong.latestCounters = stats;
         if (strong.exited || strong.failedDisplayModePreset) return;
+        [strong.connectionProgress recordNativeState:state];
         if (strong.changingDisplayMode && strong.foreground && !strong.inputInactive) [strong updateDisplayModeRestoration];
         if (strong.mirrorRestartScheduled || strong.failedDisplayModePreset) { [strong reportDiagnostics:stats]; return; }
         if (strong.changingDisplayMode) {
@@ -751,6 +755,7 @@
     if (!self.inputOnly && self.lastFramebuffer) { [self rememberViewport]; self.restoreViewportPending = YES; self.image.alpha = .45; }
     if (self.inputOnly) { self.restoreViewportPending = self.awaitingReplacementLayout = NO; self.pendingRestorationFrame = nil; }
     self.starting = YES; self.exited = NO;
+    [self.connectionProgress beginWaitingForDisplays:self.mirrorRetirementDelay > 0];
     if (self.lastFramebuffer) [self scheduleResumeIndicator:self.changingDisplayMode && self.mirrorFullRestartUsed ? @"Switching display mode…" : @"Reconnecting…"];
     if (self.sessionPhaseHandler) self.sessionPhaseHandler(@"reconnecting");
     [self.view endEditing:YES]; [self.loginScroll endEditing:YES]; self.status.text = [self connectionProgressMessage];
@@ -864,6 +869,7 @@
 }
 - (void)showConnectionProgress:(NSString *)message {
     if (!self.starting || self.exited) return;
+    [self.connectionProgress recordTransportMessage:message];
     if (self.changingDisplayMode && self.mirrorFullRestartUsed) message = @"Switching display mode…";
     self.progressLabel.text = self.changingDisplayMode && self.mirrorFullRestartUsed ? @"Switching display mode…" : @"Connecting…";
     if (self.changingDisplayMode) { self.statusGeneration++; self.status.text = message; self.status.hidden = NO; }
@@ -1870,7 +1876,7 @@
             __weak typeof(self) weak = self;
             UIViewController *content = self.loginPanelContent;
             if (progress) {
-                self.loginProgressContent = [DirectConnectionBridge updateProgress:self.loginProgressContent name:self.macName ?: @"Mac" inputOnly:self.inputOnly desktopSize:self.changingDisplayMode ? self.modeTargetPreset : self.restoredDesktopSizePreset message:self.mirrorFullRestartUsed ? @"Switching display mode…" : @"Connecting…" cancel:^{ [weak showMacs]; } heightChanged:^(CGFloat height) {
+                self.loginProgressContent = [DirectConnectionBridge updateProgress:self.loginProgressContent name:self.macName ?: @"Mac" inputOnly:self.inputOnly desktopSize:self.changingDisplayMode ? self.modeTargetPreset : self.restoredDesktopSizePreset message:self.mirrorFullRestartUsed ? @"Switching display mode…" : @"Connecting…" progress:self.connectionProgress addresses:self.connectionAddresses ?: @[] sshPort:self.sshPort ?: 22 screenSharingPort:self.servicePort ?: 5900 cancel:^{ [weak showMacs]; } heightChanged:^(CGFloat height) {
                     if (weak.starting || (weak.session.running && !weak.lastFramebuffer)) {
                         weak.loginProgressHeight = height;
                         [weak.connectionPanelHost setContentHeight:height owner:weak.loginPanelOwner];

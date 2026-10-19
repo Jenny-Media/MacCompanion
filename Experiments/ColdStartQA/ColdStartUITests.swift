@@ -635,8 +635,9 @@ import XCTest
             let subtitle = app.staticTexts[terminal ? "Terminal" : mirror ? "Mirror Mac Screen" : "Virtual Display"].firstMatch
             XCTAssertTrue(subtitle.exists)
             if cancel.frame.minY - subtitle.frame.maxY > 350 {
-                XCTAssertEqual(status.frame.midY, (subtitle.frame.maxY + cancel.frame.minY) / 2, accuracy: 64,
-                    "Progress should balance the space between the Mac header and fixed actions")
+                let progress = app.otherElements["connection-progress-status"].firstMatch
+                XCTAssertEqual(progress.frame.midY, (subtitle.frame.maxY + cancel.frame.minY) / 2, accuracy: 64,
+                    "The checklist should balance the space between the Mac header and fixed actions")
             }
             let panel = app.otherElements["connection-sheet"].firstMatch
             assertSheetUsesAvailableSpace(panel, app: app)
@@ -644,6 +645,42 @@ import XCTest
             capture(terminal ? "terminal-progress" : mirror ? "mirror-progress" : "virtual-progress", app)
             cancel.tap()
             XCTAssertTrue(panel.waitForNonExistence(timeout: 5))
+            app.terminate()
+        }
+    }
+    func testConnectionChecklistDetailsKeepCancelAccessibleAcrossAllServices() {
+        for mode in ["virtual", "mirror", "trackpad", "terminal"] {
+            let arguments = ["--connect-flow", "--progress-review"] + (mode == "virtual" ? [] : ["--\(mode)-review"])
+            let app = launch(arguments)
+            let cancel = app.buttons[mode == "terminal" ? "terminal-login-cancel" : "mac-login-cancel"]
+            XCTAssertTrue(cancel.waitForExistence(timeout: 8))
+            let current = app.descendants(matching: .any)["connection-progress-step-2"].firstMatch
+            XCTAssertTrue(current.waitForExistence(timeout: 5)); XCTAssertTrue(current.label.contains("Signing in"))
+            XCTAssertEqual(current.value as? String, "In progress")
+            let final = app.descendants(matching: .any)["connection-progress-step-3"].firstMatch
+            XCTAssertTrue(final.label.contains(mode == "terminal" ? "Opening Terminal" : mode == "trackpad" ? "Enabling controls" : "Starting desktop"))
+            XCTAssertEqual(final.value as? String, "Pending")
+            let details = app.buttons["connection-progress-details"]
+            XCTAssertTrue(details.isHittable); XCTAssertEqual(details.value as? String, "Collapsed")
+            capture("checklist-\(mode)-collapsed", app)
+            details.tap()
+            XCTAssertEqual(details.value as? String, "Expanded")
+            let encryption = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Encrypted")).firstMatch
+            for _ in 0..<4 where !encryption.isHittable { app.scrollViews.firstMatch.swipeUp() }
+            XCTAssertTrue(encryption.isHittable); XCTAssertTrue(cancel.isHittable)
+            let panel = app.otherElements["connection-sheet"].firstMatch
+            let footerGap = panel.frame.maxY - cancel.frame.maxY
+            capture("checklist-\(mode)-expanded", app)
+            for _ in 0..<4 where !details.isHittable { app.scrollViews.firstMatch.swipeDown() }
+            details.tap()
+            let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                details.value as? String == "Collapsed" && cancel.isHittable && abs((panel.frame.maxY - cancel.frame.maxY) - footerGap) <= 4
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 5), .completed,
+                "Cancel stays at the form bottom as a centered native form resizes")
+            cancel.tap()
+            XCTAssertTrue(app.otherElements["connection-sheet"].firstMatch.waitForNonExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["macs-add"].isHittable)
             app.terminate()
         }
     }

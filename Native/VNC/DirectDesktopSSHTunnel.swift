@@ -245,7 +245,10 @@ final class DirectDesktopSSHTunnel: @unchecked Sendable {
             .channelOption(ChannelOptions.autoRead, value: false).withConnectedSocket(fd).get()
         opening.register(parent)
         var settings = SSHClientSettings(host: addresses[0], port: sshPort,
-            authenticationMethod: { .passwordBased(username: username, password: password) },
+            authenticationMethod: {
+                .custom(TerminalAuthenticationProgress(authentication: .passwordBased(username: username, password: password),
+                    started: { progress("Signing in to Remote Login…") }))
+            },
             hostKeyValidator: .custom(TerminalHostValidator(validate: validateHost)))
         settings.connectTimeout = .seconds(60)
         settings.protocolOptions = [.maximumPacketSize(Self.maximumPacketBytes)]

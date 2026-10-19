@@ -247,6 +247,29 @@ private func desktopWriterFinished(_ group: DispatchGroup) -> Bool { group.wait(
                 guard key == trusted else { throw TerminalSecretStore.Failure.changedKey }
             })
     }
+    func testProgressOnlyClaimsSecurityAfterTrustAndSSHKeyExchange() async throws {
+        let server = DesktopSSHServer(.echo); try await server.start()
+        var trusted = false, messages: [String] = []
+        do {
+            let tunnel = try await DirectDesktopSSHTunnel.open(addresses: ["127.0.0.1"], sshPort: server.port,
+                screenSharingPort: server.screenPort, username: "synthetic", password: "synthetic-only", validateHost: { key in
+                    XCTAssertEqual(key, server.hostKey)
+                    XCTAssertEqual(server.record.count("auth"), 0)
+                    XCTAssertFalse(messages.contains("Signing in to Remote Login…"))
+                    trusted = true
+                }, progress: { message in
+                    if message == "Signing in to Remote Login…" { XCTAssertTrue(trusted) }
+                    messages.append(message)
+                })
+            try await wait("The real SSH user-authentication request reports progress") { messages.contains("Signing in to Remote Login…") }
+            XCTAssertTrue(messages.contains("Connecting to Remote Login…"))
+            XCTAssertTrue(messages.contains("Verifying SSH server…"))
+            XCTAssertTrue(messages.contains("Opening encrypted connection…"))
+            XCTAssertEqual(server.record.count("auth"), 1, "Observing progress must not change the authentication offer")
+            await tunnel.close()
+        } catch { try? await server.close(); throw error }
+        try await server.close()
+    }
     func testBoundedEncryptedBridgePreservesFourMiBAndCloses() async throws {
         let server = DesktopSSHServer(.echo); try await server.start()
         do {

@@ -206,6 +206,7 @@ struct PresentationProgressReview: View {
         self.model = model
         let terminal = DirectTerminalSession(mac: model.library.macs.first!)
         terminal.connecting = true
+        terminal.connectionProgress.recordTransportMessage("Opening encrypted connection…")
         _terminal = State(initialValue: terminal)
     }
     var body: some View {
@@ -232,6 +233,9 @@ struct PresentationDesktopProgress: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> CompanionVNCViewer {
         let viewer = CompanionVNCViewer(); viewer.macName = "Free Mac"; viewer.connectionPanelHost = panel
         viewer.restoredDesktopSizePreset = ProcessInfo.processInfo.arguments.contains("--mirror-review") ? 0 : 2
+        viewer.inputOnly = ProcessInfo.processInfo.arguments.contains("--trackpad-review")
+        viewer.connectionAddresses = ["example.local", "backup.local"]
+        viewer.sshPort = 22; viewer.servicePort = 5900
         viewer.macsHandler = cancel
         viewer.loadViewIfNeeded(); viewer.setValue(true, forKey: "starting")
         viewer.showConnectionProgress("Opening encrypted connection…")
