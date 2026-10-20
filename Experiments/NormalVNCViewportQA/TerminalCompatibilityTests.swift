@@ -192,6 +192,35 @@ import Citadel
         }
     }
 
+    func testUppercaseSavedKeysUseUnshiftedIdentityAndRequestedShiftMetadata() async throws {
+        let cases = try vectors().encodingCases.filter {
+            $0.name.hasPrefix("saved-uppercase-") || $0.name == "all-text-uppercase"
+        }
+        XCTAssertEqual(cases.count, 10)
+        try await withHarness { rig in
+            for value in cases {
+                try await rig.record.emit("\u{1b}[=\(value.flags)u")
+                try await terminalWait(value.name + " negotiation") {
+                    rig.controller.terminal.getTerminal().keyboardEnhancementFlags.rawValue == value.flags
+                }
+                let scalar = try XCTUnwrap(value.text?.unicodeScalars.first)
+                let modifiers: [UInt32] = [(1, UInt32(0xffe1)), (2, 0xffe9), (4, 0xffe3)]
+                    .compactMap { value.modifiers & $0.0 != 0 ? $0.1 : nil }
+                let action = VNCQuickAction(title: "Synthetic uppercase", kind: .shortcut,
+                                            key: scalar.value, modifiers: modifiers)
+                XCTAssertTrue(action.valid, value.name)
+                rig.controller.terminal.keyboardState.toggle(.ctrl)
+                rig.record.clearReceived()
+                rig.controller.terminal.sendShortcut(action)
+                try await terminalWait(value.name + " saved-key packet") {
+                    !rig.record.received.isEmpty
+                }
+                XCTAssertEqual(self.hex(rig.record.received), value.expectedHex, value.name)
+                XCTAssertTrue(rig.controller.terminal.keyboardState.active.isEmpty)
+            }
+        }
+    }
+
     func testNegotiatedExplicitKeysMatchGoldenVectors() async throws {
         let fixture = try vectors()
         try await withHarness { rig in

@@ -720,6 +720,11 @@ event reporting requests that release (Enter/Tab/Backspace need report-all).
 Report alternate/associated text only when requested and known; synthetic keys
 do not invent a physical base-layout key. Literal paste/snippets bypass key
 encoding and retain bracketed-paste admission. No Command chord is sent remotely.
+When report-all is requested, a saved uppercase character without explicit
+modifiers MUST use its single-scalar lowercase key identity and Shift, retaining
+the original uppercase associated text. This applies to reversible single-scalar
+case mappings; explicit Ctrl-only chords retain their case-insensitive identity.
+Legacy uppercase text MUST retain its existing bytes.
 The indexed `terminal-compatibility-v1.json` contains authoritative byte vectors.
 The [Kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/)
 defines the negotiated flags and functional key encodings.

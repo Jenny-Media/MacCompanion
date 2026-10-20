@@ -86,10 +86,13 @@ struct TerminalKeyEncoding {
         }
         switch key {
         case .text(let value):
-            // Software keyboards can commit uppercase text without a UIKey
-            // carrying Shift. Keep the unshifted identity for Alt shortcuts.
+            // Saved uppercase characters need an unshifted identity and Shift
+            // under report-all, with their uppercase associated text retained.
+            // Keep explicit Ctrl chords and the existing Alt inference intact.
             let lower = value.lowercased()
-            if modifiers.contains(.alt), !modifiers.contains(.shift), value.unicodeScalars.count == 1,
+            let uppercaseSavedKey = all && modifiers.isEmpty && value == lower.uppercased()
+            if modifiers.contains(.alt) || uppercaseSavedKey,
+               !modifiers.contains(.shift), value.unicodeScalars.count == 1,
                lower.unicodeScalars.count == 1, lower != value {
                 return bytes(.text(lower), modifiers: modifiers.union(.shift))
             }

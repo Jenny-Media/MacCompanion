@@ -67,7 +67,7 @@ def main():
         if extracted.returncode == 0:
             summary = json.loads(extracted.stdout)
             (args.output / 'xctest-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
-    expected_count = 23 if args.include_ui_regressions else 18
+    expected_count = 24 if args.include_ui_regressions else 19
     tests_ok = (summary.get('result') == 'Passed' and summary.get('totalTestCount') == expected_count
                 and summary.get('expectedFailures') == 0 and summary.get('failedTests') == 0 and summary.get('skippedTests') == (0 if 'herdr' in tools else 1))
     status = {'simulator': args.simulator, 'runnerExitCode': result.returncode, 'cleanupVerified': cleanup_ok,

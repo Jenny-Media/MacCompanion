@@ -290,7 +290,7 @@
       "text": "B",
       "modifiers": 0,
       "flags": 31,
-      "expectedHex": "1b5b36363b3b3636751b5b36363b313a3375"
+      "expectedHex": "1b5b39383a36363b323b3636751b5b39383a36363b323a3375"
     },
     {
       "name": "all-text-expanded-shift",
@@ -393,6 +393,86 @@
       "modifiers": 6,
       "flags": 4,
       "expectedHex": "1b1f"
+    },
+    {
+      "name": "saved-uppercase-legacy",
+      "key": "text",
+      "text": "B",
+      "modifiers": 0,
+      "flags": 0,
+      "expectedHex": "42"
+    },
+    {
+      "name": "saved-uppercase-disambiguate",
+      "key": "text",
+      "text": "B",
+      "modifiers": 0,
+      "flags": 1,
+      "expectedHex": "42"
+    },
+    {
+      "name": "saved-uppercase-all",
+      "key": "text",
+      "text": "B",
+      "modifiers": 0,
+      "flags": 8,
+      "expectedHex": "1b5b39383b3275"
+    },
+    {
+      "name": "saved-uppercase-events",
+      "key": "text",
+      "text": "B",
+      "modifiers": 0,
+      "flags": 10,
+      "expectedHex": "1b5b39383b32751b5b39383b323a3375"
+    },
+    {
+      "name": "saved-uppercase-alternates",
+      "key": "text",
+      "text": "B",
+      "modifiers": 0,
+      "flags": 12,
+      "expectedHex": "1b5b39383a36363b3275"
+    },
+    {
+      "name": "saved-uppercase-associated-text",
+      "key": "text",
+      "text": "B",
+      "modifiers": 0,
+      "flags": 24,
+      "expectedHex": "1b5b39383b323b363675"
+    },
+    {
+      "name": "saved-uppercase-explicit-shift",
+      "key": "text",
+      "text": "B",
+      "modifiers": 1,
+      "flags": 31,
+      "expectedHex": "1b5b39383a36363b323b3636751b5b39383a36363b323a3375"
+    },
+    {
+      "name": "saved-uppercase-control",
+      "key": "text",
+      "text": "B",
+      "modifiers": 4,
+      "flags": 31,
+      "expectedHex": "1b5b39383b35751b5b39383b353a3375"
+    },
+    {
+      "name": "saved-uppercase-alt",
+      "key": "text",
+      "text": "B",
+      "modifiers": 2,
+      "flags": 31,
+      "expectedHex": "1b5b39383a36363b34751b5b39383a36363b343a3375"
+    },
+    {
+      "name": "all-text-uppercase-unicode",
+      "key": "text",
+      "text": "É",
+      "modifiers": 0,
+      "flags": 31,
+      "expectedHex": "1b5b3233333a3230313b323b323031751b5b3233333a3230313b323a3375"
     }
   ],
   "replacementParserSeeds": [

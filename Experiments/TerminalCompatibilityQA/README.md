@@ -45,7 +45,7 @@ tmux and Zellij default to installed binaries and are required. Herdr defaults t
 an installed binary, or a reviewed explicit path; its test skips when unavailable.
 The runner never downloads or installs a binary. `--include-ui-regressions`
 adds five existing toolbar, number-row, palette and native-editing cases to the
-eighteen terminal cases (23 total). The number-row test waits for UIKit menu
+nineteen terminal cases (24 total). The number-row test waits for UIKit menu
 transitions and the resulting action rather than assuming a fixed animation delay. Record release hashes alongside
 test evidence when providing a downloaded executable.
 
@@ -72,7 +72,7 @@ test evidence when providing a downloaded executable.
   remain under the build evidence's `QA/` directory. Inspect individual test,
   failure and skip results; exit code zero alone does not certify support.
   The runner also selects the existing first-trust/PTY/lifecycle and changed-key
-  rejection regressions. It verifies the intended 18 or 23 cases from the xcresult
+  rejection regressions. It verifies the intended 19 or 24 cases from the xcresult
   summary, requires zero expected failures, and records executable SHA256 hashes. Timeout attachments contain only the
   dedicated synthetic test screen, never a user's terminal session.
 

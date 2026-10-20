@@ -111,6 +111,49 @@ Reviewed evidence root: `/private/tmp/maccompanion-terminal-review-20261020/`.
 - Final stable repository validation after the sequencing correction:
   `validation-staged/runs/20261020T164444Z-0e842289bda2/`; status passed.
 
+### Uppercase saved-key follow-up
+
+Report-all now encodes an unmodified saved uppercase character using its
+single-scalar lowercase key identity and Shift, retaining uppercase associated
+text. Reversible case mappings use the same existing Shift policy. Explicit
+Ctrl-only chords, Alt inference and legacy text retain their behavior. The
+normative requirements and indexed golden vectors preceded the encoder change.
+
+Stable Xcode 27.0 final results: 24/24 pass on both iPhone 18 Pro and iPad Pro
+13-inch Simulator, with zero failures, expected failures or skips. Both real-tool
+hosts verify exact-session cleanup, retired descriptors, zero remaining clients
+and bridge threads, and no transport errors. All 51 encoding vectors, five host
+regressions, 139 indexed fixtures and required `bash scripts/validate.sh` pass.
+
+The fixture now contains 51 encoding vectors. A dedicated real-SSH regression
+invokes ten valid saved-key cases through `sendShortcut`, including legacy,
+disambiguation, report-all, event, alternate, associated-text and explicit
+modifier combinations. The general vector test also covers uppercase Unicode;
+the saved-shortcut model continues to accept ASCII character keys.
+
+A standalone execution of the actual encoder at `d1dce8d` mismatches six of the
+51 corrected vectors; the fixed encoder matches all 51. Isolated hosted red
+attempts encountered the previously observed SwiftUI hosting failure and are
+retained separately from this byte-level reproduction. An initial full run
+passed 23/24 because the new test incorrectly constructed a Unicode saved
+shortcut. That case now belongs to the general encoder coverage, while the
+saved-key test retains its action-validity assertion. The failed run is retained.
+
+Both normal SDK builds match all 622 current production source inputs. Follow-up
+evidence is outside Git at `/private/tmp/maccompanion-uppercase-fix-20261020/`:
+`encoding-before.json`, `encoding-after.json`, `encoding-probe.py`, the saved
+Swift sources, `red*.log`, `iphone/` and the original result bundles. Raw device
+signing material and captures remain outside Git. Physical keyboard/IME and
+remote-session acceptance remain separate from installation and Simulator checks.
+
+- Final iPhone: `iphone-final/`; xcresult
+  `simulator/QA/Results-1792516456866096000.xcresult`.
+- Final iPad: `ipad/`; xcresult
+  `simulator/QA/Results-1792516555258861000.xcresult`.
+- Final vectors: `encoding-final.json`.
+- Stable validation: `validation/runs/20261020T170838Z-723f86d09be9/`.
+- Source-bound SDK builds: `simulator/` and `iphoneos/`.
+
 The sections below retain the original implementation and screenshot evidence
 before PR review and main integration. Their 21-case counts and screenshots
 describe that earlier source state.
