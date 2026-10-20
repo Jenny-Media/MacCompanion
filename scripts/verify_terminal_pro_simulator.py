@@ -71,6 +71,7 @@ def main():
     parser.add_argument('--settings-ui', action='store_true', help='Also test gear navigation and live sheet appearance using native UI interactions')
     parser.add_argument('--screen-text-ui', action='store_true', help='Generate the simulator-only native/area text selection UI journey')
     parser.add_argument('--mac-shortcuts-ui', action='store_true', help='Generate the simulator-only per-Mac shortcuts and native swipe tests')
+    parser.add_argument('--terminal-controls-ui', action='store_true', help='Run the simulator-only shared Terminal controls Save/Cancel UI journey')
     parser.add_argument('--only-testing', action='append', default=[], help='Run a focused XCTest identifier; repeat to select multiple suites')
     parser.add_argument('--terminal-tool-host', type=Path, help='Private descriptor from the opt-in loopback terminal-tool test host')
     args = parser.parse_args()
@@ -216,6 +217,35 @@ def execute(args, parser, compiler):
             'test': {'config': 'Debug', 'macroExpansion': 'MacShortcutsApp', 'targets': [{'name': 'MacShortcutsUITests', 'parallelizable': False}]}}
         for action in ['run', 'profile', 'analyze', 'archive']:
             spec['schemes']['MacShortcutsQA'][action] = {'config': 'Debug'}
+    if args.terminal_controls_ui:
+        import copy
+        controls = copy.deepcopy(app)
+        controls['sources'] = [row for row in controls['sources'] if not row['path'].startswith(str(ROOT / 'Apps/MacCompanionIOS'))]
+        controls['sources'].append({'path': str(ROOT / 'Experiments/TerminalControlsQA/TerminalControlsApplication.swift')})
+        controls['sources'].append({'path': str(ROOT / 'spec/storekit/v0/LifetimePro.storekit'), 'buildPhase': 'resources'})
+        controls['settings']['base'].update({'PRODUCT_BUNDLE_IDENTIFIER': 'dev.maccompanion.controlsqa.ios',
+                                            'PRODUCT_NAME': 'TerminalControlsQA', 'PRODUCT_MODULE_NAME': 'Mac_Companion'})
+        controls_entitlements = qa / 'TerminalControlsQA.entitlements'
+        controls_entitlements.write_bytes(plistlib.dumps({'application-identifier': 'dev.maccompanion.controlsqa.ios',
+            'keychain-access-groups': ['dev.maccompanion.controlsqa.ios']}))
+        controls['settings']['base']['CODE_SIGN_ENTITLEMENTS'] = str(controls_entitlements)
+        controls['dependencies'] = [row for row in controls['dependencies'] if row.get('target') != 'MacCompanionSessionActivity']
+        spec['targets']['TerminalControlsApp'] = controls
+        spec['targets']['TerminalControlsJourneyTests'] = {
+            'type': 'bundle.ui-testing', 'platform': 'iOS',
+            'sources': [{'path': str(ROOT / 'Experiments/TerminalControlsQA/TerminalControlsJourneyTests.swift')},
+                        {'path': str(ROOT / 'spec/storekit/v0/LifetimePro.storekit'), 'buildPhase': 'resources'}],
+            'dependencies': [{'target': 'TerminalControlsApp'}],
+            'settings': {'base': {'GENERATE_INFOPLIST_FILE': 'YES', 'PRODUCT_BUNDLE_IDENTIFIER': 'dev.maccompanion.controlsqa.ios.tests',
+                'SWIFT_VERSION': '6.0', 'IPHONEOS_DEPLOYMENT_TARGET': '26.0', 'ARCHS': 'arm64', 'ONLY_ACTIVE_ARCH': 'YES',
+                'CODE_SIGN_IDENTITY': '-', 'CODE_SIGNING_ALLOWED': 'YES', 'TEST_TARGET_NAME': 'TerminalControlsApp'}}}
+        spec['schemes']['TerminalControlsQA'] = {'build': {'targets': {'TerminalControlsApp': 'all', 'TerminalControlsJourneyTests': 'all'}},
+            'test': {'config': 'Debug', 'macroExpansion': 'TerminalControlsApp', 'targets': [{'name': 'TerminalControlsJourneyTests', 'parallelizable': False}],
+                     'storeKitConfiguration': str(ROOT / 'spec/storekit/v0/LifetimePro.storekit')}}
+        for action in ['run', 'profile', 'analyze', 'archive']:
+            spec['schemes']['TerminalControlsQA'][action] = {'config': 'Debug'}
+        spec['schemes']['TerminalControlsQA']['run'].update({'executable': 'TerminalControlsApp',
+            'macroExpansion': 'TerminalControlsApp', 'storeKitConfiguration': str(ROOT / 'spec/storekit/v0/LifetimePro.storekit')})
     if args.terminal_tool_host:
         descriptor = json.loads(args.terminal_tool_host.read_text())
         spec['schemes']['DirectClientQA']['test'].setdefault('environmentVariables', {})['MACCOMPANION_TERMINAL_TOOL_HOST'] = json.dumps(descriptor)
@@ -229,14 +259,15 @@ def execute(args, parser, compiler):
     import time
     result = evidence / ('Results-' + str(time.time_ns()) + '.xcresult')
     with (evidence / 'test.log').open('w') as log:
-        run('xcodebuild', '-project', qa / 'DirectClientQA.xcodeproj', '-scheme', 'DirectClientQA',
+        run('xcodebuild', '-project', qa / 'DirectClientQA.xcodeproj', '-scheme', 'TerminalControlsQA' if args.terminal_controls_ui else 'DirectClientQA',
             '-destination', 'platform=iOS Simulator,id=' + args.simulator, '-derivedDataPath', compiler / 'DerivedData',
             '-onlyUsePackageVersionsFromResolvedFile', '-skipPackagePluginValidation', '-parallel-testing-enabled', 'NO',
             *(['-only-testing:DirectClientTests/DuoComparisonTests/testInteractiveCapture'] if args.duo_review else []),
             *['-only-testing:' + identifier for identifier in args.only_testing],
             '-collect-test-diagnostics', args.test_diagnostics, '-resultBundlePath', result, 'test', stdout=log, stderr=subprocess.STDOUT)
-    container = subprocess.check_output(['xcrun', 'simctl', 'get_app_container', args.simulator, bundle, 'data'], text=True).strip()
-    if not args.duo_review and not args.only_testing:
+    container = subprocess.check_output(['xcrun', 'simctl', 'get_app_container', args.simulator,
+        'dev.maccompanion.controlsqa.ios' if args.terminal_controls_ui else bundle, 'data'], text=True).strip()
+    if not args.terminal_controls_ui and not args.duo_review and not args.only_testing:
         verify_external(Path(container) / 'Documents/synthetic-key-interop')
     for name in ['synthetic-ed25519', 'synthetic-ed25519.pub', 'synthetic-rsa', 'synthetic-rsa.pub']:
         (qa / name).unlink(missing_ok=True)

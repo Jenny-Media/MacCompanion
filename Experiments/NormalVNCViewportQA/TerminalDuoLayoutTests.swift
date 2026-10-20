@@ -202,7 +202,7 @@ import UIKit
         XCTAssertTrue(String(decoding: controller.terminal.getTerminal().getBufferAsData(), as: UTF8.self).contains("toggling the toolbar keyboard"))
 
         // A narrow toolbar keeps both end controls reachable without shrinking
-        // the terminal keys; the existing Fn menu remains reachable by scrolling.
+        // the terminal keys; the floating menu exposes More Keys directly.
         let narrow = TerminalKeyboardBar(terminal: controller.terminal, preferences: .init())
         narrow.translatesAutoresizingMaskIntoConstraints = true
         narrow.frame = CGRect(x: 0, y: 0, width: 320, height: 60); controller.view.addSubview(narrow)
@@ -210,14 +210,14 @@ import UIKit
         let keyboardFrame = narrow.keyboardButton.convert(narrow.keyboardButton.bounds, to: narrow)
         let anchorFrame = narrow.menuAnchor.convert(narrow.menuAnchor.bounds, to: narrow)
         XCTAssertTrue(narrow.bounds.contains(keyboardFrame)); XCTAssertTrue(narrow.bounds.contains(anchorFrame))
-        XCTAssertGreaterThan(narrow.keyScroll.contentSize.width, narrow.keyScroll.bounds.width)
+        XCTAssertEqual(narrow.keyScroll.contentSize.width, narrow.keyScroll.bounds.width, accuracy: 1, "The compact core row fits without a hidden Fn key")
         let keys = try XCTUnwrap(narrow.keyScroll.subviews.compactMap { $0 as? UIStackView }.first)
-        for key in keys.arrangedSubviews { XCTAssertGreaterThanOrEqual(key.bounds.width, 44) }
-        narrow.keyScroll.setContentOffset(CGPoint(x: narrow.keyScroll.contentSize.width - narrow.keyScroll.bounds.width, y: 0), animated: false)
-        let fn = try XCTUnwrap(keys.arrangedSubviews.last as? UIButton)
-        XCTAssertTrue(narrow.keyScroll.bounds.contains(fn.convert(fn.bounds, to: narrow.keyScroll)))
-        func titles(_ menu: UIMenu) -> [String] { menu.children.flatMap { item in (item as? UIMenu).map(titles) ?? [item.title] } }
-        XCTAssertFalse(titles(try XCTUnwrap(fn.menu)).contains("Hide Keyboard"))
+        for key in keys.arrangedSubviews {
+            XCTAssertGreaterThanOrEqual(key.bounds.width, 44)
+            XCTAssertTrue(narrow.keyScroll.bounds.contains(key.convert(key.bounds, to: narrow.keyScroll)))
+        }
+        XCTAssertFalse(keys.arrangedSubviews.compactMap { $0 as? UIButton }.contains { $0.configuration?.title == "Fn" })
+        XCTAssertTrue(controller.controls.categoryActions?.contains { $0["kind"] as? String == "moreKeys" } == true)
         narrow.removeFromSuperview()
     }
 

@@ -219,7 +219,6 @@ struct TerminalKeyboardPreferences: Codable {
     weak var terminal: SessionTerminalView?
     // Shared preference policy; this surface owns its reusable feedback generators.
     lazy var keyFeedback = CompanionVNCInterfaceFeedback(view: self)
-    var customize: (() -> Void)?
     private let rows = UIStackView()
     private var modifierButtons: [(UIButton, TerminalModifiers)] = []
     let keyboardButton = UIButton(type: .system)
@@ -232,7 +231,6 @@ struct TerminalKeyboardPreferences: Codable {
     private let modifierKeys = UIStackView()
     private var keyRows: [(UIStackView, NSLayoutConstraint, NSLayoutConstraint)] = []
     private var modifierHeight: NSLayoutConstraint!
-    private var more = UIButton(type: .system)
     var toggleKeyboard: (() -> Void)?
     private var softwareKeyboardVisible = false
     private var composerVisible = false
@@ -291,7 +289,7 @@ struct TerminalKeyboardPreferences: Codable {
         rows.addArrangedSubview(bar)
         let fill = controls.widthAnchor.constraint(equalTo: keyScroll.frameLayoutGuide.widthAnchor); fill.priority = .init(750)
         modifierHeight = bar.heightAnchor.constraint(equalToConstant: 52)
-        let modifierWidth = controls.widthAnchor.constraint(greaterThanOrEqualToConstant: 9 * 44 + 8 * 3)
+        let modifierWidth = controls.widthAnchor.constraint(greaterThanOrEqualToConstant: 4 * 44 + 3 * 3)
         keyRows.append((controls, modifierHeight, modifierWidth))
         NSLayoutConstraint.activate([
             fill,
@@ -312,10 +310,6 @@ struct TerminalKeyboardPreferences: Codable {
             let hold = UILongPressGestureRecognizer(target: self, action: #selector(lockModifier(_:))); value.addGestureRecognizer(hold)
             controls.addArrangedSubview(value)
         }
-        for key in [TerminalAccessoryKey.left, .down, .up, .right] { controls.addArrangedSubview(button(key.title) { [weak self] in self?.send(key) }) }
-        more = button("Fn", action: {})
-        more.showsMenuAsPrimaryAction = true
-        controls.addArrangedSubview(more)
         registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (bar: TerminalKeyboardBar, _: UITraitCollection) in
             bar.updateKeyMetrics(refreshFonts: true)
         }
@@ -323,10 +317,6 @@ struct TerminalKeyboardPreferences: Codable {
         refresh()
     }
     func configure(_ preferences: TerminalKeyboardPreferences) {
-        more.accessibilityLabel = "Extra Terminal Keys"
-        more.menu = UIMenu(children: [UIDeferredMenuElement.uncached { [weak self] completion in
-            Task { @MainActor in completion(self?.extraMenu(preferences) ?? []) }
-        }])
         for key in custom.arrangedSubviews { custom.removeArrangedSubview(key); key.removeFromSuperview() }
         hasCustomKeys = DirectProAccess.shared.hasPro && !preferences.keys.isEmpty
         if hasCustomKeys {
@@ -335,45 +325,17 @@ struct TerminalKeyboardPreferences: Codable {
         updateRows()
         updateKeyMetrics(refreshFonts: true)
     }
-    // Capture readiness/ownership when UIKit opens the menu, not when the bar
-    // was configured. A retained action cannot revive after pause or replacement.
-    func extraMenu(_ preferences: TerminalKeyboardPreferences) -> [UIMenuElement] {
-        let epoch = terminal?.customInputEpoch()
-        func choice(_ title: String, _ action: @escaping @MainActor () -> Void) -> UIAction {
-            UIAction(title: title, attributes: epoch == nil ? .disabled : []) { [weak self] _ in
-                guard let epoch, self?.terminal?.customInputEpoch() == epoch else { return }
-                action()
-            }
+    func configure(_ profile: TerminalControlsProfile, perform: @escaping (UUID) -> Void) {
+        for key in custom.arrangedSubviews { custom.removeArrangedSubview(key); key.removeFromSuperview() }
+        let actions = DirectProAccess.shared.hasPro ? profile.actions.filter(\.inRow) : []
+        hasCustomKeys = !actions.isEmpty
+        for item in actions {
+            custom.addArrangedSubview(button(item.title) { [weak self] in
+                guard self?.terminal?.customInputEpoch() != nil else { return }
+                perform(item.id)
+            })
         }
-        var menu: [UIMenuElement] = [UIMenu(title: "Navigation & Function Keys", children: TerminalAccessoryKey.allCases.filter { ![.escape, .tab, .left, .right, .up, .down].contains($0) }.map { key in
-            choice(key.title) { [weak self] in self?.send(key) }
-        }), UIMenu(title: "Shortcuts", children: [("Interrupt · Ctrl-C", "c"), ("End Input · Ctrl-D", "d"), ("Suspend · Ctrl-Z", "z")].map { title, text in
-            choice(title) { [weak self] in
-                guard let terminal = self?.terminal else { return }
-                terminal.performCustomInput {
-                    terminal.resetModifiers()
-                    terminal.sendKey(.text(text), modifiers: .ctrl)
-                }
-            }
-        }), UIMenu(title: "Keyboard", children: [
-            choice("Shift for Next Key") { [weak self] in self?.toggle(.shift) },
-            choice("Lock/Unlock Shift") { [weak self] in self?.toggle(.shift, lock: true) },
-            choice("Copy Selection") { [weak terminal] in terminal?.copy(nil) },
-            choice("Paste") { [weak terminal] in terminal?.pasteWithFeedback() },
-            choice("Customize Keys & Snippets") { [weak self] in self?.customize?() }])]
-        if DirectProAccess.shared.hasPro, !preferences.snippets.isEmpty {
-            menu.insert(UIMenu(title: "Saved Snippets", children: preferences.snippets.map { snippet in
-                choice(snippet.name) { [weak self] in
-                    guard DirectProAccess.shared.hasPro, let terminal = self?.terminal else { return }
-                    terminal.performCustomInput {
-                        terminal.resetModifiers()
-                        let text = terminal.getTerminal().bracketedPasteMode ? "\u{1b}[200~" + snippet.text + "\u{1b}[201~" : snippet.text
-                        terminal.send(data: Array(text.utf8)[...])
-                    }
-                }
-            }), at: 1)
-        }
-        return menu
+        updateRows(); updateKeyMetrics(refreshFonts: true); refresh()
     }
     func setSoftwareKeyboardVisible(_ visible: Bool) {
         guard softwareKeyboardVisible != visible else { return }
@@ -438,7 +400,7 @@ struct TerminalKeyboardPreferences: Codable {
         guard let terminal else { return }
         terminal.performCustomInput { terminal.insertText(number) }
     }
-    private func toggle(_ modifier: TerminalModifiers, lock: Bool = false) {
+    func toggle(_ modifier: TerminalModifiers, lock: Bool = false) {
         guard let terminal, terminal.customInputEpoch() != nil else { return }
         terminal.keyboardState.toggle(modifier, lock: lock); keyFeedback.feedback("selection"); refresh()
     }

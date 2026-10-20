@@ -1,0 +1,164 @@
+#if os(iOS)
+import XCTest
+import Security
+@testable import Mac_Companion
+
+@MainActor final class TerminalControlsProfileTests: XCTestCase {
+    @MainActor private final class Memory {
+        var data: Data?
+        var keyboards: [UUID: TerminalKeyboardPreferences] = [:]
+        var quick = DirectControlMode.terminal.defaults
+        var writes = 0
+        var failWrite = false
+        var unreadableSource: UUID?
+        var store: TerminalControlsStore {
+            .init(read: { self.data }, write: {
+                if self.failWrite { throw TerminalControlsStore.Failure.unreadable }
+                self.data = $0; self.writes += 1
+            }, legacyIDs: { self.keyboards.keys.sorted { $0.uuidString < $1.uuidString } }, legacyKeyboard: {
+                if self.unreadableSource == $0 { throw TerminalControlsStore.Failure.unreadable }
+                return self.keyboards[$0]!
+            }, legacyActions: { self.quick })
+        }
+    }
+    func testImportsAllMacsWithoutLosingSameNameLongUnicodeOrCollidingIDs() throws {
+        let memory = Memory(), first = UUID(), second = UUID(), collision = UUID()
+        let long = String(repeating: "😀", count: 1023) + "\n"
+        let hidden = VNCQuickAction(id: collision, title: "Same", kind: .shortcut, enabled: false, key: 0x42)
+        memory.quick.append(hidden)
+        memory.keyboards[first] = .init(keys: [.home, .f1], snippets: [.init(id: collision, name: "Same", text: long)])
+        memory.keyboards[second] = .init(keys: [.f1, .end], snippets: [.init(id: collision, name: "Same", text: "  different\n\t中文\n")])
+        let profile = try memory.store.load()
+        XCTAssertTrue(profile.valid)
+        XCTAssertEqual(profile.importedMacs, [first, second])
+        let snippets = profile.actions.filter { $0.kind == .text }
+        XCTAssertEqual(snippets.count, 2)
+        XCTAssertEqual(Set(snippets.map(\.text)), [long, "  different\n\t中文\n"])
+        XCTAssertEqual(snippets.map(\.title), ["Same", "Same"])
+        XCTAssertTrue(snippets.allSatisfy { !$0.inMenu && !$0.inRow }, "Imported snippets remain available under Saved Text without pinning every Mac’s collection")
+        XCTAssertEqual(Set(profile.actions.map(\.id)).count, profile.actions.count)
+        let imported = try XCTUnwrap(profile.actions.first { $0.id == hidden.id })
+        XCTAssertFalse(imported.inMenu); XCTAssertEqual(imported.character, 0x42)
+        XCTAssertEqual(Set(profile.actions.compactMap(\.key)), [.home, .end, .f1])
+        XCTAssertEqual(memory.keyboards[first]?.snippets.first?.text, long, "Migration leaves legacy sources intact")
+        XCTAssertEqual(try memory.store.load(), profile); XCTAssertEqual(memory.writes, 1)
+    }
+    func testRemovedImportedSnippetDoesNotResurrectAndLaterMacStillImports() throws {
+        let memory = Memory(), first = UUID(), next = UUID()
+        let snippet = TerminalSnippet(name: "Remove me", text: "synthetic")
+        memory.keyboards[first] = .init(snippets: [snippet])
+        var draft = try memory.store.load()
+        draft.actions.removeAll { $0.id == snippet.id }
+        _ = try memory.store.save(draft)
+        XCTAssertFalse(try memory.store.load().actions.contains { $0.id == snippet.id })
+        memory.keyboards[next] = .init(snippets: [.init(name: "New Mac", text: "next")])
+        let refreshed = try memory.store.load()
+        XCTAssertFalse(refreshed.actions.contains { $0.id == snippet.id })
+        XCTAssertEqual(refreshed.actions.filter { $0.kind == .text }.map(\.text), ["next"])
+        XCTAssertEqual(refreshed.importedMacs, [first, next])
+    }
+    func testFailedAtomicWriteRetriesWithoutPartialImportOrDuplicateActions() throws {
+        let memory = Memory(), mac = UUID()
+        memory.keyboards[mac] = .init(snippets: [.init(name: "Kept", text: "\t  kept\n")])
+        memory.failWrite = true
+        XCTAssertThrowsError(try memory.store.load()); XCTAssertNil(memory.data)
+        XCTAssertEqual(memory.writes, 0)
+        memory.failWrite = false
+        let profile = try memory.store.load()
+        XCTAssertEqual(profile.actions.filter { $0.kind == .text }.count, 1)
+        XCTAssertEqual(profile.importedMacs, [mac])
+        XCTAssertEqual(try memory.store.load(), profile); XCTAssertEqual(memory.writes, 1)
+    }
+    func testTemporaryIdentityDiscardJournalHasNoMigrationAuthority() throws {
+        let memory = Memory(), temporary = UUID(), saved = UUID()
+        memory.keyboards[temporary] = .init(snippets: [.init(name: "Temporary", text: "discard")])
+        memory.keyboards[saved] = .init(snippets: [.init(name: "Saved", text: "keep")])
+        var store = memory.store; store.excludedIDs = { [temporary] }
+        let profile = try store.load()
+        XCTAssertEqual(profile.actions.filter { $0.kind == .text }.map(\.text), ["keep"])
+        XCTAssertEqual(profile.importedMacs, [saved])
+        XCTAssertEqual(memory.keyboards[temporary]?.snippets.first?.text, "discard", "The existing cleanup owner retains authority over its source")
+    }
+    func testUnreadableDestinationAndSourceNeverGetReplacedWithDefaults() throws {
+        let memory = Memory()
+        memory.data = Data("corrupt synthetic record".utf8)
+        let corrupt = memory.data
+        XCTAssertThrowsError(try memory.store.load())
+        XCTAssertEqual(memory.data, corrupt); XCTAssertEqual(memory.writes, 0)
+        memory.data = nil
+        _ = try memory.store.load()
+        let saved = memory.data, writes = memory.writes, bad = UUID()
+        memory.keyboards[bad] = .init(snippets: [.init(name: "Unreadable source", text: "preserved")])
+        memory.unreadableSource = bad
+        XCTAssertThrowsError(try memory.store.load())
+        XCTAssertEqual(memory.data, saved); XCTAssertEqual(memory.writes, writes)
+    }
+    func testStaleEditorCannotOverwriteAnotherWindowOrANewImport() throws {
+        let memory = Memory()
+        var first = try memory.store.load(), second = first
+        first.actions[0].title = "First window"
+        let saved = try memory.store.save(first)
+        second.actions[0].title = "Stale window"
+        XCTAssertThrowsError(try memory.store.save(second))
+        XCTAssertEqual(try memory.store.load(), saved)
+        memory.keyboards[UUID()] = .init(snippets: [.init(name: "Later import", text: "new")])
+        XCTAssertThrowsError(try memory.store.save(saved))
+        XCTAssertEqual(try memory.store.load().actions.last?.text, "new")
+    }
+    func testEditingPlacementsAndOrderPreservesOnePayloadAndStableIdentity() throws {
+        let memory = Memory()
+        var profile = try memory.store.load()
+        let item = TerminalControlAction(title: "Both", kind: .text, text: "  exact\n", inRow: true)
+        profile.actions.append(item)
+        profile.move(item.id, to: profile.actions[0].id)
+        profile.actions[0].title = "Renamed"
+        profile.actions[0].inMenu = false
+        let saved = try memory.store.save(profile)
+        XCTAssertEqual(saved.actions[0].id, item.id)
+        XCTAssertEqual(saved.actions[0].text, item.text)
+        XCTAssertTrue(saved.actions[0].inRow); XCTAssertFalse(saved.actions[0].inMenu)
+        XCTAssertEqual(saved.actions.filter { $0.id == item.id }.count, 1)
+    }
+    func testSharedRecordIncludesAllMacImportsAndPreservesDisabledQuickActions() throws {
+        let memory = Memory()
+        let original = VNCQuickAction(title: "Hidden text", kind: .text, enabled: false, text: "hidden\n")
+        memory.quick = [original]
+        let first = try memory.store.load()
+        XCTAssertEqual(first.actions.map(\.id), [original.id]); XCTAssertFalse(first.actions[0].inMenu)
+        memory.keyboards[UUID()] = .init(snippets: [.init(name: "Another Mac", text: "other")])
+        let second = try memory.store.load()
+        XCTAssertEqual(second.actions.first?.id, first.actions.first?.id)
+        XCTAssertEqual(second.actions.count, 2)
+        XCTAssertEqual(try JSONDecoder().decode(TerminalControlsProfile.self, from: XCTUnwrap(memory.data)), second)
+    }
+    func testTerminalTextRetainsFourKiBByteLimitAndRejectsControlInjection() {
+        var item = TerminalControlAction(title: "Text", kind: .text, text: String(repeating: "😀", count: 1024))
+        XCTAssertTrue(item.valid)
+        item.text += "a"; XCTAssertFalse(item.valid)
+        for text in ["", "x\0y", "x\u{1b}[31my"] { item.text = text; XCTAssertFalse(item.valid) }
+        item.text = "\t中文\n"; item.inMenu = false; item.inRow = false; XCTAssertTrue(item.valid, "Unpinned content stays in the library")
+        item.kind = .key; XCTAssertFalse(item.valid)
+        item.key = .f12; XCTAssertTrue(item.valid)
+        item.kind = .shortcut; item.character = 0x42; XCTAssertTrue(item.valid)
+        item.modifiers = [0xffeb]; XCTAssertFalse(item.valid, "Terminal cannot import Command chords")
+    }
+    func testInvalidLegacyPayloadStopsMigrationWithoutTruncation() throws {
+        let memory = Memory(), mac = UUID()
+        memory.keyboards[mac] = .init(snippets: [.init(name: "Long", text: String(repeating: "x", count: 4097))])
+        XCTAssertThrowsError(try memory.store.load()); XCTAssertNil(memory.data); XCTAssertEqual(memory.writes, 0)
+        memory.keyboards[mac]?.snippets[0].text = String(repeating: "x", count: 4096)
+        XCTAssertEqual(try memory.store.load().actions.last?.text.utf8.count, 4096)
+    }
+    func testLegacyKeychainDiscoveryFindsEveryMacWithoutChangingItsSource() throws {
+        let ids = [UUID(), UUID()]
+        let service = "media.jenny.maccompanion.ssh-terminal-keyboard-v1.v1"
+        defer { for id in ids { SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: id.uuidString.lowercased()] as CFDictionary) } }
+        for (index, id) in ids.enumerated() {
+            try TerminalKeyboardPreferences(snippets: [.init(name: "Synthetic \(index)", text: "preserved \(index)\n")]).save(id)
+        }
+        let found = try TerminalSecretStore.accounts(kind: "terminal-keyboard-v1")
+        XCTAssertTrue(Set(ids).isSubset(of: Set(found)))
+        for (index, id) in ids.enumerated() { XCTAssertEqual(try TerminalKeyboardPreferences.load(id).snippets.first?.text, "preserved \(index)\n") }
+    }
+}
+#endif

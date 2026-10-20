@@ -407,6 +407,29 @@ Terminal profiles reject macOS Command chords and desktop-only actions; Terminal
 shortcuts use the existing xterm encoder and saved text uses bracketed paste when
 requested by the shell. Existing Pro customization and free standard controls remain.
 
+On iOS, Terminal controls use one device-local profile for every Mac connection.
+The floating menu exposes More Keys, Saved Text and Customize Controls directly;
+the software-keyboard row has no Fn menu. A visual editor previews the custom row
+and floating menu. Preview selection/reordering never sends session input. Each
+action has one definition and independent row/menu placements. Cancel discards
+the draft; Save commits it once, rejecting a stale editor revision.
+
+Import existing shared Terminal quick actions and every local per-Mac Terminal
+keyboard record into that profile without deleting or rewriting the sources.
+Exclude never-saved identities still owned by the temporary-identity discard
+journal; migration must not retain their data beyond that cleanup.
+Preserve IDs where unique, order, disabled actions, modifier chords, all text
+including whitespace, and the existing 4096-byte Terminal snippet limit. Keep
+same-name snippets with different content. Journal completed source imports in
+the same atomic Keychain record as the actions so retries and later user removals
+cannot duplicate or resurrect imports. An unreadable source or destination must
+not be replaced with defaults. Custom content remains local, non-synchronizing,
+WhenUnlockedThisDeviceOnly and excluded from diagnostics and ActivityKit.
+Input continues through the existing ready-foreground, PTY-generation and
+whole-action queue admission policies. Retained menu actions are invalid after
+pause or connection replacement. This changes control presentation and local
+preference migration, not SSH authentication or negotiated key encoding.
+
 Two-finger trackpad scrolling uses the existing balanced RFB wheel masks: one tick
 per six points, at most eight ticks per gesture update. Keep fractional deltas;
 discard excess movement, canceled motion and remainder at the end. Never replay
@@ -414,10 +437,13 @@ input after fingers stop or after a lifecycle transition. This changes local ges
 sensitivity, not the wire format or authentication.
 
 Quick actions can be reordered, hidden and augmented with explicitly configured
-shortcut chords or saved text (at most 256 Unicode scalars). Store custom content
+shortcut chords or saved text (at most 256 Unicode scalars in the legacy profiles;
+the shared iOS Terminal profile above supports 4096 UTF-8 bytes). Store custom content
 only in a distinct local, non-synchronizing WhenUnlockedThisDeviceOnly Keychain
-entry. Never include it in diagnostics or ActivityKit. Send saved text as balanced
-Unicode key events, not a remote clipboard claim. Shortcut modifiers and key are
+entry. Never include it in diagnostics or ActivityKit. Screen Sharing and Trackpad
+send saved text as balanced Unicode key events; Terminal uses its existing UTF-8
+PTY path and negotiated bracketed paste. Neither claims a remote clipboard write.
+Shortcut modifiers and key are
 one balanced group and clear one-shot modifiers. Actions require a ready foreground
 session; local display/input settings remain available during recovery.
 Admit the complete custom action into the bounded input queue or none of it.

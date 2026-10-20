@@ -997,7 +997,12 @@ struct DirectSessionSettingsV1: View {
                     switch selection {
                     case .pro: DirectProView()
                     case .desktop: VNCInputSettings(mode: .desktop)
-                    case .terminal: VNCInputSettings(mode: .terminal)
+                    case .terminal:
+                        #if os(iOS)
+                        TerminalControlsSettings()
+                        #else
+                        VNCInputSettings(mode: .terminal)
+                        #endif
                     case .trackpad: VNCInputSettings(mode: .trackpad)
                     case .help: DirectMacSetupGuide()
                     }

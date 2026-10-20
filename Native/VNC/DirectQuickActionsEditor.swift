@@ -419,6 +419,7 @@ struct DirectQuickActionInspector: View {
 struct DirectSavedTextEditor: View {
     @Binding var text: String
     let mode: DirectControlMode
+    var maximumBytes: Int? = nil
     private var editorBackground: Color {
         #if os(iOS) || os(visionOS)
         Color(uiColor: .systemBackground)
@@ -447,8 +448,8 @@ struct DirectSavedTextEditor: View {
             HStack {
                 Text("Stored only on this device")
                 Spacer()
-                Text("\(text.unicodeScalars.count)/256").monospacedDigit()
-                    .foregroundStyle(text.unicodeScalars.count > 256 ? Color.red : Color.secondary)
+                Text(maximumBytes.map { "\(text.utf8.count)/\($0) bytes" } ?? "\(text.unicodeScalars.count)/256").monospacedDigit()
+                    .foregroundStyle((maximumBytes.map { text.utf8.count > $0 } ?? (text.unicodeScalars.count > 256)) ? Color.red : Color.secondary)
             }.font(.caption).foregroundStyle(.secondary)
             Text(mode == .terminal ? "A trailing newline can run a command." : "Sent to the focused field on your Mac.")
                 .font(.caption).foregroundStyle(.secondary)

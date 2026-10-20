@@ -92,12 +92,13 @@ import SwiftUI
         defer { window.isHidden = true; window.rootViewController = nil }
         holder.view.layoutIfNeeded()
         let ctrl = try XCTUnwrap(descendants(bar).compactMap { $0 as? UIButton }.first { $0.configuration?.title == "Ctrl" })
-        let fn = try XCTUnwrap(descendants(bar).compactMap { $0 as? UIButton }.first { $0.configuration?.title == "Fn" })
+        let escape = try XCTUnwrap(descendants(bar).compactMap { $0 as? UIButton }.first { $0.configuration?.title == "Esc" })
+        XCTAssertFalse(descendants(bar).compactMap { $0 as? UIButton }.contains { $0.configuration?.title == "Fn" })
         let normal = try XCTUnwrap(ctrl.titleLabel?.font.pointSize)
         bar.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
         holder.view.layoutIfNeeded(); bar.layoutIfNeeded()
         XCTAssertGreaterThan(try XCTUnwrap(ctrl.titleLabel?.font.pointSize), normal)
-        XCTAssertGreaterThan(try XCTUnwrap(fn.titleLabel?.font.pointSize), normal)
+        XCTAssertGreaterThan(try XCTUnwrap(escape.titleLabel?.font.pointSize), normal)
         for button in descendants(bar).compactMap({ $0 as? UIButton }).filter({ $0.configuration?.title != nil }) {
             button.layoutIfNeeded()
             XCTAssertGreaterThanOrEqual(button.bounds.height + 1, button.titleLabel?.font.lineHeight ?? 0)

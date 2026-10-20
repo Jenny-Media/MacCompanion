@@ -118,11 +118,16 @@ import Citadel
             let surface = rig.controller.terminal
             rig.controller.applyAppearance(.dark); rig.controller.applyAppearance(.light)
             XCTAssertEqual(rig.controller.preparedGeneration, generation)
+            // DECSET 1004 immediately reports focus. Drain that legitimate
+            // emulator reply before measuring whether paused user input replays.
+            // The cursor reply is an ordered barrier over the same SSH stream.
+            try await rig.record.emit(fixture.queries.request)
+            try await terminalWait("mode replies drained") { rig.record.received.last == 82 }
             rig.record.clearReceived()
             rig.session.background(); await rig.session.waitForLifecycleUpdates()
             rig.session.send(Array("must-not-replay".utf8))
             rig.session.resize(columns: 100, rows: 30)
-            XCTAssertTrue(rig.session.connected); XCTAssertTrue(rig.record.received.isEmpty)
+            XCTAssertTrue(rig.session.connected); XCTAssertTrue(rig.record.received.isEmpty, "Unexpected synthetic PTY bytes: " + self.hex(rig.record.received))
             rig.session.foreground(); await rig.session.waitForLifecycleUpdates()
             try await terminalWait("latest grid after resume") { rig.record.size == [100, 30] }
             XCTAssertEqual(rig.record.shellRequests, 1)
@@ -132,7 +137,7 @@ import Citadel
             XCTAssertTrue(rig.controller.terminal.getTerminal().isCurrentBufferAlternate)
             XCTAssertTrue(rig.controller.terminal.getTerminal().bracketedPasteMode)
             XCTAssertEqual(rig.controller.terminal.getTerminal().keyboardEnhancementFlags.rawValue, 1)
-            XCTAssertTrue(rig.record.received.isEmpty)
+            XCTAssertTrue(rig.record.received.isEmpty, "Unexpected synthetic PTY bytes: " + self.hex(rig.record.received))
         }
     }
 
@@ -433,6 +438,7 @@ private final class CompatibilityPress: UIPress {
         window = UIWindow(windowScene: scene)
         host = UIHostingController(rootView: DirectTerminalView(mac: mac, session: session, autoConnect: false, exit: {}).directAppearance())
         window.rootViewController = host; window.makeKeyAndVisible()
+        host.loadViewIfNeeded(); window.layoutIfNeeded()
     }
     static func make() async throws -> TerminalCompatibilityHarness {
         // Query replies must not be echoed back as new terminal requests.
@@ -447,6 +453,10 @@ private final class CompatibilityPress: UIPress {
         do {
             try TerminalSecretStore.write(Data(String(openSSHPublicKey: key.publicKey).utf8), id: mac.id, kind: "host-key")
             let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+            try await terminalWait("active QA window") {
+                UIApplication.shared.applicationState == .active && scene.activationState == .foregroundActive
+                    && scene.windows.contains { $0.isKeyWindow && $0.rootViewController?.viewIfLoaded?.window != nil }
+            }
             let rig = TerminalCompatibilityHarness(record: record, server: server, mac: mac, scene: scene)
             do {
                 try await terminalWait("hosted terminal") { rig.findController(rig.host) != nil }
@@ -464,8 +474,14 @@ private final class CompatibilityPress: UIPress {
     func connect() { session.connect(username: "synthetic", password: "synthetic-only", remember: false) }
     func tap(_ title: String) throws {
         func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
-        let button = try XCTUnwrap(descendants(controller.keyboardBar).compactMap { $0 as? UIButton }.first { $0.configuration?.title == title })
-        button.sendActions(for: .touchUpInside)
+        if let button = descendants(controller.keyboardBar).compactMap({ $0 as? UIButton }).first(where: { $0.configuration?.title == title }) {
+            button.sendActions(for: .touchUpInside)
+        } else {
+            let key = try XCTUnwrap(TerminalAccessoryKey.allCases.first { $0.title == title })
+            let menu = controller.makeMoreKeysMenu(), kind = "terminalKey-" + key.rawValue
+            let item = try XCTUnwrap(menu.sections.flatMap { $0["items"] as? [[String: Any]] ?? [] }.first { $0["kind"] as? String == kind })
+            menu.selectionHandler?(item)
+        }
     }
     private func findController(_ root: UIViewController) -> TerminalController? {
         if let match = root as? TerminalController { return match }
