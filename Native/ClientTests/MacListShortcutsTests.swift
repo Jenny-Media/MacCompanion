@@ -104,7 +104,7 @@ private final class RecordingInterfaceFeedback: CompanionVNCInterfaceFeedback {
             feedback.feedback("open")
             XCTAssertEqual(feedback.events, ["open"])
             defaults.set(false, forKey: CompanionVNCControlsHapticsPreference)
-            for kind in ["selection", "open", "commit", "end", "success", "error"] { feedback.feedback(kind) }
+            for kind in ["selection", "key", "open", "commit", "end", "success", "error"] { feedback.feedback(kind) }
             XCTAssertEqual(feedback.events, ["open"])
             defaults.set(true, forKey: CompanionVNCControlsHapticsPreference)
             feedback.feedback("selection")

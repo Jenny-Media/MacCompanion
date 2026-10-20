@@ -6,6 +6,7 @@ import SwiftUI
     var value = DirectMacAccessProfile()
     private(set) var original: DirectMacAccessProfile?
     var message: String?
+    @ObservationIgnored var feedback: (String) -> Void = { CompanionVNCPlayInterfaceFeedback($0) }
     init(macID: UUID) { self.macID = macID }
     var editable: Bool { original != nil && !DirectMacConnections.shared.isActive(macID) }
     func load() {
@@ -18,13 +19,15 @@ import SwiftUI
         do {
             if value.sshMethod == .key, value.keyID != original.keyID || original.sshMethod != .key {
                 guard let keyID = value.keyID, let selected = try TerminalKeyLibraryStore.load().keys.first(where: { $0.id == keyID }),
-                      try TerminalKeyLibraryStore.canUse(selected) else { message = "Choose an available SSH key. Check Pro access if this key is outside the free allowance."; return false }
+                      try TerminalKeyLibraryStore.canUse(selected) else { message = "Choose an available SSH key. Check Pro access if this key is outside the free allowance."; feedback("error"); return false }
             }
-            try DirectMacAccessStore.save(value, id: macID, replacing: original); self.original = value; message = nil; onSaved(); return true }
+            try DirectMacAccessStore.save(value, id: macID, replacing: original); self.original = value; message = nil
+            if value != original { feedback("success") }
+            onSaved(); return true }
         catch DirectMacAccessStore.Failure.busy { message = "Disconnect this Mac before changing its login." }
         catch DirectMacAccessStore.Failure.changed { message = "Access settings changed elsewhere. Close and reopen this editor to review them." }
         catch { message = "The login could not be saved. Check the account, password and SSH selection. Existing settings are kept." }
-        return false
+        feedback("error"); return false
     }
     func clear() { value = .init(); original = nil; message = nil }
     func forget(onForgotten: () -> Void = {}) -> Bool {
@@ -32,6 +35,7 @@ import SwiftUI
         do {
             try DirectMacAccessStore.forget(macID, replacing: original)
             value = .init(); self.original = value; message = nil
+            if original != value { feedback("success") }
             onForgotten(); return true
         } catch DirectMacAccessStore.Failure.busy {
             message = "Disconnect this Mac before forgetting its login."
@@ -40,7 +44,7 @@ import SwiftUI
         } catch {
             message = "Couldn’t confirm the saved login was removed. Try again."
         }
-        return false
+        feedback("error"); return false
     }
 }
 
@@ -122,7 +126,7 @@ struct DirectMacAccessView: View {
             } message: { Text(connections.hasTransfers(mac.id) ? "Active file transfers will be interrupted. Completed downloads are kept so you can save them." : "Screen Sharing, Terminal and Files connections to this Mac will close. Other Macs stay connected.") }
             .confirmationDialog("Forget this Mac’s saved login?", isPresented: $forgetConfirmation, titleVisibility: .visible) {
                 Button("Forget Saved Login", role: .destructive) {
-                    if draft.forget(onForgotten: saved) { CompanionVNCPlayInterfaceFeedback("success"); dismiss() }
+                    if draft.forget(onForgotten: saved) { dismiss() }
                 }.accessibilityIdentifier("access-confirm-forget-login")
             } message: { Text("Saved passwords and this Mac’s key selection are removed. Keys in the library and the verified SSH server identity are kept.") }
         }.directAppearance()

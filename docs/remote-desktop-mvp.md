@@ -135,6 +135,27 @@ following until the next trackpad gesture. Mac-originated cursor notifications
 do not move the view. Following uses the existing image and gesture-paced scroll
 offset updates, with no idle polling, helper or connection change.
 
+### On-screen keyboard feedback
+
+Terminal, Screen Sharing and Trackpad & Keyboard use the device-local Interface
+Haptics preference for custom keys and modifier changes. Each explicit key action
+requests one quiet tick; modifier selection/lock changes request selection feedback.
+The preference applies immediately. System keyboard typing, transport writes and
+automatic modifier resets add no app-generated haptic. Explicit keyboard toggles,
+accepted session option changes, composer expansion/docking and committed edge snaps
+use selection feedback. Reselecting an option, cancelled gestures and restoring
+settings stay silent. Remote key buttons dim while input is unavailable and resume
+without queued presses or armed modifiers. Local keyboard visibility, presentation,
+settings and input-only recovery remain available during a temporary input pause.
+Session key menus close when input becomes unavailable;
+deferred menu choices cannot act on a retired or replacement connection. Desktop-size
+feedback compares the live geometry without changing verified preference saving.
+Composer delivery, clipboard copies and Saved Login management
+acknowledge confirmed success or failure once; retired or unavailable composer owners
+stay silent. All interface events use the same live preference and view-associated
+UIKit generators. Trackpad gestures keep their independent setting. Native UIKit
+feedback remains subject to system availability.
+
 ### Trackpad touch feedback, 2026-10-08
 
 Trackpad & Keyboard, Desktop Trackpad and the tabletop input pad share soft

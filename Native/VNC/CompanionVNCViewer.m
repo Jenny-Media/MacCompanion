@@ -15,6 +15,12 @@
 #import "CompanionVNCTextReview.h"
 #import "Mac_Companion-Swift.h"
 
+// Marks typing menus so a temporary input pause does not retire local controls.
+@interface CompanionVNCKeyMenu : CompanionVNCMenu
+@end
+@implementation CompanionVNCKeyMenu
+@end
+
 @interface CompanionRemoteTextInput : UITextView
 @property(nonatomic, copy) void (^remoteDelete)(void);
 @end
@@ -69,6 +75,10 @@
 @property UILabel *progressLabel;
 @property UIActivityIndicatorView *spinner;
 @property CompanionVNCControls *controls;
+@property CompanionVNCInterfaceFeedback *keyFeedback;
+@property BOOL keyGroupAccepted, admittingCustomKey;
+@property(weak) UINavigationController *sessionMenu;
+@property NSUInteger sessionMenuGeneration;
 @property BOOL retiringPointerGestures;
 @property NSUInteger displaySelectionRejections, displaySelectionRejectMask;
 @property BOOL initialDisplayApplied;
@@ -167,6 +177,8 @@
 @property NSDictionary *diagnosticFlags;
 @property(nonatomic, copy) NSDictionary *lastConnectionFailure;
 - (BOOL)composedTextAvailable;
+- (BOOL)sessionKeyInputAvailable;
+- (void)retireSessionMenu;
 @end
 
 @implementation CompanionVNCViewer
@@ -220,12 +232,15 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.connectionProgress = [DirectConnectionProgressState new];
+    self.keyFeedback = [[CompanionVNCInterfaceFeedback alloc] initWithView:self.view];
     self.view.backgroundColor = UIColor.systemBackgroundColor; self.foreground = YES;
     self.modifiers = [NSMutableArray new];
     [self prepareConnection];
     __weak CompanionVNCViewer *weak = self;
     self.remoteKeyboard = [[CompanionVNCKeyboard alloc] initWithEvents:^(NSArray<NSDictionary *> *events) {
-        if (weak && weak.foreground && !weak.inputInactive && !weak.exited && !weak.checkingResume && !weak.restoreViewportPending) [weak.session keyEvents:events];
+        if (weak.admittingCustomKey) weak.keyGroupAccepted = [weak sessionKeyInputAvailable] && [weak.session tryKeyEvents:events];
+        else if (weak && weak.foreground && !weak.inputInactive && !weak.exited && !weak.checkingResume && !weak.restoreViewportPending)
+            [weak.session keyEvents:events]; // Ordinary system commits retain explicit overflow/failure handling.
     }];
     self.status = [UILabel new]; self.status.text = @"macOS Screen Sharing · over SSH";
     self.status.font = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleCaption1] scaledFontForFont:[UIFont systemFontOfSize:12]];
@@ -268,6 +283,7 @@
             if ([kind isEqual:@"composeText"] || [kind isEqual:@"rightClick"] || [kind isEqual:@"shortcut"] || [kind isEqual:@"text"]
                 || [kind isEqual:@"escape"] || [kind isEqual:@"tab"] || [kind isEqual:@"returnKey"])
                 choice[@"disabled"] = @(![weak composedTextAvailable]);
+            if ([kind isEqual:@"keys"] || [kind isEqual:@"functionKeys"]) choice[@"disabled"] = @(![weak sessionKeyInputAvailable]);
             [snapshot addObject:choice];
         }
         weak.controls.quickActions = snapshot;
@@ -445,6 +461,7 @@
     for (NSUInteger i = 0; i < titles.count; i++) {
         UIButton *key = [self button:titles[i] action:i == 6 ? @selector(moreKeys:) : @selector(remoteKey:)];
         key.tag = [symbols[i] integerValue]; [keys addObject:key];
+        [key addTarget:self action:@selector(prepareKeyFeedback) forControlEvents:UIControlEventTouchDown];
         if (i >= 2 && i <= 5) {
             [self.modifiers addObject:key];
             key.accessibilityLabel = @[@"Shift", @"Control", @"Option", @"Command"][i - 2];
@@ -587,6 +604,7 @@
     [self showConnectionProgress:@"Switching display mode…"];
 }
 - (void)prepareConnection {
+    [self retireSessionMenu];
     self.mirrorRestartScheduled = NO;
     if (self.changingDisplayMode) self.mirrorRestoreAttempts++;
     self.desktopSizeRestored = self.changingDisplayMode || self.inputOnly; self.pendingDesktopSizePreset = 0; self.pendingStreamDisplayID = nil;
@@ -626,6 +644,7 @@
         CompanionVNCViewer *strong = weak; if (!strong || strong.session != owner) return;
         strong.latestCounters = stats;
         if (strong.exited || strong.failedDisplayModePreset) return;
+        if (!strong.session.running) [strong retireSessionMenu];
         [strong.connectionProgress recordNativeState:state];
         if (strong.changingDisplayMode && strong.foreground && !strong.inputInactive) [strong updateDisplayModeRestoration];
         if (strong.mirrorRestartScheduled || strong.failedDisplayModePreset) { [strong reportDiagnostics:stats]; return; }
@@ -804,6 +823,7 @@
     [self loginEdited]; [self refreshAccessEditing];
 }
 - (void)stopViewer {
+    [self retireSessionMenu];
     [self cancelDisplayModeConfirmation]; self.failedDisplayModePreset = nil;
     self.changingDisplayMode = self.mirrorRestartScheduled = self.mirrorRequiresCleanup = NO;
     self.mirrorCleanupRemaining = 0;
@@ -947,16 +967,18 @@
 }
 - (void)becameInactive {
     if (!self.foreground || self.exited || self.inputInactive) return;
+    [self retireSessionMenu];
     self.inputInactive = YES; self.modeVerificationTimed = NO; self.modeVerificationGeneration++;
     [self discardPendingDisplayPreferences];
     [self cancelDisplayModeConfirmation];
     [self.controls close]; [self releasePointer]; [self resetModifiers]; [self cancelTrackpadTouches];
     [self invalidateTextReview:YES];
     [self.session suspendInputForInterruption];
-    [self updateCursor]; [self updateTrackpadFeedback];
+    [self updateCursor]; [self updateTrackpadFeedback]; [self updateRemoteKeyAvailability];
 }
 - (void)background { [self backgroundWithCompletion:nil]; }
 - (void)backgroundWithCompletion:(void (^)(void))completion {
+    [self retireSessionMenu];
     [self retireTextDraft];
     if (!self.foreground || self.exited) { if (completion) completion(); return; }
     [self discardPendingDisplayPreferences];
@@ -984,12 +1006,12 @@
     if (self.foreground) {
         if (self.inputInactive) { self.inputInactive = NO; [self.session resumeInputAfterInterruption]; [self updateCursor]; [self updateTrackpadFeedback]; }
         if (self.changingDisplayMode) [self updateDisplayModeRestoration];
-        [self revealDeferredTextReviewFailure]; return;
+        [self updateRemoteKeyAvailability]; [self revealDeferredTextReviewFailure]; return;
     }
     self.foreground = YES; self.inputInactive = NO;
     [self.credentialState resumeWithActive:YES allowed:self.credentialState.accessAllowed]; [self renderCredentialForm];
     if (self.deferredTextReviewFailure) { self.reconnectWhenReady = NO; [self revealDeferredTextReviewFailure]; return; }
-    if (!self.reconnectWhenReady) return;
+    if (!self.reconnectWhenReady) { [self updateRemoteKeyAvailability]; return; }
     self.checkingResume = YES;
     self.status.hidden = YES; [self scheduleResumeIndicator:self.inputOnly ? @"Resuming Trackpad & Keyboard…" : @"Updating desktop…"]; self.image.alpha = 1;
     if (!self.session.running) { [self reconnectAfterFailedResume]; return; }
@@ -1075,6 +1097,7 @@
     });
 }
 - (void)updateStatusPresentation {
+    [self updateRemoteKeyAvailability];
     BOOL busy = self.changingDisplayMode || self.checkingResume || self.starting || self.restoreViewportPending || self.pendingDesktopSizePreset != 0 || self.pendingStreamDisplayID != nil;
     self.statusBackdrop.hidden = self.status.hidden;
     self.statusSpinner.hidden = !busy || self.status.hidden;
@@ -1382,8 +1405,11 @@
         NSDictionary *selected = nil;
         for (NSDictionary *d in weak.displayViews) if ([d[@"id"] isEqual:displayID]) { selected = d; break; }
         weak.initialDisplayApplied = YES; weak.restoredDisplayID = nil;
+        BOOL changed = [weak.selectedDisplay[@"id"] unsignedIntValue] != displayID.unsignedIntValue;
         if ([weak.session.desktopDisplayLayout[@"views"] count]) {
-            if (![weak applyStreamDisplay:displayID ?: @0]) {
+            if ([weak applyStreamDisplay:displayID ?: @0]) {
+                if (changed) [weak.keyFeedback feedback:@"selection"];
+            } else {
                 weak.displaySelectionRejections++;
                 weak.displaySelectionRejectMask = (!weak.foreground || weak.exited ? 1 : 0)
                     | (weak.inputInactive || weak.inputOnly || weak.textReview ? 2 : 0)
@@ -1397,6 +1423,7 @@
             }
         } else {
             [weak selectDisplay:selected];
+            if (changed && (!displayID || selected)) [weak.keyFeedback feedback:@"selection"];
             if (weak.displaySelectionHandler) weak.displaySelectionHandler(selected[@"id"]);
         }
     };
@@ -1767,10 +1794,13 @@
     self.keyboardButton.accessibilityLabel = active ? @"Hide Keyboard" : @"Show Keyboard";
     self.keyboardButton.accessibilityHint = active ? @"Dismiss the keyboard and restore the desktop view." : @"Open the keyboard to type on your Mac.";
 }
-- (void)keyboard {
+- (void)keyboard { [self toggleKeyboardWithFeedback:YES]; }
+- (void)toggleKeyboardWithFeedback:(BOOL)feedback {
     if (self.textReview) return;
-    if (self.input.isFirstResponder) [self.input resignFirstResponder]; else [self.input becomeFirstResponder];
+    BOOL before = self.input.isFirstResponder;
+    if (before) [self.input resignFirstResponder]; else [self.input becomeFirstResponder];
     [self updateKeyboardButton];
+    if (feedback && before != self.input.isFirstResponder) [self.keyFeedback feedback:@"selection"];
 }
 - (void)textViewDidBeginEditing:(UITextView *)textView { if (textView == self.input) [self updateKeyboardButton]; }
 - (void)textViewDidEndEditing:(UITextView *)textView { if (textView == self.input) [self updateKeyboardButton]; }
@@ -1810,17 +1840,33 @@
 - (void)sendRemoteKey:(uint32_t)key {
     [self.remoteKeyboard pressKey:key]; [self refreshModifiers];
 }
+- (BOOL)sendCustomKey:(uint32_t)key {
+    self.keyGroupAccepted = NO; self.admittingCustomKey = YES;
+    [self.remoteKeyboard pressKey:key]; self.admittingCustomKey = NO; [self refreshModifiers];
+    return self.keyGroupAccepted;
+}
+- (BOOL)sendRemoteModifier:(uint32_t)key {
+    self.keyGroupAccepted = NO; self.admittingCustomKey = YES;
+    [self.remoteKeyboard pressModifierAlone:key]; self.admittingCustomKey = NO; [self refreshModifiers];
+    return self.keyGroupAccepted;
+}
+- (void)prepareKeyFeedback { if ([self sessionKeyInputAvailable]) [self.keyFeedback prepareKeyFeedback]; }
 - (void)singleModifier:(UILongPressGestureRecognizer *)gesture {
-    if (gesture.state != UIGestureRecognizerStateBegan) return;
-    [self.remoteKeyboard pressModifierAlone:(uint32_t)gesture.view.tag]; [self refreshModifiers];
+    if (gesture.state != UIGestureRecognizerStateBegan || ![self sessionKeyInputAvailable]) return;
+    if ([self sendRemoteModifier:(uint32_t)gesture.view.tag]) [self.keyFeedback feedback:@"selection"];
 }
 - (void)remoteKey:(UIButton *)button {
+    if (![self sessionKeyInputAvailable]) return;
     if ([self.modifiers containsObject:button]) {
-        [self.remoteKeyboard toggleModifier:(uint32_t)button.tag]; [self refreshModifiers];
-    } else [self sendRemoteKey:(uint32_t)button.tag];
+        [self.remoteKeyboard toggleModifier:(uint32_t)button.tag];
+        [self.keyFeedback feedback:@"selection"]; [self refreshModifiers];
+    } else {
+        if ([self sendCustomKey:(uint32_t)button.tag]) [self.keyFeedback feedback:@"key"];
+    }
 }
 - (void)moreKeys:(UIButton *)button {
-    [self presentMenu:@"Extra Keys" sections:@[
+    if (![self sessionKeyInputAvailable]) return;
+    [self presentMenu:@"Extra Keys" requiresKeyInput:YES sections:@[
         @{@"title": @"Editing", @"items": @[
             @{@"kind": @"key", @"title": @"Return", @"symbol": @"return", @"key": @0xff0d},
             @{@"kind": @"key", @"title": @"Backspace", @"symbol": @"delete.left", @"key": @0xff08},
@@ -1842,9 +1888,10 @@
             @{@"kind": @"modifier", @"title": @"Send Command Alone", @"symbol": @"command", @"key": @0xffeb}]}]];
 }
 - (void)showFunctionKeys {
+    if (![self sessionKeyInputAvailable]) return;
     NSMutableArray *items = [NSMutableArray new];
     for (NSUInteger i = 0; i < 12; i++) [items addObject:@{@"kind": @"key", @"title": [NSString stringWithFormat:@"F%lu", (unsigned long)i+1], @"key": @(0xffbe + i), @"symbol": @"keyboard"}];
-    [self presentMenu:@"Function Keys" sections:@[@{@"title": @"F1–F12", @"items": items}]];
+    [self presentMenu:@"Function Keys" requiresKeyInput:YES sections:@[@{@"title": @"F1–F12", @"items": items}]];
 }
 - (void)setQuickActions:(NSArray<NSDictionary *> *)quickActions {
     _quickActions = [quickActions copy];
@@ -2044,41 +2091,68 @@
 }
 - (void)performControlAction:(NSDictionary *)action {
     NSString *kind = action[@"kind"];
+    BOOL feedback = ![action[@"interfaceFeedbackHandled"] boolValue];
     if (self.textReview) return;
     if ([kind isEqual:@"copyText"]) { [self showCopyScreenText]; return; }
     if ([kind isEqual:@"viewMenu"]) { [self showViewMenu]; return; }
     if ([kind isEqual:@"desktopSizeMenu"]) { [self showDesktopSizeMenu]; return; }
     if ([kind isEqual:@"mirrorDisplay"]) { [self confirmDisplayModePreset:0]; return; }
     if ([kind isEqual:@"virtualDisplay"]) { [self confirmDisplayModePreset:self.restoredDesktopSizePreset > 0 ? self.restoredDesktopSizePreset : 2]; return; }
-    if ([kind isEqual:@"desktopSize"]) { [self applyDesktopSizePreset:[action[@"preset"] integerValue]]; return; }
+    if ([kind isEqual:@"desktopSize"]) {
+        NSInteger preset = [action[@"preset"] integerValue];
+        BOOL changed = ![self desktopSizeMatchesPreset:preset];
+        if ([self applyDesktopSizePreset:preset] && changed && feedback) [self.keyFeedback feedback:@"selection"];
+        return;
+    }
     if ([kind isEqual:@"inputMenu"]) { [self showInputMenu]; return; }
     if ([kind isEqual:@"files"]) { if (self.filesHandler) self.filesHandler(); return; }
     if ([kind isEqual:@"composeText"]) { [self showTextComposer]; return; }
     if ([kind isEqual:@"appSettings"]) { if (self.appSettingsHandler) self.appSettingsHandler(); return; }
     if ([kind isEqual:@"exit"]) { [self showMacs]; return; }
     if ([kind isEqual:@"details"]) { [self showConnectionDetails]; return; }
-    if ([kind isEqual:@"setPointer"]) { if (!self.inputOnly) [self setTrackpadModeEnabled:NO]; return; }
-    if ([kind isEqual:@"setTrackpad"]) { [self setTrackpadModeEnabled:YES]; return; }
+    if ([kind isEqual:@"setPointer"] || [kind isEqual:@"setTrackpad"] || [kind isEqual:@"mode"]) {
+        BOOL before = self.trackpadMode;
+        if ([kind isEqual:@"setTrackpad"]) [self setTrackpadModeEnabled:YES];
+        else if (!self.inputOnly) [self setTrackpadModeEnabled:[kind isEqual:@"mode"] ? !before : NO];
+        if (feedback && before != self.trackpadMode) [self.keyFeedback feedback:@"selection"];
+        return;
+    }
     if ([kind isEqual:@"functionKeys"]) { [self showFunctionKeys]; return; }
-    if ([kind isEqual:@"fullscreen"]) { self.fullscreen = !self.fullscreen; return; }
-    if ([kind isEqual:@"inputOnly"]) { if (self.connectionForegroundAvailable) self.inputOnly = !self.inputOnly; return; }
-    if ([kind isEqual:@"keyboard"]) { [self keyboard]; return; }
+    if ([kind isEqual:@"fullscreen"]) {
+        self.fullscreen = !self.fullscreen;
+        if (feedback) [self.keyFeedback feedback:@"selection"];
+        return;
+    }
+    if ([kind isEqual:@"inputOnly"]) {
+        BOOL before = self.inputOnly;
+        if (self.connectionForegroundAvailable) self.inputOnly = !before;
+        if (feedback && before != self.inputOnly) [self.keyFeedback feedback:@"selection"];
+        return;
+    }
+    if ([kind isEqual:@"keyboard"]) { [self toggleKeyboardWithFeedback:feedback]; return; }
     if ([kind isEqual:@"displays"]) { [self chooseView]; return; }
     if ([kind isEqual:@"input"]) { if (self.settingsHandler) self.settingsHandler(); return; }
-    if ([kind isEqual:@"mode"]) { if (!self.inputOnly) [self setTrackpadModeEnabled:!self.trackpadMode]; return; }
     if ([kind isEqual:@"fit"]) { [self fitDesktop]; return; }
     if ([kind isEqual:@"keys"]) { [self moreKeys:self.views]; return; }
     if ([kind isEqual:@"session"]) { [self showSessionMenu]; return; }
-    if (!self.foreground || self.exited || self.inputInactive || self.restoreViewportPending || self.checkingResume || !self.session.connected) {
+    if (![self sessionKeyInputAvailable]) {
         self.status.hidden = NO; self.status.text = @"Wait for the desktop to resume before sending input."; [self updateStatusPresentation]; return;
     }
-    if ([kind isEqual:@"escape"]) { [self sendRemoteKey:0xff1b]; return; }
-    if ([kind isEqual:@"tab"]) { [self sendRemoteKey:0xff09]; return; }
-    if ([kind isEqual:@"returnKey"]) { [self sendRemoteKey:0xff0d]; return; }
-    if ([kind isEqual:@"key"]) { [self sendRemoteKey:[action[@"key"] unsignedIntValue]]; return; }
-    if ([kind isEqual:@"modifier"]) { [self.remoteKeyboard pressModifierAlone:[action[@"key"] unsignedIntValue]]; [self refreshModifiers]; return; }
+    // Local admission is immediate; do not wait for a transport or Mac reply.
+    BOOL menuFeedback = feedback && [action[@"menuFeedback"] boolValue];
+    NSString *inputFeedback = menuFeedback ? @"key" : (feedback && [action[@"inputFeedback"] boolValue] ? @"commit" : nil);
+    if ([@[@"key", @"escape", @"tab", @"returnKey"] containsObject:kind]) {
+        uint32_t key = [kind isEqual:@"escape"] ? 0xff1b : [kind isEqual:@"tab"] ? 0xff09 : [kind isEqual:@"returnKey"] ? 0xff0d : [action[@"key"] unsignedIntValue];
+        if ([self sendCustomKey:key] && inputFeedback) [self.keyFeedback feedback:inputFeedback];
+        return;
+    }
+    if ([kind isEqual:@"modifier"]) {
+        if ([self sendRemoteModifier:[action[@"key"] unsignedIntValue]] && inputFeedback) [self.keyFeedback feedback:menuFeedback ? @"selection" : inputFeedback];
+        return;
+    }
     if ([kind isEqual:@"rightClick"]) {
-        CGPoint p = [self trackpadPointer]; [self clickPointer:p mask:4];
+        CGPoint p = [self trackpadPointer];
+        if ([self clickPointer:p mask:4] && inputFeedback) [self.keyFeedback feedback:inputFeedback];
     } else if ([kind isEqual:@"shortcut"] || [kind isEqual:@"text"]) {
         if (self.quickActionsProvider) {
             NSArray *current = self.quickActionsProvider(self.inputOnly);
@@ -2093,25 +2167,74 @@
             for (NSNumber *modifier in action[@"modifiers"]) [keyboard toggleModifier:modifier.unsignedIntValue];
             [keyboard pressKey:[action[@"key"] unsignedIntValue]];
         } else [keyboard text:action[@"text"] ?: @""];
+        if (!events.count) return;
         if (![self.session tryKeyEvents:events]) {
             self.status.hidden = NO; self.status.text = @"Input is busy. Try the action again."; [self updateStatusPresentation];
-        }
+        } else if (inputFeedback) [self.keyFeedback feedback:inputFeedback];
         [self refreshModifiers];
     }
 }
-- (void)presentMenu:(NSString *)title sections:(NSArray<NSDictionary *> *)sections {
-    CompanionVNCMenu *picker = [CompanionVNCMenu new]; picker.title = title; picker.sections = sections;
-    __weak CompanionVNCViewer *weak = self;
-    picker.selectionHandler = ^(NSDictionary *item) { [weak performControlAction:item]; };
-    if ([self.presentedViewController isKindOfClass:UINavigationController.class]) {
-        UINavigationController *navigation = (id)self.presentedViewController;
-        if ([navigation.topViewController isKindOfClass:CompanionVNCMenu.class]) {
-            [navigation pushViewController:picker animated:YES]; return;
+- (BOOL)sessionKeyInputAvailable {
+    return self.foreground && !self.exited && !self.inputInactive && !self.restoreViewportPending
+        && !self.checkingResume && !self.textReview && self.session.connected;
+}
+- (void)updateRemoteKeyAvailability {
+    BOOL ready = [self sessionKeyInputAvailable];
+    for (UIButton *key in self.keyRow.arrangedSubviews) {
+        if (key == self.keyboardButton) continue; // Local keyboard visibility stays usable.
+        key.enabled = ready; key.alpha = ready ? 1 : .4;
+    }
+    if (!ready) {
+        [self resetModifiers];
+        for (UIViewController *menu in self.sessionMenu.viewControllers) {
+            if ([menu isKindOfClass:CompanionVNCKeyMenu.class]) { [self retireSessionMenu]; break; }
         }
     }
-    if (self.presentedViewController) return;
+}
+- (void)retireSessionMenu {
+    self.sessionMenuGeneration++;
+    UINavigationController *menu = self.sessionMenu; self.sessionMenu = nil;
+    if (!menu) return;
+    menu.view.userInteractionEnabled = NO;
+    for (UIViewController *controller in menu.viewControllers) {
+        if ([controller isKindOfClass:CompanionVNCMenu.class]) ((CompanionVNCMenu *)controller).selectionHandler = nil;
+        else if ([controller isKindOfClass:CompanionVNCDisplayPicker.class]) ((CompanionVNCDisplayPicker *)controller).selectionHandler = nil;
+    }
+    // A presentation in progress is dismissed by its completion below.
+    if (menu.presentingViewController && !menu.isBeingPresented) [menu dismissViewControllerAnimated:NO completion:nil];
+}
+- (void)presentMenu:(NSString *)title sections:(NSArray<NSDictionary *> *)sections {
+    [self presentMenu:title requiresKeyInput:NO sections:sections];
+}
+- (void)presentMenu:(NSString *)title requiresKeyInput:(BOOL)requiresKeyInput sections:(NSArray<NSDictionary *> *)sections {
+    UINavigationController *navigation = [self.presentedViewController isKindOfClass:UINavigationController.class] ? (id)self.presentedViewController : nil;
+    BOOL push = [navigation.topViewController isKindOfClass:CompanionVNCMenu.class];
+    if (self.presentedViewController && !push) return;
+    if (!push) self.sessionMenuGeneration++;
+    NSUInteger generation = self.sessionMenuGeneration;
+    CompanionVNCMenu *picker = requiresKeyInput ? [CompanionVNCKeyMenu new] : [CompanionVNCMenu new]; picker.title = title; picker.sections = sections;
+    __weak CompanionVNCViewer *weak = self;
+    __weak CompanionVNCSession *owner = self.session;
+    picker.selectionHandler = ^(NSDictionary *item) {
+        CompanionVNCViewer *strong = weak;
+        // Dismissal is asynchronous. A copied callback must not reach a retired
+        // connection or become usable again after a pause and resume.
+        if (!strong || !owner || strong.session != owner || strong.sessionMenuGeneration != generation
+            || !strong.connectionForegroundAvailable || (requiresKeyInput && ![strong sessionKeyInputAvailable])) return;
+        NSMutableDictionary *action = item.mutableCopy; action[@"menuFeedback"] = @YES;
+        [strong performControlAction:action];
+    };
+    if (push) {
+        self.sessionMenu = navigation;
+        [navigation pushViewController:picker animated:YES]; return;
+    }
     UINavigationController *menu = [CompanionVNCMenu navigationControllerForMenu:picker sourceView:self.views];
-    [self presentViewController:menu animated:YES completion:nil];
+    self.sessionMenu = menu;
+    __weak UINavigationController *weakMenu = menu;
+    [self presentViewController:menu animated:YES completion:^{
+        if (weak.sessionMenu != weakMenu || weak.sessionMenuGeneration != generation)
+            [weakMenu dismissViewControllerAnimated:NO completion:nil];
+    }];
 }
 - (BOOL)canCopyScreenText {
     return self.foreground && !self.exited && !self.inputInactive && !self.changingDisplayMode && !self.restoreViewportPending && !self.checkingResume && !self.inputOnly && !self.textReview
@@ -2228,12 +2351,16 @@
     if (!current) return NO;
     if (inputOnly) {
         if (!self.connectionForegroundAvailable || self.inputOnly || self.textReview) return NO;
-        [self restartInputOnlyConnection]; return YES;
+        [self restartInputOnlyConnection]; [self.keyFeedback feedback:@"selection"]; return YES;
     }
     if (![self displayChangeAllowed]) return NO;
-    return [self restartDisplayModePreset:target.integerValue];
+    BOOL changed = [self.session.diagnosticCounters[@"layoutVirtual"] boolValue] != (target.integerValue > 0);
+    BOOL accepted = [self restartDisplayModePreset:target.integerValue];
+    if (accepted && changed) [self.keyFeedback feedback:@"selection"];
+    return accepted;
 }
 - (void)retireDisplayModeOwner {
+    [self retireSessionMenu];
     [self releasePointer]; [self cancelTrackpadTouches]; [self resetModifiers];
     // Intentional retirement cannot publish a generic failure over mode recovery.
     self.session.stateHandler = nil; self.session.frameHandler = nil; self.session.cursorHandler = nil; self.session.displayLayoutHandler = nil;
@@ -2476,7 +2603,7 @@
     [sections addObject:@{@"title": @"Keyboard", @"items": @[
         @{@"kind": @"composeText", @"title": @"Compose Text", @"symbol": @"square.and.pencil", @"disabled": @(![self composedTextAvailable])},
         @{@"kind": @"keyboard", @"title": self.input.isFirstResponder ? @"Hide Keyboard" : @"Show Keyboard", @"symbol": self.input.isFirstResponder ? @"keyboard.chevron.compact.down" : @"keyboard"},
-        @{@"kind": @"keys", @"title": @"Extra Keys", @"symbol": @"keyboard", @"submenu": @YES, @"push": @YES}]}];
+        @{@"kind": @"keys", @"title": @"Extra Keys", @"symbol": @"keyboard", @"submenu": @YES, @"push": @YES, @"disabled": @(![self sessionKeyInputAvailable])}]}];
     return sections;
 }
 - (void)showInputMenu { [self presentMenu:@"Input" sections:[self inputMenuSections]]; }

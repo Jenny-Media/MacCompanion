@@ -3,10 +3,16 @@ NS_ASSUME_NONNULL_BEGIN
 FOUNDATION_EXPORT NSString *const CompanionVNCControlsHapticsPreference;
 /// Interface feedback is local action acknowledgement, never a transport ACK.
 /// UIKit gracefully omits unsupported haptics; trackpad feedback stays separate.
+/// The key event is a quiet tick for custom on-screen keys, never system typing.
 FOUNDATION_EXPORT void CompanionVNCPlayInterfaceFeedback(NSString *kind);
 NS_SWIFT_UI_ACTOR
 @interface CompanionVNCInterfaceFeedback : NSObject
 - (instancetype)initWithDefaults:(NSUserDefaults *)defaults;
+- (instancetype)initWithView:(UIView *)view;
+- (instancetype)initWithDefaults:(NSUserDefaults *)defaults view:(nullable UIView *)view;
+@property(nonatomic, weak, readonly, nullable) UIView *sourceView;
+/// Prepare on touch down without emitting a pulse; preference checks remain live.
+- (void)prepareKeyFeedback;
 @property(nonatomic, readonly) BOOL foreground;
 - (void)feedback:(NSString *)kind;
 /// Output boundary overridden by native tests without vibrating hardware.

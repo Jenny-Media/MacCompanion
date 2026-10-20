@@ -5,6 +5,13 @@ import UIKit
 
 @MainActor private final class ShortcutOutputController: TerminalController {
     var output: [UInt8] = []
+    private let inputEpoch = UUID()
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        terminal.customInputEpoch = { [weak self] in self?.inputEpoch }
+        terminal.admitCustomInput = { [weak self] bytes in self?.output += bytes; return self != nil }
+        keyboardBar.refresh()
+    }
     override func send(source: TerminalView, data: ArraySlice<UInt8>) { output += terminal.encodeOutput(data) }
 }
 

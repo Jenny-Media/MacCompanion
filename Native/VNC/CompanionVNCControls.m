@@ -10,42 +10,74 @@ NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptic
 @end
 @implementation CompanionVNCInterfaceFeedback
 - (instancetype)init { return [self initWithDefaults:NSUserDefaults.standardUserDefaults]; }
-- (instancetype)initWithDefaults:(NSUserDefaults *)defaults {
-    if ((self = [super init])) { _defaults = defaults; }
+- (instancetype)initWithDefaults:(NSUserDefaults *)defaults { return [self initWithDefaults:defaults view:nil]; }
+- (instancetype)initWithView:(UIView *)view { return [self initWithDefaults:NSUserDefaults.standardUserDefaults view:view]; }
+- (instancetype)initWithDefaults:(NSUserDefaults *)defaults view:(UIView *)view {
+    if ((self = [super init])) { _defaults = defaults; _sourceView = view; }
     return self;
 }
 - (BOOL)foreground { return UIApplication.sharedApplication.applicationState == UIApplicationStateActive; }
+- (BOOL)enabled {
+    return NSThread.isMainThread && self.foreground
+        && ([self.defaults objectForKey:CompanionVNCControlsHapticsPreference] == nil
+            || [self.defaults boolForKey:CompanionVNCControlsHapticsPreference]);
+}
+- (UISelectionFeedbackGenerator *)selectionGenerator {
+    if (!self.selection) self.selection = self.sourceView
+        ? [UISelectionFeedbackGenerator feedbackGeneratorForView:self.sourceView] : [UISelectionFeedbackGenerator new];
+    return self.selection;
+}
+- (UIImpactFeedbackGenerator *)lightGenerator {
+    if (!self.light) self.light = self.sourceView
+        ? [UIImpactFeedbackGenerator feedbackGeneratorWithStyle:UIImpactFeedbackStyleLight forView:self.sourceView]
+        : [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
+    return self.light;
+}
+- (void)prepareKeyFeedback {
+    if (!self.enabled) return;
+    [self.selectionGenerator prepare]; [self.lightGenerator prepare];
+}
 - (void)feedback:(NSString *)kind {
-    if (!NSThread.isMainThread || !self.foreground) return;
-    if ([self.defaults objectForKey:CompanionVNCControlsHapticsPreference] != nil
-        && ![self.defaults boolForKey:CompanionVNCControlsHapticsPreference]) return;
-    if (![@[@"selection", @"open", @"commit", @"end", @"success", @"error"] containsObject:kind]) return;
+    if (!self.enabled) return;
+    if (![@[@"selection", @"key", @"open", @"commit", @"end", @"success", @"error"] containsObject:kind]) return;
     [self emitFeedback:kind];
 }
 - (void)emitFeedback:(NSString *)kind {
     if ([kind isEqual:@"selection"]) {
-        if (!self.selection) self.selection = [UISelectionFeedbackGenerator new];
-        [self.selection selectionChanged];
+        [self.selectionGenerator selectionChanged]; [self.selectionGenerator prepare];
     } else if ([kind isEqual:@"success"] || [kind isEqual:@"error"]) {
-        if (!self.notification) self.notification = [UINotificationFeedbackGenerator new];
+        if (!self.notification) self.notification = self.sourceView ? [UINotificationFeedbackGenerator feedbackGeneratorForView:self.sourceView] : [UINotificationFeedbackGenerator new];
         [self.notification notificationOccurred:[kind isEqual:@"success"] ? UINotificationFeedbackTypeSuccess : UINotificationFeedbackTypeError];
     } else if ([kind isEqual:@"end"]) {
-        if (!self.medium) self.medium = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
+        if (!self.medium) self.medium = self.sourceView ? [UIImpactFeedbackGenerator feedbackGeneratorWithStyle:UIImpactFeedbackStyleMedium forView:self.sourceView] : [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
         [self.medium impactOccurredWithIntensity:.55];
     } else {
-        if (!self.light) self.light = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
-        [self.light impactOccurredWithIntensity:[kind isEqual:@"commit"] ? .35 : .55];
+        if ([kind isEqual:@"key"]) {
+            // Use the standard light preset instead of reducing its intensity to .2.
+            // UIKit chooses the hardware response for the associated view.
+            [self.lightGenerator impactOccurred]; [self.lightGenerator prepare];
+        } else [self.lightGenerator impactOccurredWithIntensity:[kind isEqual:@"commit"] ? .35 : .55];
     }
 }
 @end
 void CompanionVNCPlayInterfaceFeedback(NSString *kind) {
-    static CompanionVNCInterfaceFeedback *feedback;
     if (!NSThread.isMainThread) return;
-    if (!feedback) feedback = [CompanionVNCInterfaceFeedback new];
+    UIWindow *source = nil;
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if (scene.activationState != UISceneActivationStateForegroundActive || ![scene isKindOfClass:UIWindowScene.class]) continue;
+        for (UIWindow *window in ((UIWindowScene *)scene).windows) if (window.isKeyWindow) { source = window; break; }
+        if (source) break;
+    }
+    if (!source) return;
+    static NSMapTable<UIWindow *, CompanionVNCInterfaceFeedback *> *feedbackByWindow;
+    if (!feedbackByWindow) feedbackByWindow = [NSMapTable weakToStrongObjectsMapTable];
+    CompanionVNCInterfaceFeedback *feedback = [feedbackByWindow objectForKey:source];
+    if (!feedback) { feedback = [[CompanionVNCInterfaceFeedback alloc] initWithView:source]; [feedbackByWindow setObject:feedback forKey:source]; }
     [feedback feedback:kind];
 }
 @interface CompanionVNCControls () <UIDragInteractionDelegate, UIDropInteractionDelegate>
 @property UIButton *button;
+@property CompanionVNCInterfaceFeedback *interfaceFeedback;
 @property UIVisualEffectView *panel;
 @property UIScrollView *scroll;
 @property UILabel *nameLabel;
@@ -62,6 +94,7 @@ void CompanionVNCPlayInterfaceFeedback(NSString *kind) {
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self = [super initWithFrame:frame])) {
         self.backgroundColor = UIColor.clearColor;
+        _interfaceFeedback = [[CompanionVNCInterfaceFeedback alloc] initWithView:self];
         _macName = @"Mac"; _quickActions = @[]; _bottomInset = 8;
         _button = [UIButton buttonWithType:UIButtonTypeSystem];
         UIButtonConfiguration *config;
@@ -87,9 +120,7 @@ void CompanionVNCPlayInterfaceFeedback(NSString *kind) {
 }
 - (BOOL)hapticsEnabled { return [NSUserDefaults.standardUserDefaults objectForKey:CompanionVNCControlsHapticsPreference] == nil || [NSUserDefaults.standardUserDefaults boolForKey:CompanionVNCControlsHapticsPreference]; }
 - (void)setHapticsEnabled:(BOOL)value { [NSUserDefaults.standardUserDefaults setBool:value forKey:CompanionVNCControlsHapticsPreference]; }
-- (void)emitFeedback:(NSString *)kind {
-    CompanionVNCPlayInterfaceFeedback(kind);
-}
+- (void)emitFeedback:(NSString *)kind { [self.interfaceFeedback feedback:kind]; }
 - (void)feedback:(NSString *)kind { if (self.hapticsEnabled) [self emitFeedback:kind]; }
 - (BOOL)reduceMotion { return UIAccessibilityIsReduceMotionEnabled(); }
 - (void)pressDown {
@@ -325,8 +356,15 @@ void CompanionVNCPlayInterfaceFeedback(NSString *kind) {
         if ((NSUInteger)button.tag < self.quickCount && self.previewSelectionHandler && item[@"id"]) self.previewSelectionHandler(item[@"id"]);
         return;
     }
-    if (![item[@"kind"] isEqual:@"exit"]) [self feedback:@"commit"]; [self close];
-    if (self.actionHandler) self.actionHandler(item);
+    NSString *kind = item[@"kind"] ?: @"";
+    // Input and state changes acknowledge their accepted result in the owner.
+    BOOL input = [@[@"escape", @"tab", @"returnKey", @"key", @"modifier", @"shortcut", @"text", @"paste", @"interrupt", @"rightClick"] containsObject:kind];
+    BOOL deferred = input || [@[@"keyboard", @"mode", @"setPointer", @"setTrackpad", @"inputOnly", @"fullscreen", @"numberRow", @"desktopSize", @"virtualDisplay", @"mirrorDisplay"] containsObject:kind] || [kind hasPrefix:@"colors-"];
+    NSMutableDictionary *action = item.mutableCopy;
+    if (input) action[@"inputFeedback"] = @YES;
+    if (![kind isEqual:@"exit"] && !deferred) { [self feedback:@"commit"]; action[@"interfaceFeedbackHandled"] = @YES; }
+    [self close];
+    if (self.actionHandler) self.actionHandler(action);
 }
 - (void)slide:(UILongPressGestureRecognizer *)gesture {
     if (gesture.state == UIGestureRecognizerStateBegan) { [self pressDown]; [self open]; }

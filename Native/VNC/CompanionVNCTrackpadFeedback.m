@@ -87,12 +87,16 @@
 }
 - (void)setHapticsEnabled:(BOOL)value {
     _hapticsEnabled = value;
-    if (!value) { self.clickFeedback = nil; self.dragFeedback = nil; }
+    if (!value) {
+        if (self.clickFeedback) [self removeInteraction:self.clickFeedback];
+        if (self.dragFeedback) [self removeInteraction:self.dragFeedback];
+        self.clickFeedback = nil; self.dragFeedback = nil;
+    }
 }
 - (void)prepareHaptics {
     if (!self.hapticsEnabled || !self.active) return;
-    if (!self.clickFeedback) self.clickFeedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
-    if (!self.dragFeedback) self.dragFeedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
+    if (!self.clickFeedback) self.clickFeedback = [UIImpactFeedbackGenerator feedbackGeneratorWithStyle:UIImpactFeedbackStyleLight forView:self];
+    if (!self.dragFeedback) self.dragFeedback = [UIImpactFeedbackGenerator feedbackGeneratorWithStyle:UIImpactFeedbackStyleMedium forView:self];
     [self.clickFeedback prepare]; [self.dragFeedback prepare];
 }
 - (void)emitHaptic:(BOOL)drag {

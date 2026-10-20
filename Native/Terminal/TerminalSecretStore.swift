@@ -67,9 +67,10 @@ enum TerminalSecretStore {
         guard fields.count >= 2, let data = Data(base64Encoded: String(fields[1])) else { return nil }
         return "SHA256:" + Data(SHA256.hash(data: data)).base64EncodedString().replacingOccurrences(of: "=", with: "")
     }
-    private static func remove(_ id: UUID, kind: String) throws {
+    @discardableResult private static func remove(_ id: UUID, kind: String) throws -> Bool {
         let result = SecItemDelete(query(id, kind) as CFDictionary)
         guard result == errSecSuccess || result == errSecItemNotFound else { throw Failure.storage }
+        return result == errSecSuccess
     }
     @MainActor static func forgetLogin(_ id: UUID) throws {
         #if os(iOS)
@@ -79,11 +80,11 @@ enum TerminalSecretStore {
         #endif
     }
     static func removeLegacyLogin(_ id: UUID) throws { try remove(id, kind: "login") }
-    @MainActor static func forgetHostKey(_ id: UUID) throws {
+    @discardableResult @MainActor static func forgetHostKey(_ id: UUID) throws -> Bool {
         #if os(iOS)
         guard !DirectMacConnections.shared.isActive(id) else { throw DirectMacAccessStore.Failure.busy }
         #endif
-        try remove(id, kind: "host-key")
+        return try remove(id, kind: "host-key")
     }
     @MainActor static func sshKey(_ id: UUID) throws -> TerminalSSHKey? {
         try TerminalKeyLibraryStore.selected(id)?.key

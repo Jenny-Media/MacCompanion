@@ -85,6 +85,7 @@ private enum TerminalPTY {
     /// False for an intentional temporary Quick Connect session.
     @ObservationIgnored var saveMacRequested = true
     static let maximumPausedOutputBytes = 1_048_576
+    static let maximumQueuedInputBytes = 65_536
     // Native windows admit input independently of other active scenes.
     var inputAvailable: @MainActor () -> Bool = { true }
     var suspendInput: (@MainActor () -> Void)?
@@ -483,14 +484,20 @@ private enum TerminalPTY {
         !inputInactive && !suspended && DirectAppLockV1.shared.canAccess && inputAvailable()
         #endif
     }
-    func send(_ data: [UInt8], source: OutputSource = .userInput) {
-        guard admits(source), connected, DirectClientPlatformV1.sessionAvailable, let writer, !data.isEmpty else { return }
+    var canSendUserInput: Bool { admits(.userInput) && connected && DirectClientPlatformV1.sessionAvailable && writer != nil }
+    #if os(iOS)
+    var customInputEpoch: UUID? { canSendUserInput ? writeGeneration : nil }
+    #endif
+    func send(_ data: [UInt8], source: OutputSource = .userInput) { _ = trySend(data, source: source) }
+    /// Immediate local queue admission; no transport acknowledgement is awaited.
+    @discardableResult func trySend(_ data: [UInt8], source: OutputSource = .userInput) -> Bool {
+        guard admits(source), connected, DirectClientPlatformV1.sessionAvailable, let writer, !data.isEmpty else { return false }
         #if os(macOS) || os(visionOS)
         let releasingBytes = nativeInputReleaseBytes
         #else
         let releasingBytes = 0
         #endif
-        guard data.count <= 65536, queuedBytes + releasingBytes + data.count <= 65536 else { stop(); present(.inputPaused); return }
+        guard data.count <= Self.maximumQueuedInputBytes, queuedBytes + releasingBytes + data.count <= Self.maximumQueuedInputBytes else { stop(); present(.inputPaused); return false }
         queuedBytes += data.count; let id = generation, writeID = writeGeneration; let previous = writeTail
         #if os(macOS) || os(visionOS)
         let previousRelease = nativeInputReleaseTail
@@ -505,6 +512,7 @@ private enum TerminalPTY {
             do { try await writer.write(data) }
             catch { if generation == id && writeGeneration == writeID { stop(); present(.terminalEnded, message: "The connection ended while sending input. It won’t be replayed. Open a new shell to continue.") } }
         }
+        return true
     }
     #if os(iOS)
     var composeGeneration: UUID { generation }
