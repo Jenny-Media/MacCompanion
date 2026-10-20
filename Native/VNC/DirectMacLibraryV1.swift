@@ -293,12 +293,12 @@ enum DesktopCredentialStoreV1 {
             try write(macs.filter { $0.id != mac.id }); localChange?(mac.id); VNCSessionPreferences.clear(mac.id)
         } catch { recovery = .make(.removeFailed) }
     }
-    func forgetLogin(_ mac: DirectMacRecordV1) {
+    @discardableResult func forgetLogin(_ mac: DirectMacRecordV1) -> Bool {
         #if os(iOS)
-        guard !DirectMacConnections.shared.isActive(mac.id) else { recovery = .make(.removeFailed, message: "Disconnect this Mac before forgetting its login."); return }
+        guard !DirectMacConnections.shared.isActive(mac.id) else { recovery = .make(.removeFailed, message: "Disconnect this Mac before forgetting its login."); return false }
         #endif
-        do { try removeLogin(mac.id); failure = nil }
-        catch { recovery = .make(.removeFailed, message: "The saved Screen Sharing login couldn’t be removed. Review it and retry.") }
+        do { try removeLogin(mac.id); failure = nil; return true }
+        catch { recovery = .make(.removeFailed, message: "The saved Screen Sharing login couldn’t be removed. Review it and retry."); return false }
     }
     func applyCloud(_ next: [DirectMacRecordV1]) throws {
         guard readable, next.count <= 64, Set(next.map(\.id)).count == next.count else { throw DirectCloudError.invalid }
@@ -932,11 +932,13 @@ struct DirectMacEditorV1: View {
                     guard let mac else { return }
                     do {
                         switch action {
-                        case .desktop: library.forgetLogin(mac)
+                        case .desktop:
+                            guard library.forgetLogin(mac) else { CompanionVNCPlayInterfaceFeedback("error"); credentialAction = nil; return }
                         case .terminal: try TerminalSecretStore.forgetLogin(mac.id)
                         case .serverKey: try TerminalSecretStore.forgetHostKey(mac.id)
                         }
-                    } catch { library.recovery = .make(.removeFailed, message: "The saved entry couldn’t be removed. Review the entry and retry; other logins are kept.") }
+                        CompanionVNCPlayInterfaceFeedback("success")
+                    } catch { CompanionVNCPlayInterfaceFeedback("error"); library.recovery = .make(.removeFailed, message: "The saved entry couldn’t be removed. Review the entry and retry; other logins are kept.") }
                     credentialAction = nil
                 }
             } message: { action in Text(action.detail) }
@@ -1012,7 +1014,7 @@ struct DirectSessionSettingsV1: View {
             Section {
                 Toggle("Show session in Dynamic Island", isOn: $showSession).accessibilityIdentifier("session-live-activity")
                 Toggle("Interface Haptics", isOn: $controlsHaptics).accessibilityIdentifier("controls-haptics")
-            } header: { Text("This Device") } footer: { Text("Dynamic Island shows session status with Resume and End actions. Interface haptics confirm gestures, opening modes and explicit session actions. Trackpad haptics are controlled separately.") }
+            } header: { Text("This Device") } footer: { Text("Dynamic Island shows session status with Resume and End actions. Interface haptics confirm on-screen keys, modifier changes, gestures and session actions. Trackpad haptics are controlled separately.") }
         }.navigationBarTitleDisplayMode(.inline)
     }
     private var sync: some View {

@@ -505,6 +505,12 @@ private struct TerminalSurface: UIViewControllerRepresentable {
             super.contentOffset = offset
         }
     }
+    override func copy(_ sender: Any?) {
+        guard let selected = getSelection(), !selected.isEmpty else { return }
+        let previous = UIPasteboard.general.changeCount
+        super.copy(sender)
+        if UIPasteboard.general.changeCount != previous { keyboardBar?.keyFeedback.feedback("success") }
+    }
     func resetModifiers() { keyboardState.reset(); controlModifier = false; metaModifier = false; keyboardBar?.refresh() }
     override func insertText(_ text: String) {
         let modifiers = keyboardState.consume()
@@ -657,9 +663,9 @@ private struct TerminalSurface: UIViewControllerRepresentable {
                 terminal.send(data: saved.terminalBytes(applicationCursor: terminal.getTerminal().applicationCursor)[...])
             }
             terminal.keyboardBar?.refresh()
-        } else { performControl(kind) }
+        } else { performControl(kind, feedbackHandled: item["interfaceFeedbackHandled"] as? Bool == true) }
     }
-    private func performControl(_ kind: String) {
+    private func performControl(_ kind: String, feedbackHandled: Bool = false) {
         guard session.connected else { return }
         switch kind {
         case "inputMenu":
@@ -686,9 +692,13 @@ private struct TerminalSurface: UIViewControllerRepresentable {
             details.overrideUserInterfaceStyle = paletteIsDark == true ? .dark : .light
             details.addAction(UIAlertAction(title: "Done", style: .cancel))
             present(details, animated: true)
-        case "keyboard": session.toggleKeyboard?()
+        case "keyboard":
+            let wasVisible = terminal.isFirstResponder
+            session.toggleKeyboard?()
+            if wasVisible != terminal.isFirstResponder && !feedbackHandled { keyboardBar.keyFeedback.feedback("selection") }
         case "numberRow":
             keyboardBar.showsNumberRow.toggle()
+            if !feedbackHandled { keyboardBar.keyFeedback.feedback("selection") }
             defaults.set(keyboardBar.showsNumberRow, forKey: Self.numberRowPreference)
             view.setNeedsLayout()
         case "paste": terminal.resetModifiers(); terminal.paste(nil)
@@ -703,7 +713,10 @@ private struct TerminalSurface: UIViewControllerRepresentable {
             terminal.keyboardBar?.refresh()
         default:
             if kind.hasPrefix("colors-"), let value = DirectTerminalAppearance(rawValue: String(kind.dropFirst(7))) {
-                DirectAppearanceV1.shared.terminal = value
+                if DirectAppearanceV1.shared.terminal != value {
+                    DirectAppearanceV1.shared.terminal = value
+                    if !feedbackHandled { keyboardBar.keyFeedback.feedback("selection") }
+                }
             } else { action(kind) }
         }
     }

@@ -56,11 +56,13 @@ struct DirectComposedText: Equatable {
     var issue: String?
     var confirmation: DirectComposedText?
     @ObservationIgnored private var epoch = UUID()
+    @ObservationIgnored private var deliveryID: UUID?
     @ObservationIgnored private var available: () -> Bool = { false }
     @ObservationIgnored private var send: ((String, @escaping (String?) -> Void) -> Void)?
     @ObservationIgnored var close: (() -> Void)?
     @ObservationIgnored var sendingChanged: ((Bool) -> Void)?
     @ObservationIgnored var interrupted: (() -> Void)?
+    @ObservationIgnored var feedback: (String) -> Void = { _ in }
     init(macName: String, mode: DirectControlMode) { self.macName = macName; self.mode = mode }
     var presentationEpoch: UUID { epoch }
     var validationIssue: String? {
@@ -95,18 +97,20 @@ struct DirectComposedText: Equatable {
     }
     private func deliver(_ prepared: DirectComposedText) {
         guard canSend, available(), let send else { invalidate(); return }
-        let token = epoch
+        let token = epoch, delivery = UUID()
+        deliveryID = delivery
         sending = true; issue = nil; sendingChanged?(true)
         send(prepared.text) { [weak self] error in
-            guard let self, self.epoch == token, self.active else { return }
-            self.sending = false; self.sendingChanged?(false)
-            if let error { self.issue = error }
-            else { self.text = ""; self.close?() }
+            guard let self, self.epoch == token, self.active, self.sending, self.deliveryID == delivery else { return }
+            guard self.available() else { self.invalidate(); return }
+            self.deliveryID = nil; self.sending = false; self.sendingChanged?(false)
+            if let error { self.issue = error; self.feedback("error") }
+            else { self.feedback("success"); self.text = ""; self.close?() }
         }
     }
     func invalidate() {
         if sending { interrupted?() }
-        epoch = UUID(); text = ""; issue = nil; confirmation = nil; active = false; expanded = false; docked = false; floatingAnchor = CGPoint(x: 0.5, y: 1)
+        epoch = UUID(); deliveryID = nil; text = ""; issue = nil; confirmation = nil; active = false; expanded = false; docked = false; floatingAnchor = CGPoint(x: 0.5, y: 1)
         sending = false; available = { false }; send = nil; sendingChanged?(false); close?()
     }
 }
@@ -163,6 +167,10 @@ struct DirectComposedText: Equatable {
         guard !draft.sending, DirectAppLockV1.shared.canAccess, available(), controller.presentedViewController == nil else { return }
         draft.configure(available: { DirectAppLockV1.shared.canAccess && DirectClientPlatformV1.sessionAvailable && available() }, send: send)
         let host = DirectTextComposerPanel(draft: draft)
+        draft.feedback = { [weak host] kind in
+            guard let host, host.viewIfLoaded?.window != nil else { return }
+            host.interfaceFeedback.feedback(kind)
+        }
         if draft.mode == .terminal { host.followAppearance(from: controller) }
         host.shortcutBar = shortcutBar
         host.visibilityChanged = { [weak self, weak host] visible in
@@ -257,6 +265,7 @@ struct DirectComposerPlacement {
     private var measuredWidth: CGFloat = 0
     private var measuredCategory: UIContentSizeCategory?
     private var measuredEditorHeight: CGFloat = 0
+    lazy var interfaceFeedback = CompanionVNCInterfaceFeedback(view: view)
     private var grabber: UIButton?
     private var closeButton: UIButton?
     private var editorHost: UIHostingController<AnyView>?
@@ -419,16 +428,17 @@ struct DirectComposerPlacement {
     }
     @objc func toggleExpansion() {
         guard usable else { return }
-        cancelMovement(); draft.expanded.toggle(); settle()
+        cancelMovement(); draft.expanded.toggle(); draft.feedback("selection"); settle()
     }
     @objc func toggleDock() {
         guard usable else { return }
-        cancelMovement(); draft.docked.toggle(); draft.expanded = false; settle()
+        cancelMovement(); draft.docked.toggle(); draft.expanded = false; draft.feedback("selection"); settle()
     }
     private func cancelMovement() { dragging = false; draggingHeight = nil }
     private func move(_ anchor: CGPoint) -> Bool {
         guard usable, !draft.docked, !draft.expanded else { return false }
-        draft.floatingAnchor = anchor; settle(); return true
+        guard draft.floatingAnchor != anchor else { return false }
+        draft.floatingAnchor = anchor; draft.feedback("selection"); settle(); return true
     }
     @objc private func moveUp() -> Bool { move(CGPoint(x: draft.floatingAnchor.x, y: 0)) }
     @objc private func moveDown() -> Bool { move(CGPoint(x: draft.floatingAnchor.x, y: 1)) }
@@ -460,6 +470,9 @@ struct DirectComposerPlacement {
                     if !initialExpanded && translation.y > 110 { back(); return }
                     draft.expanded = velocity < -300 || (velocity <= 300 && current > (compactHeight + availableHeight) / 2)
                 }
+                let changed = draft.docked ? draft.expanded != initialExpanded
+                    : draft.floatingAnchor != initialAnchor && [CGFloat(0), 1].contains(where: { draft.floatingAnchor.x == $0 || draft.floatingAnchor.y == $0 })
+                if changed { draft.feedback("selection") }
                 settle()
             } else { view.setNeedsLayout(); view.layoutIfNeeded() }
         case .cancelled, .failed:
