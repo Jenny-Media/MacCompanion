@@ -70,6 +70,8 @@
 @property UIActivityIndicatorView *spinner;
 @property CompanionVNCControls *controls;
 @property CompanionVNCInterfaceFeedback *keyFeedback;
+@property(weak) UINavigationController *sessionMenu;
+@property NSUInteger sessionMenuGeneration;
 @property BOOL retiringPointerGestures;
 @property NSUInteger displaySelectionRejections, displaySelectionRejectMask;
 @property BOOL initialDisplayApplied;
@@ -168,6 +170,8 @@
 @property NSDictionary *diagnosticFlags;
 @property(nonatomic, copy) NSDictionary *lastConnectionFailure;
 - (BOOL)composedTextAvailable;
+- (BOOL)sessionKeyInputAvailable;
+- (void)retireSessionMenu;
 @end
 
 @implementation CompanionVNCViewer
@@ -590,6 +594,7 @@
     [self showConnectionProgress:@"Switching display mode…"];
 }
 - (void)prepareConnection {
+    [self retireSessionMenu];
     self.mirrorRestartScheduled = NO;
     if (self.changingDisplayMode) self.mirrorRestoreAttempts++;
     self.desktopSizeRestored = self.changingDisplayMode || self.inputOnly; self.pendingDesktopSizePreset = 0; self.pendingStreamDisplayID = nil;
@@ -629,6 +634,7 @@
         CompanionVNCViewer *strong = weak; if (!strong || strong.session != owner) return;
         strong.latestCounters = stats;
         if (strong.exited || strong.failedDisplayModePreset) return;
+        if (!strong.session.running) [strong retireSessionMenu];
         [strong.connectionProgress recordNativeState:state];
         if (strong.changingDisplayMode && strong.foreground && !strong.inputInactive) [strong updateDisplayModeRestoration];
         if (strong.mirrorRestartScheduled || strong.failedDisplayModePreset) { [strong reportDiagnostics:stats]; return; }
@@ -807,6 +813,7 @@
     [self loginEdited]; [self refreshAccessEditing];
 }
 - (void)stopViewer {
+    [self retireSessionMenu];
     [self cancelDisplayModeConfirmation]; self.failedDisplayModePreset = nil;
     self.changingDisplayMode = self.mirrorRestartScheduled = self.mirrorRequiresCleanup = NO;
     self.mirrorCleanupRemaining = 0;
@@ -950,6 +957,7 @@
 }
 - (void)becameInactive {
     if (!self.foreground || self.exited || self.inputInactive) return;
+    [self retireSessionMenu];
     self.inputInactive = YES; self.modeVerificationTimed = NO; self.modeVerificationGeneration++;
     [self discardPendingDisplayPreferences];
     [self cancelDisplayModeConfirmation];
@@ -960,6 +968,7 @@
 }
 - (void)background { [self backgroundWithCompletion:nil]; }
 - (void)backgroundWithCompletion:(void (^)(void))completion {
+    [self retireSessionMenu];
     [self retireTextDraft];
     if (!self.foreground || self.exited) { if (completion) completion(); return; }
     [self discardPendingDisplayPreferences];
@@ -1835,6 +1844,7 @@
     }
 }
 - (void)moreKeys:(UIButton *)button {
+    if (![self sessionKeyInputAvailable]) return;
     [self presentMenu:@"Extra Keys" sections:@[
         @{@"title": @"Editing", @"items": @[
             @{@"kind": @"key", @"title": @"Return", @"symbol": @"return", @"key": @0xff0d},
@@ -1857,6 +1867,7 @@
             @{@"kind": @"modifier", @"title": @"Send Command Alone", @"symbol": @"command", @"key": @0xffeb}]}]];
 }
 - (void)showFunctionKeys {
+    if (![self sessionKeyInputAvailable]) return;
     NSMutableArray *items = [NSMutableArray new];
     for (NSUInteger i = 0; i < 12; i++) [items addObject:@{@"kind": @"key", @"title": [NSString stringWithFormat:@"F%lu", (unsigned long)i+1], @"key": @(0xffbe + i), @"symbol": @"keyboard"}];
     [self presentMenu:@"Function Keys" sections:@[@{@"title": @"F1–F12", @"items": items}]];
@@ -1866,6 +1877,7 @@
     self.controls.quickActions = quickActions ?: [DirectConnectionBridge defaultQuickActionsForInputOnly:self.inputOnly];
 }
 - (void)updateConnectionChrome {
+    if (self.sessionMenu && ![self sessionKeyInputAvailable]) [self retireSessionMenu];
     self.loginSubtitle.text = self.inputOnly ? @"Trackpad & Keyboard" : @"Screen Sharing";
     self.loginPurpose.hidden = self.inputOnly;
     self.loginSubtitle.accessibilityHint = self.inputOnly ? @"Control this Mac without video" : @"View and control this Mac";
@@ -2068,7 +2080,7 @@
     if ([kind isEqual:@"virtualDisplay"]) { [self confirmDisplayModePreset:self.restoredDesktopSizePreset > 0 ? self.restoredDesktopSizePreset : 2]; return; }
     if ([kind isEqual:@"desktopSize"]) {
         NSInteger preset = [action[@"preset"] integerValue];
-        BOOL changed = self.restoredDesktopSizePreset != preset;
+        BOOL changed = ![self desktopSizeMatchesPreset:preset];
         if ([self applyDesktopSizePreset:preset] && changed && feedback) [self.keyFeedback feedback:@"selection"];
         return;
     }
@@ -2103,9 +2115,13 @@
     if ([kind isEqual:@"fit"]) { [self fitDesktop]; return; }
     if ([kind isEqual:@"keys"]) { [self moreKeys:self.views]; return; }
     if ([kind isEqual:@"session"]) { [self showSessionMenu]; return; }
-    if (!self.foreground || self.exited || self.inputInactive || self.restoreViewportPending || self.checkingResume || !self.session.connected) {
+    if (![self sessionKeyInputAvailable]) {
         self.status.hidden = NO; self.status.text = @"Wait for the desktop to resume before sending input."; [self updateStatusPresentation]; return;
     }
+    // Local admission is immediate; do not wait for a transport or Mac reply.
+    BOOL menuFeedback = feedback && [action[@"menuFeedback"] boolValue];
+    if (menuFeedback && [@[@"key", @"escape", @"tab", @"returnKey"] containsObject:kind]) [self.keyFeedback feedback:@"key"];
+    else if (menuFeedback && [kind isEqual:@"modifier"]) [self.keyFeedback feedback:@"selection"];
     if ([kind isEqual:@"escape"]) { [self sendRemoteKey:0xff1b]; return; }
     if ([kind isEqual:@"tab"]) { [self sendRemoteKey:0xff09]; return; }
     if ([kind isEqual:@"returnKey"]) { [self sendRemoteKey:0xff0d]; return; }
@@ -2129,30 +2145,55 @@
         } else [keyboard text:action[@"text"] ?: @""];
         if (![self.session tryKeyEvents:events]) {
             self.status.hidden = NO; self.status.text = @"Input is busy. Try the action again."; [self updateStatusPresentation];
-        }
+        } else if (menuFeedback) [self.keyFeedback feedback:@"key"];
         [self refreshModifiers];
     }
 }
+- (BOOL)sessionKeyInputAvailable {
+    return self.foreground && !self.exited && !self.inputInactive && !self.restoreViewportPending
+        && !self.checkingResume && !self.textReview && self.session.connected;
+}
+- (void)retireSessionMenu {
+    self.sessionMenuGeneration++;
+    UINavigationController *menu = self.sessionMenu; self.sessionMenu = nil;
+    if (!menu) return;
+    menu.view.userInteractionEnabled = NO;
+    for (UIViewController *controller in menu.viewControllers) {
+        if ([controller isKindOfClass:CompanionVNCMenu.class]) ((CompanionVNCMenu *)controller).selectionHandler = nil;
+        else if ([controller isKindOfClass:CompanionVNCDisplayPicker.class]) ((CompanionVNCDisplayPicker *)controller).selectionHandler = nil;
+    }
+    // A presentation in progress is dismissed by its completion below.
+    if (menu.presentingViewController && !menu.isBeingPresented) [menu dismissViewControllerAnimated:NO completion:nil];
+}
 - (void)presentMenu:(NSString *)title sections:(NSArray<NSDictionary *> *)sections {
+    UINavigationController *navigation = [self.presentedViewController isKindOfClass:UINavigationController.class] ? (id)self.presentedViewController : nil;
+    BOOL push = [navigation.topViewController isKindOfClass:CompanionVNCMenu.class];
+    if (self.presentedViewController && !push) return;
+    if (!push) self.sessionMenuGeneration++;
+    NSUInteger generation = self.sessionMenuGeneration;
     CompanionVNCMenu *picker = [CompanionVNCMenu new]; picker.title = title; picker.sections = sections;
     __weak CompanionVNCViewer *weak = self;
+    __weak CompanionVNCSession *owner = self.session;
     picker.selectionHandler = ^(NSDictionary *item) {
-        // Menu keys bypass the toolbar. Quick-action buttons already acknowledge
-        // their own selection, so keep feedback at this UI boundary, not transport.
-        NSString *kind = item[@"kind"];
-        if ([@[@"key", @"escape", @"tab", @"returnKey", @"shortcut", @"text"] containsObject:kind]) [weak.keyFeedback feedback:@"key"];
-        else if ([kind isEqual:@"modifier"]) [weak.keyFeedback feedback:@"selection"];
-        [weak performControlAction:item];
+        CompanionVNCViewer *strong = weak;
+        // Dismissal is asynchronous. A copied callback must not reach a retired
+        // connection or become usable again after a pause and resume.
+        if (!strong || !owner || strong.session != owner || strong.sessionMenuGeneration != generation
+            || ![strong sessionKeyInputAvailable]) return;
+        NSMutableDictionary *action = item.mutableCopy; action[@"menuFeedback"] = @YES;
+        [strong performControlAction:action];
     };
-    if ([self.presentedViewController isKindOfClass:UINavigationController.class]) {
-        UINavigationController *navigation = (id)self.presentedViewController;
-        if ([navigation.topViewController isKindOfClass:CompanionVNCMenu.class]) {
-            [navigation pushViewController:picker animated:YES]; return;
-        }
+    if (push) {
+        self.sessionMenu = navigation;
+        [navigation pushViewController:picker animated:YES]; return;
     }
-    if (self.presentedViewController) return;
     UINavigationController *menu = [CompanionVNCMenu navigationControllerForMenu:picker sourceView:self.views];
-    [self presentViewController:menu animated:YES completion:nil];
+    self.sessionMenu = menu;
+    __weak UINavigationController *weakMenu = menu;
+    [self presentViewController:menu animated:YES completion:^{
+        if (weak.sessionMenu != weakMenu || weak.sessionMenuGeneration != generation)
+            [weakMenu dismissViewControllerAnimated:NO completion:nil];
+    }];
 }
 - (BOOL)canCopyScreenText {
     return self.foreground && !self.exited && !self.inputInactive && !self.changingDisplayMode && !self.restoreViewportPending && !self.checkingResume && !self.inputOnly && !self.textReview
@@ -2278,6 +2319,7 @@
     return accepted;
 }
 - (void)retireDisplayModeOwner {
+    [self retireSessionMenu];
     [self releasePointer]; [self cancelTrackpadTouches]; [self resetModifiers];
     // Intentional retirement cannot publish a generic failure over mode recovery.
     self.session.stateHandler = nil; self.session.frameHandler = nil; self.session.cursorHandler = nil; self.session.displayLayoutHandler = nil;

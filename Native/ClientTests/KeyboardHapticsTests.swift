@@ -24,6 +24,32 @@ import XCTest
     override func send(source: TerminalView, data: ArraySlice<UInt8>) { output += terminal.encodeOutput(data) }
 }
 
+private final class KeyboardMenuSession: CompanionVNCSession {
+    var ready = true
+    var sizeAllowed = true
+    var acceptsSize = true
+    var acceptsKeys = true
+    var livePreset = 1
+    var sizes: [Int] = []
+    var keyGroups = 0
+    override var running: Bool { ready }
+    override var connected: Bool { ready }
+    override var desktopFrameReady: Bool { ready }
+    override var desktopSizeAvailable: Bool { ready && sizeAllowed }
+    override var diagnosticCounters: [AnyHashable: Any] {
+        let size = livePreset == 1 ? (2048, 1280) : livePreset == 2 ? (2560, 1600) : (2880, 1800)
+        return ["layoutVirtual": true, "layoutCount": 1, "framebufferWidth": size.0,
+                "framebufferHeight": size.1, "layoutWidth": size.0, "layoutHeight": size.1]
+    }
+    override func requestDesktopSizePreset(_ preset: Int) -> Bool {
+        guard acceptsSize else { return false }; sizes.append(preset); return true
+    }
+    override func keyEvents(_ events: [[AnyHashable: Any]]?) { if events?.isEmpty == false { keyGroups += 1 } }
+    override func tryKeyEvents(_ events: [[AnyHashable: Any]]?) -> Bool {
+        guard acceptsKeys else { return false }; keyEvents(events); return true
+    }
+}
+
 @MainActor private final class KeyboardMenuViewer: CompanionVNCViewer {
     var capturedMenu: UINavigationController?
     override func present(_ controller: UIViewController, animated: Bool, completion: (() -> Void)? = nil) {
@@ -167,8 +193,9 @@ import XCTest
         for inputOnly in [false, true] {
             try withFeedback { defaults, feedback in
                 let viewer = KeyboardMenuViewer()
-                viewer.session = CompanionVNCSession(); viewer.inputOnly = inputOnly
+                viewer.inputOnly = inputOnly
                 viewer.loadViewIfNeeded(); viewer.setValue(feedback, forKey: "keyFeedback")
+                let owner = KeyboardMenuSession(); viewer.session = owner
                 defer { viewer.stop() }
                 _ = viewer.perform(NSSelectorFromString("moreKeys:"), with: nil)
                 let menu = try XCTUnwrap(viewer.capturedMenu?.topViewController as? CompanionVNCMenu)
@@ -182,6 +209,113 @@ import XCTest
                 _ = viewer.perform(NSSelectorFromString("performControlAction:"), with: ["kind": "escape"])
                 XCTAssertEqual(feedback.events.count, 2, "Quick-action UI already provides its own commit feedback")
             }
+        }
+    }
+    func testUnavailableConnectionCannotOpenKeyMenus() {
+        let viewer = KeyboardMenuViewer(); viewer.loadViewIfNeeded()
+        let owner = KeyboardMenuSession(); owner.ready = false; viewer.session = owner
+        defer { viewer.stop() }
+        _ = viewer.perform(NSSelectorFromString("moreKeys:"), with: nil)
+        _ = viewer.perform(NSSelectorFromString("showFunctionKeys"))
+        XCTAssertNil(viewer.capturedMenu)
+        owner.ready = true; viewer.setValue(true, forKey: "restoreViewportPending")
+        _ = viewer.perform(NSSelectorFromString("moreKeys:"), with: nil)
+        _ = viewer.perform(NSSelectorFromString("showFunctionKeys"))
+        XCTAssertNil(viewer.capturedMenu)
+    }
+    func testKeyMenuCallbacksRejectDisconnectRestoreAndReplacementWithoutInputOrFeedback() throws {
+        for inputOnly in [false, true] {
+            for transition in ["disconnected", "restoring", "replacement", "paused-and-resumed"] {
+                try withFeedback { _, feedback in
+                    let viewer = KeyboardMenuViewer(); viewer.inputOnly = inputOnly; viewer.loadViewIfNeeded()
+                    viewer.setValue(feedback, forKey: "keyFeedback")
+                    let owner = KeyboardMenuSession(); viewer.session = owner
+                    defer { viewer.stop() }
+                    _ = viewer.perform(NSSelectorFromString("moreKeys:"), with: nil)
+                    let menu = try XCTUnwrap(viewer.capturedMenu?.topViewController as? CompanionVNCMenu)
+                    let delayed = try XCTUnwrap(menu.selectionHandler)
+                    let replacement = KeyboardMenuSession()
+                    switch transition {
+                    case "disconnected": owner.ready = false
+                    case "restoring": viewer.setValue(true, forKey: "restoreViewportPending")
+                    case "replacement": viewer.session = replacement
+                    default:
+                        _ = viewer.perform(NSSelectorFromString("becameInactive"))
+                        viewer.setValue(false, forKey: "inputInactive")
+                    }
+                    delayed(["kind": "key", "key": 0xffbe]); delayed(["kind": "modifier", "key": 0xffe1])
+                    XCTAssertTrue(feedback.events.isEmpty, transition)
+                    XCTAssertEqual(owner.keyGroups, 0, transition); XCTAssertEqual(replacement.keyGroups, 0, transition)
+                }
+            }
+        }
+    }
+    func testRejectedOrRemovedMenuShortcutsStaySilent() throws {
+        try withFeedback { _, feedback in
+            let viewer = KeyboardMenuViewer(); viewer.loadViewIfNeeded(); viewer.setValue(feedback, forKey: "keyFeedback")
+            let owner = KeyboardMenuSession(); viewer.session = owner; defer { viewer.stop() }
+            _ = viewer.perform(NSSelectorFromString("moreKeys:"), with: nil)
+            let menu = try XCTUnwrap(viewer.capturedMenu?.topViewController as? CompanionVNCMenu)
+            viewer.quickActionsProvider = { _ in [] }
+            menu.selectionHandler?(["kind": "text", "id": "removed", "text": "synthetic"])
+            XCTAssertTrue(feedback.events.isEmpty); XCTAssertEqual(owner.keyGroups, 0)
+            viewer.quickActionsProvider = nil; owner.acceptsKeys = false
+            menu.selectionHandler?(["kind": "text", "text": "synthetic"])
+            XCTAssertTrue(feedback.events.isEmpty); XCTAssertEqual(owner.keyGroups, 0)
+            owner.acceptsKeys = true
+            menu.selectionHandler?(["kind": "text", "text": "synthetic"])
+            XCTAssertEqual(feedback.events, ["key"]); XCTAssertEqual(owner.keyGroups, 1)
+        }
+    }
+    func testNativeKeyMenuDismissesOnDisconnectAndCopiedCallbackCannotRevive() async throws {
+        try await verifyMenuDismissal(inputOnly: false)
+        try await verifyMenuDismissal(inputOnly: true)
+    }
+    private func verifyMenuDismissal(inputOnly: Bool) async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        let viewer = CompanionVNCViewer(); viewer.inputOnly = inputOnly
+        window.rootViewController = viewer; window.makeKeyAndVisible(); viewer.loadViewIfNeeded()
+        let owner = KeyboardMenuSession(); viewer.session = owner
+        defer { viewer.stop(); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        viewer.view.layoutIfNeeded()
+        _ = viewer.perform(NSSelectorFromString("moreKeys:"), with: nil)
+        let navigation = try XCTUnwrap(viewer.presentedViewController as? UINavigationController)
+        let menu = try XCTUnwrap(navigation.topViewController as? CompanionVNCMenu)
+        let copied = try XCTUnwrap(menu.selectionHandler)
+        for _ in 0..<100 {
+            if !navigation.isBeingPresented { break }; try await Task.sleep(for: .milliseconds(20))
+        }
+        owner.ready = false
+        _ = viewer.perform(NSSelectorFromString("updateConnectionChrome"))
+        for _ in 0..<100 {
+            if viewer.presentedViewController == nil { break }; try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertNil(viewer.presentedViewController)
+        XCTAssertFalse(navigation.view.isUserInteractionEnabled); XCTAssertNil(menu.selectionHandler)
+        owner.ready = true; copied(["kind": "key", "key": 0xffbe])
+        XCTAssertEqual(owner.keyGroups, 0, "An old callback cannot revive when the same connection becomes ready again")
+    }
+    func testDesktopSizeFeedbackUsesLiveGeometryAndPreservesVerifiedSaving() {
+        withFeedback { defaults, feedback in
+            let viewer = CompanionVNCViewer(); viewer.loadViewIfNeeded(); viewer.setValue(feedback, forKey: "keyFeedback")
+            let owner = KeyboardMenuSession(); viewer.session = owner; viewer.restoredDesktopSizePreset = 2
+            var saved: [Int] = []; viewer.desktopSizeSelectionHandler = { saved.append($0) }
+            defer { viewer.stop() }
+            _ = viewer.perform(NSSelectorFromString("performControlAction:"), with: ["kind": "desktopSize", "preset": 1])
+            XCTAssertTrue(feedback.events.isEmpty, "Reselecting the live size stays silent even if the saved preference differs")
+            XCTAssertTrue(owner.sizes.isEmpty); XCTAssertEqual(saved, [1])
+            // Recreate the independent mismatch before choosing the saved size.
+            viewer.restoredDesktopSizePreset = 2; saved = []
+            _ = viewer.perform(NSSelectorFromString("performControlAction:"), with: ["kind": "desktopSize", "preset": 2])
+            XCTAssertEqual(feedback.events, ["selection"]); XCTAssertEqual(owner.sizes, [2])
+            XCTAssertTrue(saved.isEmpty, "A queued resize must not overwrite the saved size before verified pixels")
+            viewer.setValue(0, forKey: "pendingDesktopSizePreset"); owner.acceptsSize = false
+            _ = viewer.perform(NSSelectorFromString("performControlAction:"), with: ["kind": "desktopSize", "preset": 3])
+            XCTAssertEqual(feedback.events.count, 1); XCTAssertEqual(owner.sizes, [2])
+            owner.acceptsSize = true; defaults.set(false, forKey: CompanionVNCControlsHapticsPreference)
+            _ = viewer.perform(NSSelectorFromString("performControlAction:"), with: ["kind": "desktopSize", "preset": 3])
+            XCTAssertEqual(feedback.events.count, 1); XCTAssertEqual(owner.sizes, [2, 3]); XCTAssertTrue(saved.isEmpty)
         }
     }
     func testRealUIKitGeneratorsAttachToTheTerminalAndDesktopKeySurfaces() throws {

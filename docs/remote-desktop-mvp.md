@@ -144,7 +144,10 @@ The preference applies immediately. System keyboard typing, transport writes and
 automatic modifier resets add no app-generated haptic. Explicit keyboard toggles,
 accepted session option changes, composer expansion/docking and committed edge snaps
 use selection feedback. Reselecting an option, cancelled gestures and restoring
-settings stay silent. Composer delivery, clipboard copies and Saved Login management
+settings stay silent. Session key menus close when input becomes unavailable;
+deferred menu choices cannot act on a retired or replacement connection. Desktop-size
+feedback compares the live geometry without changing verified preference saving.
+Composer delivery, clipboard copies and Saved Login management
 acknowledge confirmed success or failure once; retired or unavailable composer owners
 stay silent. All interface events use the same live preference and view-associated
 UIKit generators. Trackpad gestures keep their independent setting. Native UIKit
