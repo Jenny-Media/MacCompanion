@@ -91,6 +91,7 @@ import UIKit
         let host = UIHostingController(rootView: DirectTerminalView(mac: mac, session: session, autoConnect: false, exit: {}).environment(appearance))
         let keyboardFrame = SoftwareKeyboardFrame()
         NotificationCenter.default.addObserver(keyboardFrame, selector: #selector(SoftwareKeyboardFrame.changed(_:)), name: UIResponder.keyboardDidChangeFrameNotification, object: nil)
+        NotificationCenter.default.addObserver(keyboardFrame, selector: #selector(SoftwareKeyboardFrame.changed(_:)), name: UIResponder.keyboardDidShowNotification, object: nil)
         window.rootViewController = host; window.makeKeyAndVisible()
         defer {
             NotificationCenter.default.removeObserver(keyboardFrame)
@@ -104,7 +105,14 @@ import UIKit
         XCTAssertTrue(controller.terminal.becomeFirstResponder())
         for palette in [DirectTerminalAppearance.light, .dark, .light] {
             appearance.terminal = palette
-            try await Task.sleep(for: .milliseconds(700)); window.layoutIfNeeded()
+            let deadline = Date().addingTimeInterval(5)
+            while Date() < deadline {
+                window.layoutIfNeeded()
+                let observed = window.convert(keyboardFrame.frame, from: window.screen.coordinateSpace)
+                let button = controller.controls.button.convert(controller.controls.button.bounds, to: window)
+                if !observed.isNull, observed.height > 100, abs(button.maxY - (observed.minY - 4)) <= 2 { break }
+                try await Task.sleep(for: .milliseconds(20))
+            }
             let button = controller.controls.button.convert(controller.controls.button.bounds, to: window)
             let terminal = controller.terminal.convert(controller.terminal.bounds, to: window)
             let keyboard = window.convert(keyboardFrame.frame, from: window.screen.coordinateSpace)
@@ -235,9 +243,21 @@ import UIKit
             try Data(name.utf8).write(to: ready, options: .atomic)
             try await Task.sleep(for: .seconds(2)); try? FileManager.default.removeItem(at: ready)
         }
+        func settle(_ description: String, _ condition: () -> Bool) async throws {
+            let deadline = Date().addingTimeInterval(8)
+            while Date() < deadline {
+                if condition() { return }
+                try await Task.sleep(for: .milliseconds(20))
+            }
+            XCTFail("Timed out waiting for " + description)
+            throw POSIXError(.ETIMEDOUT)
+        }
         func inputMenu(_ owner: TerminalController) async throws -> CompanionVNCMenu {
             owner.controls.actionHandler?(["kind": "inputMenu"])
-            try await Task.sleep(for: .milliseconds(550))
+            try await settle("input menu presentation") {
+                guard let navigation = owner.presentedViewController as? UINavigationController else { return false }
+                return !navigation.isBeingPresented && navigation.transitionCoordinator == nil
+            }
             let navigation = try XCTUnwrap(owner.presentedViewController as? UINavigationController)
             return try XCTUnwrap(navigation.topViewController as? CompanionVNCMenu)
         }
@@ -266,7 +286,10 @@ import UIKit
         XCTAssertNotNil((checked.contentConfiguration as? UIListContentConfiguration)?.image)
         try await capture("number-row-menu-on")
         menu.tableView(menu.tableView, didSelectRowAt: path)
-        try await Task.sleep(for: .milliseconds(650)); window.layoutIfNeeded()
+        try await settle("number row action after menu dismissal") {
+            controller.presentedViewController == nil && !controller.keyboardBar.showsNumberRow
+        }
+        window.layoutIfNeeded()
         XCTAssertFalse(controller.keyboardBar.showsNumberRow)
         XCTAssertTrue(try numberRow(controller.keyboardBar).isHidden)
         XCTAssertEqual(controller.keyboardBar.bounds.height, 60, accuracy: 1)
@@ -295,7 +318,10 @@ import UIKit
         XCTAssertEqual(restored.keyboardBar.bounds.height, 60, accuracy: 1)
         let restoredMenu = try await inputMenu(restored)
         restoredMenu.tableView(restoredMenu.tableView, didSelectRowAt: path)
-        try await Task.sleep(for: .milliseconds(650)); window.layoutIfNeeded()
+        try await settle("restored number row action after menu dismissal") {
+            restored.presentedViewController == nil && restored.keyboardBar.showsNumberRow
+        }
+        window.layoutIfNeeded()
         XCTAssertEqual(restored.keyboardBar.bounds.height, 108, accuracy: 1)
         XCTAssertFalse(try numberRow(restored.keyboardBar).isHidden)
         XCTAssertTrue(defaults.bool(forKey: TerminalController.numberRowPreference))

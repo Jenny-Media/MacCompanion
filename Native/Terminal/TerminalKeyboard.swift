@@ -32,26 +32,6 @@ struct TerminalKeyboardState {
         if enhanced { return Array("\u{1b}[127;\(modifiers.rawValue + 1)u".utf8) }
         return (modifiers.contains(.alt) ? [0x1b] : []) + [controlH || modifiers.contains(.ctrl) ? 0x08 : 0x7f]
     }
-    /// Software Alt shortcuts have a known key even without a hardware UIKey.
-    /// SwiftTerm's text-only enhanced event loses that identity. Encode only
-    /// this shortcut case; leave IME commits and ordinary text to UITextInput.
-    static func altShortcut(_ value: String, modifiers: TerminalModifiers, flags: KittyKeyboardFlags) -> [UInt8]? {
-        guard modifiers.contains(.alt), value.unicodeScalars.count == 1,
-              let scalar = value.unicodeScalars.first, scalar.value >= 0x20, scalar.value != 0x7f else { return nil }
-        guard flags.contains(.disambiguate) || flags.contains(.reportAllKeys) else { return text(value, modifiers: modifiers) }
-        let lower = value.lowercased().unicodeScalars
-        let key = lower.count == 1 ? lower.first!.value : scalar.value
-        var keyModifiers = modifiers
-        // The software keyboard commits uppercase text without a UIKey carrying Shift.
-        if key != scalar.value { keyModifiers.insert(.shift) }
-        var identity = String(key)
-        if flags.contains(.reportAlternates), keyModifiers.contains(.shift),
-           let shifted = shifted(value).unicodeScalars.first, shifted.value != key {
-            identity += ":\(shifted.value)"
-        }
-        // Alt/Ctrl shortcuts never carry associated text, even in report-text mode.
-        return Array("\u{1b}[\(identity);\(keyModifiers.rawValue + 1)u".utf8)
-    }
     static func text(_ value: String, modifiers: TerminalModifiers) -> [UInt8] {
         let text = modifiers.contains(.shift) ? shifted(value) : value
         var result = [UInt8]()
@@ -62,6 +42,8 @@ struct TerminalKeyboardState {
                 if (0x40...0x5f).contains(ascii) || (0x61...0x7a).contains(ascii) { result.append(UInt8(ascii & 0x1f)); continue }
                 if ascii == 0x20 || ascii == 0x32 { result.append(0); continue }
                 if ascii == 0x3f || ascii == 0x38 { result.append(0x7f); continue }
+                if ascii == 0x2f { result.append(0x1f); continue }
+                if ascii == 0x7e { result.append(0x1e); continue }
                 if (0x33...0x37).contains(ascii) { result.append(UInt8(ascii - 0x33 + 0x1b)); continue }
             }
             result.append(contentsOf: String(scalar).utf8)
@@ -70,19 +52,111 @@ struct TerminalKeyboardState {
     }
 }
 
+/// Explicit key actions, distinct from literal paste and native IME commits.
+/// SwiftTerm's encoder is internal; use its public negotiated state without
+/// changing the pinned frontend or fabricating physical keyboard metadata.
+enum TerminalKeyInput {
+    case text(String), accessory(TerminalAccessoryKey), enter, backspace
+}
+
+struct TerminalKeyEncoding {
+    var flags: KittyKeyboardFlags = []
+    var applicationCursor = false
+    var backspaceSendsControlH = false
+
+    func bytes(_ key: TerminalKeyInput, modifiers: TerminalModifiers = []) -> [UInt8] {
+        let all = flags.contains(.reportAllKeys)
+        let disambiguate = all || flags.contains(.disambiguate)
+        let events = flags.contains(.reportEvents)
+        let parameter = modifiers.rawValue + 1
+        func csi(_ code: String, suffix: String = "u", release: Bool = false, text: String? = nil) -> [UInt8] {
+            var value = code
+            if !modifiers.isEmpty || release { value += ";\(parameter)" + (release ? ":3" : "") }
+            if let text, all, flags.contains(.reportText), !release,
+               !modifiers.contains(.ctrl), !modifiers.contains(.alt) {
+                value += modifiers.isEmpty ? ";;" : ";"
+                value += text.unicodeScalars.map { String($0.value) }.joined(separator: ":")
+            }
+            return Array(("\u{1b}[" + value + suffix).utf8)
+        }
+        func unicode(_ code: String, legacy: [UInt8], releaseAllowed: Bool = true, text: String? = nil) -> [UInt8] {
+            let encoded = disambiguate && (all || releaseAllowed || !modifiers.isEmpty)
+            let press = encoded ? csi(code, text: text) : legacy
+            return press + (events && releaseAllowed && disambiguate ? csi(code, release: true) : [])
+        }
+        switch key {
+        case .text(let value):
+            // Software keyboards can commit uppercase text without a UIKey
+            // carrying Shift. Keep the unshifted identity for Alt shortcuts.
+            let lower = value.lowercased()
+            if modifiers.contains(.alt), !modifiers.contains(.shift), value.unicodeScalars.count == 1,
+               lower.unicodeScalars.count == 1, lower != value {
+                return bytes(.text(lower), modifiers: modifiers.union(.shift))
+            }
+            if flags.isEmpty { return TerminalKeyboardState.text(value, modifiers: modifiers) }
+            let legacy = !all && (!disambiguate || modifiers.intersection([.ctrl, .alt]).isEmpty) &&
+                (flags.isEmpty || !modifiers.contains([.ctrl, .shift]))
+            return value.unicodeScalars.flatMap { scalar -> [UInt8] in
+                let original = String(scalar)
+                let base = modifiers.intersection([.ctrl, .shift]).isEmpty ? scalar : (original.lowercased().unicodeScalars.first ?? scalar)
+                var code = String(base.value)
+                let text = modifiers.contains(.shift) ? TerminalKeyboardState.shifted(original) : original
+                if flags.contains(.reportAlternates), modifiers.contains(.shift), text.unicodeScalars.count == 1, let shifted = text.unicodeScalars.first {
+                    code += ":\(shifted.value)"
+                }
+                let press = legacy ? TerminalKeyboardState.text(original, modifiers: modifiers) : csi(code, text: text)
+                let release = events && (!legacy || !modifiers.intersection([.ctrl, .alt]).isEmpty) ? csi(code, release: true) : []
+                return press + release
+            }
+        case .enter:
+            return unicode("13", legacy: TerminalKeyboardState.text("\r", modifiers: modifiers), releaseAllowed: all)
+        case .backspace:
+            return unicode("127", legacy: TerminalKeyboardState.backspace(modifiers: modifiers, controlH: backspaceSendsControlH), releaseAllowed: all)
+        case .accessory(let key):
+            if flags.isEmpty {
+                if key == .tab && modifiers.contains(.shift) {
+                    return (modifiers.contains(.alt) ? [0x1b] : []) + Array("\u{1b}[Z".utf8)
+                }
+                return key.bytes(modifiers: modifiers, applicationCursor: applicationCursor)
+            }
+            if key == .escape { return unicode("27", legacy: key.bytes(modifiers: modifiers)) }
+            if key == .tab {
+                let legacy = modifiers.contains(.shift) ? (modifiers.contains(.alt) ? [UInt8(0x1b)] : []) + Array("\u{1b}[Z".utf8) : key.bytes(modifiers: modifiers)
+                return unicode("9", legacy: legacy, releaseAllowed: all)
+            }
+            let letter: String? = switch key {
+            case .up: "A"; case .down: "B"; case .right: "C"; case .left: "D"; case .home: "H"; case .end: "F"
+            case .f1: "P"; case .f2: "Q"; case .f4: "S"; default: nil
+            }
+            if let letter {
+                let press = modifiers.isEmpty ? (disambiguate ? Array(("\u{1b}[" + letter).utf8) : key.bytes(applicationCursor: applicationCursor)) : csi("1", suffix: letter)
+                return press + (events ? csi("1", suffix: letter, release: true) : [])
+            }
+            let code: Int = switch key {
+            case .delete: 3; case .pageUp: 5; case .pageDown: 6; case .f3: 13; case .f5: 15; case .f6: 17
+            case .f7: 18; case .f8: 19; case .f9: 20; case .f10: 21; case .f11: 23; case .f12: 24; default: 0
+            }
+            return csi(String(code), suffix: "~") + (events ? csi(String(code), suffix: "~", release: true) : [])
+        }
+    }
+}
+
 extension VNCQuickAction {
     func terminalBytes(applicationCursor: Bool = false) -> [UInt8] {
+        terminalBytes(encoding: .init(applicationCursor: applicationCursor))
+    }
+    func terminalBytes(encoding: TerminalKeyEncoding) -> [UInt8] {
         guard kind == .shortcut, valid, compatible(with: .terminal) else { return [] }
         var flags: TerminalModifiers = []
         if modifiers.contains(0xffe1) { flags.insert(.shift) }
         if modifiers.contains(0xffe3) { flags.insert(.ctrl) }
         if modifiers.contains(0xffe9) { flags.insert(.alt) }
         let special: [UInt32: TerminalAccessoryKey] = [0xff1b: .escape, 0xff09: .tab, 0xffff: .delete, 0xff51: .left, 0xff52: .up, 0xff53: .right, 0xff54: .down]
-        if key == 0xff08 { return TerminalKeyboardState.backspace(modifiers: flags) }
-        if let special = special[key] { return special.bytes(modifiers: flags, applicationCursor: applicationCursor) }
-        if key == 0xff0d { return TerminalKeyboardState.text("\r", modifiers: flags) }
+        if key == 0xff08 { return encoding.bytes(.backspace, modifiers: flags) }
+        if let special = special[key] { return encoding.bytes(.accessory(special), modifiers: flags) }
+        if key == 0xff0d { return encoding.bytes(.enter, modifiers: flags) }
         guard let scalar = UnicodeScalar(key) else { return [] }
-        return TerminalKeyboardState.text(String(scalar), modifiers: flags)
+        return encoding.bytes(.text(String(scalar)), modifiers: flags)
     }
 }
 
@@ -275,7 +349,7 @@ struct TerminalKeyboardPreferences: Codable {
                 guard let terminal = self?.terminal else { return }
                 terminal.performCustomInput {
                     terminal.resetModifiers()
-                    terminal.send(data: TerminalKeyboardState.text(text, modifiers: .ctrl)[...])
+                    terminal.sendKey(.text(text), modifiers: .ctrl)
                 }
             }
         }), UIMenu(title: "Keyboard", children: [
@@ -387,7 +461,7 @@ struct TerminalKeyboardPreferences: Codable {
     private func send(_ key: TerminalAccessoryKey) {
         guard let terminal else { return }
         terminal.performCustomInput {
-            terminal.send(data: key.bytes(modifiers: terminal.keyboardState.consume(), applicationCursor: terminal.getTerminal().applicationCursor)[...])
+            terminal.sendKey(.accessory(key), modifiers: terminal.keyboardState.consume())
         }
         refresh()
     }
