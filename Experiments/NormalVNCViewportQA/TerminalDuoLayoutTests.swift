@@ -116,7 +116,7 @@ import UIKit
             let button = controller.controls.button.convert(controller.controls.button.bounds, to: window)
             let terminal = controller.terminal.convert(controller.terminal.bounds, to: window)
             let keyboard = window.convert(keyboardFrame.frame, from: window.screen.coordinateSpace)
-            XCTAssertEqual(controller.keyboardBar.bounds.height, 108, accuracy: 1, "The number row must remain visible in the SwiftUI host")
+            XCTAssertEqual(controller.keyboardBar.bounds.height, 156, accuracy: 1, "The number row must remain visible in the SwiftUI host")
             XCTAssertGreaterThan(keyboard.height, 100, "The real software keyboard must be visible")
             XCTAssertEqual(button.maxY, keyboard.minY - 4, accuracy: 2, "SwiftUI and UIKit must avoid the keyboard once")
             XCTAssertLessThanOrEqual(terminal.maxY + 4, button.minY)
@@ -146,7 +146,7 @@ import UIKit
             XCTAssertLessThanOrEqual(button.maxY, controller.keyboardCeiling(), "The dock must stay above the keyboard")
             XCTAssertTrue(toolbar.contains(button), "The menu button must occupy the modifier bar")
             XCTAssertLessThan(toolbar.minY - controller.terminal.frame.maxY, controller.terminal.caretFrame.height + 1, "Only whole-row rounding may separate output from the toolbar")
-            XCTAssertEqual(toolbar.height, keyboard ? 108 : 60, accuracy: 1, "Keyboard requested: \(keyboard); first responder: \(controller.terminal.isFirstResponder); ceiling: \(controller.keyboardCeiling())")
+            XCTAssertEqual(toolbar.height, keyboard ? 156 : 60, accuracy: 1, "Keyboard requested: \(keyboard); first responder: \(controller.terminal.isFirstResponder); ceiling: \(controller.keyboardCeiling())")
             XCTAssertNil(controller.terminal.inputAccessoryView, "A second accessory would duplicate the toolbar and keyboard avoidance")
             if !keyboard { continue }
             XCTAssertLessThan(controller.keyboardCeiling(), controller.view.bounds.height - 100)
@@ -202,7 +202,7 @@ import UIKit
         XCTAssertTrue(String(decoding: controller.terminal.getTerminal().getBufferAsData(), as: UTF8.self).contains("toggling the toolbar keyboard"))
 
         // A narrow toolbar keeps both end controls reachable without shrinking
-        // the terminal keys; the floating menu exposes More Keys directly.
+        // the terminal keys; the fixed controls remain reachable and the core keys scroll.
         let narrow = TerminalKeyboardBar(terminal: controller.terminal, preferences: .init())
         narrow.translatesAutoresizingMaskIntoConstraints = true
         narrow.frame = CGRect(x: 0, y: 0, width: 320, height: 60); controller.view.addSubview(narrow)
@@ -210,11 +210,13 @@ import UIKit
         let keyboardFrame = narrow.keyboardButton.convert(narrow.keyboardButton.bounds, to: narrow)
         let anchorFrame = narrow.menuAnchor.convert(narrow.menuAnchor.bounds, to: narrow)
         XCTAssertTrue(narrow.bounds.contains(keyboardFrame)); XCTAssertTrue(narrow.bounds.contains(anchorFrame))
-        XCTAssertEqual(narrow.keyScroll.contentSize.width, narrow.keyScroll.bounds.width, accuracy: 1, "The compact core row fits without a hidden Fn key")
+        XCTAssertGreaterThanOrEqual(narrow.keyScroll.contentSize.width, narrow.keyScroll.bounds.width)
+        XCTAssertTrue(narrow.bounds.contains(narrow.numberButton.convert(narrow.numberButton.bounds, to: narrow)))
+        XCTAssertTrue(narrow.bounds.contains(narrow.expandButton.convert(narrow.expandButton.bounds, to: narrow)))
         let keys = try XCTUnwrap(narrow.keyScroll.subviews.compactMap { $0 as? UIStackView }.first)
         for key in keys.arrangedSubviews {
             XCTAssertGreaterThanOrEqual(key.bounds.width, 44)
-            XCTAssertTrue(narrow.keyScroll.bounds.contains(key.convert(key.bounds, to: narrow.keyScroll)))
+
         }
         XCTAssertFalse(keys.arrangedSubviews.compactMap { $0 as? UIButton }.contains { $0.configuration?.title == "Fn" })
         XCTAssertTrue(controller.controls.categoryActions?.contains { $0["kind"] as? String == "moreKeys" } == true)
@@ -229,7 +231,9 @@ import UIKit
         let mac = try DirectMacRecordV1.normalized(name: "Studio Mac", addresses: ["studio.local"])
         let session = DirectTerminalSession(mac: mac); session.connected = true
         var customizationRequested = false
-        let controller = TerminalController(session: session, customize: { customizationRequested = true }, defaults: defaults)
+        var data = try JSONEncoder().encode(TerminalControlsProfile.defaults)
+        let controlsStore = TerminalControlsStore(read: { data }, write: { data = $0 }, legacyIDs: { [] })
+        let controller = TerminalController(session: session, customize: { customizationRequested = true }, defaults: defaults, controlsStore: controlsStore)
         window.rootViewController = controller; window.makeKeyAndVisible(); controller.applyAppearance(.light)
         let folder = URL.documentsDirectory.appending(path: "TerminalNumberRow")
         let ready = folder.appending(path: "ready")
@@ -270,7 +274,7 @@ import UIKit
         XCTAssertTrue(controller.keyboardBar.showsNumberRow, "New installations retain the number row")
         XCTAssertTrue(controller.terminal.becomeFirstResponder())
         try await Task.sleep(for: .milliseconds(550)); window.layoutIfNeeded()
-        XCTAssertEqual(controller.keyboardBar.bounds.height, 108, accuracy: 1)
+        XCTAssertEqual(controller.keyboardBar.bounds.height, 156, accuracy: 1)
         let rowsWithNumbers = controller.terminal.getTerminal().rows
         try await capture("number-row-on")
         let menu = try await inputMenu(controller)
@@ -291,8 +295,8 @@ import UIKit
         }
         window.layoutIfNeeded()
         XCTAssertFalse(controller.keyboardBar.showsNumberRow)
-        XCTAssertTrue(try numberRow(controller.keyboardBar).isHidden)
-        XCTAssertEqual(controller.keyboardBar.bounds.height, 60, accuracy: 1)
+        XCTAssertEqual(try numberRow(controller.keyboardBar).superview?.bounds.height, 0)
+        XCTAssertEqual(controller.keyboardBar.bounds.height, 108, accuracy: 1)
         XCTAssertGreaterThan(controller.terminal.getTerminal().rows, rowsWithNumbers, "Hiding numbers must return space to the PTY")
         XCTAssertTrue(controller.terminal.isFirstResponder)
         XCTAssertTrue(session.connected); XCTAssertTrue(controller.session === session)
@@ -309,21 +313,21 @@ import UIKit
 
         // A new session controller reads the persisted choice without changing
         // the protected per-Mac custom-key preferences or requiring Pro.
-        let restored = TerminalController(session: session, customize: {}, defaults: defaults)
+        let restored = TerminalController(session: session, customize: {}, defaults: defaults, controlsStore: controlsStore)
         window.rootViewController = restored
         try await Task.sleep(for: .milliseconds(350)); window.layoutIfNeeded()
         XCTAssertFalse(restored.keyboardBar.showsNumberRow)
         XCTAssertTrue(restored.terminal.becomeFirstResponder())
         try await Task.sleep(for: .milliseconds(550)); window.layoutIfNeeded()
-        XCTAssertEqual(restored.keyboardBar.bounds.height, 60, accuracy: 1)
+        XCTAssertEqual(restored.keyboardBar.bounds.height, 108, accuracy: 1)
         let restoredMenu = try await inputMenu(restored)
         restoredMenu.tableView(restoredMenu.tableView, didSelectRowAt: path)
         try await settle("restored number row action after menu dismissal") {
             restored.presentedViewController == nil && restored.keyboardBar.showsNumberRow
         }
         window.layoutIfNeeded()
-        XCTAssertEqual(restored.keyboardBar.bounds.height, 108, accuracy: 1)
-        XCTAssertFalse(try numberRow(restored.keyboardBar).isHidden)
+        XCTAssertEqual(restored.keyboardBar.bounds.height, 156, accuracy: 1)
+        XCTAssertGreaterThan(try XCTUnwrap(try numberRow(restored.keyboardBar).superview?.bounds.height), 0)
         XCTAssertTrue(defaults.bool(forKey: TerminalController.numberRowPreference))
         _ = restored.terminal.resignFirstResponder()
         try await Task.sleep(for: .milliseconds(550)); window.layoutIfNeeded()

@@ -226,10 +226,21 @@ struct TerminalKeyboardPreferences: Codable {
     let keyScroll = UIScrollView()
     private let numbers = UIStackView()
     private let custom = UIStackView()
+    private let navigation = UIStackView()
+    private let navigationScroll = UIScrollView()
+    let numberButton = UIButton(type: .system)
+    let expandButton = UIButton(type: .system)
+    var layoutChanged: (() -> Void)?
+    var openKeypad: ((Bool) -> Void)?
+    var compactLayout = false { didSet { if oldValue != compactLayout { updateRows() } } }
+    private var expandedRowsVisible: Bool { expanded && !compactLayout }
+    var expanded = true { didSet { if oldValue != expanded { updateRows() } } }
+    var showsNavigation = true { didSet { if oldValue != showsNavigation { updateRows() } } }
     private let numberScroll = UIScrollView()
     private let customScroll = UIScrollView()
     private let modifierKeys = UIStackView()
     private var keyRows: [(UIStackView, NSLayoutConstraint, NSLayoutConstraint)] = []
+    private var naturalHeights: [ObjectIdentifier: CGFloat] = [:]
     private var modifierHeight: NSLayoutConstraint!
     var toggleKeyboard: (() -> Void)?
     private var softwareKeyboardVisible = false
@@ -238,24 +249,28 @@ struct TerminalKeyboardPreferences: Codable {
     var showsNumberRow = true {
         didSet { if oldValue != showsNumberRow { updateRows() } }
     }
+    var expandedHeight: CGFloat {
+        8 + (modifierHeight?.constant ?? 52) + (showsNumberRow ? naturalHeight(numbers) + 4 : 0)
+            + (hasCustomKeys ? naturalHeight(custom) + 4 : 0) + (showsNavigation ? naturalHeight(navigation) + 4 : 0)
+    }
     var height: CGFloat {
-        8 + (modifierHeight?.constant ?? 52) + (softwareKeyboardVisible && !composerVisible ?
-            (showsNumberRow ? keyRows[0].1.constant + 4 : 0) + (hasCustomKeys ? keyRows[1].1.constant + 4 : 0) : 0)
+        softwareKeyboardVisible && !composerVisible && expandedRowsVisible ? expandedHeight : 8 + (modifierHeight?.constant ?? 52)
     }
     init(terminal: SessionTerminalView, preferences: TerminalKeyboardPreferences) {
         self.terminal = terminal
         super.init(frame: .zero)
         accessibilityIdentifier = "terminal-keyboard-bar"
         translatesAutoresizingMaskIntoConstraints = false
-        rows.axis = .vertical; rows.spacing = 4; rows.translatesAutoresizingMaskIntoConstraints = false
+        rows.axis = .vertical; rows.spacing = 0; rows.translatesAutoresizingMaskIntoConstraints = false
         addSubview(rows)
         NSLayoutConstraint.activate([rows.topAnchor.constraint(equalTo: topAnchor, constant: 4), rows.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4), rows.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4), rows.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4)])
         for number in ["1","2","3","4","5","6","7","8","9","0"] { numbers.addArrangedSubview(button(number) { [weak self] in self?.sendNumber(number) }) }
-        for (row, scroll) in [(numbers, numberScroll), (custom, customScroll)] {
+        for (row, scroll) in [(numbers, numberScroll), (custom, customScroll), (navigation, navigationScroll)] {
             row.axis = .horizontal; row.distribution = .fillEqually; row.spacing = 3
             row.translatesAutoresizingMaskIntoConstraints = false
             scroll.showsHorizontalScrollIndicator = false; scroll.addSubview(row); rows.addArrangedSubview(scroll)
-            let height = scroll.heightAnchor.constraint(equalToConstant: 44)
+            let height = scroll.heightAnchor.constraint(equalToConstant: 0)
+            naturalHeights[ObjectIdentifier(row)] = 44
             let minimum = row.widthAnchor.constraint(greaterThanOrEqualToConstant: 0)
             let fill = row.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor); fill.priority = .init(750)
             NSLayoutConstraint.activate([height, minimum, fill,
@@ -265,9 +280,26 @@ struct TerminalKeyboardPreferences: Codable {
                 row.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
                 row.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
                 row.heightAnchor.constraint(equalTo: scroll.frameLayoutGuide.heightAnchor)])
-            keyRows.append((row, height, minimum)); scroll.isHidden = true
+            keyRows.append((row, height, minimum)); scroll.clipsToBounds = true
         }
         numbers.accessibilityIdentifier = "terminal-number-row"
+        navigation.accessibilityIdentifier = "terminal-navigation-row"
+        for key in [TerminalAccessoryKey.left, .down, .up, .right] {
+            navigation.addArrangedSubview(button(key.title) { [weak self] in self?.send(key) })
+        }
+        for (value, title, id) in [(numberButton, "123", "terminal-number-toggle"), (expandButton, "", "terminal-expand-toggle")] {
+            var configuration = UIButton.Configuration.gray(); configuration.title = title; configuration.cornerStyle = .medium
+            configuration.contentInsets = .init(top: 2, leading: 0, bottom: 2, trailing: 0)
+            if value === numberButton { configuration.title = nil; configuration.image = UIImage(systemName: "textformat.123") }
+            value.configuration = configuration; value.accessibilityIdentifier = id
+            value.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        }
+        numberButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }; if compactLayout || !softwareKeyboardVisible { openKeypad?(true); return }; if !expanded { showsNumberRow = true; expanded = true } else { showsNumberRow.toggle() }; layoutChanged?()
+        }, for: .touchUpInside)
+        expandButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }; if compactLayout || !softwareKeyboardVisible { openKeypad?(false); return }; expanded.toggle(); layoutChanged?()
+        }, for: .touchUpInside)
         var keyboardConfiguration = UIButton.Configuration.gray()
         keyboardConfiguration.image = UIImage(systemName: "keyboard")
         keyboardConfiguration.cornerStyle = .medium
@@ -279,13 +311,13 @@ struct TerminalKeyboardPreferences: Codable {
             self.toggleKeyboard?()
             if wasVisible != terminal.isFirstResponder { self.keyFeedback.feedback("selection") }
         }, for: .touchUpInside)
-        keyScroll.showsHorizontalScrollIndicator = false
+        keyScroll.showsHorizontalScrollIndicator = true
         keyScroll.accessibilityIdentifier = "terminal-modifier-keys"
         keyScroll.translatesAutoresizingMaskIntoConstraints = false
         let controls = modifierKeys; controls.axis = .horizontal; controls.distribution = .fillEqually; controls.spacing = 3
         controls.translatesAutoresizingMaskIntoConstraints = false; keyScroll.addSubview(controls)
         menuAnchor.isUserInteractionEnabled = false
-        let bar = UIStackView(arrangedSubviews: [keyboardButton, keyScroll, menuAnchor]); bar.spacing = 4
+        let bar = UIStackView(arrangedSubviews: [keyboardButton, keyScroll, numberButton, expandButton, menuAnchor]); bar.spacing = 4
         rows.addArrangedSubview(bar)
         let fill = controls.widthAnchor.constraint(equalTo: keyScroll.frameLayoutGuide.widthAnchor); fill.priority = .init(750)
         modifierHeight = bar.heightAnchor.constraint(equalToConstant: 52)
@@ -327,7 +359,8 @@ struct TerminalKeyboardPreferences: Codable {
     }
     func configure(_ profile: TerminalControlsProfile, perform: @escaping (UUID) -> Void) {
         for key in custom.arrangedSubviews { custom.removeArrangedSubview(key); key.removeFromSuperview() }
-        let actions = DirectProAccess.shared.hasPro ? profile.actions.filter(\.inRow) : []
+        let actions = DirectProAccess.shared.hasPro ? profile.placed(.keyboard) : []
+        expanded = profile.expandedBar ?? true; showsNavigation = profile.navigationRow ?? true
         hasCustomKeys = !actions.isEmpty
         for item in actions {
             custom.addArrangedSubview(button(item.title) { [weak self] in
@@ -350,11 +383,27 @@ struct TerminalKeyboardPreferences: Codable {
         composerVisible = visible; updateRows()
     }
     private func updateRows() {
-        numbers.isHidden = !softwareKeyboardVisible || composerVisible || !showsNumberRow
-        custom.isHidden = !softwareKeyboardVisible || composerVisible || !hasCustomKeys
-        numberScroll.isHidden = numbers.isHidden; customScroll.isHidden = custom.isHidden
-        invalidateIntrinsicContentSize(); setNeedsLayout()
+        let usesKeypad = compactLayout || !softwareKeyboardVisible
+        numberButton.accessibilityLabel = usesKeypad ? "Open Number Keypad" : showsNumberRow && expanded ? "Hide Number Row" : "Show Number Row"
+        numberButton.accessibilityValue = usesKeypad ? nil : (showsNumberRow && expandedRowsVisible ? "On" : "Off")
+        numberButton.isSelected = showsNumberRow && expandedRowsVisible
+        expandButton.configuration?.image = UIImage(systemName: usesKeypad ? "rectangle.grid.3x2" : expanded ? "chevron.down" : "chevron.up")
+        expandButton.accessibilityLabel = usesKeypad ? "Open Keypad" : expanded ? "Collapse Keyboard Bar" : "Expand Keyboard Bar"
+        let expanded = softwareKeyboardVisible && !composerVisible && expandedRowsVisible
+        for (index, shown) in [expanded && showsNumberRow, expanded && hasCustomKeys, expanded && showsNavigation].enumerated() {
+            let (row, height, _) = keyRows[index]
+            let scroll = [numberScroll, customScroll, navigationScroll][index]
+            // Keep arranged views attached. Explicit zero heights avoid UIKit's
+            // animated hidden-state constraints retaining overlapping row frames.
+            height.constant = shown ? naturalHeight(row) : 0
+            scroll.alpha = shown ? 1 : 0; scroll.isUserInteractionEnabled = shown
+            scroll.accessibilityElementsHidden = !shown
+            rows.setCustomSpacing(shown ? 4 : 0, after: scroll)
+        }
+        invalidateIntrinsicContentSize(); setNeedsLayout(); superview?.setNeedsLayout()
     }
+    private func naturalHeight(_ row: UIStackView) -> CGFloat { naturalHeights[ObjectIdentifier(row)] ?? 44 }
+
     override func didMoveToWindow() { super.didMoveToWindow(); updateKeyMetrics(refreshFonts: true) }
     private var keyFont: UIFont {
         UIFontMetrics(forTextStyle: .caption1).scaledFont(for: .systemFont(ofSize: 13, weight: .medium), compatibleWith: traitCollection)
@@ -376,10 +425,14 @@ struct TerminalKeyboardPreferences: Codable {
             let rowHeight = max(row === modifierKeys ? 52 : 44, ceil(sizes.map(\.height).max() ?? 0))
             let keyWidth = max(row === modifierKeys ? 44 : 28, ceil(sizes.map(\.width).max() ?? 0) + 12)
             let rowWidth = CGFloat(buttons.count) * keyWidth + CGFloat(max(0, buttons.count - 1)) * row.spacing
-            if height.constant != rowHeight { height.constant = rowHeight; changed = true }
+            if naturalHeights[ObjectIdentifier(row)] != rowHeight {
+                naturalHeights[ObjectIdentifier(row)] = rowHeight
+                if row === modifierKeys { height.constant = rowHeight }
+                changed = true
+            }
             if width.constant != rowWidth { width.constant = rowWidth; changed = true }
         }
-        if changed { invalidateIntrinsicContentSize(); setNeedsLayout(); superview?.setNeedsLayout() }
+        if changed { updateRows() }
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override var intrinsicContentSize: CGSize { CGSize(width: UIView.noIntrinsicMetric, height: height) }
@@ -420,8 +473,11 @@ struct TerminalKeyboardPreferences: Codable {
             button.isSelected = terminal.keyboardState.active.contains(modifier)
             button.configuration?.baseBackgroundColor = button.isSelected ? .systemBlue : .secondarySystemFill
             button.configuration?.baseForegroundColor = button.isSelected ? .white : .label
+            let name = modifier == .ctrl ? "Ctrl" : "Alt"
+            button.configuration?.title = name + (terminal.keyboardState.locked.contains(modifier) ? " 🔒" : button.isSelected ? " •" : "")
             button.accessibilityValue = terminal.keyboardState.locked.contains(modifier) ? "Locked" : (button.isSelected ? "Next key" : "Off")
         }
+        updateKeyMetrics(refreshFonts: false)
     }
     private func send(_ key: TerminalAccessoryKey) {
         guard let terminal else { return }

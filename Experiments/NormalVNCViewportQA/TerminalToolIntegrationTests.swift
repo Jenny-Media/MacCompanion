@@ -46,7 +46,9 @@ import SwiftTerm
                 Date().timeIntervalSince(lastOutputAt) >= 0.25
             }
         }
+        var commandIndex = 0
         func command(_ value: String) async throws {
+            commandIndex += 1
             let paste = controller.terminal.getTerminal().bracketedPasteMode ? "\u{1b}[200~" + value + "\u{1b}[201~" : value
             session.send(Array(paste.utf8))
             // Model pasting and then pressing Return as separate user actions.
@@ -54,7 +56,7 @@ import SwiftTerm
             // Paste and Enter in one read. Echo proves the paste was handled;
             // normalize whitespace because phone-sized panes wrap commands.
             let expected = value.filter { !$0.isWhitespace }
-            try await wait("pasted command echo before native Return", diagnostics: text) {
+            try await wait(tool + " command \(commandIndex) echo before native Return (frontend \(controller.terminal.getTerminal().cols)x\(controller.terminal.getTerminal().rows))", diagnostics: text) {
                 text().filter { !$0.isWhitespace }.contains(expected)
             }
             controller.terminal.insertText("\n")
@@ -68,7 +70,14 @@ import SwiftTerm
         try await command("MCQA_STATE=kept; printf '%s%s\\n' 'MCQA_' 'ROUNDTRIP_中文😀'")
         try await wait("Unicode command output from " + tool, diagnostics: text) { text().contains("MCQA_ROUNDTRIP_中文😀") }
         XCTAssertTrue(session.connected)
-        session.resize(columns: 100, rows: 30)
+        // Resize the real hosted viewport so the frontend and remote PTY
+        // agree. A transport-only 100x30 request left a phone renderer using
+        // its old grid and could erase a full-screen tool's visible output.
+        let columns = controller.terminal.getTerminal().cols
+        window.frame = window.frame.insetBy(dx: 20, dy: 20)
+        window.layoutIfNeeded(); controller.view.layoutIfNeeded()
+        try await wait("frontend resize", diagnostics: text) { controller.terminal.getTerminal().cols != columns }
+        try await wait("resized tool output settles", diagnostics: text) { Date().timeIntervalSince(lastOutputAt) >= 0.25 }
         try await command("printf '%s%s\\n' 'MCQA_' 'RESIZED'")
         try await wait("output after PTY resize", diagnostics: text) { text().contains("MCQA_RESIZED") }
         _ = controller.terminal.resignFirstResponder()

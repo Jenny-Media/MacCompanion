@@ -7,7 +7,8 @@ the original three reproduced gaps.
 
 `TerminalToolIntegrationTests` optionally connects to this test-only host and
 runs real tmux, Zellij, and Herdr binaries. Each case checks shell execution,
-Unicode terminal text, output after resize, and persistence of a shell variable after
+Unicode terminal text, output after resizing the hosted viewport (keeping the
+renderer and SSH PTY grid in agreement), and persistence of a shell variable after
 disconnect/reattach with the terminal focused and software keyboard open. It waits
 for the pane prompt and a quiet period after focus/layout negotiation before
 typing. Reattachment uses the production fresh-PTY reset with no harness reset.

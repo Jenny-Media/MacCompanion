@@ -999,7 +999,7 @@ struct DirectSessionSettingsV1: View {
                     case .desktop: VNCInputSettings(mode: .desktop)
                     case .terminal:
                         #if os(iOS)
-                        TerminalControlsSettings()
+                        TerminalControlsSettings(close: { settingsSheet = nil })
                         #else
                         VNCInputSettings(mode: .terminal)
                         #endif

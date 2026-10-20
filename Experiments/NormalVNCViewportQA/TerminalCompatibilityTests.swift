@@ -1,5 +1,6 @@
 import XCTest
-import SwiftUI
+import UIKit
+import Observation
 import SwiftTerm
 import NIO
 import NIOSSH
@@ -427,8 +428,9 @@ private final class CompatibilityPress: UIPress {
     let session: DirectTerminalSession
     let window: UIWindow
     let previous: UIWindow?
-    let host: UIViewController
-    private(set) var controller: TerminalController!
+    let host: TerminalController
+    var controller: TerminalController { host }
+    private var observingSession = true
     var renderedBytes = [UInt8]()
     var text: String { terminalCompatibilityText(controller.terminal.getTerminal()) }
     private init(record: SSHTestRecord, server: Channel, mac: DirectMacRecordV1, scene: UIWindowScene) {
@@ -436,9 +438,14 @@ private final class CompatibilityPress: UIPress {
         session = DirectTerminalSession(mac: mac)
         previous = scene.windows.first(where: \.isKeyWindow)
         window = UIWindow(windowScene: scene)
-        host = UIHostingController(rootView: DirectTerminalView(mac: mac, session: session, autoConnect: false, exit: {}).directAppearance())
+        // Protocol cases exercise the production native surface directly. The
+        // native journey target separately covers the complete SwiftUI flow.
+        // A second SwiftUI root during application launch can enter an unrelated
+        // appearance cycle before a representable controller is ever created.
+        host = TerminalController(session: session, customize: {})
         window.rootViewController = host; window.makeKeyAndVisible()
         host.loadViewIfNeeded(); window.layoutIfNeeded()
+        projectSessionState()
     }
     static func make() async throws -> TerminalCompatibilityHarness {
         // Query replies must not be echoed back as new terminal requests.
@@ -459,8 +466,9 @@ private final class CompatibilityPress: UIPress {
             }
             let rig = TerminalCompatibilityHarness(record: record, server: server, mac: mac, scene: scene)
             do {
-                try await terminalWait("hosted terminal") { rig.findController(rig.host) != nil }
-                rig.controller = rig.findController(rig.host)
+                try await terminalWait("hosted terminal") {
+                    rig.host.viewIfLoaded?.window === rig.window && rig.session.received != nil && rig.session.prepareTerminal != nil
+                }
                 let receive = rig.session.received
                 rig.session.received = { [weak rig] bytes in receive?(bytes); rig?.renderedBytes += bytes }
                 rig.connect()
@@ -472,6 +480,17 @@ private final class CompatibilityPress: UIPress {
         } catch { try? TerminalSecretStore.remove(mac.id); try? await server.close(); throw error }
     }
     func connect() { session.connect(username: "synthetic", password: "synthetic-only", remember: false) }
+    private func projectSessionState() {
+        guard observingSession else { return }
+        // Mirror TerminalSurface.updateUIViewController's observed projection.
+        // Keep genuine session state, input admission and controller callbacks.
+        withObservationTracking {
+            controller.terminal.isUserInteractionEnabled = session.connected
+            controller.updateControls()
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in self?.projectSessionState() }
+        }
+    }
     func tap(_ title: String) throws {
         func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
         if let button = descendants(controller.keyboardBar).compactMap({ $0 as? UIButton }).first(where: { $0.configuration?.title == title }) {
@@ -483,11 +502,8 @@ private final class CompatibilityPress: UIPress {
             menu.selectionHandler?(item)
         }
     }
-    private func findController(_ root: UIViewController) -> TerminalController? {
-        if let match = root as? TerminalController { return match }
-        return root.children.lazy.compactMap { self.findController($0) }.first
-    }
     func close() async {
+        observingSession = false
         window.endEditing(true)
         session.stop(); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible()
         try? TerminalSecretStore.remove(session.mac.id)

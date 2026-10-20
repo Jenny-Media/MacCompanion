@@ -1,19 +1,31 @@
 # Shared iOS Terminal controls
 
-The floating Terminal menu exposes **More Keys**, **Saved Text**, **All Actions**
-and **Customize**. More Keys includes navigation and function keys, modifier
-locks, clipboard actions, and the existing Ctrl-C/Ctrl-D/Ctrl-Z shortcuts.
-The compact software-keyboard row keeps Esc, Tab, Ctrl and Alt beside the fixed
-keyboard toggle and floating-menu button. The optional number and custom rows
-remain available. There is no Fn button or separate iOS snippet editor.
+The floating menu exposes **Keypad**, **Shortcuts & Text**, **Keyboard & Input**,
+Appearance and Session. Keypad is a persistent grouped key grid: tapping a key
+sends once; modifiers show Off, Next Key or Locked, with explicit Lock buttons.
+There is no Fn or All Actions entry.
 
-**Terminal Controls** previews the custom row and the actual floating-menu
-renderer. Tap an action to edit it, drag to reorder, or use Earlier/Later.
-Each key, shortcut or saved-text action has one definition, with independent
-keyboard-row and menu placements. Unpinned actions remain in the library.
-Draft edits never acquire a session input callback. Cancel discards the draft;
-one Save commits it. Customization retains the existing Pro requirement.
-Free standard keys and Compose Text remain available.
+The keyboard bar keeps Esc, Tab, Ctrl and Alt, an obvious **123** toggle and an
+expand/collapse control. Expanded bars show navigation arrows, optional numbers
+and pinned custom actions. Collapsing never erases settings. Short windows automatically reserve terminal
+space by compacting the bar; its number and expand buttons then open Keypad.
+Returning to a taller layout restores the saved expanded preference. The 123
+button opens Number Keypad directly in compact layouts. Keypad hides the native
+keyboard while open and restores it on Done when it was previously visible. Navigation is on
+by default, restoring the common arrow workflow. With no onscreen keyboard,
+only the compact persistent bar is reserved; 123 and the Keypad
+button open usable panels instead of toggling invisible rows in those states.
+
+Customization starts with two separate destinations: **Keyboard Bar** and
+**Floating Menu**. Each editor previews only its destination, supports selection,
+independent placement order and accessible Earlier/Later controls. Removing a
+placement preserves its definition. Searchable **Shortcuts & Text** owns reusable
+shortcuts/text; both editors can pin the same item without copying its payload.
+Editors use a page-sized presentation, and the presenting owner closes the
+sheet explicitly. Editors never send input. Cancel discards drafts; Save commits once. Changes
+apply to all Macs on this device, after the sheet has dismissed. Multiline saved
+text requires confirmation before input, and no saved text adds Return.
+Customization retains the existing Pro requirement; standard input stays free.
 
 ## Shared settings and preservation
 
@@ -28,7 +40,7 @@ IDs where unique, same-name entries with different contents, modifiers,
 whitespace and text through the existing 4096-byte UTF-8 snippet limit.
 Colliding IDs receive independent identities; neither source payload is lost.
 Legacy records are retained unchanged.
-Imported snippets stay under Saved Text; they are not automatically pinned into
+Imported snippets stay in Shortcuts & Text; they are not automatically pinned into
 the main menu. Existing quick-action pins and custom-row keys are retained.
 
 The imported actions and completed-source journal are written together in one
@@ -46,13 +58,53 @@ queue admission; there is no transport-timing change or input replay.
 
 ## Verification
 
-The new coverage consists of 11 profile/migration tests, four hosted UI/input
-tests, and one native Save/Cancel journey. The hosted tests use the actual menu
-renderer and canonical terminal encoding/paste fixtures. The journey presents
-the production settings sheet over an in-memory store, purchases the local
-StoreKit test product, requires verified Pro access, and checks zero writes on
-Cancel and one write on Save. Its app and signing metadata are generated only
-for Simulator QA; no entitlement bypass enters the normal app.
+Coverage includes 14 profile/migration tests, seven hosted UI/input tests and six
+native UI journeys, plus an opt-in hands-on review. Tests exercise the real
+floating-menu renderer, canonical input fixtures and the production settings
+sheet. The isolated QA app purchases the local StoreKit test product and
+requires verified Pro access; no entitlement bypass enters the normal app.
+Its live terminal connects through the production SSH client to an experimental
+loopback server. Synthetic input is observed at that server, rather than inferred
+from button animations. The server requests a hidden cursor to keep cursor
+blinking from preventing XCTest quiescence; normal application code is unchanged.
+Native rename journeys use the system Select All menu instead of assuming a
+caret position, including UIKit's Next Page menu at accessibility text sizes.
+The iPad journeys wait for the software keyboard before resolving selection
+presses or search-result coordinates, because focused fields and centered
+sheets move when that keyboard appears.
+Protocol cases mount the production native Terminal controller in a UIKit
+window and observe the same session state projected by `TerminalSurface`.
+This avoids introducing another SwiftUI root during the host application's
+initial appearance. The native journeys retain the complete connected SwiftUI
+view and settings sheets; no input/transport settling delay is added.
+
+| Use case | Verification |
+| --- | --- |
+| Repeated history/cursor navigation | Native arrow taps and received SSH bytes |
+| Ctrl/Alt/Shift next-key and locks | Native Keypad journey, hosted state and wire checks |
+| Interrupt with keyboard hidden | Native Keypad Ctrl-C and received byte |
+| Occasional function/navigation keys | Native F1/Home/End, canonical key vectors |
+| Numbers and more terminal space | 123, collapse/expand, short-window Keypad and restoration |
+| Reusable Unicode/path/multiline text | Search, exact SSH bytes, cancel/confirm, no added Return |
+| Create a shortcut | Name/key editing and final chord preview; explicit deletion |
+| Many saved items and favorite placement | Search over 43 saved texts; reuse and unpin preserve one definition |
+| Independent keyboard/menu customization | Separate native destinations; independent order model tests |
+| Large text and accessible reordering | Native accessibility XXXL journeys and actual menu renderer move actions |
+| Hardware/moved keyboard geometry | Hosted keyboard-guide and composer layout checks |
+| Settings shared across Macs | One profile, multiple legacy Mac imports and revision checks |
+| Connected Save/background/reconnect | Native Save then real SSH input, suspend/retained-panel admission and loopback integration |
+
+A Save notification is deferred in the editing session until its settings sheet
+finishes dismissing. Other sessions reload immediately. The editor no longer
+invokes a second synchronous reload. Native navigation keeps Back separate from editable content; toolbar actions
+belong only to the active destination. Optional rows use explicit zero heights while collapsed and retain their natural
+heights separately, avoiding animated stack-view hidden-state constraints during
+keyboard transitions. Frame regressions reject overlaps after restoration.
+Each Keypad presentation has independent
+state; reopening it cannot revive a retained callback from an earlier panel.
+Saved-item search uses an inline field and full-width row hit areas, without an
+additional search-controller presentation between selecting an item and closing
+the panel.
 
 After the managed Simulator build, run the focused regressions with:
 
@@ -67,9 +119,10 @@ bash scripts/validate.sh
 ```
 
 The broader selection also covers keyboard feedback, real loopback SSH input,
-quick-action editing, Terminal layouts, text sizing and composer layout. On
-iPhone it uses the native composer rotation/row-restoration check. On iPad it
-uses `testComposerReservesTheShortcutBarAcrossKeyboardLayouts`, which checks
+quick-action editing, Terminal layouts, text sizing and composer layout. The
+native runtime journey rotates with the software keyboard visible and requires
+usable terminal height and restoration on return to portrait. On iPad, hosted
+coverage uses `testComposerReservesTheShortcutBarAcrossKeyboardLayouts`, which checks
 docked, moved and hardware keyboards with tablet window sizes. An additional
 iPad attempt with the phone rotation check failed because a hosted scene
 geometry request left its window portrait; that failure is retained, and is not
@@ -77,4 +130,12 @@ reported as tablet rotation acceptance.
 
 Simulator and repository-validation results are recorded in the PR. Synthetic
 screenshots, failed attempts, logs and xcresult bundles remain outside Git under
-`/private/tmp/maccompanion-terminal-redesign-20261020/`.
+`/private/tmp/maccompanion-terminal-redesign-20261020/` and
+`/private/tmp/maccompanion-terminal-ux-20261020/`.
+
+For hands-on review, add `--terminal-controls-review` and select
+`TerminalControlsJourneyTests/TerminalControlsJourneyTests/testInteractiveReview`.
+The QA-only Finish Review button ends the bounded review without changing Pro
+entitlement policy. Physical VoiceOver, hardware-keyboard behavior, dictation
+and the reported device-only Save symptom still require physical acceptance;
+Simulator results do not certify those.

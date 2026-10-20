@@ -19,6 +19,7 @@ def main():
     parser.add_argument('--tmux', type=Path, default=shutil.which('tmux'))
     parser.add_argument('--zellij', type=Path, default=shutil.which('zellij'))
     parser.add_argument('--herdr', type=Path, default=shutil.which('herdr'))
+    parser.add_argument('--screenshots', action='store_true', help='Pause on synthetic tool screens for external Simulator screenshot capture')
     parser.add_argument('--include-ui-regressions', action='store_true', help='Also verify existing toolbar, appearance and native-editing behavior')
     args = parser.parse_args()
     if args.output.resolve().is_relative_to(ROOT) or args.output.exists():
@@ -43,6 +44,7 @@ def main():
                    '--only-testing', 'DirectClientTests/TerminalToolIntegrationTests',
                    '--only-testing', 'DirectClientTests/TerminalIntegrationTests/testChangedHostKeyRejectsBeforeAnyPasswordAuthentication',
                    '--only-testing', 'DirectClientTests/TerminalIntegrationTests/testRealSSHTrustBeforeLoginInteractivePTYOrderedInputResizeAndPreservedShell']
+        if args.screenshots: command += ['--screenshots']
         if args.include_ui_regressions:
             for identifier in [
                 'AppearanceTests/testTerminalPaletteIsIndependentAndFollowsAppWhenSelectedWithoutNewSession',

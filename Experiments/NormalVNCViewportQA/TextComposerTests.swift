@@ -151,7 +151,7 @@ import StoreKitTest
         let bar = controller.keyboardBar
         let preferences = TerminalKeyboardPreferences(keys: [.f1, .f2])
         bar.configure(preferences); bar.showsNumberRow = true; bar.setSoftwareKeyboardVisible(true)
-        XCTAssertEqual(bar.height, 156, accuracy: 1, "Reproduce the real three-row Terminal bar")
+        XCTAssertEqual(bar.height, 204, accuracy: 1, "Expanded Terminal bar includes numbers, pinned actions and navigation")
         for landscape in [false, true] {
             scene.requestGeometryUpdate(.iOS(interfaceOrientations: landscape ? .landscapeRight : .portrait))
             for _ in 0..<300 {
@@ -195,7 +195,7 @@ import StoreKitTest
                 bar.setSoftwareKeyboardVisible(true)
                 XCTAssertFalse(bar.isHidden, "Restore the shortcut row after either close path")
                 XCTAssertFalse(controller.controls.isHidden, "Restore the anchored menu with the row")
-                XCTAssertEqual(bar.height, 156, accuracy: 1, "Restore number and custom rows without reconfiguring preferences")
+                XCTAssertEqual(bar.height, 204, accuracy: 1, "Restore number, custom and navigation rows without reconfiguring preferences")
                 XCTAssertTrue(bar.showsNumberRow)
             }
         }

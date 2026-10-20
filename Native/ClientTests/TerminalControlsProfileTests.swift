@@ -160,5 +160,42 @@ import Security
         XCTAssertTrue(Set(ids).isSubset(of: Set(found)))
         for (index, id) in ids.enumerated() { XCTAssertEqual(try TerminalKeyboardPreferences.load(id).snippets.first?.text, "preserved \(index)\n") }
     }
+    func testIndependentPlacementOrderAndUnpinPreserveSharedContent() throws {
+        let first = TerminalControlAction(title: "First", kind: .text, text: "中文😀\n", inRow: true)
+        let second = TerminalControlAction(title: "Second", kind: .text, text: "path with spaces", inRow: true)
+        var profile = TerminalControlsProfile(actions: [first, second])
+        profile.move(second.id, to: first.id, in: .keyboard)
+        XCTAssertEqual(profile.placed(.keyboard).map(\.id), [second.id, first.id])
+        XCTAssertEqual(profile.placed(.menu).map(\.id), [first.id, second.id])
+        profile.pin(first.id, in: .keyboard, enabled: false)
+        XCTAssertEqual(profile.actions.first?.text, first.text)
+        XCTAssertEqual(profile.placed(.menu).map(\.id), [first.id, second.id])
+        profile.pin(first.id, in: .keyboard, enabled: true)
+        XCTAssertEqual(profile.placed(.keyboard).map(\.id), [second.id, first.id])
+        XCTAssertEqual(profile.actions.count, 2)
+        profile.delete(first.id)
+        XCTAssertEqual(profile.actions.count, 1); XCTAssertTrue(profile.valid)
+        XCTAssertEqual(profile.rowOrder, [second.id]); XCTAssertEqual(profile.placed(.menu).map(\.id), [second.id])
+        XCTAssertEqual(try JSONDecoder().decode(TerminalControlsProfile.self, from: JSONEncoder().encode(profile)), profile)
+    }
+    func testV1RecordWithoutLayoutFieldsDecodesAndKeepsPayloads() throws {
+        let original = TerminalControlsProfile(actions: [.init(title: "Old text", kind: .text, text: "  old\n", inRow: true)])
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(original)) as? [String: Any])
+        for key in ["rowOrder", "menuOrder", "numberRow", "expandedBar", "navigationRow"] { json.removeValue(forKey: key) }
+        let decoded = try JSONDecoder().decode(TerminalControlsProfile.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertTrue(decoded.valid); XCTAssertEqual(decoded.actions, original.actions)
+        XCTAssertNil(decoded.navigationRow); XCTAssertNil(decoded.expandedBar)
+    }
+    func testLayoutAndIndependentOrdersShareOptimisticSaveAndRejectInvalidIDs() throws {
+        let memory = Memory(); var profile = try memory.store.load()
+        profile.numberRow = false; profile.expandedBar = false; profile.navigationRow = true
+        let saved = try memory.store.save(profile)
+        XCTAssertFalse(try XCTUnwrap(try memory.store.load().numberRow))
+        XCTAssertFalse(try XCTUnwrap(try memory.store.load().expandedBar))
+        XCTAssertThrowsError(try memory.store.save(profile))
+        var bad = saved; bad.rowOrder = [UUID()]; XCTAssertFalse(bad.valid)
+        bad = saved; bad.menuOrder = [saved.actions[0].id, saved.actions[0].id]; XCTAssertFalse(bad.valid)
+    }
+
 }
 #endif

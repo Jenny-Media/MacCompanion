@@ -50,14 +50,52 @@ struct TerminalControlAction: Codable, Identifiable, Equatable {
     }
 }
 
+enum TerminalControlsDestination: String, CaseIterable, Identifiable, Hashable {
+    case keyboard, menu
+    var id: String { rawValue }
+    var title: String { self == .keyboard ? "Keyboard Bar" : "Floating Menu" }
+    var symbol: String { self == .keyboard ? "keyboard" : "ellipsis.circle" }
+}
+
 struct TerminalControlsProfile: Codable, Equatable {
     var version = 1
     var revision = UUID()
     var actions: [TerminalControlAction] = []
     var importedMacs: Set<UUID> = []
+    // Optional fields decode existing v1 records without rewriting their content.
+    var rowOrder: [UUID]?
+    var menuOrder: [UUID]?
+    var numberRow: Bool?
+    var expandedBar: Bool?
+    var navigationRow: Bool?
+    func placed(_ destination: TerminalControlsDestination) -> [TerminalControlAction] {
+        let items = actions.filter { destination == .keyboard ? $0.inRow : $0.inMenu }
+        let order = destination == .keyboard ? rowOrder : menuOrder
+        let ranks = Dictionary(uniqueKeysWithValues: (order ?? []).enumerated().map { ($1, $0) })
+        return items.enumerated().sorted {
+            (ranks[$0.element.id] ?? (actions.count + $0.offset)) < (ranks[$1.element.id] ?? (actions.count + $1.offset))
+        }.map(\.element)
+    }
+    mutating func move(_ id: UUID, to target: UUID, in destination: TerminalControlsDestination) {
+        var order = placed(destination).map(\.id)
+        guard let from = order.firstIndex(of: id), let to = order.firstIndex(of: target), from != to else { return }
+        order.insert(order.remove(at: from), at: to)
+        if destination == .keyboard { rowOrder = order } else { menuOrder = order }
+    }
+    mutating func delete(_ id: UUID) {
+        actions.removeAll { $0.id == id }; rowOrder?.removeAll { $0 == id }; menuOrder?.removeAll { $0 == id }
+    }
+    mutating func pin(_ id: UUID, in destination: TerminalControlsDestination, enabled: Bool) {
+        guard let index = actions.firstIndex(where: { $0.id == id }) else { return }
+        if destination == .keyboard { actions[index].inRow = enabled } else { actions[index].inMenu = enabled }
+    }
     var valid: Bool {
         version == 1 && actions.count <= 4096 && importedMacs.count <= 4096
             && Set(actions.map(\.id)).count == actions.count && actions.allSatisfy(\.valid)
+            && [rowOrder, menuOrder].allSatisfy { order in
+                guard let order else { return true }
+                return order.count <= 4096 && Set(order).count == order.count && Set(order).isSubset(of: Set(actions.map(\.id)))
+            }
     }
     static var defaults: Self { .init(actions: DirectControlMode.terminal.defaults.map(TerminalControlAction.init)) }
     mutating func importKeyboard(_ preferences: TerminalKeyboardPreferences, macID: UUID) {

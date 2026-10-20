@@ -98,7 +98,7 @@ import StoreKit
         window.endEditing(true)
         preview.previewMoveHandler?(saved.id.uuidString, draft.profile.actions[0].id.uuidString)
         try await settle()
-        XCTAssertEqual(draft.profile.actions.first?.id, saved.id)
+        XCTAssertEqual(draft.profile.placed(.menu).first?.id, saved.id)
         XCTAssertEqual(draft.profile.actions.filter { $0.id == saved.id }.count, 1)
         XCTAssertEqual(draft.profile.revision, originalRevision, "Draft editing never commits a storage revision")
         XCTAssertNil(preview.actionHandler, "The real menu renderer has no session input callback in editing mode")
@@ -126,13 +126,14 @@ import StoreKit
         try await settle()
         XCTAssertFalse(descendants(controller.keyboardBar).compactMap { $0 as? UIButton }.contains { $0.configuration?.title == "Fn" })
         let titles = (controller.controls.categoryActions ?? []).compactMap { $0["title"] as? String }
-        for title in ["More Keys", "Saved Text", "All Actions"] { XCTAssertTrue(titles.contains(title)) }
+        for title in ["Keypad", "Shortcuts & Text"] { XCTAssertTrue(titles.contains(title)) }
+        XCTAssertFalse(titles.contains("All Actions"))
         controller.controls.button.sendActions(for: .touchUpInside)
         try await settle(); XCTAssertTrue(controller.controls.menuOpen)
         let choices = try XCTUnwrap(controller.controls.value(forKey: "choices") as? [UIButton])
         let more = try XCTUnwrap(choices.first { $0.accessibilityIdentifier == "session-action-moreKeys" })
-        let input = try XCTUnwrap(choices.first { $0.accessibilityIdentifier == "session-action-inputMenu" })
-        XCTAssertGreaterThan(input.frame.minY, more.frame.minY, "Six categories wrap into readable rows")
+        let input = try XCTUnwrap(choices.first { $0.accessibilityIdentifier == "session-action-session" })
+        XCTAssertGreaterThan(input.frame.minY, more.frame.minY, "Five categories wrap into readable rows")
         XCTAssertGreaterThanOrEqual(more.bounds.width, 90)
         capture("terminal-controls-floating-menu", window: window)
         let menu = controller.makeMoreKeysMenu()
@@ -155,7 +156,7 @@ import StoreKit
         let expected = try bytes(vector.expectedHex)
         var uppercase = TerminalControlAction(title: "Uppercase B", kind: .shortcut)
         uppercase.character = try XCTUnwrap(vector.text?.unicodeScalars.first).value
-        let saved = TerminalControlAction(title: "Saved Text", kind: .text, text: fixture.paste.text)
+        let saved = TerminalControlAction(title: "Saved Text", kind: .text, text: "  中文😀")
         let profile = TerminalControlsProfile(actions: [uppercase, saved])
         let data = try JSONEncoder().encode(profile)
         let store = TerminalControlsStore(read: { data }, write: { _ in XCTFail("Action use must not write settings") }, legacyIDs: { [] })
@@ -169,7 +170,7 @@ import StoreKit
         XCTAssertEqual(controller.output, expected)
         controller.output = []
         controller.performControlAction(saved.id)
-        XCTAssertEqual(controller.output, try bytes(fixture.paste.expectedHex))
+        XCTAssertEqual(controller.output, Array(("\u{1b}[200~  中文😀\u{1b}[201~").utf8))
         controller.updateControls()
         let old = try XCTUnwrap(controller.controls.quickActions.first)
         controller.epoch = UUID(); controller.output = []
@@ -214,4 +215,88 @@ import StoreKit
         controller.controls.actionHandler?(try XCTUnwrap(controller.controls.quickActions.first))
         XCTAssertEqual(controller.output, Array("after".utf8))
     }
+    func testRuntimeKeypadUsesOneShotLocksAndRejectsRetainedPresentation() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        var data = try JSONEncoder().encode(TerminalControlsProfile.defaults)
+        let store = TerminalControlsStore(read: { data }, write: { data = $0 }, legacyIDs: { [] })
+        let session = DirectTerminalSession(mac: .init(id: UUID(), name: "Synthetic", addresses: ["127.0.0.1"]))
+        session.connected = true
+        let controller = ControlsInputController(session: session, customize: {}, controlsStore: store)
+        window.rootViewController = controller; window.makeKeyAndVisible()
+        defer { session.stop(); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        controller.controls.actionHandler?(["kind": "moreKeys"])
+        for _ in 0..<150 where controller.presentedViewController?.isBeingPresented == true || controller.transitionCoordinator != nil { try await Task.sleep(for: .milliseconds(20)) }
+        let first = try XCTUnwrap(controller.presentedViewController as? UIHostingController<TerminalKeypad>).rootView.state
+        first.toggle(.ctrl, false); XCTAssertEqual(first.armed, .ctrl)
+        first.send("terminalKey-home"); XCTAssertTrue(first.armed.isEmpty)
+        XCTAssertEqual(controller.output, TerminalAccessoryKey.home.bytes(modifiers: .ctrl))
+        first.toggle(.alt, true); first.send("terminalKey-end"); XCTAssertEqual(first.locked, .alt)
+        controller.dismiss(animated: false)
+        for _ in 0..<150 where controller.presentedViewController != nil { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertNil(controller.presentedViewController)
+        controller.controls.actionHandler?(["kind": "moreKeys"])
+        for _ in 0..<150 where controller.presentedViewController?.isBeingPresented == true || controller.transitionCoordinator != nil { try await Task.sleep(for: .milliseconds(20)) }
+        let second = try XCTUnwrap(controller.presentedViewController as? UIHostingController<TerminalKeypad>).rootView.state
+        XCTAssertFalse(first === second)
+        controller.output = []; first.send("terminalKey-f1"); XCTAssertTrue(controller.output.isEmpty)
+        second.toggle(.alt, false); second.send("terminalKey-f1")
+        XCTAssertEqual(controller.output, TerminalAccessoryKey.f1.bytes())
+        controller.output = []; session.suspendInput?(); second.send("terminalKey-f1")
+        XCTAssertFalse(second.ready); XCTAssertTrue(controller.output.isEmpty)
+    }
+
+    func testCompactBarRestoresLayoutAndNumbersExpandWithOneTap() {
+        let terminal = SessionTerminalView(frame: .zero)
+        let bar = TerminalKeyboardBar(terminal: terminal, preferences: .init())
+        bar.configure(.defaults) { _ in XCTFail("Layout controls never send an action") }
+        bar.setSoftwareKeyboardVisible(true)
+        XCTAssertEqual(bar.height, 156, accuracy: 1)
+        var keypadRequests = 0, changes = 0
+        bar.openKeypad = { _ in keypadRequests += 1 }; bar.layoutChanged = { changes += 1 }
+        bar.compactLayout = true
+        XCTAssertEqual(bar.height, 60, accuracy: 1); XCTAssertTrue(bar.expanded)
+        bar.numberButton.sendActions(for: .touchUpInside)
+        bar.expandButton.sendActions(for: .touchUpInside)
+        XCTAssertEqual(keypadRequests, 2); XCTAssertEqual(changes, 0)
+        bar.compactLayout = false
+        XCTAssertEqual(bar.height, 156, accuracy: 1)
+        bar.expandButton.sendActions(for: .touchUpInside)
+        XCTAssertFalse(bar.expanded); XCTAssertEqual(bar.height, 60, accuracy: 1)
+        bar.numberButton.sendActions(for: .touchUpInside)
+        XCTAssertTrue(bar.expanded); XCTAssertTrue(bar.showsNumberRow)
+        XCTAssertEqual(bar.height, 156, accuracy: 1); XCTAssertEqual(changes, 2)
+        bar.setSoftwareKeyboardVisible(false)
+        XCTAssertEqual(bar.numberButton.accessibilityLabel, "Open Number Keypad")
+        bar.numberButton.sendActions(for: .touchUpInside)
+        bar.expandButton.sendActions(for: .touchUpInside)
+        XCTAssertEqual(keypadRequests, 4); XCTAssertEqual(changes, 2)
+        XCTAssertTrue(bar.expanded); XCTAssertTrue(bar.showsNumberRow)
+    }
+
+    func testExpandedRowsRemainSeparateAfterRepeatedCompactRestoration() async throws {
+        let entitlement = try await pro(); defer { entitlement.clearTransactions() }
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        let host = UIViewController(); window.rootViewController = host; window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        let terminal = SessionTerminalView(frame: .zero)
+        let bar = TerminalKeyboardBar(terminal: terminal, preferences: .init())
+        bar.configure(.init(actions: [.init(title: "Project", kind: .text, text: "synthetic", inRow: true)])) { _ in XCTFail("Layout never sends input") }
+        bar.translatesAutoresizingMaskIntoConstraints = true; host.view.addSubview(bar)
+        bar.setSoftwareKeyboardVisible(true)
+        let stack = try XCTUnwrap(bar.subviews.compactMap { $0 as? UIStackView }.first)
+        for compact in [false, true, false, true, false] {
+            bar.compactLayout = compact
+            bar.frame = CGRect(x: 0, y: 100, width: 402, height: bar.height)
+            bar.setNeedsLayout(); bar.layoutIfNeeded()
+            let rows = stack.arrangedSubviews.filter { $0.bounds.height > 0 }
+            XCTAssertEqual(rows.count, compact ? 1 : 4)
+            for (index, row) in rows.enumerated() {
+                XCTAssertGreaterThanOrEqual(row.bounds.height, 44)
+                for later in rows.dropFirst(index + 1) { XCTAssertFalse(row.frame.intersects(later.frame), "Restored keyboard rows must not overlap") }
+            }
+        }
+    }
+
 }

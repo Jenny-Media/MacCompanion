@@ -72,6 +72,7 @@ def main():
     parser.add_argument('--screen-text-ui', action='store_true', help='Generate the simulator-only native/area text selection UI journey')
     parser.add_argument('--mac-shortcuts-ui', action='store_true', help='Generate the simulator-only per-Mac shortcuts and native swipe tests')
     parser.add_argument('--terminal-controls-ui', action='store_true', help='Run the simulator-only shared Terminal controls Save/Cancel UI journey')
+    parser.add_argument('--terminal-controls-review', action='store_true', help='Keep the verified-Pro synthetic connected terminal open for a ten-minute interactive review')
     parser.add_argument('--only-testing', action='append', default=[], help='Run a focused XCTest identifier; repeat to select multiple suites')
     parser.add_argument('--terminal-tool-host', type=Path, help='Private descriptor from the opt-in loopback terminal-tool test host')
     args = parser.parse_args()
@@ -222,7 +223,9 @@ def execute(args, parser, compiler):
         controls = copy.deepcopy(app)
         controls['sources'] = [row for row in controls['sources'] if not row['path'].startswith(str(ROOT / 'Apps/MacCompanionIOS'))]
         controls['sources'].append({'path': str(ROOT / 'Experiments/TerminalControlsQA/TerminalControlsApplication.swift')})
+        controls['sources'].append({'path': str(ROOT / 'Experiments/NormalVNCViewportQA/SSHTestServer.swift')})
         controls['sources'].append({'path': str(ROOT / 'spec/storekit/v0/LifetimePro.storekit'), 'buildPhase': 'resources'})
+        controls['sources'].append({'path': str(ROOT / 'spec/fixtures/terminal-compatibility-v1.json'), 'buildPhase': 'resources'})
         controls['settings']['base'].update({'PRODUCT_BUNDLE_IDENTIFIER': 'dev.maccompanion.controlsqa.ios',
                                             'PRODUCT_NAME': 'TerminalControlsQA', 'PRODUCT_MODULE_NAME': 'Mac_Companion'})
         controls_entitlements = qa / 'TerminalControlsQA.entitlements'
@@ -246,6 +249,9 @@ def execute(args, parser, compiler):
             spec['schemes']['TerminalControlsQA'][action] = {'config': 'Debug'}
         spec['schemes']['TerminalControlsQA']['run'].update({'executable': 'TerminalControlsApp',
             'macroExpansion': 'TerminalControlsApp', 'storeKitConfiguration': str(ROOT / 'spec/storekit/v0/LifetimePro.storekit')})
+    if args.terminal_controls_review:
+        if not args.terminal_controls_ui: parser.error('--terminal-controls-review requires --terminal-controls-ui')
+        spec['schemes']['TerminalControlsQA']['test']['environmentVariables'] = {'MACCOMPANION_TERMINAL_CONTROLS_REVIEW': '1'}
     if args.terminal_tool_host:
         descriptor = json.loads(args.terminal_tool_host.read_text())
         spec['schemes']['DirectClientQA']['test'].setdefault('environmentVariables', {})['MACCOMPANION_TERMINAL_TOOL_HOST'] = json.dumps(descriptor)
