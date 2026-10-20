@@ -46,9 +46,18 @@ import SwiftTerm
                 Date().timeIntervalSince(lastOutputAt) >= 0.25
             }
         }
-        func command(_ value: String) {
+        func command(_ value: String) async throws {
             let paste = controller.terminal.getTerminal().bracketedPasteMode ? "\u{1b}[200~" + value + "\u{1b}[201~" : value
-            session.send(Array(paste.utf8)); controller.terminal.insertText("\n")
+            session.send(Array(paste.utf8))
+            // Model pasting and then pressing Return as separate user actions.
+            // Zellij 0.44.3 can drop legacy Enter when its stdin parser receives
+            // Paste and Enter in one read. Echo proves the paste was handled;
+            // normalize whitespace because phone-sized panes wrap commands.
+            let expected = value.filter { !$0.isWhitespace }
+            try await wait("pasted command echo before native Return", diagnostics: text) {
+                text().filter { !$0.isWhitespace }.contains(expected)
+            }
+            controller.terminal.insertText("\n")
         }
         connect()
         try await wait("authenticated " + tool) { session.connected || session.recovery != nil }
@@ -56,11 +65,11 @@ import SwiftTerm
         try await focusReadyPane()
         // Adjacent printf arguments keep the complete expected marker out of
         // the echoed command, so matching it proves shell execution and rendering.
-        command("MCQA_STATE=kept; printf '%s%s\\n' 'MCQA_' 'ROUNDTRIP_中文😀'")
+        try await command("MCQA_STATE=kept; printf '%s%s\\n' 'MCQA_' 'ROUNDTRIP_中文😀'")
         try await wait("Unicode command output from " + tool, diagnostics: text) { text().contains("MCQA_ROUNDTRIP_中文😀") }
         XCTAssertTrue(session.connected)
         session.resize(columns: 100, rows: 30)
-        command("printf '%s%s\\n' 'MCQA_' 'RESIZED'")
+        try await command("printf '%s%s\\n' 'MCQA_' 'RESIZED'")
         try await wait("output after PTY resize", diagnostics: text) { text().contains("MCQA_RESIZED") }
         _ = controller.terminal.resignFirstResponder()
         session.stop()
@@ -69,7 +78,7 @@ import SwiftTerm
         try await wait("reattached SSH " + tool) { session.connected || session.recovery != nil }
         XCTAssertTrue(session.connected, session.status)
         try await focusReadyPane()
-        command("printf '%s%s\\n' 'MCQA_PERSIST_' \"$MCQA_STATE\"")
+        try await command("printf '%s%s\\n' 'MCQA_PERSIST_' \"$MCQA_STATE\"")
         try await wait("original pane shell survives client disconnect", diagnostics: text) { text().contains("MCQA_PERSIST_kept") }
         XCTAssertTrue(session.connected)
         try await captureForReview(tool + "-reattached")

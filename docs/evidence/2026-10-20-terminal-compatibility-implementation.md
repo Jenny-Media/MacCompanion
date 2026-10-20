@@ -49,6 +49,20 @@ settled notification-derived geometry. Its original visibility, exact dock
 position, responder, controller and preserved-output assertions remain intact.
 Compatibility teardown ends editing before hiding its window.
 
+A final restoration repeat passed 22/23: Zellij displayed the last pasted
+command but did not execute its immediately following Return. A disposable
+host-only comparison, independent of the app and Simulator, reproduced this
+with paste plus Return in one write in 5/5 trials; sending Return after command
+echo executed in 5/5. The pinned Zellij 0.44.3 parser drains the available raw
+bytes into its first parsed event, leaving the following legacy Enter empty.
+The integration helper now waits for the whole command echo before one native
+Return, with no retry or timeout increase. The failed run is retained.
+Production bytes and transport timing are unchanged; coalesced paste/Return
+remains an upstream limitation outside these staged-action compatibility claims.
+See the [harness notes](../../Experiments/TerminalCompatibilityQA/README.md).
+After this correction, both full iPhone and iPad lanes again passed 23/23 with
+zero failures, expected failures or skips and exact-session cleanup verified.
+
 The adjacent run contains all 24 non-capture haptic checks, three shortcut
 checks and 31 existing SSH cases. The saved-login/Pro scenario first failed to
 load its synthetic StoreKit product. An isolated diagnostic prepared StoreKit
@@ -85,6 +99,17 @@ Reviewed evidence root: `/private/tmp/maccompanion-terminal-review-20261020/`.
   status passed, 139 indexed fixtures.
 - Initial 22/23 run and isolated keyboard-observation failure: `iphone/` and
   `keyboard-layout-isolation.log`; their failed results are preserved.
+- Restoration repeat with the Zellij paste/Return failure: `iphone-final/`;
+  xcresult `build/QA/Results-1792514236888290000.xcresult`.
+- Independent Zellij comparison: `zellij-input-chunking/comparison.json`,
+  `tool-host-report.json` and the sibling `zellij-input-chunking.py` reproducer.
+- Final staged-action iPhone run: `iphone-staged/`; xcresult
+  `build/QA/Results-1792514640921268000.xcresult`.
+- Final staged-action iPad run: `ipad-staged/`, with the same summary and host
+  report names; xcresult `build/QA/Results-1792514749692069000.xcresult`.
+  Both final runs retain their own logs and result bundles.
+- Final stable repository validation after the sequencing correction:
+  `validation-staged/runs/20261020T164444Z-0e842289bda2/`; status passed.
 
 The sections below retain the original implementation and screenshot evidence
 before PR review and main integration. Their 21-case counts and screenshots

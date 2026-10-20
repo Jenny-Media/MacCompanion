@@ -14,6 +14,18 @@ typing. Reattachment uses the production fresh-PTY reset with no harness reset.
 It does not qualify splits, mouse/copy mode, nested editors,
 graphics, hardware keyboards, physical iOS suspension, or arbitrary user configs.
 
+Commands model separate paste and Return actions. The test sends the paste,
+waits until the whole command is echoed in the renderer (ignoring whitespace
+introduced by viewport wrapping), and then sends one native Return. Execution
+and shell-persistence assertions still require their distinct output markers.
+This sequencing avoids an independently reproduced Zellij 0.44.3 input-parser
+limitation: when Paste and legacy Enter arrive in one stdin read, the first
+parsed event drains the raw bytes and the following Enter can carry no bytes to
+the pane. See the pinned [stdin parser](https://github.com/zellij-org/zellij/blob/v0.44.3/zellij-client/src/stdin_handler.rs#L147-L192)
+and [pane forwarding](https://github.com/zellij-org/zellij/blob/v0.44.3/zellij-server/src/panes/terminal_pane.rs#L1271-L1280).
+Coalesced paste plus Return remains unqualified by these staged cases. The
+production transport is unchanged and does not enforce peer read boundaries.
+
 ## Run
 
 Create a temporary Python virtual environment and install `requirements.txt`.
