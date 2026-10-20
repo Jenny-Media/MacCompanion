@@ -491,6 +491,9 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     private var deletionEncoded = false
     private var insertedShortcut: [UInt8]?
     private var shortcutEncoded = false
+    var customInputEpoch: () -> UUID? = { nil }
+    var admitCustomInput: ([UInt8]) -> Bool = { _ in false }
+    private var customInputBytes: [UInt8]?
     // SwiftTerm pins short buffers to zero. With a canvas extending behind the
     // status bar, that resting offset must include the leading scroll inset.
     // Leave finger-driven scrolling and deceleration owned by UIScrollView.
@@ -510,6 +513,23 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         let previous = UIPasteboard.general.changeCount
         super.copy(sender)
         if UIPasteboard.general.changeCount != previous { keyboardBar?.keyFeedback.feedback("success") }
+    }
+    /// Buffer one explicit accessory action so its encoded bytes are admitted
+    /// together. Ordinary system typing keeps the existing delegate path.
+    @discardableResult func performCustomInput(feedbackKind: String? = "key", ignoringFramingBytes: Int = 0, _ action: () -> Void) -> Bool {
+        guard customInputBytes == nil, let epoch = customInputEpoch() else { return false }
+        customInputBytes = []
+        action()
+        let bytes = customInputBytes ?? []
+        customInputBytes = nil
+        guard bytes.count > ignoringFramingBytes, customInputEpoch() == epoch, admitCustomInput(bytes) else { return false }
+        if let feedbackKind { keyboardBar?.keyFeedback.feedback(feedbackKind) }
+        return true
+    }
+    func pasteWithFeedback(feedbackKind: String? = "key") {
+        // Retain SwiftTerm's single clipboard read and selection bookkeeping.
+        let framing = getTerminal().bracketedPasteMode ? "\u{1b}[200~\u{1b}[201~".utf8.count : 0
+        if performCustomInput(feedbackKind: feedbackKind, ignoringFramingBytes: framing, { super.paste(nil) }) { resetModifiers() }
     }
     func resetModifiers() { keyboardState.reset(); controlModifier = false; metaModifier = false; keyboardBar?.refresh() }
     override func insertText(_ text: String) {
@@ -536,6 +556,17 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         super.deleteBackward()
     }
     func encodeOutput(_ bytes: ArraySlice<UInt8>) -> [UInt8] {
+        let encoded = encodeKeyboardOutput(bytes)
+        if customInputBytes != nil {
+            // One extra byte preserves the existing explicit oversized-input
+            // failure while bounding this temporary accessory-action buffer.
+            let room = DirectTerminalSession.maximumQueuedInputBytes + 1 - customInputBytes!.count
+            if room > 0 { customInputBytes! += encoded.prefix(room) }
+            return []
+        }
+        return encoded
+    }
+    private func encodeKeyboardOutput(_ bytes: ArraySlice<UInt8>) -> [UInt8] {
         if let insertedShortcut {
             guard !shortcutEncoded else { return [] }; shortcutEncoded = true
             return insertedShortcut
@@ -587,6 +618,8 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     override var preferredStatusBarStyle: UIStatusBarStyle { paletteIsDark == true ? .lightContent : .darkContent }
     override func viewDidLoad() {
         super.viewDidLoad(); view.backgroundColor = .systemBackground
+        terminal.customInputEpoch = { [weak session] in session?.customInputEpoch }
+        terminal.admitCustomInput = { [weak session] bytes in session?.trySend(bytes) == true }
         terminal.terminalDelegate = self; terminal.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(terminal)
         // The persistent toolbar owns the only bottom control space. No
         // additional row is reserved for the shared menu button.
@@ -620,7 +653,10 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         controls.customizeHandler = { [weak self] in self?.action("quickActions") }
         controls.openingHandler = { [weak self] in self?.updateControls() }
         CompanionVNCObserveDivision(view)
-        session.received = { [weak self] bytes in self?.terminal.feed(byteArray: bytes[...]) }
+        session.received = { [weak self] bytes in
+            self?.terminal.feed(byteArray: bytes[...])
+            if bytes.isEmpty { self?.updateControls() } // A completed resume delivers an empty refresh.
+        }
         configureKeyboard()
         session.reloadKeyboard = { [weak self] in self?.configureKeyboard(); self?.updateControls() }
         session.suspendInput = { [weak self] in
@@ -640,6 +676,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         updateControls()
     }
     func updateControls() {
+        keyboardBar.refresh()
         controls.isHidden = !session.connected
         updateKeyboardBarVisibility()
         keyboardBar.setKeyboardFocused(terminal.isFirstResponder)
@@ -650,22 +687,25 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     private func performQuickAction(_ item: [AnyHashable: Any]) {
         guard session.connected, DirectAppLockV1.shared.canAccess else { return }
         let kind = item["kind"] as? String ?? ""
+        let inputFeedback: String? = item["inputFeedback"] as? Bool == true && item["interfaceFeedbackHandled"] as? Bool != true ? "commit" : nil
         if kind == "shortcut" || kind == "text" {
             guard DirectProAccess.shared.hasPro,
                   let id = item["id"] as? String,
                   let saved = VNCSessionPreferences.actions(.terminal).first(where: { $0.id.uuidString == id && $0.enabled }),
                   saved.compatible(with: .terminal) else { return }
-            terminal.resetModifiers()
-            if saved.kind == .text {
-                let text = terminal.getTerminal().bracketedPasteMode ? "\u{1b}[200~" + saved.text + "\u{1b}[201~" : saved.text
-                terminal.send(data: Array(text.utf8)[...])
-            } else {
-                terminal.send(data: saved.terminalBytes(applicationCursor: terminal.getTerminal().applicationCursor)[...])
+            terminal.performCustomInput(feedbackKind: inputFeedback) {
+                terminal.resetModifiers()
+                if saved.kind == .text {
+                    let text = terminal.getTerminal().bracketedPasteMode ? "\u{1b}[200~" + saved.text + "\u{1b}[201~" : saved.text
+                    terminal.send(data: Array(text.utf8)[...])
+                } else {
+                    terminal.send(data: saved.terminalBytes(applicationCursor: terminal.getTerminal().applicationCursor)[...])
+                }
             }
             terminal.keyboardBar?.refresh()
-        } else { performControl(kind, feedbackHandled: item["interfaceFeedbackHandled"] as? Bool == true) }
+        } else { performControl(kind, feedbackHandled: item["interfaceFeedbackHandled"] as? Bool == true, inputFeedback: inputFeedback) }
     }
-    private func performControl(_ kind: String, feedbackHandled: Bool = false) {
+    private func performControl(_ kind: String, feedbackHandled: Bool = false, inputFeedback: String? = nil) {
         guard session.connected else { return }
         switch kind {
         case "inputMenu":
@@ -701,15 +741,20 @@ private struct TerminalSurface: UIViewControllerRepresentable {
             if !feedbackHandled { keyboardBar.keyFeedback.feedback("selection") }
             defaults.set(keyboardBar.showsNumberRow, forKey: Self.numberRowPreference)
             view.setNeedsLayout()
-        case "paste": terminal.resetModifiers(); terminal.paste(nil)
+        case "paste": terminal.pasteWithFeedback(feedbackKind: inputFeedback)
         case "composeText": showTextComposer()
         case "escape", "tab", "returnKey":
-            terminal.resetModifiers()
-            let bytes: [UInt8] = kind == "escape" ? [0x1b] : kind == "tab" ? [0x09] : [0x0d]
-            terminal.send(data: bytes[...]); terminal.keyboardBar?.refresh()
+            terminal.performCustomInput(feedbackKind: inputFeedback) {
+                terminal.resetModifiers()
+                let bytes: [UInt8] = kind == "escape" ? [0x1b] : kind == "tab" ? [0x09] : [0x0d]
+                terminal.send(data: bytes[...])
+            }
+            terminal.keyboardBar?.refresh()
         case "interrupt":
-            terminal.resetModifiers()
-            terminal.send(data: TerminalKeyboardState.text("c", modifiers: .ctrl)[...])
+            terminal.performCustomInput(feedbackKind: inputFeedback) {
+                terminal.resetModifiers()
+                terminal.send(data: TerminalKeyboardState.text("c", modifiers: .ctrl)[...])
+            }
             terminal.keyboardBar?.refresh()
         default:
             if kind.hasPrefix("colors-"), let value = DirectTerminalAppearance(rawValue: String(kind.dropFirst(7))) {

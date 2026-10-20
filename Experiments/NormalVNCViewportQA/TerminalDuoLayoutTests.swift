@@ -18,6 +18,14 @@ import UIKit
 }
 
 @MainActor final class TerminalDuoLayoutTests: XCTestCase {
+    // The host uses the real default store; lease only this known QA setting.
+    // Preference-mutating tests elsewhere use private suites.
+    private func numberRowFixture() -> () -> Void {
+        let defaults = UserDefaults.standard, key = TerminalController.numberRowPreference
+        let previous = defaults.object(forKey: key)
+        defaults.set(true, forKey: key)
+        return { defaults.set(previous, forKey: key) }
+    }
     func testImmersiveTerminalProtectsEntryAndLiveGridButAllowsHistoryBehindStatus() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
@@ -72,6 +80,7 @@ import UIKit
     }
 
     func testHostedTerminalDockFollowsKeyboardAcrossPaletteChanges() async throws {
+        let restoreNumberRow = numberRowFixture(); defer { restoreNumberRow() }
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         let appearance = DirectAppearanceV1.shared
@@ -110,6 +119,7 @@ import UIKit
     }
 
     func testDockAndSessionMenuStayClearOfTerminalAndSoftwareKeyboard() async throws {
+        let restoreNumberRow = numberRowFixture(); defer { restoreNumberRow() }
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene); window.overrideUserInterfaceStyle = .light
         let mac = try DirectMacRecordV1.normalized(name: "Synthetic Terminal", addresses: ["studio.local"])

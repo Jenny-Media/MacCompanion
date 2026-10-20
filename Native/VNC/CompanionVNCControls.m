@@ -357,9 +357,11 @@ void CompanionVNCPlayInterfaceFeedback(NSString *kind) {
         return;
     }
     NSString *kind = item[@"kind"] ?: @"";
-    // State changes acknowledge their accepted result, rather than the menu tap.
-    BOOL deferred = [@[@"keyboard", @"mode", @"setPointer", @"setTrackpad", @"inputOnly", @"fullscreen", @"numberRow", @"desktopSize", @"virtualDisplay", @"mirrorDisplay"] containsObject:kind] || [kind hasPrefix:@"colors-"];
+    // Input and state changes acknowledge their accepted result in the owner.
+    BOOL input = [@[@"escape", @"tab", @"returnKey", @"key", @"modifier", @"shortcut", @"text", @"paste", @"interrupt", @"rightClick"] containsObject:kind];
+    BOOL deferred = input || [@[@"keyboard", @"mode", @"setPointer", @"setTrackpad", @"inputOnly", @"fullscreen", @"numberRow", @"desktopSize", @"virtualDisplay", @"mirrorDisplay"] containsObject:kind] || [kind hasPrefix:@"colors-"];
     NSMutableDictionary *action = item.mutableCopy;
+    if (input) action[@"inputFeedback"] = @YES;
     if (![kind isEqual:@"exit"] && !deferred) { [self feedback:@"commit"]; action[@"interfaceFeedbackHandled"] = @YES; }
     [self close];
     if (self.actionHandler) self.actionHandler(action);

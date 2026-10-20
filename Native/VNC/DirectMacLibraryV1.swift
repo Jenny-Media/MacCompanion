@@ -300,6 +300,19 @@ enum DesktopCredentialStoreV1 {
         do { try removeLogin(mac.id); failure = nil; return true }
         catch { recovery = .make(.removeFailed, message: "The saved Screen Sharing login couldn’t be removed. Review it and retry."); return false }
     }
+    #if os(iOS)
+    @discardableResult func forgetServerKey(_ mac: DirectMacRecordV1,
+        feedback: (String) -> Void = { CompanionVNCPlayInterfaceFeedback($0) }) -> Bool {
+        do {
+            let changed = try TerminalSecretStore.forgetHostKey(mac.id)
+            if changed { feedback("success") }
+            return changed
+        } catch {
+            recovery = .make(.removeFailed, message: "The saved entry couldn’t be removed. Review the entry and retry; other logins are kept.")
+            feedback("error"); return false
+        }
+    }
+    #endif
     func applyCloud(_ next: [DirectMacRecordV1]) throws {
         guard readable, next.count <= 64, Set(next.map(\.id)).count == next.count else { throw DirectCloudError.invalid }
         try next.forEach { _ = try $0.validated() }
@@ -935,7 +948,9 @@ struct DirectMacEditorV1: View {
                         case .desktop:
                             guard library.forgetLogin(mac) else { CompanionVNCPlayInterfaceFeedback("error"); credentialAction = nil; return }
                         case .terminal: try TerminalSecretStore.forgetLogin(mac.id)
-                        case .serverKey: try TerminalSecretStore.forgetHostKey(mac.id)
+                        case .serverKey:
+                            library.forgetServerKey(mac)
+                            credentialAction = nil; return
                         }
                         CompanionVNCPlayInterfaceFeedback("success")
                     } catch { CompanionVNCPlayInterfaceFeedback("error"); library.recovery = .make(.removeFailed, message: "The saved entry couldn’t be removed. Review the entry and retry; other logins are kept.") }

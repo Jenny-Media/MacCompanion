@@ -33,7 +33,7 @@ import XCTest
         try withFeedback { defaults, feedback in
             let session = DirectTerminalSession(mac: .init(id: UUID(), name: "Synthetic", addresses: ["synthetic.invalid"]))
             session.connected = true
-            let controller = TerminalController(session: session, customize: {})
+            let controller = TerminalController(session: session, customize: {}, defaults: defaults)
             defer { session.stop() }
             try withWindow(controller) {
                 controller.keyboardBar.keyFeedback = feedback
@@ -94,12 +94,12 @@ import XCTest
         }
     }
     func testTerminalNumberRowAndPaletteMenusAvoidReselectionAndDuplicateFeedback() {
-        withFeedback { _, feedback in
+        withFeedback { defaults, feedback in
             let appearance = DirectAppearanceV1.shared, previous = appearance.terminal
             defer { appearance.terminal = previous }
             appearance.terminal = .app
             let session = DirectTerminalSession(mac: .init(id: UUID(), name: "Synthetic", addresses: ["synthetic.invalid"]))
-            let controller = TerminalController(session: session, customize: {}); session.connected = true; controller.loadViewIfNeeded()
+            let controller = TerminalController(session: session, customize: {}, defaults: defaults); session.connected = true; controller.loadViewIfNeeded()
             defer { session.stop() }
             controller.keyboardBar.keyFeedback = feedback
             controller.controls.actionHandler?(["kind": "numberRow"])
@@ -151,12 +151,37 @@ import XCTest
         XCTAssertNil(try DirectMacAccessStore.load(mac).login)
         XCTAssertTrue(draft.forget()); XCTAssertEqual(events.count, 3, "Already forgotten stays silent")
     }
+    func testForgetServerKeyOnlyAcknowledgesActualRemovalAndReportsBusyFailure() throws {
+        try withFeedback { defaults, feedback in
+            let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let library = DirectMacLibraryV1(url: folder.appending(path: "macs.json"))
+            let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic trust", addresses: ["synthetic.invalid"])
+            defer { try? TerminalSecretStore.remove(mac.id) }
+            let pulse: (String) -> Void = { feedback.feedback($0) }
+            XCTAssertFalse(library.forgetServerKey(mac, feedback: pulse)); XCTAssertTrue(feedback.events.isEmpty)
+            let key = "ssh-ed25519 " + Data(repeating: 1, count: 32).base64EncodedString()
+            try TerminalSecretStore.approveHostKey(key, id: mac.id)
+            XCTAssertTrue(library.forgetServerKey(mac, feedback: pulse)); XCTAssertEqual(feedback.events, ["success"])
+            XCTAssertNil(try TerminalSecretStore.hostKey(mac.id))
+            XCTAssertFalse(library.forgetServerKey(mac, feedback: pulse)); XCTAssertEqual(feedback.events, ["success"])
+            try TerminalSecretStore.approveHostKey(key, id: mac.id)
+            let owner = DirectMacConnections.shared.begin(macID: mac.id, kind: "synthetic", disconnect: {})
+            defer { DirectMacConnections.shared.end(owner) }
+            XCTAssertFalse(library.forgetServerKey(mac, feedback: pulse)); XCTAssertEqual(feedback.events, ["success", "error"])
+            XCTAssertEqual(try TerminalSecretStore.hostKey(mac.id), key, "Busy failure preserves trust")
+            DirectMacConnections.shared.end(owner)
+            defaults.set(false, forKey: CompanionVNCControlsHapticsPreference)
+            XCTAssertTrue(library.forgetServerKey(mac, feedback: pulse)); XCTAssertEqual(feedback.events, ["success", "error"])
+            XCTAssertNil(try TerminalSecretStore.hostKey(mac.id))
+        }
+    }
     func testQuickControlOptionsDeferFeedbackToAcceptanceAndGenericActionsMarkItHandled() {
         withFeedback { _, feedback in
             let controls = CompanionVNCControls(); controls.setValue(feedback, forKey: "interfaceFeedback")
             var received: [AnyHashable: Any]?
             controls.actionHandler = { received = $0 }
-            for kind in ["keyboard", "fullscreen", "setTrackpad", "numberRow", "virtualDisplay", "colors-dark", "composeText"] {
+            for kind in ["keyboard", "fullscreen", "setTrackpad", "numberRow", "virtualDisplay", "colors-dark", "escape", "tab", "returnKey", "shortcut", "text", "paste", "interrupt", "rightClick", "composeText"] {
                 controls.setValue(UIVisualEffectView(), forKey: "panel")
                 controls.setValue([["kind": kind]], forKey: "items")
                 let button = UIButton(); button.tag = 0

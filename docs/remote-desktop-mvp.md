@@ -144,7 +144,10 @@ The preference applies immediately. System keyboard typing, transport writes and
 automatic modifier resets add no app-generated haptic. Explicit keyboard toggles,
 accepted session option changes, composer expansion/docking and committed edge snaps
 use selection feedback. Reselecting an option, cancelled gestures and restoring
-settings stay silent. Session key menus close when input becomes unavailable;
+settings stay silent. Remote key buttons dim while input is unavailable and resume
+without queued presses or armed modifiers. Local keyboard visibility, presentation,
+settings and input-only recovery remain available during a temporary input pause.
+Session key menus close when input becomes unavailable;
 deferred menu choices cannot act on a retired or replacement connection. Desktop-size
 feedback compares the live geometry without changing verified preference saving.
 Composer delivery, clipboard copies and Saved Login management

@@ -823,6 +823,49 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         XCTAssertFalse(session.connected); XCTAssertEqual(record.passwordRequests, 0)
         try await server.close()
     }
+    func testCustomInputAdmissionFollowsWriterPauseResumeAndQueueLimit() async throws {
+        let record = SSHTestRecord(), key = NIOSSHPrivateKey(ed25519Key: .init())
+        let peer = try await server(record: record, key: key)
+        defer { _ = peer.close() }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic input admission", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(peer.localAddress?.port))
+        let defaults = UserDefaults(suiteName: "terminal-admission-" + UUID().uuidString)!
+        let session = DirectTerminalSession(mac: mac, activityDefaults: defaults, activityBackend: TerminalActivityTestBackend())
+        defer { session.stop(); try? TerminalSecretStore.remove(mac.id) }
+        XCTAssertNil(session.customInputEpoch)
+        XCTAssertFalse(session.trySend([0x61]))
+        session.connect(username: "synthetic", password: "synthetic-only", remember: false)
+        try await wait { session.trust != nil }
+        XCTAssertFalse(session.trySend([0x61]))
+        session.answerTrust(true)
+        try await wait { session.canSendUserInput }
+        let firstEpoch = try XCTUnwrap(session.customInputEpoch)
+        XCTAssertFalse(session.trySend([]))
+        XCTAssertTrue(session.trySend(Array("accepted".utf8)))
+        try await wait { String(decoding: record.received, as: UTF8.self) == "accepted" }
+        session.background(); await session.waitForLifecycleUpdates()
+        XCTAssertTrue(session.connected); XCTAssertTrue(session.suspended)
+        XCTAssertNil(session.customInputEpoch); XCTAssertFalse(session.trySend(Array("dropped".utf8)))
+        session.foreground()
+        XCTAssertTrue(session.suspended, "Resume is asynchronous even while connected remains true")
+        XCTAssertNil(session.customInputEpoch); XCTAssertFalse(session.trySend(Array("dropped".utf8)))
+        await session.waitForLifecycleUpdates()
+        XCTAssertTrue(session.canSendUserInput); XCTAssertNotEqual(session.customInputEpoch, firstEpoch)
+        let resumedEpoch = try XCTUnwrap(session.customInputEpoch)
+        session.becameInactive()
+        XCTAssertNil(session.customInputEpoch); XCTAssertFalse(session.trySend(Array("dropped".utf8)))
+        session.foreground()
+        XCTAssertTrue(session.canSendUserInput); XCTAssertNotEqual(session.customInputEpoch, resumedEpoch)
+        session.inputAvailable = { false }
+        XCTAssertNil(session.customInputEpoch); XCTAssertFalse(session.trySend(Array("dropped".utf8)))
+        session.inputAvailable = { true }
+        XCTAssertTrue(session.trySend(Array("-resumed".utf8)))
+        try await wait { String(decoding: record.received, as: UTF8.self) == "accepted-resumed" }
+        XCTAssertEqual(record.passwordRequests, 1); XCTAssertEqual(record.shellRequests, 1)
+        XCTAssertFalse(session.trySend(Array(repeating: 0x61, count: DirectTerminalSession.maximumQueuedInputBytes + 1)))
+        XCTAssertFalse(session.connected); XCTAssertNil(session.customInputEpoch)
+        XCTAssertEqual(session.recovery?.reason, .inputPaused)
+        XCTAssertEqual(String(decoding: record.received, as: UTF8.self), "accepted-resumed", "Rejected input is never replayed")
+    }
     func testRealSSHTrustBeforeLoginInteractivePTYOrderedInputResizeAndPreservedShell() async throws {
         let record=SSHTestRecord(),key=NIOSSHPrivateKey(ed25519Key:.init())
         let server=try await server(record:record,key:key)

@@ -247,25 +247,9 @@ struct TerminalKeyboardPreferences: Codable {
     }
     func configure(_ preferences: TerminalKeyboardPreferences) {
         more.accessibilityLabel = "Extra Terminal Keys"
-        var menu = [UIMenu(title: "Navigation & Function Keys", children: TerminalAccessoryKey.allCases.filter { ![.escape, .tab, .left, .right, .up, .down].contains($0) }.map { key in UIAction(title: key.title) { [weak self] _ in self?.send(key) } }),
-            UIMenu(title: "Shortcuts", children: [("Interrupt · Ctrl-C", "c"), ("End Input · Ctrl-D", "d"), ("Suspend · Ctrl-Z", "z")].map { title, text in UIAction(title: title) { [weak self] _ in
-                guard let self, let terminal = self.terminal else { return }
-                terminal.resetModifiers(); self.keyFeedback.feedback("key")
-                terminal.send(data: TerminalKeyboardState.text(text, modifiers: .ctrl)[...])
-            } }),
-            UIMenu(title: "Keyboard", children: [UIAction(title: "Shift for Next Key") { [weak self] _ in self?.toggle(.shift) }, UIAction(title: "Lock/Unlock Shift") { [weak self] _ in self?.toggle(.shift, lock: true) }, UIAction(title: "Copy Selection") { [weak terminal] _ in terminal?.copy(nil) }, UIAction(title: "Paste") { [weak self] _ in
-                guard let self, let terminal = self.terminal else { return }
-                terminal.resetModifiers(); self.keyFeedback.feedback("key"); terminal.paste(nil)
-            }, UIAction(title: "Customize Keys & Snippets") { [weak self] _ in self?.customize?() }])]
-        if DirectProAccess.shared.hasPro, !preferences.snippets.isEmpty {
-            menu.insert(UIMenu(title: "Saved Snippets", children: preferences.snippets.map { snippet in UIAction(title: snippet.name) { [weak self] _ in
-                guard DirectProAccess.shared.hasPro, let self, let terminal = self.terminal else { return }
-                terminal.resetModifiers(); self.keyFeedback.feedback("key")
-                let text = terminal.getTerminal().bracketedPasteMode ? "\u{1b}[200~" + snippet.text + "\u{1b}[201~" : snippet.text
-                terminal.send(data: Array(text.utf8)[...])
-            } }), at: 1)
-        }
-        more.menu = UIMenu(children: menu)
+        more.menu = UIMenu(children: [UIDeferredMenuElement.uncached { [weak self] completion in
+            Task { @MainActor in completion(self?.extraMenu(preferences) ?? []) }
+        }])
         for key in custom.arrangedSubviews { custom.removeArrangedSubview(key); key.removeFromSuperview() }
         hasCustomKeys = DirectProAccess.shared.hasPro && !preferences.keys.isEmpty
         if hasCustomKeys {
@@ -273,6 +257,46 @@ struct TerminalKeyboardPreferences: Codable {
         }
         updateRows()
         updateKeyMetrics(refreshFonts: true)
+    }
+    // Capture readiness/ownership when UIKit opens the menu, not when the bar
+    // was configured. A retained action cannot revive after pause or replacement.
+    func extraMenu(_ preferences: TerminalKeyboardPreferences) -> [UIMenuElement] {
+        let epoch = terminal?.customInputEpoch()
+        func choice(_ title: String, _ action: @escaping @MainActor () -> Void) -> UIAction {
+            UIAction(title: title, attributes: epoch == nil ? .disabled : []) { [weak self] _ in
+                guard let epoch, self?.terminal?.customInputEpoch() == epoch else { return }
+                action()
+            }
+        }
+        var menu: [UIMenuElement] = [UIMenu(title: "Navigation & Function Keys", children: TerminalAccessoryKey.allCases.filter { ![.escape, .tab, .left, .right, .up, .down].contains($0) }.map { key in
+            choice(key.title) { [weak self] in self?.send(key) }
+        }), UIMenu(title: "Shortcuts", children: [("Interrupt · Ctrl-C", "c"), ("End Input · Ctrl-D", "d"), ("Suspend · Ctrl-Z", "z")].map { title, text in
+            choice(title) { [weak self] in
+                guard let terminal = self?.terminal else { return }
+                terminal.performCustomInput {
+                    terminal.resetModifiers()
+                    terminal.send(data: TerminalKeyboardState.text(text, modifiers: .ctrl)[...])
+                }
+            }
+        }), UIMenu(title: "Keyboard", children: [
+            choice("Shift for Next Key") { [weak self] in self?.toggle(.shift) },
+            choice("Lock/Unlock Shift") { [weak self] in self?.toggle(.shift, lock: true) },
+            choice("Copy Selection") { [weak terminal] in terminal?.copy(nil) },
+            choice("Paste") { [weak terminal] in terminal?.pasteWithFeedback() },
+            choice("Customize Keys & Snippets") { [weak self] in self?.customize?() }])]
+        if DirectProAccess.shared.hasPro, !preferences.snippets.isEmpty {
+            menu.insert(UIMenu(title: "Saved Snippets", children: preferences.snippets.map { snippet in
+                choice(snippet.name) { [weak self] in
+                    guard DirectProAccess.shared.hasPro, let terminal = self?.terminal else { return }
+                    terminal.performCustomInput {
+                        terminal.resetModifiers()
+                        let text = terminal.getTerminal().bracketedPasteMode ? "\u{1b}[200~" + snippet.text + "\u{1b}[201~" : snippet.text
+                        terminal.send(data: Array(text.utf8)[...])
+                    }
+                }
+            }), at: 1)
+        }
+        return menu
     }
     func setSoftwareKeyboardVisible(_ visible: Bool) {
         guard softwareKeyboardVisible != visible else { return }
@@ -330,15 +354,15 @@ struct TerminalKeyboardPreferences: Codable {
             return value
         }
         button.configuration = configuration; button.accessibilityLabel = title; button.addAction(UIAction { _ in action() }, for: .touchUpInside)
-        button.addAction(UIAction { [weak self] _ in self?.keyFeedback.prepareKeyFeedback() }, for: .touchDown)
+        button.addAction(UIAction { [weak self] _ in if self?.terminal?.customInputEpoch() != nil { self?.keyFeedback.prepareKeyFeedback() } }, for: .touchDown)
         return button
     }
     private func sendNumber(_ number: String) {
         guard let terminal else { return }
-        keyFeedback.feedback("key"); terminal.insertText(number)
+        terminal.performCustomInput { terminal.insertText(number) }
     }
     private func toggle(_ modifier: TerminalModifiers, lock: Bool = false) {
-        guard let terminal else { return }
+        guard let terminal, terminal.customInputEpoch() != nil else { return }
         terminal.keyboardState.toggle(modifier, lock: lock); keyFeedback.feedback("selection"); refresh()
     }
     @objc private func lockModifier(_ gesture: UILongPressGestureRecognizer) {
@@ -348,6 +372,11 @@ struct TerminalKeyboardPreferences: Codable {
     }
     func refresh() {
         guard let terminal else { return }
+        let ready = terminal.customInputEpoch() != nil
+        if !ready { terminal.keyboardState.reset(); terminal.controlModifier = false; terminal.metaModifier = false }
+        for (row, _, _) in keyRows {
+            for case let key as UIButton in row.arrangedSubviews { key.isEnabled = ready; key.alpha = ready ? 1 : 0.4 }
+        }
         for (button, modifier) in modifierButtons {
             button.isSelected = terminal.keyboardState.active.contains(modifier)
             button.configuration?.baseBackgroundColor = button.isSelected ? .systemBlue : .secondarySystemFill
@@ -357,8 +386,10 @@ struct TerminalKeyboardPreferences: Codable {
     }
     private func send(_ key: TerminalAccessoryKey) {
         guard let terminal else { return }
-        keyFeedback.feedback("key")
-        terminal.send(data: key.bytes(modifiers: terminal.keyboardState.consume(), applicationCursor: terminal.getTerminal().applicationCursor)[...]); refresh()
+        terminal.performCustomInput {
+            terminal.send(data: key.bytes(modifiers: terminal.keyboardState.consume(), applicationCursor: terminal.getTerminal().applicationCursor)[...])
+        }
+        refresh()
     }
 }
 #endif
