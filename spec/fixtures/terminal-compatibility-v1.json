@@ -553,6 +553,38 @@
       "modifiers": 8,
       "flags": 1,
       "expectedHex": "1b5b39383b313075"
+    },
+    {
+      "name": "insert",
+      "key": "insert",
+      "text": null,
+      "modifiers": 0,
+      "flags": 0,
+      "expectedHex": "1b5b327e"
+    },
+    {
+      "name": "ctrl-alt-insert",
+      "key": "insert",
+      "text": null,
+      "modifiers": 6,
+      "flags": 0,
+      "expectedHex": "1b5b323b377e"
+    },
+    {
+      "name": "enhanced-insert",
+      "key": "insert",
+      "text": null,
+      "modifiers": 0,
+      "flags": 1,
+      "expectedHex": "1b5b327e"
+    },
+    {
+      "name": "command-insert-events",
+      "key": "insert",
+      "text": null,
+      "modifiers": 8,
+      "flags": 3,
+      "expectedHex": "1b5b323b397e1b5b323b393a337e"
     }
   ],
   "replacementParserSeeds": [

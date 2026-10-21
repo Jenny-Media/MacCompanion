@@ -101,6 +101,7 @@ import UIKit
         func controllers(_ root: UIViewController) -> [UIViewController] { [root] + root.children.flatMap(controllers) }
         try await Task.sleep(for: .milliseconds(400))
         let controller = try XCTUnwrap(controllers(host).compactMap { $0 as? TerminalController }.first)
+        let configuredBarHeight = controller.keyboardBar.height
         controller.terminal.feed(text: "Preserved while changing terminal colors\r\n")
         XCTAssertTrue(controller.terminal.becomeFirstResponder())
         for palette in [DirectTerminalAppearance.light, .dark, .light] {
@@ -116,7 +117,7 @@ import UIKit
             let button = controller.controls.button.convert(controller.controls.button.bounds, to: window)
             let terminal = controller.terminal.convert(controller.terminal.bounds, to: window)
             let keyboard = window.convert(keyboardFrame.frame, from: window.screen.coordinateSpace)
-            XCTAssertEqual(controller.keyboardBar.bounds.height, 60, accuracy: 1, "The single row remains visible in the SwiftUI host")
+            XCTAssertEqual(controller.keyboardBar.bounds.height, configuredBarHeight, accuracy: 1, "Configured rows remain visible in the SwiftUI host")
             XCTAssertGreaterThan(keyboard.height, 100, "The real software keyboard must be visible")
             XCTAssertEqual(button.maxY, keyboard.minY - 4, accuracy: 2, "SwiftUI and UIKit must avoid the keyboard once")
             XCTAssertLessThanOrEqual(terminal.maxY + 4, button.minY)
@@ -135,6 +136,7 @@ import UIKit
         let controller = TerminalController(session: session, customize: {})
         window.rootViewController = controller; window.makeKeyAndVisible()
         defer { window.endEditing(true); window.isHidden = true; window.rootViewController = nil; session.stop() }
+        let configuredBarHeight = controller.keyboardBar.height
         controller.terminal.feed(text: "The prompt and its rightmost columns remain readable\r\n")
         for keyboard in [false, true, false] {
             if keyboard { XCTAssertTrue(controller.terminal.becomeFirstResponder()) }
@@ -146,7 +148,7 @@ import UIKit
             XCTAssertLessThanOrEqual(button.maxY, controller.keyboardCeiling(), "The dock must stay above the keyboard")
             XCTAssertTrue(toolbar.contains(button), "The menu button must occupy the modifier bar")
             XCTAssertLessThan(toolbar.minY - controller.terminal.frame.maxY, controller.terminal.caretFrame.height + 1, "Only whole-row rounding may separate output from the toolbar")
-            XCTAssertEqual(toolbar.height, 60, accuracy: 1, "The single bar stays consistent when the native keyboard changes")
+            XCTAssertEqual(toolbar.height, configuredBarHeight, accuracy: 1, "Configured rows stay consistent when the native keyboard changes")
             XCTAssertNil(controller.terminal.inputAccessoryView, "A second accessory would duplicate the toolbar and keyboard avoidance")
             if !keyboard { continue }
             XCTAssertLessThan(controller.keyboardCeiling(), controller.view.bounds.height - 100)
@@ -205,7 +207,7 @@ import UIKit
         // the terminal keys; the fixed controls remain reachable and the core keys scroll.
         let narrow = TerminalKeyboardBar(terminal: controller.terminal, preferences: .init())
         narrow.translatesAutoresizingMaskIntoConstraints = true
-        narrow.frame = CGRect(x: 0, y: 0, width: 320, height: 60); controller.view.addSubview(narrow)
+        narrow.frame = CGRect(x: 0, y: 0, width: 320, height: narrow.height); controller.view.addSubview(narrow)
         narrow.layoutIfNeeded()
         let keyboardFrame = narrow.keyboardButton.convert(narrow.keyboardButton.bounds, to: narrow)
         let anchorFrame = narrow.menuAnchor.convert(narrow.menuAnchor.bounds, to: narrow)
@@ -225,7 +227,7 @@ import UIKit
         narrow.removeFromSuperview()
     }
 
-    func testInlineNumberToggleAppliesImmediatelyAndRestoresAcrossSessions() async throws {
+    func testDedicatedNumberToggleAppliesImmediatelyAndRestoresAcrossSessions() async throws {
         let suite = "TerminalNumberRowQA-" + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
@@ -247,7 +249,7 @@ import UIKit
         bar.numberButton.sendActions(for: .touchUpInside); window.layoutIfNeeded()
         XCTAssertFalse(bar.showsNumberRow)
         XCTAssertEqual(bar.height, 60, accuracy: 1)
-        XCTAssertEqual(controller.terminal.getTerminal().rows, rows, "Inline numbers never change the PTY height")
+        XCTAssertGreaterThan(controller.terminal.getTerminal().rows, rows, "Hiding the dedicated number row gives its space back to the PTY")
         XCTAssertTrue(controller.terminal.isFirstResponder)
         XCTAssertFalse(defaults.bool(forKey: TerminalController.numberRowPreference))
         XCTAssertFalse(try XCTUnwrap(JSONDecoder().decode(TerminalControlsProfile.self, from: data).numberRow))
@@ -259,7 +261,7 @@ import UIKit
         restored.keyboardBar.numberButton.sendActions(for: .touchUpInside); window.layoutIfNeeded()
         XCTAssertTrue(restored.keyboardBar.showsNumberRow)
         XCTAssertTrue(defaults.bool(forKey: TerminalController.numberRowPreference))
-        XCTAssertEqual(restored.keyboardBar.height, 60, accuracy: 1)
+        XCTAssertEqual(restored.keyboardBar.height, 115, accuracy: 1)
     }
 
     func testSessionMenuContainsOnlyActiveSessionActionsAndPreservesTerminal() async throws {

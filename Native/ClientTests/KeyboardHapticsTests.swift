@@ -81,7 +81,7 @@ private final class KeyboardMenuSession: CompanionVNCSession {
     private func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
     private func button(_ title: String, in view: UIView) throws -> UIButton {
         try XCTUnwrap(descendants(view).compactMap { $0 as? UIButton }.first {
-            $0.configuration?.title == title || $0.title(for: .normal) == title
+            $0.accessibilityLabel == title || $0.configuration?.title == title || $0.title(for: .normal) == title
         })
     }
     private func withFeedback(_ body: (UserDefaults, KeyboardFeedbackRecorder) throws -> Void) rethrows {

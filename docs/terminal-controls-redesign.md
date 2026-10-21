@@ -7,26 +7,28 @@ vertical layout. Customize Controls opens the editor directly; there is no
 intermediate Keyboard & Input submenu or duplicate header entry. Shortcuts and
 Text open separate, searchable collections backed by the same preserved saved
 items. Text also exposes the free Compose Text action. Opening either collection
-or the editor sends nothing. Selecting a shortcut sends once; saved text adds no
-Return and multiline text still requires confirmation.
+or the editor sends nothing. Selecting a shortcut sends once; saved text opens the composer for review.
+Send Text adds no Return, and multiline text still requires confirmation.
 
 Keypad uses a grid icon and starts in the standard half-height draggable sheet.
-It can expand to full height. Compact Navigation, F1–F12, Numbers and Actions
-groups avoid one long oversized grid. Modifiers show Off, Next Key or Locked,
-with separate lock buttons. There is no Fn or All Actions entry.
+It can expand to full height. Its searchable All Keys catalog groups Essentials,
+Navigation, Function Keys, Common Shortcuts, Symbols and Numbers. Every built-in
+key is available without Pro or pinning. Modifiers show Off, Next Key or Locked,
+with separate lock buttons. Hold a key to pin it without sending input. There is
+no Fn or All Actions entry; saved Shortcuts and Text have their own tabs.
 
-The keyboard bar uses **one horizontally scrollable row** in portrait, landscape,
-and with the native keyboard shown or hidden. Its keyboard toggle stays fixed
-at the far left, and the floating-menu button stays at the right. Esc, Tab,
-Ctrl, Alt/Option, Shift, Command and arrows use compact symbols with accessible
-names and at least 44-point targets. Armed modifiers are highlighted; locked
-modifiers also have an outline and an explicit accessibility value. The strip
-also contains the 123 toggle, Keypad, pinned actions and optional numbers.
-Numbers and custom keys never create extra rows. The editor previews this same
-single-row arrangement. Legacy expanded/collapsed values remain stored for
-compatibility, but no longer alter the row count or hide saved placements.
+The keyboard bar keeps **the same configured rows** in portrait, landscape,
+and with the native keyboard shown or hidden. The keyboard toggle stays fixed
+at the far left and the floating-menu button at the right of Main. Esc, Tab,
+Ctrl, Alt/Option and Shift use compact symbols. Quick up/down arrows are enabled
+by default; Command is optional. Numbers have a dedicated 1–0 row above Main by
+default. The visual editor can reorder whole rows and move shared placements
+between Main and up to two extra navigation/custom rows. Expand Rows explicitly
+shows those extra rows; 123 independently toggles Numbers. No keyboard visibility
+change silently expands or collapses the layout. Legacy flat placements remain
+on Main and legacy expanded values are retained without rewriting content.
 Keypad hides the native keyboard while open and restores it on Done when it was
-previously visible.
+previously visible. See [row behavior and regression coverage](terminal-keyboard-rows.md).
 
 Dragging across a key cancels button tracking so slow horizontal drags scroll
 without sending that key. Holding a stationary modifier retains its lock gesture.
@@ -112,7 +114,7 @@ view and settings sheets; no input/transport settling delay is added.
 | Stable bar and compact sheet | Native keyboard show/hide, half-sheet drag to full height, grouped key sends and menu alignment |
 | Interrupt with keyboard hidden | Native Keypad Ctrl-C and received byte |
 | Occasional function/navigation keys | Native F1/Home/End, canonical key vectors |
-| Numbers and more terminal space | One-row horizontal scrolling, inline 123 toggle, fixed keyboard control and Keypad |
+| Numbers and more terminal space | Independent number row, explicit expansion, fixed keyboard control and All Keys |
 | Reusable Unicode/path/multiline text | Search, exact SSH bytes, cancel/confirm, no added Return |
 | Create a shortcut | Name/key editing and final chord preview; explicit deletion |
 | Many saved items and favorite placement | Search over 43 saved texts; reuse and unpin preserve one definition |
@@ -125,9 +127,9 @@ view and settings sheets; no input/transport settling delay is added.
 A Save notification is deferred in the editing session until its settings sheet
 finishes dismissing. Other sessions reload immediately. The editor no longer
 invokes a second synchronous reload. Native navigation keeps Back separate from editable content; toolbar actions
-belong only to the active destination. The bar retains one horizontal stack across keyboard and composer transitions.
+belong only to the active destination. The bar retains its configured rows across keyboard and composer transitions.
 Frame regressions check fixed keyboard placement, symbol hit areas, reachable
-custom keys and stable height at narrow phone and tablet widths.
+custom keys, explicit row heights and stable layout across keyboard focus changes at narrow phone and tablet widths.
 Each Keypad presentation has independent
 state; reopening it cannot revive a retained callback from an earlier panel.
 Saved-item search uses an inline field and full-width row hit areas, without an

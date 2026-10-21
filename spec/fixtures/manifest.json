@@ -837,7 +837,7 @@
       "path": "terminal-compatibility-v1.json",
       "kind": "client.terminalCompatibility.v1",
       "expect": "valid",
-      "canonicalSHA256": "9b3031dd95ce13bf373d12924b0b67754a3f112814e14b09500ad20eeaf9cdb5"
+      "canonicalSHA256": "4aabc38025e2680f569d0007cbd6a543382fb4128c5e5b1b8cd88bd44bb24ff1"
     }
   ]
 }

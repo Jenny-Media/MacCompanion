@@ -40,7 +40,9 @@ import UIKit
         revealHorizontal(element, scroll: app.scrollViews["terminal-modifier-keys"])
     }
     private func revealPreviewKey(_ element: XCUIElement, app: XCUIApplication) {
-        revealHorizontal(element, scroll: app.scrollViews["terminal-row-preview-scroll"])
+        let scroll = app.scrollViews["terminal-row-preview-scroll"]
+        reveal(scroll, app: app)
+        revealHorizontal(element, scroll: scroll)
     }
     private func open(_ app: XCUIApplication) {
         XCTAssertTrue(app.buttons["controls-qa-open"].waitForExistence(timeout: 5))
@@ -145,6 +147,9 @@ import UIKit
         controls.tap()
         let shortcut = app.buttons.matching(NSPredicate(format: "label == %@", "Live Project")).firstMatch
         XCTAssertTrue(shortcut.waitForExistence(timeout: 5)); shortcut.tap()
+        XCTAssertTrue(app.buttons["compose-send"].waitForExistence(timeout: 5))
+        try await assertInput("", app: app)
+        app.buttons["compose-send"].tap()
         let sent = NSPredicate(format: "label CONTAINS %@", "6f726967696e616c")
         let received = expectation(for: sent, evaluatedWith: app.staticTexts["controls-qa-input"])
         await fulfillment(of: [received], timeout: 5)
@@ -188,71 +193,87 @@ import UIKit
         await fulfillment(of: [expectation(for: visible, evaluatedWith: nil)], timeout: 5)
         guard keyboard.exists && space.isHittable else { throw NSError(domain: "TerminalControlsJourneyTests.Keyboard", code: 1) }
     }
+    private func findKey(_ query: String, app: XCUIApplication) {
+        let field = app.textFields["terminal-keypad-search"]
+        reveal(field, app: app, up: false); field.tap()
+        let old = field.value as? String ?? ""
+        if !old.isEmpty && !["Find a key or group", "Search saved items"].contains(old) { field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: old.count)) }
+        field.typeText(query + "\n")
+    }
+    private func palette(_ app: XCUIApplication) {
+        app.buttons["terminal-controls"].tap(); app.buttons["session-action-moreKeys"].tap()
+        XCTAssertTrue(app.navigationBars["Keypad"].waitForExistence(timeout: 5))
+    }
     func testCommandModifierFromNegotiatedRemoteApplication() async throws {
         let (app, store) = try await launchPro()
         defer { app.terminate(); store.clearTransactions() }
         live(app)
         app.buttons["terminal-controls"].tap(); app.buttons["session-action-moreKeys"].tap()
+        let advanced = app.buttons["terminal-keypad-advanced"]; reveal(advanced, app: app); advanced.tap()
         let command = app.buttons["terminal-keypad-Cmd"]
+        reveal(command, app: app)
         XCTAssertTrue(command.waitForExistence(timeout: 5)); XCTAssertTrue(command.isEnabled)
         command.tap(); XCTAssertTrue(command.label.contains("Next Key"))
+        findKey("Home", app: app)
         app.buttons["terminal-keypad-home"].tap()
         try await assertInput("1b5b313b39481b5b313b393a3348", app: app)
+        findKey("", app: app)
+        reveal(advanced, app: app)
+        if advanced.value as? String != "Expanded" { advanced.tap() }
+        reveal(command, app: app)
         XCTAssertTrue(command.label.contains("Off"))
         capture("command-one-shot-negotiated-remote", app: app)
         app.buttons["Done"].tap()
     }
 
     func testStableBarAndDraggableCompactKeypad() async throws {
-        let (app, store) = try await launchPro()
-        defer { app.terminate(); store.clearTransactions() }
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
         live(app)
-        let arrow = app.buttons["↑"], number = app.buttons["9"]
-        XCTAssertTrue(arrow.waitForExistence(timeout: 5)); XCTAssertTrue(number.exists)
-        for title in ["Esc", "Tab", "Ctrl", "Alt", "Shift", "Cmd"] {
-            let key = app.buttons[title]
-            XCTAssertTrue(key.exists)
-            XCTAssertGreaterThanOrEqual(key.frame.minX, app.frame.minX)
-            XCTAssertLessThanOrEqual(key.frame.maxX, app.frame.maxX, "Compact symbols keep common modifiers visible")
-        }
-        capture("bar-native-keyboard-hidden", app: app)
-        app.buttons["terminal-keyboard-toggle"].tap()
-        XCTAssertTrue(arrow.exists); XCTAssertTrue(number.exists)
-        capture("bar-native-keyboard-shown", app: app)
-        app.buttons["terminal-keyboard-toggle"].tap()
-        XCTAssertTrue(arrow.exists); XCTAssertTrue(number.exists)
+        let toggle = app.buttons["terminal-keyboard-toggle"], number = app.buttons["9"]
+        XCTAssertTrue(number.waitForExistence(timeout: 5))
+        let numberY = number.frame.midY - toggle.frame.midY
+        XCTAssertLessThan(numberY, 0, "Numbers default above Main")
+        for title in ["Esc", "Tab", "Ctrl", "Alt", "Shift"] { XCTAssertTrue(app.buttons[title].exists) }
+        XCTAssertFalse(app.buttons["Cmd"].exists)
+        capture("compact-numbers-top-keyboard-hidden", app: app)
+        toggle.tap(); try await waitForSoftwareKeyboard(app)
+        XCTAssertEqual(number.frame.midY - toggle.frame.midY, numberY, accuracy: 1)
+        capture("compact-numbers-top-native-keyboard", app: app)
+        app.buttons["terminal-row-expand"].tap()
+        XCTAssertTrue(app.buttons["Home"].exists)
+        capture("expanded-rows-native-keyboard", app: app)
+        toggle.tap(); XCTAssertTrue(app.buttons["Home"].exists)
+        capture("expanded-rows-keyboard-hidden", app: app)
+        app.buttons["terminal-row-expand"].tap()
         app.buttons["terminal-controls"].tap()
         let session = app.buttons["session-action-session"], settings = app.buttons["session-action-customize"], keypad = app.buttons["session-action-moreKeys"]
-        XCTAssertTrue(session.waitForExistence(timeout: 5))
-        XCTAssertGreaterThan(session.frame.midX, app.buttons["session-action-appearance"].frame.midX)
-        XCTAssertEqual(session.frame.midY, settings.frame.midY, accuracy: 1)
         let shortcuts = app.buttons["session-action-savedShortcuts"], text = app.buttons["session-action-savedText"]
         XCTAssertEqual(keypad.frame.midY, shortcuts.frame.midY, accuracy: 1)
         XCTAssertEqual(shortcuts.frame.midY, text.frame.midY, accuracy: 1)
         XCTAssertLessThan(keypad.frame.midX, shortcuts.frame.midX); XCTAssertLessThan(shortcuts.frame.midX, text.frame.midX)
         XCTAssertLessThan(keypad.frame.midY, settings.frame.midY)
-        capture("floating-menu-session-bottom-right", app: app)
-        keypad.tap()
+        XCTAssertEqual(session.frame.midY, settings.frame.midY, accuracy: 1)
+        XCTAssertGreaterThan(session.frame.midX, app.buttons["session-action-appearance"].frame.midX)
+        capture("floating-menu-right-aligned", app: app); keypad.tap()
         let navigation = app.navigationBars["Keypad"]
         XCTAssertTrue(navigation.waitForExistence(timeout: 5))
         let halfY = navigation.frame.minY
         if UIDevice.current.userInterfaceIdiom == .phone { XCTAssertGreaterThan(halfY, app.frame.height * 0.35) }
-        capture("keypad-half-sheet-navigation", app: app)
-        app.buttons["terminal-keypad-up"].tap()
-        try await assertInput("1b5b41", app: app)
-        app.buttons["F1–F12"].tap()
-        capture("keypad-half-sheet-function-keys", app: app)
-        app.buttons["terminal-keypad-f12"].tap()
-        try await assertInput("1b5b411b5b32347e", app: app)
+        capture("all-keys-default-half-sheet", app: app)
         let grabber = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: app.frame.midX, dy: halfY - 10))
         let expanded = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: app.frame.midX, dy: 130))
         grabber.press(forDuration: 0.2, thenDragTo: expanded)
         if UIDevice.current.userInterfaceIdiom == .phone { XCTAssertLessThan(navigation.frame.minY, halfY - 100) }
-        capture("keypad-dragged-full-height", app: app)
-        app.buttons["Numbers"].tap(); app.buttons["terminal-keypad-number-7"].tap()
-        app.buttons["Done"].tap()
-        try await assertInput("1b5b411b5b32347e37", app: app)
-        XCTAssertTrue(arrow.exists); XCTAssertTrue(number.exists)
+        capture("all-keys-expanded-sheet", app: app)
+        findKey("F12", app: app); app.buttons["terminal-keypad-f12"].tap()
+        try await assertInput("1b5b32347e", app: app)
+        XCTAssertTrue(navigation.exists, "Sending a rare key keeps the keypad open")
+        findKey("Numbers", app: app)
+        app.buttons["terminal-keypad-character-55-"].tap()
+        app.buttons["Done"].tap(); try await assertInput("1b5b32347e37", app: app)
+        revealKey(app.buttons["Shift"], app: app); app.buttons["Shift"].tap()
+        app.buttons["1"].tap(); app.buttons["2"].tap()
+        try await assertInput("1b5b32347e372132", app: app)
     }
 
     func testSeparateShortcutsAndTextAndDirectCustomization() async throws {
@@ -274,6 +295,10 @@ import UIKit
         try await searchSaved("Unicode", app: app)
         capture("text-only-section", app: app)
         app.buttons[textID].tap()
+        XCTAssertTrue(app.buttons["compose-send"].waitForExistence(timeout: 5))
+        try await assertInput("02", app: app)
+        capture("saved-text-review-before-send", app: app)
+        app.buttons["compose-send"].tap()
         try await assertInput("02e4b8ade69687f09f9880", app: app)
         app.buttons["terminal-controls"].tap(); app.buttons["session-action-savedText"].tap()
         app.buttons["terminal-compose-text"].tap()
@@ -299,83 +324,45 @@ import UIKit
     }
 
     func testRuntimeKeyboardKeypadAndSearchableSavedText() async throws {
-        let (app, store) = try await launchPro()
-        defer { app.terminate(); store.clearTransactions() }
-        live(app)
-        app.buttons["terminal-controls"].tap(); app.buttons["session-action-moreKeys"].tap()
-        XCTAssertTrue(app.navigationBars["Keypad"].waitForExistence(timeout: 5))
-        app.buttons["Numbers"].tap()
-        capture("number-keypad-with-keyboard-hidden", app: app)
-        app.buttons["Done"].tap()
-        app.buttons["terminal-keyboard-toggle"].tap()
-        XCTAssertTrue(app.buttons["↑"].waitForExistence(timeout: 5))
-        revealKey(app.buttons["↑"], app: app)
-        app.buttons["↑"].tap(); app.buttons["↑"].tap(); app.buttons["←"].tap()
-        try await assertInput("1b5b411b5b411b5b44", app: app)
-        capture("single-row-scrolled-to-arrows", app: app)
-        revealKey(app.buttons["terminal-number-toggle"], app: app)
-        app.buttons["terminal-number-toggle"].tap()
-        XCTAssertFalse(app.buttons["9"].exists)
-        app.buttons["terminal-number-toggle"].tap(); revealKey(app.buttons["9"], app: app); app.buttons["9"].tap()
-        try await assertInput("1b5b411b5b411b5b4439", app: app)
-        revealKey(app.buttons["Esc"], app: app)
-        capture("single-row-returned-to-symbols", app: app)
-        XCTAssertTrue(app.buttons["terminal-keyboard-toggle"].isHittable)
-        XCTAssertFalse(app.buttons["terminal-expand-toggle"].exists)
-        app.buttons["terminal-keyboard-toggle"].tap()
-        app.buttons["terminal-controls"].tap(); app.buttons["session-action-moreKeys"].tap()
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        live(app); palette(app)
         let ctrl = app.buttons["terminal-keypad-Ctrl"]
-        XCTAssertTrue(ctrl.waitForExistence(timeout: 5)); ctrl.tap()
-        XCTAssertTrue(ctrl.label.contains("Next Key"))
-        reveal(app.buttons["terminal-keypad-home"], app: app); app.buttons["terminal-keypad-home"].tap()
+        ctrl.tap(); XCTAssertTrue(ctrl.label.contains("Next Key"))
+        findKey("Home", app: app); app.buttons["terminal-keypad-home"].tap()
         XCTAssertTrue(ctrl.label.contains("Off"))
         app.buttons["Lock Ctrl"].tap()
-        XCTAssertTrue(ctrl.label.contains("Locked"))
-        app.buttons["terminal-keypad-end"].tap()
-        XCTAssertTrue(ctrl.label.contains("Locked"))
-        app.buttons["Unlock Ctrl"].tap()
-        capture("keypad-explicit-modifier-states", app: app)
-        app.buttons["F1–F12"].tap()
-        reveal(app.buttons["terminal-keypad-f1"], app: app); app.buttons["terminal-keypad-f1"].tap()
-        app.buttons["Actions"].tap()
-        let interrupt = app.buttons["terminal-keypad-interrupt"]; reveal(interrupt, app: app); interrupt.tap()
+        findKey("End", app: app); app.buttons["terminal-keypad-end"].tap()
+        XCTAssertTrue(ctrl.label.contains("Locked")); app.buttons["Unlock Ctrl"].tap()
+        capture("all-keys-modifier-states", app: app)
+        findKey("F8", app: app)
+        let f8 = app.buttons["terminal-keypad-f8"]; f8.press(forDuration: 1)
+        app.buttons["Pin to Keyboard Bar"].tap()
+        try await assertInput("1b5b313b35481b5b313b3546", app: app)
+        XCTAssertTrue(app.staticTexts["terminal-keypad-notice"].exists)
+        capture("pin-key-does-not-send", app: app)
+        f8.tap(); try await assertInput("1b5b313b35481b5b313b35461b5b31397e", app: app)
         app.buttons["Done"].tap()
-        try await assertInput("1b5b411b5b411b5b44391b5b313b35481b5b313b35461b4f5003", app: app)
-        app.buttons["terminal-controls"].tap(); app.buttons["session-action-savedText"].tap()
-        try await searchSaved("Unicode", app: app)
-        capture("saved-items-search", app: app)
-        app.buttons["terminal-saved-00000000-0000-0000-0000-00000000C002"].tap()
-        try await assertInput("1b5b411b5b411b5b44391b5b313b35481b5b313b35461b4f5003e4b8ade69687f09f9880", app: app)
+        let pinned = app.buttons["F8"]; revealKey(pinned, app: app); pinned.tap()
+        let before = "1b5b313b35481b5b313b35461b5b31397e1b5b31397e"
+        try await assertInput(before, app: app)
         app.buttons["terminal-controls"].tap(); app.buttons["session-action-savedText"].tap()
         try await searchSaved("Multiline", app: app)
         app.buttons["terminal-saved-00000000-0000-0000-0000-00000000C003"].tap()
-        XCTAssertTrue(app.alerts["Paste Multiline Text?"].waitForExistence(timeout: 5))
-        capture("saved-multiline-confirmation", app: app)
-        app.alerts.buttons["Cancel"].tap()
-        try await assertInput("1b5b411b5b411b5b44391b5b313b35481b5b313b35461b4f5003e4b8ade69687f09f9880", app: app)
-        app.buttons["terminal-controls"].tap(); app.buttons["session-action-savedText"].tap()
-        try await searchSaved("Multiline", app: app)
-        app.buttons["terminal-saved-00000000-0000-0000-0000-00000000C003"].tap()
-        XCTAssertTrue(app.alerts["Paste Multiline Text?"].waitForExistence(timeout: 5))
-        app.alerts.buttons["Paste"].tap()
-        try await assertInput("1b5b411b5b411b5b44391b5b313b35481b5b313b35461b4f5003e4b8ade69687f09f98806f6e650a2020e4b8ade69687f09f9880", app: app)
+        XCTAssertTrue(app.buttons["compose-send"].waitForExistence(timeout: 5))
+        try await assertInput(before, app: app)
+        app.buttons["compose-send"].tap()
+        XCTAssertTrue(app.alerts["Send line breaks or tabs?"].waitForExistence(timeout: 5))
+        capture("saved-multiline-review-confirmation", app: app)
+        app.alerts.buttons["Cancel"].tap(); try await assertInput(before, app: app)
+        app.buttons["compose-back"].tap()
         app.buttons["terminal-keyboard-toggle"].tap()
         XCUIDevice.shared.orientation = .landscapeLeft
         XCTAssertTrue(app.buttons["terminal-keyboard-toggle"].waitForExistence(timeout: 5))
-        let surface = app.descendants(matching: .any).matching(identifier: "terminal-surface").firstMatch
-        XCTAssertGreaterThan(surface.frame.height, 90)
-        capture("terminal-landscape-keyboard-compact", app: app)
-        app.buttons["terminal-controls"].tap(); app.buttons["session-action-moreKeys"].tap()
-        app.buttons["Numbers"].tap()
-        reveal(app.buttons["terminal-keypad-number-7"], app: app)
-        XCTAssertTrue(app.buttons["terminal-keypad-number-7"].exists)
-        app.buttons["terminal-keypad-number-7"].tap(); app.buttons["Done"].tap()
+        capture("stable-rows-landscape", app: app)
         XCUIDevice.shared.orientation = .portrait
-        if app.buttons["terminal-keyboard-toggle"].label == "Show Keyboard" { app.buttons["terminal-keyboard-toggle"].tap() }
-        capture("terminal-returned-to-portrait", app: app)
-        XCTAssertTrue(app.buttons["↑"].waitForExistence(timeout: 5))
-        capture("terminal-portrait-restores-expanded-bar", app: app)
+        capture("stable-rows-returned-portrait", app: app)
     }
+
     func testEditorsRemoveOnlyPlacementAndReuseOneSavedDefinition() async throws {
         let (app, store) = try await launchPro()
         defer { app.terminate(); store.clearTransactions() }
@@ -385,7 +372,7 @@ import UIKit
         app.buttons["terminal-controls-save"].tap()
         XCTAssertEqual(app.staticTexts["controls-qa-placements"].label, "Row: off; Menu: on")
         app.buttons["controls-qa-open"].tap(); app.buttons["terminal-edit-keyboard"].tap()
-        app.buttons["terminal-control-add"].tap()
+        reveal(app.buttons["terminal-control-add"], app: app); app.buttons["terminal-control-add"].tap()
         app.buttons["Project"].tap()
         XCTAssertTrue(app.textFields["terminal-control-name"].waitForExistence(timeout: 5))
         app.buttons["terminal-controls-save"].tap()
@@ -436,11 +423,76 @@ import UIKit
         XCTAssertEqual(app.staticTexts["controls-qa-writes"].label, "Writes: 0")
         live(app); app.buttons["terminal-controls"].tap()
         let keypad = app.buttons["session-action-moreKeys"]; reveal(keypad, app: app); keypad.tap()
+        reveal(app.buttons["terminal-keypad-Ctrl"], app: app)
         XCTAssertTrue(app.buttons["terminal-keypad-Ctrl"].waitForExistence(timeout: 5))
         capture("keypad-accessibility-xxxl", app: app)
         app.buttons["terminal-keypad-Ctrl"].tap()
         XCTAssertTrue(app.buttons["terminal-keypad-Ctrl"].label.contains("Next Key"))
         app.buttons["Done"].tap()
+    }
+    func testRowEditorAddsReordersAndMovesOneSharedItem() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        open(app)
+        let addRow = app.buttons["terminal-add-row"]; reveal(addRow, app: app); addRow.tap()
+        app.buttons["Shortcuts"].tap()
+        let name = app.textFields.matching(NSPredicate(format: "identifier BEGINSWITH %@", "terminal-row-name-")).firstMatch
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        capture("row-editor-custom-row-preview", app: app)
+        let move = app.buttons["Move Numbers Down"]; reveal(move, app: app, up: false); move.tap()
+        capture("row-editor-numbers-reordered", app: app)
+        app.buttons["terminal-controls-save"].tap()
+        XCTAssertEqual(app.staticTexts["controls-qa-writes"].label, "Writes: 1")
+        XCTAssertEqual(app.staticTexts["controls-qa-count"].label, "Saved items: 1")
+        open(app)
+        let picker = app.buttons["terminal-item-row"]; reveal(picker, app: app)
+        picker.tap(); app.buttons.matching(NSPredicate(format: "label == %@ AND NOT identifier BEGINSWITH %@", "Shortcuts", "terminal-select-row-")).firstMatch.tap()
+        capture("row-editor-move-shared-item", app: app)
+        app.buttons["terminal-controls-save"].tap()
+        XCTAssertEqual(app.staticTexts["controls-qa-count"].label, "Saved items: 1")
+        XCTAssertEqual(app.staticTexts["controls-qa-placements"].label, "Row: on; Menu: on")
+    }
+    func testKeypadSavedTabsPreserveAnUnsentDraft() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        live(app); palette(app)
+        app.buttons["Shortcuts"].tap()
+        let shortcut = app.buttons["terminal-keypad-saved-00000000-0000-0000-0000-00000000C004"]
+        XCTAssertTrue(shortcut.waitForExistence(timeout: 5)); shortcut.tap()
+        try await assertInput("02", app: app)
+        app.buttons["Text"].tap(); findKey("Unicode", app: app)
+        app.buttons["terminal-keypad-saved-00000000-0000-0000-0000-00000000C002"].tap()
+        XCTAssertTrue(app.buttons["compose-back"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.textViews["compose-text"].value as? String, "中文😀")
+        try await assertInput("02", app: app)
+        capture("keypad-text-tab-review", app: app); app.buttons["compose-back"].tap()
+        palette(app); app.buttons["Text"].tap(); findKey("Multiline", app: app)
+        app.buttons["terminal-keypad-saved-00000000-0000-0000-0000-00000000C003"].tap()
+        XCTAssertTrue(app.alerts["Replace unsent draft?"].waitForExistence(timeout: 5))
+        capture("saved-text-keeps-unsent-draft", app: app)
+        app.alerts.buttons["Keep Draft"].tap(); try await assertInput("02", app: app)
+        app.buttons["terminal-controls"].tap(); app.buttons["session-action-savedText"].tap(); app.buttons["terminal-compose-text"].tap()
+        XCTAssertTrue(app.buttons["compose-back"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.textViews["compose-text"].value as? String, "中文😀")
+        app.buttons["compose-back"].tap()
+    }
+    func testReadingModeHidesNumbersAndKeepsTheSameBarAcrossKeyboardChanges() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        live(app)
+        let surface = app.descendants(matching: .any).matching(identifier: "terminal-surface").firstMatch
+        let before = surface.frame.height
+        let numbers = app.buttons["terminal-number-toggle"]
+        revealKey(numbers, app: app); numbers.tap()
+        XCTAssertFalse(app.buttons["9"].exists)
+        XCTAssertGreaterThan(surface.frame.height, before)
+        revealKey(app.buttons["Esc"], app: app)
+        try await assertInput("", app: app)
+        capture("reading-mode-keyboard-hidden", app: app)
+        app.buttons["terminal-keyboard-toggle"].tap(); try await waitForSoftwareKeyboard(app)
+        XCTAssertFalse(app.buttons["9"].exists)
+        capture("reading-mode-native-keyboard", app: app)
+        app.buttons["terminal-keyboard-toggle"].tap()
+        revealKey(numbers, app: app); numbers.tap()
+        XCTAssertTrue(app.buttons["9"].waitForExistence(timeout: 5))
+        try await assertInput("", app: app)
     }
     func testInteractiveReview() async throws {
         guard ProcessInfo.processInfo.environment["MACCOMPANION_TERMINAL_CONTROLS_REVIEW"] == "1" else { throw XCTSkip("Opt-in interactive review") }

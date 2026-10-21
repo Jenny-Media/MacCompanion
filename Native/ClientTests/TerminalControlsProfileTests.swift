@@ -199,5 +199,51 @@ import Security
         bad = saved; bad.menuOrder = [saved.actions[0].id, saved.actions[0].id]; XCTAssertFalse(bad.valid)
     }
 
+    func testRowsUpgradeFlatPlacementsAndKeepNumbersIndependent() throws {
+        let snippet = TerminalControlAction(title: "Deploy", kind: .text, text: "  exact 中文😀\n", inRow: true)
+        var profile = TerminalControlsProfile(actions: [snippet])
+        XCTAssertEqual(profile.resolvedRows.map(\.kind), [.numbers, .navigation, .main])
+        XCTAssertEqual(profile.resolvedRows.last?.actionIDs, [snippet.id])
+        XCTAssertNil(profile.rowsExpanded); XCTAssertNil(profile.commandInBar)
+        let custom = try XCTUnwrap(profile.addRow(title: "Shortcuts"))
+        profile.place(snippet.id, in: custom)
+        XCTAssertEqual(profile.resolvedRows.filter { $0.actionIDs.contains(snippet.id) }.map(\.id), [custom])
+        profile.moveRow(TerminalKeyboardRow.numbersID, offset: 1)
+        profile.numberRow = false
+        let decoded = try JSONDecoder().decode(TerminalControlsProfile.self, from: JSONEncoder().encode(profile))
+        XCTAssertEqual(decoded, profile); XCTAssertTrue(decoded.valid)
+        profile.removeRow(custom)
+        XCTAssertEqual(profile.actions, [.init(id: snippet.id, title: snippet.title, kind: .text, text: snippet.text, inRow: false)])
+        XCTAssertTrue(profile.valid); XCTAssertFalse(profile.resolvedRows.flatMap(\.actionIDs).contains(snippet.id))
+    }
+    func testCatalogPinReusesDefinitionAcrossSurfacesAndPreservesEdits() throws {
+        let key = try XCTUnwrap(TerminalKeyCatalog.all.first { $0.accessory == .f8 })
+        var profile = TerminalControlsProfile.defaults
+        let id = profile.pin(key, in: .keyboard)
+        let index = try XCTUnwrap(profile.actions.firstIndex { $0.id == id })
+        profile.actions[index].title = "Debugger"
+        XCTAssertEqual(profile.pin(key, in: .menu), id)
+        XCTAssertEqual(profile.actions.filter { key.matches($0) }.count, 1)
+        XCTAssertEqual(profile.actions[index].title, "Debugger")
+        profile.pin(id, in: .keyboard, enabled: false)
+        XCTAssertTrue(profile.actions[index].inMenu); XCTAssertEqual(profile.pin(key, in: .keyboard), id)
+        XCTAssertTrue(profile.valid)
+        XCTAssertEqual(Set(TerminalKeyCatalog.all.map(\.id)).count, TerminalKeyCatalog.all.count)
+        XCTAssertTrue(TerminalKeyCatalog.all.allSatisfy { $0.definition.valid })
+    }
+    func testRowValidationRejectsDuplicatePlacementAndPreservesSavedCommand() throws {
+        var item = TerminalControlAction(title: "Command B", kind: .shortcut, inRow: true)
+        item.character = 0x42; item.modifiers = [0xffeb]
+        var profile = TerminalControlsProfile(actions: [item]); profile.keyboardRows = profile.resolvedRows
+        XCTAssertTrue(profile.valid)
+        profile.commandInBar = false
+        XCTAssertEqual(profile.actions[0], item)
+        let extra = try XCTUnwrap(profile.addRow())
+        XCTAssertNil(profile.addRow(), "Numbers and Main plus two optional rows bound phone height")
+        profile.place(item.id, in: extra)
+        profile.keyboardRows![0].actionIDs = [item.id]
+        XCTAssertFalse(profile.valid)
+    }
+
 }
 #endif

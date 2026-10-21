@@ -151,7 +151,7 @@ import StoreKitTest
         let bar = controller.keyboardBar
         let preferences = TerminalKeyboardPreferences(keys: [.f1, .f2])
         bar.configure(preferences); bar.showsNumberRow = true; bar.setKeyboardFocused(true)
-        XCTAssertEqual(bar.height, 60, accuracy: 1, "Numbers, pinned actions and navigation share a single row")
+        XCTAssertEqual(bar.height, 115, accuracy: 1, "Numbers have an independent row while optional Navigation starts collapsed")
         for landscape in [false, true] {
             scene.requestGeometryUpdate(.iOS(interfaceOrientations: landscape ? .landscapeRight : .portrait))
             for _ in 0..<300 {
@@ -172,14 +172,14 @@ import StoreKitTest
                 XCTAssertGreaterThan(panel.view.keyboardLayoutGuide.layoutFrame.height, 100)
                 controller.textComposer.draft.edit("retained landscape draft")
                 panel.view.setNeedsLayout(); panel.view.layoutIfNeeded()
-                XCTAssertEqual(bar.height, 60, accuracy: 1)
+                XCTAssertEqual(bar.height, 115, accuracy: 1)
                 XCTAssertEqual(controller.controls.isHidden, bar.isHidden, "Do not leave an orphan menu button when the row yields space")
                 XCTAssertGreaterThanOrEqual(panel.panelFrame.height, 112)
                 if bar.isHidden {
                     XCTAssertTrue(landscape, "Portrait must retain its visible shortcut row")
                     XCTAssertEqual(panel.panelFrame.maxY, panel.view.keyboardLayoutGuide.layoutFrame.minY - 8, accuracy: 1)
                 } else {
-                    XCTAssertEqual(bar.bounds.height, 60, accuracy: 1)
+                    XCTAssertEqual(bar.bounds.height, 115, accuracy: 1)
                     let shortcut = panel.view.convert(bar.bounds, from: bar)
                     XCTAssertEqual(panel.panelFrame.maxY, shortcut.minY - 8, accuracy: 1)
                     XCTAssertFalse(panel.panelFrame.intersects(shortcut))
@@ -195,7 +195,7 @@ import StoreKitTest
                 bar.setKeyboardFocused(true)
                 XCTAssertFalse(bar.isHidden, "Restore the shortcut row after either close path")
                 XCTAssertFalse(controller.controls.isHidden, "Restore the anchored menu with the row")
-                XCTAssertEqual(bar.height, 60, accuracy: 1, "Restore the single row with number, custom and navigation keys intact")
+                XCTAssertEqual(bar.height, 115, accuracy: 1, "Restore both rows with number and custom keys intact")
                 XCTAssertTrue(bar.showsNumberRow)
             }
         }

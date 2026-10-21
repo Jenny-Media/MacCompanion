@@ -170,20 +170,23 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
             let probe = TerminalLoginFrameProbe(window: window)
             defer { probe.stop(); panel.close(); session.stop(); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible(); try? TerminalSecretStore.remove(mac.id) }
             if outcome == "lost" {
-                try await wait { session.connected && !panel.isVisible && host.presentedViewController == nil }
+                try await wait(outcome + " authenticated handoff") { session.connected && !panel.isVisible && host.presentedViewController == nil }
                 try await record.finish(status: nil, transportFailed: true)
-                try await wait { session.recovery?.reason == .terminalEnded && panel.isVisible }
+                try await wait(outcome + " visible recovery") { session.recovery?.reason == .terminalEnded && panel.isVisible }
                 XCTAssertEqual(record.passwordRequests, 1); XCTAssertEqual(record.shellRequests, 1)
             } else {
-                try await wait { panel.isVisible && probe.credentialFrames > 0 }
+                try await wait(outcome + " visible credentials") { panel.isVisible && probe.credentialFrames > 0 }
                 if outcome == "rejected" {
                     XCTAssertEqual(session.recovery?.reason, .loginRejected)
                     XCTAssertGreaterThan(record.passwordRequests, 0)
                 } else { XCTAssertEqual(record.passwordRequests, 0) }
             }
             XCTAssertNotNil(host.presentedViewController)
+            // A mounted rejected-login owner is allowed to show credentials on
+            // redraw. Retire it, as cancellation does, before closing its sheet.
+            probe.stop(); window.rootViewController = nil; session.stop()
             panel.close()
-            try await wait { host.presentedViewController == nil }
+            try await wait(outcome + " completed dismissal") { host.presentedViewController == nil }
         }
     }
 
@@ -375,7 +378,8 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
         let controls = try XCTUnwrap(descendants(host.view).compactMap { $0 as? CompanionVNCControls }.first)
         controls.button.sendActions(for: .touchUpInside)
-        let interrupt = try XCTUnwrap(descendants(controls).first { $0.accessibilityIdentifier == "session-action-interrupt" } as? UIButton)
+        let interruptTitle = try XCTUnwrap(DirectControlMode.terminal.defaults.first { $0.kind == .interrupt }?.title)
+        let interrupt = try XCTUnwrap(descendants(controls).compactMap { $0 as? UIButton }.first { $0.configuration?.title == interruptTitle })
         interrupt.sendActions(for: .touchUpInside)
         try await wait("floating Ctrl-C reaches the PTY") { record.received.contains(3) }
         XCTAssertEqual(record.passwordRequests, 1)
@@ -392,22 +396,28 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
             throw error
         }
         try await wait("synthetic StoreKit entitlement is verified") { access.hasPro }
-        let text = VNCQuickAction(title: "Synthetic action", kind: .text, text: "synthetic-action-only")
-        try VNCSessionPreferences.saveProfile([text], mode: .terminal)
+        var saved = TerminalControlAction(title: "Synthetic action", kind: .shortcut)
+        saved.character = 0x62; saved.modifiers = [0xffe3]
+        let controlsStore = TerminalControlsStore()
+        var draft = try controlsStore.load(); draft.actions.append(saved)
+        _ = try controlsStore.save(draft)
+        defer { if var restored = try? controlsStore.load() { restored.delete(saved.id); _ = try? controlsStore.save(restored) } }
+        try await wait("shared controls refresh without reconnecting") { controls.quickActions.contains { $0["id"] as? String == saved.id.uuidString } }
+        let admittedItem = try XCTUnwrap(controls.quickActions.first { $0["id"] as? String == saved.id.uuidString })
         controls.button.sendActions(for: .touchUpInside)
-        let custom = try XCTUnwrap(descendants(controls).first { $0.accessibilityIdentifier == "session-action-text" } as? UIButton)
+        let custom = try XCTUnwrap(descendants(controls).compactMap { $0 as? UIButton }.first { $0.configuration?.title == saved.title })
         custom.sendActions(for: .touchUpInside)
-        try await wait("configured Terminal text reaches the same PTY") { String(decoding: record.received, as: UTF8.self).contains(text.text) }
+        try await wait("configured shortcut reaches the same PTY") { record.received.last == 0x02 }
         XCTAssertEqual(record.passwordRequests, 1, "Changing controls must not reconnect the shell")
         try await wait("the completed action panel finishes closing") {
-            !descendants(controls).contains { $0.accessibilityIdentifier == "session-action-text" }
+            !descendants(controls).compactMap { $0 as? UIButton }.contains { $0.configuration?.title == saved.title }
         }
         store.clearTransactions(); await access.refresh()
         try await wait("cleared StoreKit entitlement retires Pro input") { !access.hasPro }
         controls.button.sendActions(for: .touchUpInside)
-        XCTAssertFalse(descendants(controls).contains { $0.accessibilityIdentifier == "session-action-text" })
+        XCTAssertFalse(descendants(controls).compactMap { $0 as? UIButton }.contains { $0.configuration?.title == saved.title })
         let count = record.received.count
-        controls.actionHandler?(text.native)
+        controls.actionHandler?(admittedItem)
         try await Task.sleep(for: .milliseconds(50))
         XCTAssertEqual(record.received.count, count, "A stale Pro action cannot send input after entitlement ends")
     }

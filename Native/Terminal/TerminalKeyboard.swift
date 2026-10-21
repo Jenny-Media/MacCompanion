@@ -140,7 +140,7 @@ struct TerminalKeyEncoding {
                 return press + (events ? csi("1", suffix: letter, release: true) : [])
             }
             let code: Int = switch key {
-            case .delete: 3; case .pageUp: 5; case .pageDown: 6; case .f3: 13; case .f5: 15; case .f6: 17
+            case .insert: 2; case .delete: 3; case .pageUp: 5; case .pageDown: 6; case .f3: 13; case .f5: 15; case .f6: 17
             case .f7: 18; case .f8: 19; case .f9: 20; case .f10: 21; case .f11: 23; case .f12: 24; default: 0
             }
             return csi(String(code), suffix: "~") + (events ? csi(String(code), suffix: "~", release: true) : [])
@@ -169,12 +169,12 @@ extension VNCQuickAction {
 }
 
 enum TerminalAccessoryKey: String, Codable, CaseIterable, Identifiable {
-    case escape, tab, up, down, left, right, home, end, pageUp, pageDown, delete, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12
+    case escape, tab, up, down, left, right, home, end, pageUp, pageDown, insert, delete, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12
     var id: String { rawValue }
     var title: String {
         switch self {
         case .escape: "Esc"; case .tab: "Tab"; case .up: "↑"; case .down: "↓"; case .left: "←"; case .right: "→"
-        case .home: "Home"; case .end: "End"; case .pageUp: "PgUp"; case .pageDown: "PgDn"; case .delete: "Del"
+        case .home: "Home"; case .end: "End"; case .pageUp: "PgUp"; case .pageDown: "PgDn"; case .insert: "Ins"; case .delete: "Del"
         default: rawValue.uppercased()
         }
     }
@@ -186,7 +186,7 @@ enum TerminalAccessoryKey: String, Codable, CaseIterable, Identifiable {
         case .escape: return TerminalKeyboardState.text("\u{1b}", modifiers: modifiers)
         case .tab: return modifiers.contains(.shift) ? Array("\u{1b}[Z".utf8) : TerminalKeyboardState.text("\t", modifiers: modifiers)
         default:
-            let code: Int = switch self { case .pageUp: 5; case .pageDown: 6; case .delete: 3; case .f5: 15; case .f6: 17; case .f7: 18; case .f8: 19; case .f9: 20; case .f10: 21; case .f11: 23; case .f12: 24; default: 0 }
+            let code: Int = switch self { case .insert: 2; case .pageUp: 5; case .pageDown: 6; case .delete: 3; case .f5: 15; case .f6: 17; case .f7: 18; case .f8: 19; case .f9: 20; case .f10: 21; case .f11: 23; case .f12: 24; default: 0 }
             if code > 0 { return Array(("\u{1b}[\(code)" + (modifiers.isEmpty ? "" : ";\(parameter)") + "~").utf8) }
             let suffix: String = switch self { case .f1: "P"; case .f2: "Q"; case .f3: "R"; case .f4: "S"; default: "" }
             return Array((modifiers.isEmpty ? "\u{1b}O" + suffix : "\u{1b}[1;\(parameter)" + suffix).utf8)
@@ -229,194 +229,232 @@ private final class TerminalKeyScrollView: UIScrollView {
 @MainActor final class TerminalKeyboardBar: UIView {
     weak var terminal: SessionTerminalView?
     lazy var keyFeedback = CompanionVNCInterfaceFeedback(view: self)
+    private let rows = UIStackView()
     private let row = UIStackView()
     private let keys = UIStackView()
     private let numbers = UIStackView()
-    private let custom = UIStackView()
-    private let navigation = UIStackView()
+    private let numberScroll: UIScrollView = TerminalKeyScrollView()
+    private var extraViews: [UIView] = []
+    private var generated: [UIButton] = []
+    private var numeric: [UIButton] = []
     private var modifierButtons: [(UIButton, TerminalModifiers)] = []
     private var commandShortcuts: [UIButton] = []
     private var keyWidths: [ObjectIdentifier: NSLayoutConstraint] = [:]
     private var keySymbols: [ObjectIdentifier: String] = [:]
-    private var rowHeight: NSLayoutConstraint!
+    private var heights: [NSLayoutConstraint] = []
+    private var keyHeight: CGFloat = 52
     private var keyboardFocused: Bool?
     let keyboardButton = UIButton(type: .system)
     let numberButton = UIButton(type: .system)
     let keypadButton = UIButton(type: .system)
+    let expandButton = UIButton(type: .system)
     let menuAnchor = UIView()
     let keyScroll: UIScrollView = TerminalKeyScrollView()
     var layoutChanged: (() -> Void)?
     var toggleKeyboard: (() -> Void)?
     var openKeypad: ((Bool) -> Void)?
-    var showsNavigation = true { didSet { navigation.isHidden = !showsNavigation } }
-    var showsNumberRow = true { didSet { updateNumbers() } }
-    var height: CGFloat { 8 + (rowHeight?.constant ?? 52) }
+    var showsNavigation = true
+    var showsExtraRows = false { didSet { updateVisibility() } }
+    var showsNumberRow = true { didSet { updateVisibility() } }
+    var height: CGFloat {
+        let count = max(1, rows.arrangedSubviews.filter { !$0.isHidden }.count)
+        return 8 + CGFloat(count) * keyHeight + CGFloat(count - 1) * 3
+    }
 
     init(terminal: SessionTerminalView, preferences: TerminalKeyboardPreferences) {
         self.terminal = terminal
         super.init(frame: .zero)
         accessibilityIdentifier = "terminal-keyboard-bar"
         translatesAutoresizingMaskIntoConstraints = false
-        row.axis = .horizontal; row.spacing = 4; row.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(row)
-        for item in [keyboardButton, keyScroll, menuAnchor] { row.addArrangedSubview(item) }
-        rowHeight = row.heightAnchor.constraint(equalToConstant: 52)
-        let keyboardWidth = keyboardButton.widthAnchor.constraint(equalToConstant: 44)
-        keyWidths[ObjectIdentifier(keyboardButton)] = keyboardWidth
-        menuAnchor.isUserInteractionEnabled = false
+        rows.axis = .vertical; rows.spacing = 3; rows.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(rows)
         NSLayoutConstraint.activate([
-            row.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
-            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4), rowHeight,
-            keyboardWidth,
-            menuAnchor.widthAnchor.constraint(equalToConstant: 52)
-        ])
+            rows.topAnchor.constraint(equalTo: topAnchor, constant: 4), rows.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
+            rows.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4), rows.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4)])
+        row.axis = .horizontal; row.spacing = 4
+        for item in [keyboardButton, keyScroll, expandButton, menuAnchor] { row.addArrangedSubview(item) }
+        menuAnchor.isUserInteractionEnabled = false
+        menuAnchor.widthAnchor.constraint(equalToConstant: 52).isActive = true
         configureButton(keyboardButton, title: "Show Keyboard", symbol: "keyboard")
         keyboardButton.accessibilityIdentifier = "terminal-keyboard-toggle"
         keyboardButton.addAction(UIAction { [weak self] _ in
             guard let self, let terminal = self.terminal else { return }
-            let wasVisible = terminal.isFirstResponder
-            self.toggleKeyboard?()
-            if wasVisible != terminal.isFirstResponder { self.keyFeedback.feedback("selection") }
+            let before = terminal.isFirstResponder; toggleKeyboard?()
+            if before != terminal.isFirstResponder { keyFeedback.feedback("selection") }
         }, for: .touchUpInside)
-        keyScroll.showsHorizontalScrollIndicator = true
-        keyScroll.alwaysBounceHorizontal = true
-        keyScroll.accessibilityIdentifier = "terminal-modifier-keys"
-        keyScroll.accessibilityLabel = "Terminal keys"
-        keys.axis = .horizontal; keys.spacing = 3; keys.translatesAutoresizingMaskIntoConstraints = false
-        keyScroll.addSubview(keys)
-        NSLayoutConstraint.activate([
-            keys.leadingAnchor.constraint(equalTo: keyScroll.contentLayoutGuide.leadingAnchor),
-            keys.trailingAnchor.constraint(equalTo: keyScroll.contentLayoutGuide.trailingAnchor),
-            keys.topAnchor.constraint(equalTo: keyScroll.contentLayoutGuide.topAnchor),
-            keys.bottomAnchor.constraint(equalTo: keyScroll.contentLayoutGuide.bottomAnchor),
-            keys.heightAnchor.constraint(equalTo: keyScroll.frameLayoutGuide.heightAnchor)
-        ])
-        keys.addArrangedSubview(button("Esc", symbol: "escape") { [weak self] in self?.send(.escape) })
-        keys.addArrangedSubview(button("Tab", symbol: "arrow.right.to.line") { [weak self] in self?.send(.tab) })
-        for (modifier, symbol) in [(TerminalModifiers.ctrl, "control"), (.alt, "option"), (.shift, "shift"), (.command, "command")] {
-            let value = button(modifier.title, symbol: symbol) { [weak self] in self?.toggle(modifier) }
-            value.addGestureRecognizer(UILongPressGestureRecognizer(target: self, action: #selector(lockModifier(_:))))
-            modifierButtons.append((value, modifier)); keys.addArrangedSubview(value)
-        }
-        for (group, identifier) in [(navigation, "terminal-navigation-row"), (custom, "terminal-custom-keys"), (numbers, "terminal-number-row")] {
-            group.axis = .horizontal; group.spacing = 3; group.accessibilityIdentifier = identifier
-        }
-        for (key, symbol) in [(TerminalAccessoryKey.left, "arrow.left"), (.down, "arrow.down"), (.up, "arrow.up"), (.right, "arrow.right")] {
-            navigation.addArrangedSubview(button(key.title, symbol: symbol) { [weak self] in self?.send(key) })
-        }
-        keys.addArrangedSubview(navigation)
+        configureButton(expandButton, title: "Expand Rows", symbol: "rectangle.expand.vertical")
+        expandButton.accessibilityIdentifier = "terminal-row-expand"
+        expandButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }; showsExtraRows.toggle(); keyFeedback.feedback("selection"); layoutChanged?()
+        }, for: .touchUpInside)
         configureButton(numberButton, title: "Hide Numbers", symbol: "textformat.123")
         numberButton.accessibilityIdentifier = "terminal-number-toggle"
         numberButton.addAction(UIAction { [weak self] _ in
-            guard let self else { return }; showsNumberRow.toggle(); layoutChanged?()
-            if showsNumberRow { layoutIfNeeded(); keyScroll.scrollRectToVisible(numbers.convert(numbers.bounds, to: keys), animated: true) }
+            guard let self else { return }; showsNumberRow.toggle(); keyFeedback.feedback("selection"); layoutChanged?()
         }, for: .touchUpInside)
         configureButton(keypadButton, title: "Open Keypad", symbol: "rectangle.grid.3x2")
         keypadButton.accessibilityIdentifier = "terminal-keypad-toggle"
         keypadButton.addAction(UIAction { [weak self] _ in self?.openKeypad?(false) }, for: .touchUpInside)
-        for item in [numberButton, keypadButton, custom, numbers] { keys.addArrangedSubview(item) }
-        for number in ["1","2","3","4","5","6","7","8","9","0"] {
-            numbers.addArrangedSubview(button(number) { [weak self] in self?.sendNumber(number) })
+        keys.axis = .horizontal; keys.spacing = 3
+        install(keys, in: keyScroll)
+        keyScroll.accessibilityIdentifier = "terminal-modifier-keys"; keyScroll.accessibilityLabel = "Terminal keys"
+        numbers.axis = .horizontal; numbers.spacing = 3; numbers.distribution = .fillEqually
+        numbers.accessibilityIdentifier = "terminal-number-row"
+        install(numbers, in: numberScroll, fitting: true)
+        numberScroll.accessibilityIdentifier = "terminal-number-scroll"
+        for value in ["1","2","3","4","5","6","7","8","9","0"] {
+            let key = UIButton(type: .system); configureButton(key, title: value, number: true)
+            key.addAction(UIAction { [weak self] _ in self?.sendNumber(value) }, for: .touchUpInside)
+            numeric.append(key); numbers.addArrangedSubview(key)
         }
         registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (bar: TerminalKeyboardBar, _: UITraitCollection) in bar.updateKeyMetrics() }
-        configure(preferences); refresh()
+        configure(preferences)
+    }
+    private func install(_ stack: UIStackView, in scroll: UIScrollView, fitting: Bool = false) {
+        scroll.showsHorizontalScrollIndicator = true; scroll.alwaysBounceHorizontal = true
+        stack.translatesAutoresizingMaskIntoConstraints = false; scroll.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor), stack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor), stack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
+            stack.heightAnchor.constraint(equalTo: scroll.frameLayoutGuide.heightAnchor)])
+        if fitting {
+            let width = stack.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor); width.priority = .defaultHigh; width.isActive = true
+        }
     }
     func configure(_ preferences: TerminalKeyboardPreferences) {
-        clearCustomKeys()
-        if DirectProAccess.shared.hasPro {
-            for key in preferences.keys { custom.addArrangedSubview(button(key.title) { [weak self] in
-                guard DirectProAccess.shared.hasPro else { return }; self?.send(key)
-            }) }
-        }
-        custom.isHidden = custom.arrangedSubviews.isEmpty
-        updateNumbers(); updateKeyMetrics()
+        var profile = TerminalControlsProfile.defaults
+        profile.actions += preferences.keys.map { .init(title: $0.title, kind: .key, key: $0, inRow: true, inMenu: false) }
+        configure(profile) { _ in }
     }
     func configure(_ profile: TerminalControlsProfile, perform: @escaping (UUID) -> Void) {
-        clearCustomKeys(); showsNavigation = profile.navigationRow ?? true
-        for item in DirectProAccess.shared.hasPro ? profile.placed(.keyboard) : [] {
-            let key = button(item.title) { [weak self] in
-                guard self?.terminal?.customInputEpoch() != nil else { return }; perform(item.id)
-            }
-            if item.requiresCommand { commandShortcuts.append(key) }
-            custom.addArrangedSubview(key)
+        for button in generated { keyWidths.removeValue(forKey: ObjectIdentifier(button)); keySymbols.removeValue(forKey: ObjectIdentifier(button)) }
+        generated = []; modifierButtons = []; commandShortcuts = []
+        for view in keys.arrangedSubviews { keys.removeArrangedSubview(view); view.removeFromSuperview() }
+        for view in rows.arrangedSubviews { rows.removeArrangedSubview(view); view.removeFromSuperview() }
+        heights.forEach { $0.isActive = false }; heights = []; extraViews = []
+        showsNavigation = profile.navigationRow ?? true
+        keys.addArrangedSubview(button("Esc", symbol: "escape") { [weak self] in self?.send(.escape) })
+        keys.addArrangedSubview(button("Tab", symbol: "arrow.right.to.line") { [weak self] in self?.send(.tab) })
+        var modifiers: [(TerminalModifiers, String)] = [(.ctrl, "control"), (.alt, "option"), (.shift, "shift")]
+        if profile.commandInBar == true { modifiers.append((.command, "command")) }
+        for (modifier, symbol) in modifiers {
+            let key = button(modifier.title, symbol: symbol) { [weak self] in self?.toggle(modifier) }
+            key.addGestureRecognizer(UILongPressGestureRecognizer(target: self, action: #selector(lockModifier(_:))))
+            modifierButtons.append((key, modifier)); keys.addArrangedSubview(key)
         }
-        custom.isHidden = custom.arrangedSubviews.isEmpty
-        updateNumbers(); updateKeyMetrics(); refresh()
+        if showsNavigation {
+            for (key, symbol) in [(TerminalAccessoryKey.up, "arrow.up"), (.down, "arrow.down")] {
+                keys.addArrangedSubview(button(key.title, symbol: symbol) { [weak self] in self?.send(key) })
+            }
+        }
+        keys.addArrangedSubview(numberButton); keys.addArrangedSubview(keypadButton)
+        for definition in profile.resolvedRows {
+            let container: UIView
+            if definition.kind == .main { container = row }
+            else if definition.kind == .numbers { container = numberScroll }
+            else {
+                let scroll = TerminalKeyScrollView(), stack = UIStackView()
+                stack.axis = .horizontal; stack.spacing = 3; install(stack, in: scroll)
+                scroll.accessibilityIdentifier = "terminal-extra-row-" + definition.id.uuidString
+                if definition.kind == .navigation {
+                    stack.accessibilityIdentifier = "terminal-navigation-row"
+                    for key in [TerminalAccessoryKey.left, .down, .up, .right, .home, .end, .pageUp, .pageDown] {
+                        stack.addArrangedSubview(button(key.title) { [weak self] in self?.send(key) })
+                    }
+                }
+                container = scroll; extraViews.append(scroll)
+                add(profile.placed(in: definition), to: stack, perform: perform)
+                if stack.arrangedSubviews.isEmpty {
+                    let title = UILabel(); title.text = definition.title; title.font = .preferredFont(forTextStyle: .caption1); stack.addArrangedSubview(title)
+                }
+            }
+            if definition.kind == .main { add(profile.placed(in: definition), to: keys, perform: perform) }
+            rows.addArrangedSubview(container)
+            let height = container.heightAnchor.constraint(equalToConstant: keyHeight); height.priority = UILayoutPriority(999); height.isActive = true; heights.append(height)
+        }
+        showsExtraRows = profile.rowsExpanded ?? false
+        updateVisibility(); updateKeyMetrics(); refresh()
     }
-    private func clearCustomKeys() {
-        commandShortcuts = []
-        for key in custom.arrangedSubviews {
-            keyWidths.removeValue(forKey: ObjectIdentifier(key))
-            custom.removeArrangedSubview(key); key.removeFromSuperview()
+    private func add(_ actions: [TerminalControlAction], to stack: UIStackView, perform: @escaping (UUID) -> Void) {
+        guard DirectProAccess.shared.hasPro else { return }
+        for item in actions {
+            let key = button(item.title) { [weak self] in
+                guard DirectProAccess.shared.hasPro, self?.terminal?.customInputEpoch() != nil else { return }; perform(item.id)
+            }
+            key.accessibilityIdentifier = "terminal-row-action-" + item.id.uuidString
+            if item.requiresCommand { commandShortcuts.append(key) }
+            stack.addArrangedSubview(key)
         }
     }
     func setKeyboardFocused(_ focused: Bool) {
-        guard keyboardFocused != focused else { return }
-        keyboardFocused = focused
+        guard keyboardFocused != focused else { return }; keyboardFocused = focused
         keyboardButton.accessibilityLabel = focused ? "Hide Keyboard" : "Show Keyboard"
         keySymbols[ObjectIdentifier(keyboardButton)] = focused ? "keyboard.chevron.compact.down" : "keyboard"
         updateKeyMetrics()
     }
-    private func updateNumbers() {
-        numbers.isHidden = !showsNumberRow
+    private func updateVisibility() {
+        numberScroll.isHidden = !showsNumberRow
+        extraViews.forEach { $0.isHidden = !showsExtraRows }
         numberButton.accessibilityLabel = showsNumberRow ? "Hide Numbers" : "Show Numbers"
-        numberButton.accessibilityValue = showsNumberRow ? "On" : "Off"
-        numberButton.isSelected = showsNumberRow
+        numberButton.accessibilityValue = showsNumberRow ? "On" : "Off"; numberButton.isSelected = showsNumberRow
+        expandButton.accessibilityLabel = showsExtraRows ? "Collapse Rows" : "Expand Rows"
+        expandButton.accessibilityValue = showsExtraRows ? "Expanded" : "Collapsed"
+        expandButton.isHidden = extraViews.isEmpty
+        invalidateIntrinsicContentSize(); setNeedsLayout(); superview?.setNeedsLayout()
     }
+    // The menu lives in a sibling overlay. Finish both nested stacks before
+    // that overlay converts its anchor frame after a row-count change.
+    func layoutRows() {
+        rows.setNeedsLayout(); rows.layoutIfNeeded()
+        row.setNeedsLayout(); row.layoutIfNeeded()
+        keyScroll.layoutIfNeeded()
+    }
+    override func layoutSubviews() { super.layoutSubviews(); layoutRows() }
     override func didMoveToWindow() { super.didMoveToWindow(); updateKeyMetrics() }
     private var keyFont: UIFont { UIFontMetrics(forTextStyle: .caption1).scaledFont(for: .systemFont(ofSize: 13, weight: .medium), compatibleWith: traitCollection) }
-    private var allKeys: [UIButton] {
-        keys.arrangedSubviews.flatMap { item in (item as? UIStackView)?.arrangedSubviews.compactMap { $0 as? UIButton } ?? [item as? UIButton].compactMap { $0 } }
-    }
+    private var allKeys: [UIButton] { generated + numeric + [keyboardButton, numberButton, keypadButton, expandButton] }
     private func updateKeyMetrics() {
-        let font = keyFont
-        let symbolFont = UIFont.preferredFont(forTextStyle: .body, compatibleWith: traitCollection)
-        for button in allKeys + [keyboardButton] {
-            if let symbol = keySymbols[ObjectIdentifier(button)] {
-                button.configuration?.image = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(font: symbolFont))
-            }
-            button.setNeedsUpdateConfiguration(); button.updateConfiguration()
-            let text = (button.configuration?.title ?? "") as NSString
-            let contentWidth = max(text.size(withAttributes: [.font: font]).width, button.configuration?.image?.size.width ?? 0)
-            keyWidths[ObjectIdentifier(button)]?.constant = max(44, ceil(contentWidth) + 12)
+        let font = keyFont, symbolFont = UIFont.preferredFont(forTextStyle: .body, compatibleWith: traitCollection)
+        let numericIDs = Set(numeric.map(ObjectIdentifier.init))
+        for key in allKeys {
+            if let symbol = keySymbols[ObjectIdentifier(key)] { key.configuration?.image = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(font: symbolFont)) }
+            key.setNeedsUpdateConfiguration(); key.updateConfiguration()
+            let text = (key.configuration?.title ?? "") as NSString
+            let width = max(text.size(withAttributes: [.font: font]).width, key.configuration?.image?.size.width ?? 0)
+            keyWidths[ObjectIdentifier(key)]?.constant = max(numericIDs.contains(ObjectIdentifier(key)) ? 32 : 44, ceil(width) + 12)
         }
-        rowHeight.constant = max(52, ceil(max(font.lineHeight, symbolFont.lineHeight)) + 8)
+        keyHeight = max(52, ceil(max(font.lineHeight, symbolFont.lineHeight)) + 8)
+        heights.forEach { $0.constant = keyHeight }
         invalidateIntrinsicContentSize(); setNeedsLayout(); superview?.setNeedsLayout()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override var intrinsicContentSize: CGSize { CGSize(width: UIView.noIntrinsicMetric, height: height) }
-    private func configureButton(_ button: UIButton, title: String, symbol: String? = nil) {
+    private func configureButton(_ key: UIButton, title: String, symbol: String? = nil, number: Bool = false) {
         var configuration = UIButton.Configuration.gray(); configuration.cornerStyle = .medium
         configuration.contentInsets = .init(top: 2, leading: 0, bottom: 2, trailing: 0)
-        if let symbol { keySymbols[ObjectIdentifier(button)] = symbol; configuration.image = UIImage(systemName: symbol) } else { configuration.title = title }
+        if let symbol { keySymbols[ObjectIdentifier(key)] = symbol; configuration.image = UIImage(systemName: symbol) } else { configuration.title = title }
         configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { [weak self] value in
             var value = value; value.font = self?.keyFont ?? .systemFont(ofSize: 13, weight: .medium); return value
         }
-        button.configuration = configuration; button.accessibilityLabel = title
-        if button !== keyboardButton {
-            let width = button.widthAnchor.constraint(equalToConstant: 44); width.isActive = true
-            keyWidths[ObjectIdentifier(button)] = width
-        }
+        key.configuration = configuration; key.accessibilityLabel = title
+        let width = number ? key.widthAnchor.constraint(greaterThanOrEqualToConstant: 32) : key.widthAnchor.constraint(equalToConstant: 44)
+        width.isActive = true; keyWidths[ObjectIdentifier(key)] = width
     }
     private func button(_ title: String, symbol: String? = nil, action: @escaping () -> Void) -> UIButton {
-        let button = UIButton(type: .system); configureButton(button, title: title, symbol: symbol)
-        button.addAction(UIAction { _ in action() }, for: .touchUpInside)
-        button.addAction(UIAction { [weak self] _ in if self?.terminal?.customInputEpoch() != nil { self?.keyFeedback.prepareKeyFeedback() } }, for: .touchDown)
-        return button
+        let key = UIButton(type: .system); configureButton(key, title: title, symbol: symbol); generated.append(key)
+        key.addAction(UIAction { _ in action() }, for: .touchUpInside)
+        key.addAction(UIAction { [weak self] _ in if self?.terminal?.customInputEpoch() != nil { self?.keyFeedback.prepareKeyFeedback() } }, for: .touchDown)
+        return key
     }
-    private func sendNumber(_ number: String) {
-        guard let terminal else { return }; terminal.performCustomInput { terminal.insertText(number) }
+    private func sendNumber(_ value: String) {
+        guard let terminal else { return }; terminal.performCustomInput { terminal.insertText(value) }; refresh()
     }
     func toggle(_ modifier: TerminalModifiers, lock: Bool = false) {
-        guard let terminal, terminal.customInputEpoch() != nil else { return }
-        guard modifier != .command || terminal.keyEncoding.supportsCommand else { return }
+        guard let terminal, terminal.customInputEpoch() != nil, modifier != .command || terminal.keyEncoding.supportsCommand else { return }
         terminal.keyboardState.toggle(modifier, lock: lock); keyFeedback.feedback("selection"); refresh()
     }
     @objc private func lockModifier(_ gesture: UILongPressGestureRecognizer) {
-        guard gesture.state == .began, let button = gesture.view as? UIButton,
-              let modifier = modifierButtons.first(where: { $0.0 === button })?.1 else { return }
+        guard gesture.state == .began, let key = gesture.view as? UIButton, let modifier = modifierButtons.first(where: { $0.0 === key })?.1 else { return }
         toggle(modifier, lock: true)
     }
     func refresh() {
@@ -425,27 +463,21 @@ private final class TerminalKeyScrollView: UIScrollView {
         if !terminal.keyEncoding.supportsCommand { terminal.keyboardState.armed.remove(.command); terminal.keyboardState.locked.remove(.command) }
         if !ready { terminal.keyboardState.reset(); terminal.controlModifier = false; terminal.metaModifier = false }
         for key in allKeys { key.isEnabled = ready; key.alpha = ready ? 1 : 0.4 }
-        for (button, modifier) in modifierButtons {
-            button.isEnabled = ready && (modifier != .command || terminal.keyEncoding.supportsCommand)
-            button.alpha = button.isEnabled ? 1 : 0.4
-            button.accessibilityHint = modifier == .command ? "Requires Command support from the remote terminal application. Tap for the next key; hold to lock." : modifier == .alt ? "Option on Mac. Tap for the next key; hold to lock." : "Tap for the next key; hold to lock."
-            button.isSelected = terminal.keyboardState.active.contains(modifier)
-            button.configuration?.baseBackgroundColor = button.isSelected ? .systemBlue : .secondarySystemFill
-            button.configuration?.baseForegroundColor = button.isSelected ? .white : .label
-            button.layer.borderWidth = terminal.keyboardState.locked.contains(modifier) ? 2 : 0
-            button.layer.borderColor = UIColor.label.cgColor
-            button.layer.cornerRadius = 10
-            button.accessibilityValue = modifier == .command && !terminal.keyEncoding.supportsCommand ? "Unavailable in this application" : terminal.keyboardState.locked.contains(modifier) ? "Locked" : (button.isSelected ? "Next key" : "Off")
+        for (key, modifier) in modifierButtons {
+            key.isEnabled = ready && (modifier != .command || terminal.keyEncoding.supportsCommand); key.alpha = key.isEnabled ? 1 : 0.4
+            let locked = terminal.keyboardState.locked.contains(modifier)
+            key.accessibilityHint = "Tap for the next key; hold to lock."
+            key.isSelected = terminal.keyboardState.active.contains(modifier)
+            key.configuration?.baseBackgroundColor = key.isSelected ? .systemBlue : .secondarySystemFill
+            key.configuration?.baseForegroundColor = key.isSelected ? .white : .label
+            key.layer.borderWidth = locked ? 2 : 0; key.layer.borderColor = UIColor.label.cgColor; key.layer.cornerRadius = 10
+            key.accessibilityValue = modifier == .command && !terminal.keyEncoding.supportsCommand ? "Unavailable in this application" : locked ? "Locked" : key.isSelected ? "Next key" : "Off"
         }
-        for button in commandShortcuts {
-            button.isEnabled = ready && terminal.keyEncoding.supportsCommand; button.alpha = button.isEnabled ? 1 : 0.4
-            button.accessibilityValue = terminal.keyEncoding.supportsCommand ? nil : "Unavailable in this application"
-        }
-        for button in [keyboardButton, numberButton, keypadButton] { button.isEnabled = true; button.alpha = 1 }
+        for key in commandShortcuts { key.isEnabled = ready && terminal.keyEncoding.supportsCommand; key.alpha = key.isEnabled ? 1 : 0.4; key.accessibilityValue = terminal.keyEncoding.supportsCommand ? nil : "Unavailable in this application" }
+        for key in [keyboardButton, numberButton, keypadButton, expandButton] { key.isEnabled = true; key.alpha = 1 }
     }
     private func send(_ key: TerminalAccessoryKey) {
-        guard let terminal else { return }
-        terminal.performCustomInput { terminal.sendKey(.accessory(key), modifiers: terminal.keyboardState.consume()) }; refresh()
+        guard let terminal else { return }; terminal.performCustomInput { terminal.sendKey(.accessory(key), modifiers: terminal.keyboardState.consume()) }; refresh()
     }
 }
 #endif
