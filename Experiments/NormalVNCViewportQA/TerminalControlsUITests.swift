@@ -381,6 +381,10 @@ import StoreKit
             let main = try! XCTUnwrap(stack.arrangedSubviews.compactMap { $0 as? UIStackView }.first)
             XCTAssertTrue(main.arrangedSubviews.first === bar.keyScroll)
             XCTAssertEqual(bar.height, height)
+            let digits = descendants(bar).compactMap { $0 as? UIButton }.filter { $0.accessibilityLabel == "0" || $0.accessibilityLabel == "1" }
+            let numberScroll = try! XCTUnwrap(descendants(bar).first { $0.accessibilityIdentifier == "terminal-number-scroll" })
+            let right = try! XCTUnwrap(digits.first { $0.accessibilityLabel == "0" })
+            XCTAssertEqual(right.convert(right.bounds, to: numberScroll).maxX, numberScroll.bounds.width, accuracy: 1, "The dedicated number row fills its available width")
             XCTAssertGreaterThan(bar.keyScroll.contentSize.width, bar.keyScroll.bounds.width)
             bar.keyScroll.setContentOffset(.zero, animated: false)
             let original = bar.keyboardButton.convert(bar.keyboardButton.bounds, to: bar)

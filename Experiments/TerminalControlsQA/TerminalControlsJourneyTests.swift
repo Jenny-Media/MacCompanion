@@ -529,8 +529,11 @@ import UIKit
         live(app)
         let floating = app.buttons["terminal-controls"], anchor = floating.frame
         let toggle = app.buttons["terminal-keyboard-toggle"], start = toggle.frame
-        revealKey(app.buttons["terminal-row-expand"], app: app)
-        XCTAssertLessThan(toggle.frame.minX, start.minX - 50)
+        let last = app.buttons["terminal-row-expand"]
+        let overflows = last.frame.maxX > app.scrollViews["terminal-modifier-keys"].frame.maxX
+        revealKey(last, app: app)
+        if overflows { XCTAssertLessThan(toggle.frame.minX, start.minX - 50) }
+        else { XCTAssertTrue(toggle.isHittable, "A wide tablet can fit all controls without scrolling") }
         XCTAssertEqual(floating.frame, anchor)
         capture("whole-bottom-row-scrolls", app: app)
         floating.tap(); app.buttons["session-action-session"].tap()

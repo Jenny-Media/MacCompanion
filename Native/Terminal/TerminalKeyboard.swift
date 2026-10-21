@@ -377,7 +377,7 @@ private final class TerminalKeyScrollView: UIScrollView {
                     default: key = button(title, symbol: item.symbol) { [weak self] in if let modifier = item.modifier { self?.toggle(modifier) } }
                     }
                 } else {
-                    key = button(item.palette?.title ?? title, symbol: item.symbol) { [weak self] in
+                    key = button(item.palette?.title ?? title, symbol: item.symbol, number: (48...57).contains(item.palette?.character ?? 0)) { [weak self] in
                         guard let self else { return }
                         if editingPreview { previewSelect?(item, definition.id) }
                         else if let id = item.savedID { guard terminal?.customInputEpoch() != nil, DirectProAccess.shared.hasPro else { return }; perform(id) }
@@ -507,8 +507,8 @@ private final class TerminalKeyScrollView: UIScrollView {
         let width = number ? key.widthAnchor.constraint(greaterThanOrEqualToConstant: 32) : key.widthAnchor.constraint(equalToConstant: 44)
         width.isActive = true; keyWidths[ObjectIdentifier(key)] = width
     }
-    private func button(_ title: String, symbol: String? = nil, action: @escaping () -> Void) -> UIButton {
-        let key = UIButton(type: .system); configureButton(key, title: title, symbol: symbol); generated.append(key)
+    private func button(_ title: String, symbol: String? = nil, number: Bool = false, action: @escaping () -> Void) -> UIButton {
+        let key = UIButton(type: .system); configureButton(key, title: title, symbol: symbol, number: number); generated.append(key)
         let generation = layoutGeneration
         key.addAction(UIAction { [weak self] _ in guard self?.layoutGeneration == generation else { return }; action() }, for: .touchUpInside)
         key.addAction(UIAction { [weak self] _ in if self?.terminal?.customInputEpoch() != nil { self?.keyFeedback.prepareKeyFeedback() } }, for: .touchDown)
