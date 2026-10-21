@@ -150,8 +150,8 @@ import StoreKitTest
         }
         let bar = controller.keyboardBar
         let preferences = TerminalKeyboardPreferences(keys: [.f1, .f2])
-        bar.configure(preferences); bar.showsNumberRow = true; bar.setSoftwareKeyboardVisible(true)
-        XCTAssertEqual(bar.height, 204, accuracy: 1, "Expanded Terminal bar includes numbers, pinned actions and navigation")
+        bar.configure(preferences); bar.showsNumberRow = true; bar.setKeyboardFocused(true)
+        XCTAssertEqual(bar.height, 60, accuracy: 1, "Numbers, pinned actions and navigation share a single row")
         for landscape in [false, true] {
             scene.requestGeometryUpdate(.iOS(interfaceOrientations: landscape ? .landscapeRight : .portrait))
             for _ in 0..<300 {
@@ -192,10 +192,10 @@ import StoreKitTest
                     try await Task.sleep(for: .milliseconds(10))
                 }
                 XCTAssertNil(controller.presentedViewController)
-                bar.setSoftwareKeyboardVisible(true)
+                bar.setKeyboardFocused(true)
                 XCTAssertFalse(bar.isHidden, "Restore the shortcut row after either close path")
                 XCTAssertFalse(controller.controls.isHidden, "Restore the anchored menu with the row")
-                XCTAssertEqual(bar.height, 204, accuracy: 1, "Restore number, custom and navigation rows without reconfiguring preferences")
+                XCTAssertEqual(bar.height, 60, accuracy: 1, "Restore the single row with number, custom and navigation keys intact")
                 XCTAssertTrue(bar.showsNumberRow)
             }
         }

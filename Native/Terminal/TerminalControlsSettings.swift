@@ -116,21 +116,36 @@ struct TerminalControlsEditor: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Label(destination.title + " Preview", systemImage: destination.symbol).font(.headline)
                     if destination == .keyboard {
-                        if profile.numberRow ?? true { previewLabels(["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]) }
-                        ScrollView(.horizontal) { HStack { ForEach(placed) { item in actionButton(item) } } }
-                        previewLabels(["⌨", "123"] + ((profile.navigationRow ?? true) ? ["←", "↓", "↑", "→"] : []) + ["⌄"])
-                        previewLabels(["Esc", "Tab", "Ctrl", "Alt", "Shift", "Cmd", "•••"])
+                        HStack(spacing: 4) {
+                            previewSymbol("keyboard", title: "Keyboard")
+                            ScrollView(.horizontal) {
+                                HStack(spacing: 3) {
+                                    ForEach(["Esc", "Tab", "Ctrl", "Alt", "Shift", "Cmd"], id: \.self) { title in
+                                        previewSymbol(["Esc": "escape", "Tab": "arrow.right.to.line", "Ctrl": "control", "Alt": "option", "Shift": "shift", "Cmd": "command"][title]!, title: title)
+                                    }
+                                    if profile.navigationRow ?? true {
+                                        ForEach(["arrow.left", "arrow.down", "arrow.up", "arrow.right"], id: \.self) { previewSymbol($0, title: $0) }
+                                    }
+                                    previewSymbol("textformat.123", title: "Numbers")
+                                    previewSymbol("rectangle.grid.3x2", title: "Keypad")
+                                    ForEach(placed) { item in actionButton(item) }
+                                    if profile.numberRow ?? true {
+                                        ForEach(["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"], id: \.self) { Text($0).frame(minWidth: 44, minHeight: 44).background(.quaternary, in: RoundedRectangle(cornerRadius: 8)) }
+                                    }
+                                }
+                            }.accessibilityIdentifier("terminal-row-preview-scroll")
+                            previewSymbol("ellipsis", title: "Floating Menu")
+                        }
                         if placed.isEmpty { Text("Add your most-used keys, shortcuts or text below.").foregroundStyle(.secondary) }
                     } else {
                         TerminalMenuEditingPreview(actions: placed, selected: selected, editable: editable, select: { selected = $0 }, move: move).id(dynamicTypeSize)
                     }
-                    Text(destination == .keyboard ? "Expanded preview. Tap a custom item to edit. Sends nothing." : "Tap an action to edit. This preview sends nothing.").font(.caption).foregroundStyle(.secondary)
+                    Text(destination == .keyboard ? "Swipe left or right to see all keys. Tap a custom item to edit. Sends nothing." : "Tap an action to edit. This preview sends nothing.").font(.caption).foregroundStyle(.secondary)
                 }.padding(12).background(.background, in: RoundedRectangle(cornerRadius: 16))
                 if destination == .keyboard {
-                    Toggle("Number Row", isOn: Binding(get: { profile.numberRow ?? true }, set: { profile.numberRow = $0 })).accessibilityIdentifier("terminal-setting-numbers")
+                    Toggle("Numbers", isOn: Binding(get: { profile.numberRow ?? true }, set: { profile.numberRow = $0 })).accessibilityIdentifier("terminal-setting-numbers")
                     Toggle("Arrow Keys", isOn: Binding(get: { profile.navigationRow ?? true }, set: { profile.navigationRow = $0 })).accessibilityIdentifier("terminal-setting-arrows")
-                    Toggle("Start Expanded", isOn: Binding(get: { profile.expandedBar ?? true }, set: { profile.expandedBar = $0 }))
-                    Text("Use 123 or the chevron on the keyboard bar to change its size while working.").font(.caption).foregroundStyle(.secondary)
+                    Text("Keys, shortcuts and text share one scrollable row. The keyboard toggle stays at the left. Use 123 to show or hide numbers.").font(.caption).foregroundStyle(.secondary)
                 }
             }
             if let selection {
@@ -169,8 +184,8 @@ struct TerminalControlsEditor: View {
                 Button("Delete Item", role: .destructive) { if let selected { profile.delete(selected) }; selected = nil }
             }
     }
-    private func previewLabels(_ titles: [String]) -> some View {
-        HStack(spacing: 3) { ForEach(titles, id: \.self) { Text($0).font(.caption).frame(maxWidth: .infinity, minHeight: 44).background(.quaternary, in: RoundedRectangle(cornerRadius: 8)) } }.accessibilityElement(children: .combine)
+    private func previewSymbol(_ symbol: String, title: String) -> some View {
+        Image(systemName: symbol).frame(minWidth: 44, minHeight: 44).background(.quaternary, in: RoundedRectangle(cornerRadius: 8)).accessibilityLabel(title)
     }
     private var addPicker: some View {
         NavigationStack {

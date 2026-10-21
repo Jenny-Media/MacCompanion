@@ -87,18 +87,18 @@ import SwiftUI
         NSLayoutConstraint.activate([bar.widthAnchor.constraint(equalToConstant: 375),
             bar.topAnchor.constraint(equalTo: holder.view.safeAreaLayoutGuide.topAnchor),
             bar.leadingAnchor.constraint(equalTo: holder.view.leadingAnchor)])
-        bar.setSoftwareKeyboardVisible(true)
+        bar.setKeyboardFocused(true)
         window.makeKeyAndVisible()
         defer { window.isHidden = true; window.rootViewController = nil }
         holder.view.layoutIfNeeded()
-        let ctrl = try XCTUnwrap(descendants(bar).compactMap { $0 as? UIButton }.first { $0.configuration?.title == "Ctrl" })
-        let escape = try XCTUnwrap(descendants(bar).compactMap { $0 as? UIButton }.first { $0.configuration?.title == "Esc" })
+        let ctrl = try XCTUnwrap(descendants(bar).compactMap { $0 as? UIButton }.first { $0.accessibilityLabel == "Ctrl" })
+        let escape = try XCTUnwrap(descendants(bar).compactMap { $0 as? UIButton }.first { $0.accessibilityLabel == "Esc" })
         XCTAssertFalse(descendants(bar).compactMap { $0 as? UIButton }.contains { $0.configuration?.title == "Fn" })
-        let normal = try XCTUnwrap(ctrl.titleLabel?.font.pointSize)
+        let normal = try XCTUnwrap(ctrl.imageView?.image?.size.height)
         bar.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
         holder.view.layoutIfNeeded(); bar.layoutIfNeeded()
-        XCTAssertGreaterThan(try XCTUnwrap(ctrl.titleLabel?.font.pointSize), normal)
-        XCTAssertGreaterThan(try XCTUnwrap(escape.titleLabel?.font.pointSize), normal)
+        XCTAssertGreaterThan(try XCTUnwrap(ctrl.imageView?.image?.size.height), normal)
+        XCTAssertGreaterThan(try XCTUnwrap(escape.imageView?.image?.size.height), normal)
         for button in descendants(bar).compactMap({ $0 as? UIButton }).filter({ $0.configuration?.title != nil }) {
             button.layoutIfNeeded()
             XCTAssertGreaterThanOrEqual(button.bounds.height + 1, button.titleLabel?.font.lineHeight ?? 0)
@@ -107,7 +107,7 @@ import SwiftUI
         XCTAssertGreaterThan(bar.keyScroll.contentSize.width, bar.keyScroll.bounds.width)
         bar.traitOverrides.preferredContentSizeCategory = .large
         holder.view.layoutIfNeeded(); bar.layoutIfNeeded()
-        XCTAssertEqual(bar.height, 108, accuracy: 1, "Default-size toolbar keeps its compact layout")
+        XCTAssertEqual(bar.height, 60, accuracy: 1, "Default-size toolbar keeps its compact layout")
     }
     func testSelectedDisplayNameWrapsOnSmallPhoneAtAccessibilitySize() throws {
         let picker = CompanionVNCDisplayPicker()

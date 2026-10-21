@@ -100,6 +100,8 @@ struct TerminalControlsHarness: View {
         try TerminalSecretStore.write(Data(String(openSSHPublicKey: key.publicKey).utf8), id: mac.id, kind: "host-key")
         var profile = TerminalControlsProfile.defaults
         profile.actions.append(.init(id: TerminalControlsMemory.itemID, title: "Project", kind: .text, text: "original", inRow: true))
+        var shortcut = TerminalControlAction(id: UUID(uuidString: "00000000-0000-0000-0000-00000000C004")!, title: "Prefix Ctrl-B", kind: .shortcut, inMenu: false)
+        shortcut.character = 0x62; shortcut.modifiers = [0xffe3]; profile.actions.append(shortcut)
         profile.actions.append(.init(id: UUID(uuidString: "00000000-0000-0000-0000-00000000C002")!, title: "Unicode Path", kind: .text, text: "中文😀", inMenu: false))
         if let url = Bundle.main.url(forResource: "terminal-compatibility-v1", withExtension: "json"),
            let json = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any],

@@ -632,7 +632,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         composer.presentationChanged = { [weak self] visible in
             guard let self else { return }
             self.composerVisible = visible
-            self.keyboardBar.setComposerVisible(visible); self.updateKeyboardBarVisibility(); self.view.setNeedsLayout()
+            self.updateKeyboardBarVisibility(); self.view.setNeedsLayout()
         }
         return composer
     }()
@@ -668,12 +668,12 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         controls.button.accessibilityIdentifier = "terminal-controls"
         controls.categoryActions = [
             ["kind": "moreKeys", "title": "Keypad", "symbol": "rectangle.grid.3x2"],
-            ["kind": "savedText", "title": "Shortcuts & Text", "symbol": "text.quote"],
-            ["kind": "inputMenu", "title": "Keyboard & Input", "symbol": "gearshape"],
+            ["kind": "savedShortcuts", "title": "Shortcuts", "symbol": "command"],
+            ["kind": "savedText", "title": "Text", "symbol": "text.quote"],
+            ["kind": "customize", "title": "Customize Controls", "symbol": "slider.horizontal.3"],
             ["kind": "appearance", "title": "Appearance", "symbol": "circle.lefthalf.filled"],
             ["kind": "session", "title": "Session", "symbol": "link"]]
         controls.actionHandler = { [weak self] item in self?.performQuickAction(item) }
-        controls.customizeHandler = { [weak self] in self?.customize() }
         controls.openingHandler = { [weak self] in self?.updateControls() }
         CompanionVNCObserveDivision(view)
         session.prepareTerminal = { [weak self] generation in self?.prepareForPTY(generation) }
@@ -827,8 +827,10 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         case "moreKeys":
             showKeypad()
         case "savedText":
-            guard DirectProAccess.shared.hasPro else { action("pro"); return }
-            showSavedItems()
+            showSavedItems(.text)
+        case "savedShortcuts":
+            showSavedItems(.shortcuts)
+        case "customize": customize()
         case "shiftNext": keyboardBar.toggle(.shift)
         case "shiftLock": keyboardBar.toggle(.shift, lock: true)
         case "ctrlLock": keyboardBar.toggle(.ctrl, lock: true)
@@ -840,11 +842,6 @@ private struct TerminalSurface: UIViewControllerRepresentable {
                 terminal.sendKey(.text(kind == "endInput" ? "d" : "z"), modifiers: .ctrl)
             }
             keyboardBar.refresh()
-        case "inputMenu":
-            presentControlsMenu("Keyboard & Input", sections: [["title": "Keyboard", "items": [
-                ["kind": "composeText", "title": "Compose Text", "symbol": "square.and.pencil"],
-                ["kind": "numberRow", "title": "Show Number Row", "symbol": "textformat.123", "selected": keyboardBar.showsNumberRow],
-                ["kind": "customize", "title": "Customize Controls", "symbol": "slider.horizontal.3", "submenu": true]]]])
         case "appearance":
             let choices = DirectTerminalAppearance.allCases.map { value in
                 ["kind": "colors-" + value.rawValue, "title": value.title, "symbol": "circle.lefthalf.filled", "selected": DirectAppearanceV1.shared.terminal == value] as [String: Any]
@@ -987,7 +984,6 @@ private struct TerminalSurface: UIViewControllerRepresentable {
             view.convert(CGPoint(x: 0, y: window.bounds.maxY - window.safeAreaInsets.bottom), from: window).y
         } ?? safe.maxY
         let softwareKeyboard = ceiling < restingBottom - 1
-        keyboardBar.setSoftwareKeyboardVisible(softwareKeyboard)
         updateKeyboardBarVisibility()
         let inset = max(0, safe.maxY - ceiling)
         if controls.bottomInset != inset { controls.cancelSlideForLayoutChange(); controls.bottomInset = inset; controls.setNeedsLayout() }
@@ -1001,9 +997,6 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         if let window = view.window {
             top = max(0, window.safeAreaInsets.top - view.convert(CGPoint.zero, to: window).y) + 8
         } else { top = safe.minY + 8 }
-        // Keep a usable terminal in short windows; preserve the person's
-        // expanded preference and restore it when vertical space returns.
-        keyboardBar.compactLayout = softwareKeyboard && ceiling - top < keyboardBar.expandedHeight + 96
         let reservedBarHeight = composerVisible && keyboardBar.isHidden ? 0 : keyboardBar.height
         if terminal.contentInset.top != top {
             terminal.contentInset.top = top
@@ -1050,7 +1043,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     }
     private func persistBarLayout() {
         var draft = controlProfile
-        draft.numberRow = keyboardBar.showsNumberRow; draft.expandedBar = keyboardBar.expanded
+        draft.numberRow = keyboardBar.showsNumberRow
         do {
             // Reuse the optimistic revision check; never overwrite newer editor content.
             controlProfile = try controlsStore.save(draft)
@@ -1104,16 +1097,18 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         }
         inputPanel = panel; present(panel, animated: true)
     }
-    private func showSavedItems() {
+    private func showSavedItems(_ section: TerminalSavedItemsSection) {
         guard presentedViewController == nil else { return }
         let epoch = terminal.customInputEpoch(), revision = controlProfile.revision
-        let panel = UIHostingController(rootView: TerminalSavedItems(items: controlProfile.actions, macName: session.mac.name, supportsCommand: terminal.keyEncoding.supportsCommand, select: { [weak self] id in
+        let panel = UIHostingController(rootView: TerminalSavedItems(section: section, items: DirectProAccess.shared.hasPro ? controlProfile.actions : [], macName: session.mac.name, supportsCommand: terminal.keyEncoding.supportsCommand, select: { [weak self] id in
             guard let self, let epoch, terminal.customInputEpoch() == epoch, controlProfile.revision == revision else { return }
             dismiss(animated: true) { [weak self] in
                 guard let self, terminal.customInputEpoch() == epoch, controlProfile.revision == revision else { return }
                 performControlAction(id)
             }
-        }, customize: { [weak self] in self?.dismiss(animated: true) { [weak self] in self?.customize() } }))
+        }, customize: { [weak self] in self?.dismiss(animated: true) { [weak self] in self?.customize() } }, compose: { [weak self] in
+            self?.showTextComposer()
+        }))
         panel.sheetPresentationController?.detents = [.large()]
         inputPanel = panel; present(panel, animated: true)
     }

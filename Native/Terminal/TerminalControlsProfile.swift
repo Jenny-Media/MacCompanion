@@ -68,7 +68,7 @@ struct TerminalControlsProfile: Codable, Equatable {
     var rowOrder: [UUID]?
     var menuOrder: [UUID]?
     var numberRow: Bool?
-    var expandedBar: Bool?
+    var expandedBar: Bool? // Retained for compatibility; the bar now always uses one row.
     var navigationRow: Bool?
     func placed(_ destination: TerminalControlsDestination) -> [TerminalControlAction] {
         let items = actions.filter { destination == .keyboard ? $0.inRow : $0.inMenu }

@@ -119,27 +119,42 @@ import StoreKit
         let store = TerminalControlsStore(read: { data }, write: { _ in XCTFail("Rendering must not save controls") }, legacyIDs: { [] })
         let session = DirectTerminalSession(mac: .init(id: UUID(), name: "Synthetic Mac", addresses: ["127.0.0.1"]))
         session.connected = true
-        let controller = ControlsInputController(session: session, customize: {}, controlsStore: store)
+        var customizations = 0
+        let controller = ControlsInputController(session: session, customize: { customizations += 1 }, controlsStore: store)
         window.rootViewController = controller; window.makeKeyAndVisible()
         defer { session.stop(); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
         controller.terminal.feed(text: "Synthetic terminal preview\r\nAll controls are in the floating menu.\r\n$ ")
         try await settle()
         XCTAssertFalse(descendants(controller.keyboardBar).compactMap { $0 as? UIButton }.contains { $0.configuration?.title == "Fn" })
         let titles = (controller.controls.categoryActions ?? []).compactMap { $0["title"] as? String }
-        for title in ["Keypad", "Shortcuts & Text"] { XCTAssertTrue(titles.contains(title)) }
+        XCTAssertEqual(titles, ["Keypad", "Shortcuts", "Text", "Customize Controls", "Appearance", "Session"])
         XCTAssertFalse(titles.contains("All Actions"))
         controller.controls.button.sendActions(for: .touchUpInside)
         try await settle(); XCTAssertTrue(controller.controls.menuOpen)
         let choices = try XCTUnwrap(controller.controls.value(forKey: "choices") as? [UIButton])
         let more = try XCTUnwrap(choices.first { $0.accessibilityIdentifier == "session-action-moreKeys" })
         let input = try XCTUnwrap(choices.first { $0.accessibilityIdentifier == "session-action-session" })
-        XCTAssertGreaterThan(input.frame.minY, more.frame.minY, "Five categories wrap into readable rows")
+        XCTAssertGreaterThan(input.frame.minY, more.frame.minY)
+        let categoryButtons = choices.filter { ($0.accessibilityIdentifier ?? "").hasPrefix("session-action-") && $0 !== input }
+        let shortcuts = try XCTUnwrap(categoryButtons.first { $0.accessibilityIdentifier == "session-action-savedShortcuts" })
+        let text = try XCTUnwrap(categoryButtons.first { $0.accessibilityIdentifier == "session-action-savedText" })
+        let customize = try XCTUnwrap(categoryButtons.first { $0.accessibilityIdentifier == "session-action-customize" })
+        let appearance = try XCTUnwrap(categoryButtons.first { $0.accessibilityIdentifier == "session-action-appearance" })
+        XCTAssertEqual(more.frame.minY, shortcuts.frame.minY, accuracy: 1)
+        XCTAssertEqual(shortcuts.frame.minY, text.frame.minY, accuracy: 1)
+        XCTAssertLessThan(more.frame.minX, shortcuts.frame.minX); XCTAssertLessThan(shortcuts.frame.minX, text.frame.minX)
+        XCTAssertEqual(customize.frame.minY, appearance.frame.minY, accuracy: 1)
+        XCTAssertEqual(appearance.frame.minY, input.frame.minY, accuracy: 1)
+        XCTAssertLessThan(customize.frame.minX, appearance.frame.minX); XCTAssertLessThan(appearance.frame.minX, input.frame.minX)
         XCTAssertGreaterThanOrEqual(more.bounds.width, 90)
         XCTAssertEqual(input.frame.maxX, choices.filter { $0 !== input }.map { $0.frame.maxX }.max()!, accuracy: 1, "Session occupies the trailing slot")
         let categories = try XCTUnwrap(controller.controls.categoryActions)
         XCTAssertNotEqual(categories.first { $0["kind"] as? String == "moreKeys" }?["symbol"] as? String,
-                          categories.first { $0["kind"] as? String == "inputMenu" }?["symbol"] as? String)
+                          categories.first { $0["kind"] as? String == "customize" }?["symbol"] as? String)
         capture("terminal-controls-floating-menu", window: window)
+        customize.sendActions(for: .touchUpInside)
+        XCTAssertEqual(customizations, 1); XCTAssertFalse(controller.controls.menuOpen)
+        XCTAssertNil(controller.presentedViewController, "Customization opens the owner editor directly, with no input submenu")
         let menu = controller.makeMoreKeysMenu()
         let kinds = menu.sections.flatMap { ($0["items"] as? [[String: Any]] ?? []).compactMap { $0["kind"] as? String } }
         for key in TerminalAccessoryKey.allCases { XCTAssertTrue(kinds.contains("terminalKey-" + key.rawValue)) }
@@ -254,35 +269,33 @@ import StoreKit
         XCTAssertFalse(second.ready); XCTAssertTrue(controller.output.isEmpty)
     }
 
-    func testCompactBarRestoresLayoutAndNumbersExpandWithOneTap() {
+    func testSingleRowKeepsKeyboardFirstAndNumbersNeverAddHeight() {
         let terminal = SessionTerminalView(frame: .zero)
         let bar = TerminalKeyboardBar(terminal: terminal, preferences: .init())
-        bar.configure(.defaults) { _ in XCTFail("Layout controls never send an action") }
-        bar.setSoftwareKeyboardVisible(true)
-        XCTAssertEqual(bar.height, 156, accuracy: 1)
-        var keypadRequests = 0, changes = 0
-        bar.openKeypad = { _ in keypadRequests += 1 }; bar.layoutChanged = { changes += 1 }
-        bar.compactLayout = true
-        XCTAssertEqual(bar.height, 60, accuracy: 1); XCTAssertTrue(bar.expanded)
-        bar.numberButton.sendActions(for: .touchUpInside)
-        bar.expandButton.sendActions(for: .touchUpInside)
-        XCTAssertEqual(keypadRequests, 2); XCTAssertEqual(changes, 0)
-        bar.compactLayout = false
-        XCTAssertEqual(bar.height, 156, accuracy: 1)
-        bar.expandButton.sendActions(for: .touchUpInside)
-        XCTAssertFalse(bar.expanded); XCTAssertEqual(bar.height, 60, accuracy: 1)
-        bar.numberButton.sendActions(for: .touchUpInside)
-        XCTAssertTrue(bar.expanded); XCTAssertTrue(bar.showsNumberRow)
-        XCTAssertEqual(bar.height, 156, accuracy: 1); XCTAssertEqual(changes, 2)
-        bar.setSoftwareKeyboardVisible(false)
-        XCTAssertEqual(bar.height, 156, accuracy: 1, "Hiding the native keyboard keeps the bar layout")
-        XCTAssertEqual(bar.numberButton.accessibilityLabel, "Hide Number Row")
-        bar.numberButton.sendActions(for: .touchUpInside)
-        bar.expandButton.sendActions(for: .touchUpInside)
-        XCTAssertEqual(keypadRequests, 2); XCTAssertEqual(changes, 4)
-        XCTAssertFalse(bar.expanded); XCTAssertFalse(bar.showsNumberRow)
-        bar.setSoftwareKeyboardVisible(true)
-        XCTAssertEqual(bar.height, 60, accuracy: 1, "Showing the native keyboard preserves the collapsed choice")
+        var profile = TerminalControlsProfile.defaults
+        profile.expandedBar = false // Old collapsed choices cannot hide saved keys.
+        bar.configure(profile) { _ in XCTFail("Layout controls never send an action") }
+        let height = bar.height
+        XCTAssertEqual(height, 60, accuracy: 1)
+        var requests = [Bool](), changes = 0
+        bar.openKeypad = { requests.append($0) }; bar.layoutChanged = { changes += 1 }
+        for focused in [false, true, false, true] {
+            bar.setKeyboardFocused(focused)
+            bar.frame = CGRect(x: 0, y: 0, width: 402, height: bar.height)
+            bar.layoutIfNeeded()
+            let stack = bar.subviews.compactMap { $0 as? UIStackView }.first!
+            XCTAssertTrue(stack.arrangedSubviews.first === bar.keyboardButton)
+            XCTAssertEqual(bar.height, height)
+            XCTAssertGreaterThan(bar.keyScroll.contentSize.width, bar.keyScroll.bounds.width)
+            let original = bar.keyboardButton.frame
+            bar.keyScroll.setContentOffset(CGPoint(x: 120, y: 0), animated: false)
+            XCTAssertEqual(bar.keyboardButton.frame, original, "The keyboard toggle stays fixed while keys scroll")
+            bar.numberButton.sendActions(for: .touchUpInside)
+            XCTAssertEqual(bar.height, height, "Numbers stay in the existing horizontal row")
+        }
+        XCTAssertEqual(changes, 4)
+        bar.keypadButton.sendActions(for: .touchUpInside)
+        XCTAssertEqual(requests, [false])
     }
 
     func testDefaultModifiersIncludeShiftAndCommandWithoutLegacySubstitution() throws {
@@ -309,11 +322,11 @@ import StoreKit
         bar.toggle(.command, lock: true)
         terminal.feed(text: "\u{1b}[=0u"); bar.refresh()
         XCTAssertFalse(command.isEnabled); XCTAssertTrue(terminal.keyboardState.active.isEmpty)
-        controller.ready = false; bar.refresh(); bar.compactLayout = true; controller.ready = true; bar.refresh()
-        for button in [bar.keyboardButton, bar.numberButton, bar.expandButton] { XCTAssertTrue(button.isEnabled) }
+        controller.ready = false; bar.refresh(); controller.ready = true; bar.refresh()
+        for button in [bar.keyboardButton, bar.numberButton, bar.keypadButton] { XCTAssertTrue(button.isEnabled) }
     }
 
-    func testExpandedRowsRemainSeparateAfterRepeatedCompactRestoration() async throws {
+    func testSymbolsAndCustomKeysShareOneScrollableRowAtPhoneWidths() async throws {
         let entitlement = try await pro(); defer { entitlement.clearTransactions() }
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
@@ -323,18 +336,21 @@ import StoreKit
         let bar = TerminalKeyboardBar(terminal: terminal, preferences: .init())
         bar.configure(.init(actions: [.init(title: "Project", kind: .text, text: "synthetic", inRow: true)])) { _ in XCTFail("Layout never sends input") }
         bar.translatesAutoresizingMaskIntoConstraints = true; host.view.addSubview(bar)
-        bar.setSoftwareKeyboardVisible(true)
-        let stack = try XCTUnwrap(bar.subviews.compactMap { $0 as? UIStackView }.first)
-        for compact in [false, true, false, true, false] {
-            bar.compactLayout = compact
-            bar.frame = CGRect(x: 0, y: 100, width: 402, height: bar.height)
+        for width in [320.0, 402.0, 768.0] {
+            bar.frame = CGRect(x: 0, y: 100, width: width, height: bar.height)
             bar.setNeedsLayout(); bar.layoutIfNeeded()
-            let rows = stack.arrangedSubviews.filter { $0.bounds.height > 0 }
-            XCTAssertEqual(rows.count, compact ? 1 : 4)
-            for (index, row) in rows.enumerated() {
-                XCTAssertGreaterThanOrEqual(row.bounds.height, 44)
-                for later in rows.dropFirst(index + 1) { XCTAssertFalse(row.frame.intersects(later.frame), "Restored keyboard rows must not overlap") }
+            let buttons = descendants(bar).compactMap { $0 as? UIButton }
+            for title in ["Esc", "Tab", "Ctrl", "Alt", "Shift", "Cmd"] {
+                let key = try XCTUnwrap(buttons.first { $0.accessibilityLabel == title })
+                XCTAssertNil(key.configuration?.title); XCTAssertNotNil(key.configuration?.image)
+                XCTAssertGreaterThanOrEqual(key.bounds.width, 44)
+                XCTAssertEqual(key.convert(key.bounds, to: bar).midY, bar.keyboardButton.convert(bar.keyboardButton.bounds, to: bar).midY, accuracy: 1)
             }
+            let project = try XCTUnwrap(buttons.first { $0.accessibilityLabel == "Project" })
+            bar.keyScroll.scrollRectToVisible(project.convert(project.bounds, to: bar.keyScroll), animated: false)
+            bar.layoutIfNeeded()
+            XCTAssertTrue(bar.keyScroll.bounds.intersects(project.convert(project.bounds, to: bar.keyScroll)))
+            XCTAssertEqual(bar.height, 60, accuracy: 1)
         }
     }
 

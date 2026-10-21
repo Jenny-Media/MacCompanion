@@ -3,7 +3,7 @@ import StoreKitTest
 import UIKit
 
 @MainActor final class TerminalControlsJourneyTests: XCTestCase {
-    override func setUp() { super.setUp(); executionTimeAllowance = name.contains("testInteractiveReview") ? 900 : 120 }
+    override func setUp() { super.setUp(); executionTimeAllowance = name.contains("testInteractiveReview") ? 900 : name.contains("testRuntimeKeyboard") ? 240 : 120 }
     private let itemID = "00000000-0000-0000-0000-00000000C001"
     private func capture(_ name: String, app: XCUIApplication) {
         let attachment = XCTAttachment(screenshot: app.screenshot()); attachment.name = name
@@ -21,6 +21,27 @@ import UIKit
         }
         XCTAssertTrue(element.isHittable)
     }
+    private func revealHorizontal(_ element: XCUIElement, scroll: XCUIElement) {
+        for _ in 0..<10 {
+            let frame = element.frame, viewport = scroll.frame
+            if element.isHittable && frame.intersection(viewport).width >= min(44, frame.width) { return }
+            // Flicks can jump over a narrow custom key in both directions.
+            // Drag a bounded distance, including when AX reports an empty frame.
+            let direction: CGFloat = !frame.isEmpty && frame.midX < viewport.midX ? -1 : 1
+            let start = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5 + direction * 0.2, dy: 0.5))
+            let end = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5 - direction * 0.2, dy: 0.5))
+            start.press(forDuration: 0.1, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.2)
+        }
+        let diagnostic = XCTAttachment(string: element.debugDescription + "\n" + scroll.debugDescription)
+        diagnostic.name = "horizontal-control-unreachable"; diagnostic.lifetime = .keepAlways; add(diagnostic)
+        XCTAssertTrue(element.isHittable)
+    }
+    private func revealKey(_ element: XCUIElement, app: XCUIApplication) {
+        revealHorizontal(element, scroll: app.scrollViews["terminal-modifier-keys"])
+    }
+    private func revealPreviewKey(_ element: XCUIElement, app: XCUIApplication) {
+        revealHorizontal(element, scroll: app.scrollViews["terminal-row-preview-scroll"])
+    }
     private func open(_ app: XCUIApplication) {
         XCTAssertTrue(app.buttons["controls-qa-open"].waitForExistence(timeout: 5))
         app.buttons["controls-qa-open"].tap()
@@ -28,7 +49,7 @@ import UIKit
         capture("terminal-controls-overview", app: app)
         app.buttons["terminal-edit-keyboard"].tap()
         let item = app.buttons["terminal-row-preview-" + itemID]
-        XCTAssertTrue(item.waitForExistence(timeout: 5)); item.tap()
+        XCTAssertTrue(item.waitForExistence(timeout: 5)); revealPreviewKey(item, app: app); item.tap()
     }
     private func rename(_ name: String, app: XCUIApplication, up: Bool = true) async throws {
         let field = app.textFields["terminal-control-name"]
@@ -113,10 +134,10 @@ import UIKit
         app.buttons["controls-qa-live"].tap()
         let controls = app.buttons["terminal-controls"]
         XCTAssertTrue(controls.waitForExistence(timeout: 15))
-        controls.tap(); app.buttons["customize-quick-actions"].tap()
+        controls.tap(); app.buttons["session-action-customize"].tap()
         XCTAssertTrue(app.buttons["terminal-controls-save"].waitForExistence(timeout: 5))
         app.buttons["terminal-edit-keyboard"].tap()
-        app.buttons["terminal-row-preview-" + itemID].tap()
+        revealPreviewKey(app.buttons["terminal-row-preview-" + itemID], app: app); app.buttons["terminal-row-preview-" + itemID].tap()
         try await rename("Live Project", app: app)
         capture("connected-terminal-before-save", app: app)
         app.buttons["terminal-controls-save"].tap()
@@ -132,7 +153,7 @@ import UIKit
         app.typeText("q")
         try await assertInput("6f726967696e616c71", app: app)
         controls.tap()
-        XCTAssertTrue(app.buttons["customize-quick-actions"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["session-action-customize"].waitForExistence(timeout: 5))
         capture("connected-terminal-after-save", app: app)
     }
 
@@ -192,7 +213,7 @@ import UIKit
             let key = app.buttons[title]
             XCTAssertTrue(key.exists)
             XCTAssertGreaterThanOrEqual(key.frame.minX, app.frame.minX)
-            XCTAssertLessThanOrEqual(key.frame.maxX, app.frame.maxX, "Default modifiers must fit without scrolling")
+            XCTAssertLessThanOrEqual(key.frame.maxX, app.frame.maxX, "Compact symbols keep common modifiers visible")
         }
         capture("bar-native-keyboard-hidden", app: app)
         app.buttons["terminal-keyboard-toggle"].tap()
@@ -201,10 +222,15 @@ import UIKit
         app.buttons["terminal-keyboard-toggle"].tap()
         XCTAssertTrue(arrow.exists); XCTAssertTrue(number.exists)
         app.buttons["terminal-controls"].tap()
-        let session = app.buttons["session-action-session"], settings = app.buttons["session-action-inputMenu"], keypad = app.buttons["session-action-moreKeys"]
+        let session = app.buttons["session-action-session"], settings = app.buttons["session-action-customize"], keypad = app.buttons["session-action-moreKeys"]
         XCTAssertTrue(session.waitForExistence(timeout: 5))
         XCTAssertGreaterThan(session.frame.midX, app.buttons["session-action-appearance"].frame.midX)
-        XCTAssertGreaterThan(session.frame.midY, settings.frame.midY)
+        XCTAssertEqual(session.frame.midY, settings.frame.midY, accuracy: 1)
+        let shortcuts = app.buttons["session-action-savedShortcuts"], text = app.buttons["session-action-savedText"]
+        XCTAssertEqual(keypad.frame.midY, shortcuts.frame.midY, accuracy: 1)
+        XCTAssertEqual(shortcuts.frame.midY, text.frame.midY, accuracy: 1)
+        XCTAssertLessThan(keypad.frame.midX, shortcuts.frame.midX); XCTAssertLessThan(shortcuts.frame.midX, text.frame.midX)
+        XCTAssertLessThan(keypad.frame.midY, settings.frame.midY)
         capture("floating-menu-session-bottom-right", app: app)
         keypad.tap()
         let navigation = app.navigationBars["Keypad"]
@@ -229,6 +255,49 @@ import UIKit
         XCTAssertTrue(arrow.exists); XCTAssertTrue(number.exists)
     }
 
+    func testSeparateShortcutsAndTextAndDirectCustomization() async throws {
+        let (app, store) = try await launchPro()
+        defer { app.terminate(); store.clearTransactions() }
+        live(app)
+        let shortcutID = "terminal-saved-00000000-0000-0000-0000-00000000C004"
+        let textID = "terminal-saved-00000000-0000-0000-0000-00000000C002"
+        app.buttons["terminal-controls"].tap(); app.buttons["session-action-savedShortcuts"].tap()
+        XCTAssertTrue(app.navigationBars["Shortcuts"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons[shortcutID].exists); XCTAssertFalse(app.buttons[textID].exists)
+        XCTAssertFalse(app.buttons["terminal-compose-text"].exists)
+        capture("shortcuts-only-section", app: app)
+        app.buttons[shortcutID].tap()
+        try await assertInput("02", app: app)
+        app.buttons["terminal-controls"].tap(); app.buttons["session-action-savedText"].tap()
+        XCTAssertTrue(app.navigationBars["Text"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons[shortcutID].exists)
+        try await searchSaved("Unicode", app: app)
+        capture("text-only-section", app: app)
+        app.buttons[textID].tap()
+        try await assertInput("02e4b8ade69687f09f9880", app: app)
+        app.buttons["terminal-controls"].tap(); app.buttons["session-action-savedText"].tap()
+        app.buttons["terminal-compose-text"].tap()
+        if !app.buttons["compose-back"].waitForExistence(timeout: 5) {
+            capture("compose-entry-did-not-open", app: app)
+            let diagnostic = XCTAttachment(string: app.debugDescription)
+            diagnostic.name = "compose-entry-accessibility"; diagnostic.lifetime = .keepAlways; add(diagnostic)
+            XCTFail("Composer controls must be exposed through accessibility")
+            return
+        }
+        app.textViews["compose-text"].tap()
+        app.textViews["compose-text"].typeText("synthetic draft")
+        try await assertInput("02e4b8ade69687f09f9880", app: app)
+        capture("compose-from-text-section", app: app)
+        app.buttons["compose-back"].tap()
+        try await assertInput("02e4b8ade69687f09f9880", app: app)
+        app.buttons["terminal-controls"].tap(); app.buttons["session-action-customize"].tap()
+        XCTAssertTrue(app.buttons["terminal-edit-keyboard"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["terminal-edit-menu"].exists)
+        capture("customize-controls-direct-entry", app: app)
+        app.buttons["terminal-controls-cancel"].tap()
+        try await assertInput("02e4b8ade69687f09f9880", app: app)
+    }
+
     func testRuntimeKeyboardKeypadAndSearchableSavedText() async throws {
         let (app, store) = try await launchPro()
         defer { app.terminate(); store.clearTransactions() }
@@ -240,18 +309,19 @@ import UIKit
         app.buttons["Done"].tap()
         app.buttons["terminal-keyboard-toggle"].tap()
         XCTAssertTrue(app.buttons["↑"].waitForExistence(timeout: 5))
+        revealKey(app.buttons["↑"], app: app)
         app.buttons["↑"].tap(); app.buttons["↑"].tap(); app.buttons["←"].tap()
         try await assertInput("1b5b411b5b411b5b44", app: app)
-        capture("keyboard-expanded-arrows-and-numbers", app: app)
+        capture("single-row-scrolled-to-arrows", app: app)
+        revealKey(app.buttons["terminal-number-toggle"], app: app)
         app.buttons["terminal-number-toggle"].tap()
         XCTAssertFalse(app.buttons["9"].exists)
-        app.buttons["terminal-number-toggle"].tap(); app.buttons["9"].tap()
+        app.buttons["terminal-number-toggle"].tap(); revealKey(app.buttons["9"], app: app); app.buttons["9"].tap()
         try await assertInput("1b5b411b5b411b5b4439", app: app)
-        app.buttons["terminal-expand-toggle"].tap()
-        XCTAssertFalse(app.buttons["↑"].exists)
-        capture("keyboard-collapsed", app: app)
-        app.buttons["terminal-expand-toggle"].tap()
-        XCTAssertTrue(app.buttons["↑"].exists)
+        revealKey(app.buttons["Esc"], app: app)
+        capture("single-row-returned-to-symbols", app: app)
+        XCTAssertTrue(app.buttons["terminal-keyboard-toggle"].isHittable)
+        XCTAssertFalse(app.buttons["terminal-expand-toggle"].exists)
         app.buttons["terminal-keyboard-toggle"].tap()
         app.buttons["terminal-controls"].tap(); app.buttons["session-action-moreKeys"].tap()
         let ctrl = app.buttons["terminal-keypad-Ctrl"]
@@ -291,12 +361,11 @@ import UIKit
         try await assertInput("1b5b411b5b411b5b44391b5b313b35481b5b313b35461b4f5003e4b8ade69687f09f98806f6e650a2020e4b8ade69687f09f9880", app: app)
         app.buttons["terminal-keyboard-toggle"].tap()
         XCUIDevice.shared.orientation = .landscapeLeft
-        if UIDevice.current.userInterfaceIdiom == .phone { XCTAssertTrue(app.buttons["Open Keypad"].waitForExistence(timeout: 5)) }
+        XCTAssertTrue(app.buttons["terminal-keyboard-toggle"].waitForExistence(timeout: 5))
         let surface = app.descendants(matching: .any).matching(identifier: "terminal-surface").firstMatch
         XCTAssertGreaterThan(surface.frame.height, 90)
         capture("terminal-landscape-keyboard-compact", app: app)
-        if UIDevice.current.userInterfaceIdiom == .phone { app.buttons["terminal-number-toggle"].tap() }
-        else { app.buttons["terminal-controls"].tap(); app.buttons["session-action-moreKeys"].tap() }
+        app.buttons["terminal-controls"].tap(); app.buttons["session-action-moreKeys"].tap()
         app.buttons["Numbers"].tap()
         reveal(app.buttons["terminal-keypad-number-7"], app: app)
         XCTAssertTrue(app.buttons["terminal-keypad-number-7"].exists)
@@ -342,7 +411,7 @@ import UIKit
         XCTAssertEqual(app.staticTexts["controls-qa-count"].label, "Saved items: 2")
         app.buttons["controls-qa-open"].tap(); app.buttons["terminal-edit-library"].tap()
         let item = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "terminal-library-", "Tmux Prefix")).firstMatch
-        XCTAssertTrue(item.waitForExistence(timeout: 5)); item.tap()
+        XCTAssertTrue(item.waitForExistence(timeout: 5)); reveal(item, app: app); item.tap()
         let delete = app.buttons["terminal-delete-item"]; reveal(delete, app: app); delete.tap()
         app.buttons["Delete Item"].tap()
         app.buttons["terminal-controls-save"].tap()
@@ -355,7 +424,7 @@ import UIKit
         app.buttons["controls-qa-open"].tap()
         app.buttons["terminal-edit-keyboard"].tap()
         XCTAssertTrue(app.buttons["terminal-row-preview-" + itemID].waitForExistence(timeout: 5))
-        app.buttons["terminal-row-preview-" + itemID].tap()
+        revealPreviewKey(app.buttons["terminal-row-preview-" + itemID], app: app); app.buttons["terminal-row-preview-" + itemID].tap()
         try await rename("Large Project", app: app)
         capture("keyboard-editor-accessibility-xxxl", app: app)
         try await cancel(app)

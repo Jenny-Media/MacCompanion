@@ -106,25 +106,37 @@ private struct TerminalKeypadButtonStyle: ButtonStyle {
     }
 }
 
+enum TerminalSavedItemsSection {
+    case shortcuts, text
+    var title: String { self == .shortcuts ? "Shortcuts" : "Text" }
+    var kind: TerminalControlAction.Kind { self == .shortcuts ? .shortcut : .text }
+}
+
 struct TerminalSavedItems: View {
+    let section: TerminalSavedItemsSection
     let items: [TerminalControlAction]
     let macName: String
     var supportsCommand = false
     let select: (UUID) -> Void
     let customize: () -> Void
+    var compose: () -> Void = {}
     @State private var search = ""
     @FocusState private var searching: Bool
     @Environment(\.dismiss) private var dismiss
     private var filtered: [TerminalControlAction] {
-        items.filter { ($0.kind == .shortcut || $0.kind == .text) && (search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) || $0.detail.localizedCaseInsensitiveContains(search)) }
+        items.filter { $0.kind == section.kind && (search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) || $0.detail.localizedCaseInsensitiveContains(search)) }
     }
     var body: some View {
         NavigationStack {
             List {
+                if section == .text {
+                    Button("Compose Text", systemImage: "square.and.pencil", action: compose)
+                        .accessibilityIdentifier("terminal-compose-text")
+                }
                 Section {
                     HStack {
                         Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                        TextField("Search shortcuts and text", text: $search).focused($searching)
+                        TextField(section == .shortcuts ? "Search shortcuts" : "Search saved text", text: $search).focused($searching)
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
                             .accessibilityIdentifier("terminal-saved-search")
                         if !search.isEmpty {
@@ -145,11 +157,11 @@ struct TerminalSavedItems: View {
                             }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
                         }.disabled(item.requiresCommand && !supportsCommand).accessibilityIdentifier("terminal-saved-" + item.id.uuidString)
                     }
-                    if filtered.isEmpty { Text("No matching saved items.").foregroundStyle(.secondary) }
-                } header: { Text(macName) } footer: { Text("Tap a shortcut to send it, or text to paste it. Multiline text asks for confirmation.") }
-                Button("Manage Shortcuts & Text", systemImage: "pencil") { customize() }.accessibilityIdentifier("terminal-manage-saved")
+                    if filtered.isEmpty { Text(section == .shortcuts ? "No matching shortcuts." : "No matching saved text.").foregroundStyle(.secondary) }
+                } header: { Text(macName) } footer: { Text(section == .shortcuts ? "Tap a shortcut to send it once." : "Tap saved text to paste it without adding Return. Multiline text asks for confirmation.") }
+                Button("Customize Controls", systemImage: "slider.horizontal.3") { customize() }.accessibilityIdentifier("terminal-manage-saved")
             }
-                .navigationTitle("Shortcuts & Text").directInlineNavigationTitle()
+                .navigationTitle(section.title).directInlineNavigationTitle()
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }.privacySensitive().directAppearance()
     }

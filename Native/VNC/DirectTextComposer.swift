@@ -178,7 +178,9 @@ struct DirectComposedText: Equatable {
             self.presentationChanged?(visible)
         }
         controller.definesPresentationContext = true
-        host.modalPresentationStyle = .overCurrentContext
+        // Terminal can be nested in a SwiftUI presentation. Keep the composer
+        // above that hosting context so its controls enter the accessibility tree.
+        host.modalPresentationStyle = draft.mode == .terminal ? .overFullScreen : .overCurrentContext
         host.modalTransitionStyle = .crossDissolve
         self.host = host
         controller.present(host, animated: true) { [weak self, weak host] in

@@ -1,26 +1,38 @@
 # Shared iOS Terminal controls
 
-The floating menu exposes **Keypad**, **Shortcuts & Text**, **Keyboard & Input**,
-Appearance and Session. Keypad uses a grid icon; Keyboard & Input uses a settings
-gear. Incomplete rows align right, with Session at the bottom right. Keypad starts
-in the standard half-height draggable sheet and can expand to full height. Compact
-Navigation, F1–F12, Numbers and Actions groups avoid one long oversized grid.
-Tapping a key sends once; modifiers show Off, Next Key or Locked, with separate lock buttons.
-There is no Fn or All Actions entry.
+The floating menu has six entries in two rows at standard text sizes:
+**Keypad · Shortcuts · Text**, then **Customize Controls · Appearance · Session**.
+Session remains at the bottom right. Accessibility text sizes use a readable
+vertical layout. Customize Controls opens the editor directly; there is no
+intermediate Keyboard & Input submenu or duplicate header entry. Shortcuts and
+Text open separate, searchable collections backed by the same preserved saved
+items. Text also exposes the free Compose Text action. Opening either collection
+or the editor sends nothing. Selecting a shortcut sends once; saved text adds no
+Return and multiline text still requires confirmation.
 
-The keyboard bar keeps Esc, Tab, Ctrl, Alt/Option, Shift and Command, an obvious **123** toggle and an
-expand/collapse control. Expanded bars show navigation arrows, optional numbers
-and pinned custom actions. Keyboard/123/expand controls share the arrow row,
-leaving all six core keys visible in the default expanded modifier row.
-Collapsing never erases settings. Short windows automatically reserve terminal
-space by compacting the bar; its number and expand buttons then open Keypad.
-Returning to a taller layout restores the saved expanded preference. The 123
-button opens Number Keypad directly in compact layouts. Keypad hides the native
-keyboard while open and restores it on Done when it was previously visible. Navigation is on
-by default, restoring the common arrow workflow. Showing or hiding the native
-keyboard keeps the same bar layout and toggle meanings; the person's expanded
-or collapsed preference changes only when they explicitly toggle it. Short
-landscape windows can still temporarily compact the bar to preserve terminal space.
+Keypad uses a grid icon and starts in the standard half-height draggable sheet.
+It can expand to full height. Compact Navigation, F1–F12, Numbers and Actions
+groups avoid one long oversized grid. Modifiers show Off, Next Key or Locked,
+with separate lock buttons. There is no Fn or All Actions entry.
+
+The keyboard bar uses **one horizontally scrollable row** in portrait, landscape,
+and with the native keyboard shown or hidden. Its keyboard toggle stays fixed
+at the far left, and the floating-menu button stays at the right. Esc, Tab,
+Ctrl, Alt/Option, Shift, Command and arrows use compact symbols with accessible
+names and at least 44-point targets. Armed modifiers are highlighted; locked
+modifiers also have an outline and an explicit accessibility value. The strip
+also contains the 123 toggle, Keypad, pinned actions and optional numbers.
+Numbers and custom keys never create extra rows. The editor previews this same
+single-row arrangement. Legacy expanded/collapsed values remain stored for
+compatibility, but no longer alter the row count or hide saved placements.
+Keypad hides the native keyboard while open and restores it on Done when it was
+previously visible.
+
+Dragging across a key cancels button tracking so slow horizontal drags scroll
+without sending that key. Holding a stationary modifier retains its lock gesture.
+The Terminal composer presents over the full screen when entered from a SwiftUI
+session, keeping its editor and Close/Send controls in the accessibility tree.
+Typing into that local draft sends nothing until Send is explicitly requested.
 
 Command is a remote Kitty Super modifier on iOS, enabled only when the remote
 terminal application negotiates disambiguation or report-all support. It never
@@ -100,7 +112,7 @@ view and settings sheets; no input/transport settling delay is added.
 | Stable bar and compact sheet | Native keyboard show/hide, half-sheet drag to full height, grouped key sends and menu alignment |
 | Interrupt with keyboard hidden | Native Keypad Ctrl-C and received byte |
 | Occasional function/navigation keys | Native F1/Home/End, canonical key vectors |
-| Numbers and more terminal space | 123, collapse/expand, short-window Keypad and restoration |
+| Numbers and more terminal space | One-row horizontal scrolling, inline 123 toggle, fixed keyboard control and Keypad |
 | Reusable Unicode/path/multiline text | Search, exact SSH bytes, cancel/confirm, no added Return |
 | Create a shortcut | Name/key editing and final chord preview; explicit deletion |
 | Many saved items and favorite placement | Search over 43 saved texts; reuse and unpin preserve one definition |
@@ -113,9 +125,9 @@ view and settings sheets; no input/transport settling delay is added.
 A Save notification is deferred in the editing session until its settings sheet
 finishes dismissing. Other sessions reload immediately. The editor no longer
 invokes a second synchronous reload. Native navigation keeps Back separate from editable content; toolbar actions
-belong only to the active destination. Optional rows use explicit zero heights while collapsed and retain their natural
-heights separately, avoiding animated stack-view hidden-state constraints during
-keyboard transitions. Frame regressions reject overlaps after restoration.
+belong only to the active destination. The bar retains one horizontal stack across keyboard and composer transitions.
+Frame regressions check fixed keyboard placement, symbol hit areas, reachable
+custom keys and stable height at narrow phone and tablet widths.
 Each Keypad presentation has independent
 state; reopening it cannot revive a retained callback from an earlier panel.
 Saved-item search uses an inline field and full-width row hit areas, without an
