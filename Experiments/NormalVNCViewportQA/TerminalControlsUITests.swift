@@ -482,6 +482,91 @@ import StoreKit
         XCTAssertNotNil(ctrl.configuration?.image, "Preview uses production symbols and button metrics")
     }
 
+    func testCanvasShowsAllSixRowsAndRowHandlesWithoutChangingRuntimeVisibilityOrInput() throws {
+        var profile = TerminalControlsProfile.defaults
+        for _ in 0..<3 { _ = profile.addPreset(.blank) }
+        profile.rowsExpanded = false; profile.numberRow = false
+        let bar = TerminalKeyboardBar(terminal: nil, preferences: .init())
+        bar.editingPreview = true; bar.previewShowsAllRows = true; bar.previewShowsRowHandles = true
+        bar.configure(profile) { _ in XCTFail("The editor has no input owner") }
+        let handles = descendants(bar).compactMap { $0 as? UIButton }.filter { $0.accessibilityIdentifier?.hasPrefix("terminal-row-handle-") == true }
+        XCTAssertEqual(handles.count, 6)
+        XCTAssertTrue(handles.allSatisfy { !$0.isHidden })
+        XCTAssertGreaterThan(bar.height, 320)
+        let main = try XCTUnwrap(handles.first { $0.accessibilityIdentifier?.hasSuffix(TerminalKeyboardRow.mainID.uuidString) == true })
+        var selected: UUID?
+        bar.previewSelectRow = { selected = $0 }; main.sendActions(for: .touchUpInside)
+        XCTAssertEqual(selected, TerminalKeyboardRow.mainID)
+        var moved: UUID?
+        bar.previewMoveRow = { moved = $0; _ = $1 }
+        let up = try XCTUnwrap(main.accessibilityCustomActions?.first { $0.name == "Move Row Up" })
+        XCTAssertTrue(up.actionHandler?(up) == true); XCTAssertEqual(moved, TerminalKeyboardRow.mainID)
+        bar.previewShowsAllRows = false; bar.previewShowsRowHandles = false; bar.configure(profile) { _ in }
+        XCTAssertEqual(bar.height, 60)
+        XCTAssertFalse(profile.rowsExpanded!); XCTAssertFalse(profile.numberRow!)
+    }
+
+    func testAvailableRowTemplateRendersItsKeysAtUsableWidths() throws {
+        var profile = TerminalControlsProfile()
+        profile.keyboardRows = [.init(id: TerminalKeyboardRow.mainID, kind: .custom, title: "Function Keys", items: TerminalRowPreset.functions.items, expandedOnly: false)]
+        let bar = TerminalKeyboardBar(terminal: nil, preferences: .init())
+        bar.editingPreview = true; bar.previewShowsAllRows = true; bar.previewShowsRowHandles = true; bar.previewPreset = .functions
+        bar.configure(profile) { _ in XCTFail("Templates cannot send") }
+        let parent = UIView(frame: CGRect(x: 0, y: 0, width: 346, height: 60)); parent.addSubview(bar)
+        NSLayoutConstraint.activate([bar.topAnchor.constraint(equalTo: parent.topAnchor), bar.bottomAnchor.constraint(equalTo: parent.bottomAnchor), bar.leadingAnchor.constraint(equalTo: parent.leadingAnchor), bar.trailingAnchor.constraint(equalTo: parent.trailingAnchor)])
+        parent.layoutIfNeeded(); bar.layoutRows()
+        let keys = descendants(bar).compactMap { $0 as? UIButton }.filter { $0.accessibilityIdentifier?.hasPrefix("terminal-template-item-") == true }
+        XCTAssertEqual(keys.count, 12)
+        let scroll = try XCTUnwrap(descendants(bar).compactMap { $0 as? UIScrollView }.first)
+        XCTAssertGreaterThan(scroll.bounds.width, 100, String(describing: bar.perform(NSSelectorFromString("recursiveDescription"))))
+        XCTAssertTrue(keys.allSatisfy { $0.bounds.width >= 44 && $0.bounds.height >= 44 })
+    }
+
+    func testKeyboardEditorSettlesAndKeepsDragSourceViewsAcrossUnchangedLayoutPasses() async throws {
+        let draft = Draft()
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        let host = UIHostingController(rootView: TerminalControlsEditor(profile: Binding(get: { draft.profile }, set: { draft.profile = $0 }), destination: .keyboard).padding(16))
+        window.rootViewController = host; window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        try await settle()
+        let canvas = try XCTUnwrap(descendants(host.view).compactMap { $0 as? TerminalKeyboardBar }.first { $0.previewPreset == nil })
+        let before = try XCTUnwrap(descendants(canvas).compactMap { $0 as? UIButton }.first { $0.accessibilityIdentifier == "terminal-preview-item-control-ctrl" })
+        host.view.setNeedsLayout(); host.view.layoutIfNeeded()
+        try await settle()
+        let after = try XCTUnwrap(descendants(canvas).compactMap { $0 as? UIButton }.first { $0.accessibilityIdentifier == before.accessibilityIdentifier })
+        XCTAssertTrue(before === after, "An unchanged SwiftUI pass must keep the active drag source alive")
+        for bar in descendants(host.view).compactMap({ $0 as? TerminalKeyboardBar }) {
+            XCTAssertTrue(descendants(bar).compactMap { $0 as? UIScrollView }.allSatisfy { $0.convert($0.bounds, to: bar).maxX <= bar.bounds.maxX + 1 })
+        }
+        XCTAssertNil(canvas.terminal)
+    }
+
+    func testAppearancePreviewDisablesAccessibilityEditingAndPresetCallbacks() async throws {
+        let draft = Draft(), original = draft.profile
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        let host = UIHostingController(rootView: TerminalControlsEditor(profile: Binding(get: { draft.profile }, set: { draft.profile = $0 }), destination: .keyboard).padding(16))
+        window.rootViewController = host; window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        try await settle()
+        let mode = try XCTUnwrap(descendants(host.view).compactMap { $0 as? UISegmentedControl }.first)
+        for index in [1, 2] {
+            mode.selectedSegmentIndex = index; mode.sendActions(for: .valueChanged)
+            try await settle()
+            for bar in descendants(host.view).compactMap({ $0 as? TerminalKeyboardBar }) {
+                XCTAssertFalse(bar.isUserInteractionEnabled)
+                XCTAssertNil(bar.previewSelect); XCTAssertNil(bar.previewMove); XCTAssertNil(bar.previewRemove)
+                XCTAssertNil(bar.previewSelectRow); XCTAssertNil(bar.previewMoveRow)
+                XCTAssertNil(bar.previewAddPreset); XCTAssertNil(bar.previewAddItem)
+                for button in descendants(bar).compactMap({ $0 as? UIButton }) {
+                    for action in button.accessibilityCustomActions ?? [] { _ = action.actionHandler?(action) }
+                }
+            }
+            XCTAssertEqual(draft.profile, original, "Appearance previews cannot edit a draft through accessibility actions")
+        }
+    }
+
     func testReconfiguringEditableBuiltinsRetiresOldKeyAndModifierCallbacks() throws {
         let session = DirectTerminalSession(mac: .init(id: UUID(), name: "Synthetic", addresses: ["127.0.0.1"]))
         session.connected = true; defer { session.stop() }

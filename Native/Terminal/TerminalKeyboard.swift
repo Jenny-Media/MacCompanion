@@ -242,6 +242,7 @@ private final class TerminalKeyScrollView: UIScrollView {
     private var keyWidths: [ObjectIdentifier: NSLayoutConstraint] = [:]
     private var keySymbols: [ObjectIdentifier: String] = [:]
     private var heights: [NSLayoutConstraint] = []
+    private var viewportConstraints: [NSLayoutConstraint] = []
     private var keyHeight: CGFloat = 52
     private var keyboardFocused: Bool?
     let keyboardButton = UIButton(type: .system)
@@ -250,15 +251,38 @@ private final class TerminalKeyScrollView: UIScrollView {
     let expandButton = UIButton(type: .system)
     let menuAnchor = UIView()
     let keyScroll: UIScrollView = TerminalKeyScrollView()
-    var editingPreview = false
+    var editingPreview = false {
+        didSet {
+            guard oldValue != editingPreview else { return }
+            // The runtime bar participates in its controller's Auto Layout.
+            // A SwiftUI preview receives measured bounds instead; don't let a
+            // template's intrinsic width expand that viewport during sizing.
+            if editingPreview { NSLayoutConstraint.deactivate(viewportConstraints) }
+            rows.translatesAutoresizingMaskIntoConstraints = editingPreview
+            if !editingPreview { NSLayoutConstraint.activate(viewportConstraints) }
+            setNeedsLayout()
+        }
+    }
     var selectedPreviewItem: TerminalBarItem?
     var selectedPreviewRow: UUID?
     var previewSelect: ((TerminalBarItem?, UUID) -> Void)?
     var previewMove: ((TerminalBarItem, UUID, UUID, TerminalBarItem?) -> Void)?
     var previewRemove: ((TerminalBarItem, UUID) -> Void)?
-    private struct DragPlacement { let item: TerminalBarItem; let row: UUID }
+    var previewSelectRow: ((UUID) -> Void)?
+    var previewMoveRow: ((UUID, UUID?) -> Void)?
+    var previewAddPreset: ((TerminalRowPreset, UUID?) -> Void)?
+    var previewAddItem: ((TerminalBarItem, UUID, TerminalBarItem?) -> Void)?
+    var previewShowsAllRows = false
+    var previewShowsRowHandles = false
+    var previewPreset: TerminalRowPreset?
+    var previewUnavailableItems: Set<TerminalBarItem> = []
+    var previewCanAddPreset = true
+    private enum DragContent { case item(TerminalBarItem, UUID), row(UUID), preset(TerminalRowPreset), catalogItem(TerminalBarItem) }
     private var previewItems: [ObjectIdentifier: TerminalBarItem] = [:]
     private var previewRows: [ObjectIdentifier: UUID] = [:]
+    private var previewHandles: Set<ObjectIdentifier> = []
+    private var rowContainers: [UUID: UIView] = [:]
+    private let dropIndicator = UIView()
     private var profileRows: [TerminalKeyboardRow] = []
     private var layoutGeneration = UUID()
     var layoutChanged: (() -> Void)?
@@ -279,9 +303,10 @@ private final class TerminalKeyScrollView: UIScrollView {
         translatesAutoresizingMaskIntoConstraints = false
         rows.axis = .vertical; rows.spacing = 3; rows.translatesAutoresizingMaskIntoConstraints = false
         addSubview(rows)
-        NSLayoutConstraint.activate([
+        viewportConstraints = [
             rows.topAnchor.constraint(equalTo: topAnchor, constant: 4), rows.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
-            rows.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4), rows.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4)])
+            rows.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4), rows.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4)]
+        NSLayoutConstraint.activate(viewportConstraints)
         row.axis = .horizontal; row.spacing = 4
         for item in [keyScroll, menuAnchor] { row.addArrangedSubview(item) }
         menuAnchor.isUserInteractionEnabled = false
@@ -341,7 +366,8 @@ private final class TerminalKeyScrollView: UIScrollView {
         layoutGeneration = UUID()
         for key in generated { keyWidths.removeValue(forKey: ObjectIdentifier(key)); keySymbols.removeValue(forKey: ObjectIdentifier(key)) }
         generated = []; numeric = []; modifierButtons = []; commandShortcuts = []
-        previewItems = [:]; previewRows = [:]; profileRows = profile.resolvedRows
+        previewItems = [:]; previewRows = [:]; previewHandles = []; rowContainers = [:]; profileRows = profile.resolvedRows.map { source in var row = source; row.items = profile.barItems(in: source); return row }
+        dropIndicator.removeFromSuperview()
         for stack in [keys, numbers] { for view in stack.arrangedSubviews { stack.removeArrangedSubview(view); view.removeFromSuperview() } }
         for view in rows.arrangedSubviews { rows.removeArrangedSubview(view); view.removeFromSuperview() }
         heights.forEach { $0.isActive = false }; heights = []; extraViews = []
@@ -361,7 +387,7 @@ private final class TerminalKeyScrollView: UIScrollView {
                 scroll.accessibilityIdentifier = definition.kind == .main ? "terminal-row-preview-scroll" : "terminal-row-preview-scroll-" + definition.id.uuidString
                 previewRows[ObjectIdentifier(scroll)] = definition.id
                 if scroll.interactions.allSatisfy({ !($0 is UIDropInteraction) }) { scroll.addInteraction(UIDropInteraction(delegate: self)) }
-                scroll.layer.borderWidth = selectedPreviewRow == definition.id ? 1 : 0
+                scroll.layer.borderWidth = previewPreset == nil && selectedPreviewRow == definition.id ? 1 : 0
                 scroll.layer.borderColor = UIColor.tintColor.cgColor; scroll.layer.cornerRadius = 8
             }
             for item in profile.barItems(in: definition) {
@@ -397,14 +423,26 @@ private final class TerminalKeyScrollView: UIScrollView {
                     if profile.actions.first(where: { $0.id == id })?.requiresCommand == true { commandShortcuts.append(key) }
                 }
                 if editingPreview {
-                    if item.savedID == nil { key.accessibilityIdentifier = "terminal-preview-item-" + item.id }
-                    key.accessibilityValue = selectedPreviewItem == item && selectedPreviewRow == definition.id ? "Selected" : nil
+                    if item.savedID == nil { key.accessibilityIdentifier = previewPreset.map { "terminal-template-item-" + $0.id + "-" + item.id } ?? "terminal-preview-item-" + item.id }
+                    key.accessibilityValue = previewUnavailableItems.contains(item) ? "Already placed" : selectedPreviewItem == item && selectedPreviewRow == definition.id ? "Selected" : nil
+                    key.alpha = previewUnavailableItems.contains(item) ? 0.3 : 1
                     key.configuration?.baseBackgroundColor = selectedPreviewItem == item && selectedPreviewRow == definition.id ? .systemBlue : .secondarySystemFill
                     if selectedPreviewItem == item && selectedPreviewRow == definition.id { key.configuration?.baseForegroundColor = .white }
                     previewItems[ObjectIdentifier(key)] = item; previewRows[ObjectIdentifier(key)] = definition.id
                     key.addInteraction(UIDragInteraction(delegate: self)); key.addInteraction(UIDropInteraction(delegate: self))
-                    key.accessibilityCustomActions = [UIAccessibilityCustomAction(name: "Remove from Keyboard Bar", actionHandler: { [weak self] _ in self?.previewRemove?(item, definition.id); return true })] + profileRows.map { target in
+                    let items = profile.barItems(in: definition)
+                    key.accessibilityCustomActions = [UIAccessibilityCustomAction(name: "Remove from Keyboard Bar", actionHandler: { [weak self] _ in self?.previewRemove?(item, definition.id); return true })] + [-1, 1].map { offset in
+                        UIAccessibilityCustomAction(name: offset < 0 ? "Move Earlier" : "Move Later", actionHandler: { [weak self] _ in
+                            guard let index = items.firstIndex(of: item), items.indices.contains(index + offset) else { return false }
+                            let before = offset < 0 ? items[index - 1] : (items.indices.contains(index + 2) ? items[index + 2] : nil)
+                            self?.previewMove?(item, definition.id, definition.id, before); return true
+                        })
+                    } + profileRows.map { target in
                         UIAccessibilityCustomAction(name: "Move to " + target.title, actionHandler: { [weak self] _ in self?.previewMove?(item, definition.id, target.id, nil); return true })
+                    }
+                    if previewPreset != nil {
+                        key.accessibilityCustomActions = nil
+                        key.accessibilityHint = previewUnavailableItems.contains(item) ? "This key is already in your keyboard bar." : "Drag into a keyboard row, or use Add to Keyboard Bar to place this key."
                     }
                 }
                 stack.addArrangedSubview(key)
@@ -413,25 +451,116 @@ private final class TerminalKeyScrollView: UIScrollView {
                 let label = UILabel(); label.text = editingPreview ? "Empty row · add keys below" : definition.title
                 label.font = .preferredFont(forTextStyle: .caption1); stack.addArrangedSubview(label)
             }
-            rows.addArrangedSubview(container)
-            let constraint = container.heightAnchor.constraint(equalToConstant: keyHeight); constraint.priority = UILayoutPriority(999); constraint.isActive = true; heights.append(constraint)
+            let displayed: UIView
+            if editingPreview && previewShowsRowHandles {
+                let handle = UIButton(type: .system)
+                var configuration = UIButton.Configuration.plain()
+                configuration.title = previewPreset == nil ? definition.title : "Add"
+                configuration.subtitle = previewPreset == nil ? (definition.extra ? "Expanded" : definition.kind == .numbers && profile.numberRow == false ? "Hidden" : "Always") : "Drag row"
+                configuration.image = UIImage(systemName: previewPreset == nil ? "line.3.horizontal" : "plus")
+                configuration.imagePadding = 3; configuration.contentInsets = .init(top: 0, leading: 2, bottom: 0, trailing: 2)
+                configuration.titleTextAttributesTransformer = .init { attributes in var result = attributes; result.font = .preferredFont(forTextStyle: .caption2); return result }
+                configuration.subtitleTextAttributesTransformer = .init { attributes in var result = attributes; result.font = .preferredFont(forTextStyle: .caption2); result.foregroundColor = .secondaryLabel; return result }
+                handle.configuration = configuration
+                handle.accessibilityIdentifier = previewPreset.map { "terminal-preset-add-" + $0.id } ?? "terminal-row-handle-" + definition.id.uuidString
+                handle.accessibilityLabel = previewPreset.map { "Add " + $0.rawValue + " Row" } ?? "Edit " + definition.title + " Row"
+                handle.accessibilityValue = configuration.subtitle
+                handle.widthAnchor.constraint(equalToConstant: traitCollection.preferredContentSizeCategory.isAccessibilityCategory ? 132 : 96).isActive = true
+                let generation = layoutGeneration
+                handle.addAction(UIAction { [weak self] _ in
+                    guard let self, self.layoutGeneration == generation else { return }
+                    if let preset = self.previewPreset { if self.previewCanAddPreset { self.previewAddPreset?(preset, nil) } }
+                    else { self.previewSelectRow?(definition.id) }
+                }, for: .touchUpInside)
+                handle.isEnabled = previewPreset == nil || previewCanAddPreset
+                previewRows[ObjectIdentifier(handle)] = definition.id; previewHandles.insert(ObjectIdentifier(handle))
+                handle.addInteraction(UIDragInteraction(delegate: self)); handle.addInteraction(UIDropInteraction(delegate: self))
+                handle.accessibilityCustomActions = [-1, 1].map { offset in
+                    UIAccessibilityCustomAction(name: offset < 0 ? "Move Row Up" : "Move Row Down", actionHandler: { [weak self] _ in
+                        guard let self, let index = self.profileRows.firstIndex(where: { $0.id == definition.id }), self.profileRows.indices.contains(index + offset) else { return false }
+                        let target = offset < 0 ? self.profileRows[index - 1].id : (self.profileRows.indices.contains(index + 2) ? self.profileRows[index + 2].id : nil)
+                        self.previewMoveRow?(definition.id, target); return true
+                    })
+                }
+                let wrapper = UIStackView(arrangedSubviews: [handle, container]); wrapper.axis = .horizontal; wrapper.spacing = 3
+                displayed = wrapper
+            } else { displayed = container }
+            rowContainers[definition.id] = displayed
+            rows.addArrangedSubview(displayed)
+            let constraint = displayed.heightAnchor.constraint(equalToConstant: keyHeight); constraint.priority = UILayoutPriority(999); constraint.isActive = true; heights.append(constraint)
         }
         showsNumberRow = profile.numberRow ?? true; showsExtraRows = profile.rowsExpanded ?? false
         updateVisibility(); updateKeyMetrics(); refresh()
     }
     func dragInteraction(_ interaction: UIDragInteraction, itemsForBeginning session: UIDragSession) -> [UIDragItem] {
-        guard editingPreview, let view = interaction.view, let item = previewItems[ObjectIdentifier(view)] else { return [] }
-        let drag = UIDragItem(itemProvider: NSItemProvider(object: item.id as NSString)); drag.localObject = DragPlacement(item: item, row: previewRows[ObjectIdentifier(view)]!); return [drag]
+        guard editingPreview, let view = interaction.view, let row = previewRows[ObjectIdentifier(view)] else { return [] }
+        let content: DragContent
+        if previewHandles.contains(ObjectIdentifier(view)) {
+            if let preset = previewPreset { guard previewCanAddPreset else { return [] }; content = .preset(preset) }
+            else { content = .row(row) }
+        } else if let item = previewItems[ObjectIdentifier(view)] {
+            guard !previewUnavailableItems.contains(item) else { return [] }
+            content = previewPreset == nil ? .item(item, row) : .catalogItem(item)
+        } else { return [] }
+        let drag = UIDragItem(itemProvider: NSItemProvider(object: "Terminal keyboard layout" as NSString)); drag.localObject = content; return [drag]
     }
+    func dragInteraction(_ interaction: UIDragInteraction, previewForLifting item: UIDragItem, session: UIDragSession) -> UITargetedDragPreview? {
+        switch item.localObject as? DragContent {
+        case .row(let row): return rowContainers[row].map { UITargetedDragPreview(view: $0) }
+        case .preset: return rowContainers.values.first.map { UITargetedDragPreview(view: $0) }
+        default: return nil
+        }
+    }
+    func dragInteraction(_ interaction: UIDragInteraction, sessionIsRestrictedToDraggingApplication session: UIDragSession) -> Bool { true }
     func dropInteraction(_ interaction: UIDropInteraction, canHandle session: UIDropSession) -> Bool {
-        editingPreview && session.items.first?.localObject is DragPlacement
+        guard editingPreview, previewPreset == nil, let content = session.items.first?.localObject as? DragContent else { return false }
+        if case .preset = content { return profileRows.count < TerminalControlsProfile.maximumKeyboardRows }
+        return true
     }
-    func dropInteraction(_ interaction: UIDropInteraction, sessionDidUpdate session: UIDropSession) -> UIDropProposal { UIDropProposal(operation: .move) }
+    private func dropTarget(_ interaction: UIDropInteraction, session: UIDropSession) -> (UUID, TerminalBarItem?, Bool)? {
+        guard let view = interaction.view, let row = previewRows[ObjectIdentifier(view)], let container = rowContainers[row] else { return nil }
+        let point = session.location(in: self), frame = container.convert(container.bounds, to: self)
+        if case .row = session.items.first?.localObject as? DragContent { return (row, nil, point.y > frame.midY) }
+        if case .preset = session.items.first?.localObject as? DragContent { return (row, nil, point.y > frame.midY) }
+        if let item = previewItems[ObjectIdentifier(view)] {
+            let after = session.location(in: view).x > view.bounds.midX
+            return (row, item, after)
+        }
+        // Dropping into the visible whitespace appends to this row.
+        return (row, nil, false)
+    }
+    func dropInteraction(_ interaction: UIDropInteraction, sessionDidUpdate session: UIDropSession) -> UIDropProposal {
+        guard dropInteraction(interaction, canHandle: session), let (row, _, after) = dropTarget(interaction, session: session), let container = rowContainers[row], let view = interaction.view else { return UIDropProposal(operation: .forbidden) }
+        dropIndicator.backgroundColor = .systemBlue; dropIndicator.layer.cornerRadius = 2; dropIndicator.isUserInteractionEnabled = false
+        addSubview(dropIndicator)
+        let frame = container.convert(container.bounds, to: self)
+        switch session.items.first?.localObject as? DragContent {
+        case .row, .preset: dropIndicator.frame = CGRect(x: 0, y: (after ? frame.maxY : frame.minY) - 2, width: bounds.width, height: 4)
+        default:
+            let cell = view.convert(view.bounds, to: self)
+            dropIndicator.frame = CGRect(x: (after ? cell.maxX : cell.minX) - 2, y: frame.minY, width: 4, height: frame.height)
+        }
+        switch session.items.first?.localObject as? DragContent {
+        case .preset, .catalogItem: return UIDropProposal(operation: .copy)
+        default: return UIDropProposal(operation: .move)
+        }
+    }
+    func dropInteraction(_ interaction: UIDropInteraction, sessionDidExit session: UIDropSession) { dropIndicator.removeFromSuperview() }
+    func dropInteraction(_ interaction: UIDropInteraction, sessionDidEnd session: UIDropSession) { dropIndicator.removeFromSuperview() }
     func dropInteraction(_ interaction: UIDropInteraction, performDrop session: UIDropSession) {
-        guard editingPreview, let source = session.items.first?.localObject as? DragPlacement, let view = interaction.view,
-              let row = previewRows[ObjectIdentifier(view)] else { return }
-        let target = previewItems[ObjectIdentifier(view)]
-        if source.item != target || source.row != row { previewMove?(source.item, source.row, row, target) }
+        defer { dropIndicator.removeFromSuperview() }
+        guard dropInteraction(interaction, canHandle: session), let content = session.items.first?.localObject as? DragContent,
+              let (row, item, after) = dropTarget(interaction, session: session), let index = profileRows.firstIndex(where: { $0.id == row }) else { return }
+        let targetRow = after ? (profileRows.indices.contains(index + 1) ? profileRows[index + 1].id : nil) : row
+        let items = profileRows[index].items ?? []
+        let targetItem = after && item != nil ? item.flatMap { target in items.firstIndex(of: target).flatMap { items.indices.contains($0 + 1) ? items[$0 + 1] : nil } } : item
+        switch content {
+        case .row(let source): previewMoveRow?(source, targetRow)
+        case .preset(let preset): previewAddPreset?(preset, targetRow)
+        case .item(let source, let sourceRow):
+            if source != targetItem || sourceRow != row { previewMove?(source, sourceRow, row, targetItem) }
+        case .catalogItem(let source): previewAddItem?(source, row, targetItem)
+        }
     }
     private func send(_ key: TerminalPaletteKey) {
         guard let terminal else { return }
@@ -457,8 +586,13 @@ private final class TerminalKeyScrollView: UIScrollView {
         updateKeyMetrics()
     }
     private func updateVisibility() {
-        numberScroll.isHidden = !showsNumberRow
-        extraViews.forEach { $0.isHidden = !showsExtraRows }
+        let all = editingPreview && previewShowsAllRows
+        let numbersHidden = !all && !showsNumberRow
+        if numberScroll.isHidden != numbersHidden { numberScroll.isHidden = numbersHidden }
+        for definition in profileRows {
+            let hidden = !all && (definition.kind == .numbers ? !showsNumberRow : definition.extra && !showsExtraRows)
+            if let container = rowContainers[definition.id], container.isHidden != hidden { container.isHidden = hidden }
+        }
         numberButton.accessibilityLabel = showsNumberRow ? "Hide Numbers" : "Show Numbers"
         numberButton.accessibilityValue = showsNumberRow ? "On" : "Off"; numberButton.isSelected = showsNumberRow
         expandButton.accessibilityLabel = showsExtraRows ? "Collapse Rows" : "Expand Rows"
@@ -472,6 +606,10 @@ private final class TerminalKeyScrollView: UIScrollView {
     // The menu lives in a sibling overlay. Finish both nested stacks before
     // that overlay converts its anchor frame after a row-count change.
     func layoutRows() {
+        if editingPreview {
+            let frame = CGRect(x: 4, y: 4, width: max(0, bounds.width - 8), height: max(0, bounds.height - 8))
+            if rows.frame != frame { rows.frame = frame }
+        }
         rows.setNeedsLayout(); rows.layoutIfNeeded()
         row.setNeedsLayout(); row.layoutIfNeeded()
         keyScroll.layoutIfNeeded()

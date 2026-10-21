@@ -98,7 +98,7 @@ enum TerminalRowPreset: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var items: [TerminalBarItem] {
         if self == .blank { return [] }
-        if self == .essentials { return [.control(.keyboard), .key("key-escape"), .key("key-tab"), .control(.ctrl), .control(.alt), .control(.shift), .key("key-up"), .key("key-down"), .control(.numbers), .control(.keypad), .control(.expand)] }
+        if self == .essentials { return [.control(.keyboard), .key("key-escape"), .key("key-tab"), .control(.ctrl), .control(.alt), .control(.shift), .control(.numbers), .control(.keypad), .control(.expand)] }
         let group = self == .shell ? "Common Shortcuts" : rawValue
         return (TerminalKeyCatalog.groups.first { $0.title == group }?.keys ?? []).map { .key($0.id) }
     }
@@ -120,6 +120,7 @@ struct TerminalKeyboardRow: Codable, Identifiable, Equatable {
 }
 
 struct TerminalControlsProfile: Codable, Equatable {
+    static let maximumKeyboardRows = 6
     var version = 1
     var revision = UUID()
     var actions: [TerminalControlAction] = []
@@ -186,22 +187,35 @@ struct TerminalControlsProfile: Codable, Equatable {
     mutating func restoreRow(_ id: UUID) {
         guard let row = resolvedRows.first(where: { $0.id == id }) else { return }
         let preset = row.preset ?? (row.kind == .main ? .essentials : row.kind == .numbers ? .numbers : row.kind == .navigation ? .navigation : .blank)
-        // Move any existing preset keys here; restore never duplicates a control.
+        let startingItems = availableItems(for: preset, excluding: id)
         for item in barItems(in: row) { removeBarItem(item, in: id) }
-        for item in preset.items { placeBarItem(item, in: id) }
+        for item in startingItems { placeBarItem(item, in: id) }
     }
     mutating func restoreKeyboardBar() {
         for index in actions.indices { actions[index].inRow = false }
         rowOrder = nil; keyboardRows = nil; numberRow = true; navigationRow = true; rowsExpanded = false; commandInBar = false
     }
-    @discardableResult mutating func addPreset(_ preset: TerminalRowPreset) -> UUID? {
+    /// The row library shows these exact additions. Existing placements, including
+    /// deliberately duplicated legacy keys, are never stolen by a preset.
+    func availableItems(for preset: TerminalRowPreset, excluding rowID: UUID? = nil) -> [TerminalBarItem] {
+        let used = Set(resolvedRows.filter { $0.id != rowID }.flatMap { barItems(in: $0) })
+        let savedIDs = Set(used.compactMap(\.savedID))
+        let saved = actions.filter { savedIDs.contains($0.id) }
+        return preset.items.filter { item in
+            !used.contains(item) && !(item.palette.map { palette in saved.contains(where: palette.matches) } ?? false)
+        }
+    }
+    @discardableResult mutating func addPreset(_ preset: TerminalRowPreset, before target: UUID? = TerminalKeyboardRow.mainID) -> UUID? {
+        let additions = availableItems(for: preset)
+        guard preset == .blank || !additions.isEmpty else { return nil }
         guard let id = addRow(title: preset == .blank ? "Custom Row" : preset.rawValue) else { return nil }
         editRows { rows in
             let index = rows.firstIndex { $0.id == id }!
             rows[index].preset = preset
             if preset == .numbers && !rows.contains(where: { $0.kind == .numbers }) { rows[index].kind = .numbers; rows[index].expandedOnly = false }
         }
-        for item in preset.items { placeBarItem(item, in: id) }
+        for item in additions { placeBarItem(item, in: id) }
+        moveRow(id, before: target)
         return id
     }
     func placed(in row: TerminalKeyboardRow) -> [TerminalControlAction] {
@@ -216,6 +230,14 @@ struct TerminalControlsProfile: Codable, Equatable {
         guard let index = rows.firstIndex(where: { $0.id == id }), rows.indices.contains(index + offset) else { return }
         rows.swapAt(index, index + offset); keyboardRows = rows
     }
+    mutating func moveRow(_ id: UUID, before target: UUID?) {
+        var rows = resolvedRows
+        guard id != target, let source = rows.firstIndex(where: { $0.id == id }),
+              target == nil || rows.contains(where: { $0.id == target }) else { return }
+        let row = rows.remove(at: source)
+        rows.insert(row, at: target.flatMap { id in rows.firstIndex { $0.id == id } } ?? rows.endIndex)
+        keyboardRows = rows
+    }
     mutating func removeRow(_ id: UUID) {
         let rows = resolvedRows
         guard rows.contains(where: { $0.id == id && $0.kind != .main }) else { return }
@@ -223,7 +245,7 @@ struct TerminalControlsProfile: Codable, Equatable {
     }
     @discardableResult mutating func addRow(title: String = "Custom Row", navigation: Bool = false) -> UUID? {
         var rows = resolvedRows
-        guard rows.count < 4, !navigation || !rows.contains(where: { $0.kind == .navigation }) else { return nil }
+        guard rows.count < Self.maximumKeyboardRows, !navigation || !rows.contains(where: { $0.kind == .navigation }) else { return nil }
         let row = TerminalKeyboardRow(kind: navigation ? .navigation : .custom, title: title)
         rows.insert(row, at: rows.firstIndex(where: { $0.kind == .main }) ?? rows.endIndex)
         keyboardRows = rows; rowsExpanded = true; return row.id
@@ -274,7 +296,7 @@ struct TerminalControlsProfile: Codable, Equatable {
     private var validRows: Bool {
         guard let rows = keyboardRows else { return true }
         let ids = rows.flatMap(\.actionIDs)
-        return (1...4).contains(rows.count) && Set(rows.map(\.id)).count == rows.count
+        return (1...Self.maximumKeyboardRows).contains(rows.count) && Set(rows.map(\.id)).count == rows.count
             && rows.filter { $0.kind == .main }.count == 1 && rows.filter { $0.kind == .numbers }.count <= 1
             && rows.filter { $0.kind == .navigation }.count <= 1
             && rows.allSatisfy { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.title.count <= 40 && ($0.kind != .numbers || $0.items != nil || $0.actionIDs.isEmpty) }

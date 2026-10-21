@@ -60,6 +60,8 @@ struct TerminalControlsHarness: View {
                 Text(memory.profile.actions[0].title).accessibilityIdentifier("controls-qa-title")
                 Text("Row: \(memory.profile.actions[0].inRow ? "on" : "off"); Menu: \(memory.profile.actions[0].inMenu ? "on" : "off")")
                     .accessibilityIdentifier("controls-qa-placements")
+                Text("Rows: " + memory.profile.resolvedRows.map(\.title).joined(separator: " | "))
+                    .accessibilityIdentifier("controls-qa-row-order")
             }.frame(maxWidth: .infinity).padding(.vertical, 24) }.navigationTitle("Synthetic Controls QA")
                 .sheet(isPresented: $editing) { TerminalControlsSettings(store: memory.store, close: { memory.dismissals += 1; editing = false }) }
                 .fullScreenCover(isPresented: $showingTerminal) {

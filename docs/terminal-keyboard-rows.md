@@ -6,13 +6,13 @@ shown, hidden, or rotated. These are shared settings for all Macs on this device
 - Main is always available. Its entire strip scrolls horizontally, including
   the keyboard toggle and expansion control; only the floating menu stays fixed
   at the right. Esc, Tab, Ctrl, Option and Shift use compact symbols.
-  Quick up/down arrows are enabled by default. Command is optional and requires
+  Arrow keys live in Navigation by default, without duplicates in Main. Command is optional and requires
   negotiated support from the remote application; existing saved Command chords
   retain their original definition.
 - Numbers have an independent 1–0 row above Main by default. The number toggle
   shows/hides this row. Whole rows can be reordered in Customize Controls.
 - Expand Rows explicitly reveals Navigation and any configured custom row.
-  Up to four rows can be configured; optional rows can also be Always Visible. Expansion is saved and does not depend
+  Up to six total rows (including Numbers) can be configured; optional rows can also be Always Visible. Expansion is saved and does not depend
   on the native keyboard’s visibility. Removing a row removes its placements,
   keeping saved definitions and floating-menu placements.
 - Keypad opens the built-in All Keys catalog at the native medium sheet height;
@@ -28,15 +28,26 @@ shown, hidden, or rotated. These are shared settings for all Macs on this device
 - Hold a key for optional Pin to Keyboard Bar / Pin to Floating Menu. Pinning
   requires Pro, sends nothing and reuses the same saved definition. The visual
   editor reuses the actual keyboard-bar renderer without a terminal/input owner.
-  Its rows form one continuous preview. Every built-in key, modifier, toggle and
-  saved placement can move or be removed. Drag between rows or use the accessible
-  placement picker and Earlier/Later actions. The Add Row presets are Numbers,
-  Essentials, Navigation, Function Keys, Symbols, Shell Shortcuts and Blank;
-  presets remain editable and do not populate the saved-item library. Restore
-  This Row / Restore Keyboard Bar change placements only, keeping saved IDs,
-  text, import journals and floating-menu favorites. Undo restores the previous
-  draft before Save. Session offers keyboard, numbers and expansion controls
-  even if their bar buttons are removed or scrolled away.
+  Its rows form one continuous preview. At standard text sizes the canvas stays
+  visible while the row library and selected-key settings scroll below it. Typing
+  yields preview space to the local editor, and accessibility text sizes use one
+  scroll surface so every row and field stays reachable. Row count and Undo stay
+  in the editor header. Arrange shows every configured row,
+  including hidden Numbers and expanded-only rows. Drag each row's handle to
+  reorder; tap it for its own name, visibility, restore, removal and accessible
+  move controls. Every cell can drag within or between rows, with an insertion
+  marker before drop. Collapsed / Expanded preview modes show runtime appearance
+  without changing saved visibility or allowing input. Available Rows shows
+  full-size, horizontally scrollable Numbers, Essentials, Navigation, Function
+  Keys, Symbols, Shell Shortcuts and Blank presets. Drag a row into position or
+  tap Add; individual available cells also drag into the bar. Already-placed keys
+  are dimmed and excluded from additions, preserving existing placements.
+  Six rows are allowed; five or six show a terminal-space warning. Restore This
+  Row / Restore Keyboard Bar change placements only, keeping saved IDs, text,
+  import journals and floating-menu favorites. Explicit preexisting duplicate
+  key placements remain valid. Undo restores the previous draft before Save.
+  Session offers keyboard, numbers and expansion controls even if their bar
+  buttons are removed or scrolled away.
 - Shortcuts and Text remain separate floating-menu entries and use the same
   collection as the keypad’s saved-item tabs. Saved text opens the composer for
   review. Explicit Send Text adds no Return, and line breaks/tabs require

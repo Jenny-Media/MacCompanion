@@ -3,16 +3,25 @@ import StoreKitTest
 import UIKit
 
 @MainActor final class TerminalControlsJourneyTests: XCTestCase {
-    override func setUp() { super.setUp(); executionTimeAllowance = name.contains("testInteractiveReview") ? 900 : name.contains("testRuntimeKeyboard") ? 240 : 120 }
+    override func setUp() { super.setUp(); executionTimeAllowance = name.contains("testInteractiveReview") ? 900 : name.contains("testRuntimeKeyboard") || name.contains("testCanvasPreset") ? 240 : 120 }
     private let itemID = "00000000-0000-0000-0000-00000000C001"
     private func capture(_ name: String, app: XCUIApplication) {
         let attachment = XCTAttachment(screenshot: app.screenshot()); attachment.name = name
         attachment.lifetime = .keepAlways; add(attachment)
     }
     private func reveal(_ element: XCUIElement, app: XCUIApplication, up: Bool = true) {
-        for _ in 0..<8 where !element.isHittable {
-            let scroll = app.scrollViews.allElementsBoundByIndex.last { $0.isHittable && $0.frame.height > 200 } ?? app
-            if up { scroll.swipeUp() } else { scroll.swipeDown() }
+        for _ in 0..<24 {
+            let library = app.scrollViews["terminal-row-library"]
+            let inLibrary = library.exists && !element.identifier.isEmpty && library.descendants(matching: .any).matching(identifier: element.identifier).firstMatch.exists
+            let scroll = inLibrary ? library : app.scrollViews.allElementsBoundByIndex.last { $0.isHittable && $0.frame.height > 200 && $0.identifier != "terminal-row-library" } ?? app
+            let viewport = scroll.frame.intersection(app.frame)
+            let target = element.frame
+            let visible = target.intersection(viewport)
+            if element.isHittable && visible.height >= min(44, target.height) && viewport.contains(CGPoint(x: target.midX, y: target.midY)) { return }
+            let forward = target.isEmpty ? up : target.midY > viewport.midY
+            let start = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: forward ? 0.7 : 0.3))
+            let end = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: forward ? 0.3 : 0.7))
+            start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.1)
         }
         if !element.isHittable {
             capture("terminal-controls-unreachable-control", app: app)
@@ -22,7 +31,7 @@ import UIKit
         XCTAssertTrue(element.isHittable)
     }
     private func revealHorizontal(_ element: XCUIElement, scroll: XCUIElement) {
-        for _ in 0..<10 {
+        for _ in 0..<24 {
             let frame = element.frame, viewport = scroll.frame
             if element.isHittable && frame.intersection(viewport).width >= min(44, frame.width) { return }
             // Flicks can jump over a narrow custom key in both directions.
@@ -44,17 +53,22 @@ import UIKit
         reveal(scroll, app: app)
         revealHorizontal(element, scroll: scroll)
     }
-    private func open(_ app: XCUIApplication) {
+    private func openCanvas(_ app: XCUIApplication) {
         XCTAssertTrue(app.buttons["controls-qa-open"].waitForExistence(timeout: 5))
         app.buttons["controls-qa-open"].tap()
         XCTAssertTrue(app.buttons["terminal-controls-cancel"].waitForExistence(timeout: 5))
         capture("terminal-controls-overview", app: app)
         app.buttons["terminal-edit-keyboard"].tap()
+        let mode = app.segmentedControls["terminal-preview-mode"]
+        XCTAssertTrue(mode.waitForExistence(timeout: 5)); mode.buttons["Arrange"].tap()
+    }
+    private func open(_ app: XCUIApplication) {
+        openCanvas(app)
         let item = app.buttons["terminal-row-preview-" + itemID]
         XCTAssertTrue(item.waitForExistence(timeout: 5)); revealPreviewKey(item, app: app); item.tap()
     }
-    private func rename(_ name: String, app: XCUIApplication, up: Bool = true) async throws {
-        let field = app.textFields["terminal-control-name"]
+    private func rename(_ name: String, app: XCUIApplication, up: Bool = true, field target: XCUIElement? = nil) async throws {
+        let field = target ?? app.textFields["terminal-control-name"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         reveal(field, app: app, up: up)
         field.tap()
@@ -190,8 +204,12 @@ import UIKit
         // keyboard frame excludes prediction/bottom rows on iPhone.
         let space = keyboard.keys["space"]
         let visible = NSPredicate { _, _ in keyboard.exists && space.isHittable }
-        await fulfillment(of: [expectation(for: visible, evaluatedWith: nil)], timeout: 5)
-        guard keyboard.exists && space.isHittable else { throw NSError(domain: "TerminalControlsJourneyTests.Keyboard", code: 1) }
+        await fulfillment(of: [expectation(for: visible, evaluatedWith: nil)], timeout: 10)
+        guard keyboard.exists && space.isHittable else {
+            capture("software-keyboard-unavailable", app: app)
+            let diagnostic = XCTAttachment(string: app.debugDescription); diagnostic.name = "software-keyboard-tree"; diagnostic.lifetime = .keepAlways; add(diagnostic)
+            throw NSError(domain: "TerminalControlsJourneyTests.Keyboard", code: 1)
+        }
     }
     private func findKey(_ query: String, app: XCUIApplication) {
         let field = app.textFields["terminal-keypad-search"]
@@ -432,21 +450,34 @@ import UIKit
     }
     func testRowEditorAddsReordersAndMovesOneSharedItem() async throws {
         let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
-        open(app)
-        let addRow = app.buttons["terminal-add-row"]; reveal(addRow, app: app); addRow.tap()
-        app.buttons["Blank"].tap()
+        openCanvas(app)
+        let numbers = app.buttons["terminal-row-handle-00000000-0000-0000-0000-000000000102"]
+        let navigation = app.buttons["terminal-row-handle-00000000-0000-0000-0000-000000000103"]
+        navigation.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.8, thenDragTo: numbers.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1)))
+        XCTAssertLessThan(navigation.frame.minY, numbers.frame.minY)
+        capture("canvas-whole-row-reordered", app: app)
+        let add = app.buttons["terminal-preset-add-Blank"]; reveal(add, app: app); add.tap()
+        let custom = app.buttons["Edit Custom Row Row"]; reveal(custom, app: app, up: false); custom.tap()
         let name = app.textFields.matching(NSPredicate(format: "identifier BEGINSWITH %@", "terminal-row-name-")).firstMatch
         XCTAssertTrue(name.waitForExistence(timeout: 5))
-        capture("row-editor-custom-row-preview", app: app)
-        let move = app.buttons["Move Numbers Down"]; reveal(move, app: app, up: false); move.tap()
-        capture("row-editor-numbers-reordered", app: app)
-        app.buttons["terminal-controls-save"].tap()
+        let visibility = app.switches["Always Visible"]
+        visibility.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertEqual(visibility.value as? String, "1")
+        try await rename("Favorites", app: app, field: name)
+        capture("canvas-row-settings", app: app)
+        let rowOptions = app.navigationBars["Row Settings"]
+        rowOptions.buttons["Done"].tap()
+        await fulfillment(of: [expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: rowOptions)], timeout: 5)
+        let save = app.buttons["terminal-controls-save"]
+        XCTAssertTrue(save.isEnabled); save.tap()
+        await fulfillment(of: [expectation(for: NSPredicate(format: "label == %@", "Writes: 1"), evaluatedWith: app.staticTexts["controls-qa-writes"])], timeout: 5)
         XCTAssertEqual(app.staticTexts["controls-qa-writes"].label, "Writes: 1")
-        XCTAssertEqual(app.staticTexts["controls-qa-count"].label, "Saved items: 1")
+        XCTAssertEqual(app.staticTexts["controls-qa-row-order"].label, "Rows: Navigation | Numbers | Favorites | Main Row")
         open(app)
-        let picker = app.buttons["terminal-item-row"]; reveal(picker, app: app)
-        picker.tap(); app.buttons.matching(NSPredicate(format: "label == %@ AND NOT identifier BEGINSWITH %@", "Custom Row", "terminal-select-row-")).firstMatch.tap()
-        capture("row-editor-move-shared-item", app: app)
+        XCTAssertEqual(app.buttons["Edit Favorites Row"].value as? String, "Always")
+        let picker = app.buttons["terminal-item-row"]; reveal(picker, app: app, up: false)
+        picker.tap(); app.buttons["To Favorites"].tap()
+        capture("canvas-move-shared-item", app: app)
         app.buttons["terminal-controls-save"].tap()
         XCTAssertEqual(app.staticTexts["controls-qa-count"].label, "Saved items: 1")
         XCTAssertEqual(app.staticTexts["controls-qa-placements"].label, "Row: on; Menu: on")
@@ -504,8 +535,7 @@ import UIKit
         let undo = app.buttons["terminal-editor-undo"]; reveal(undo, app: app, up: false); undo.tap()
         XCTAssertTrue(ctrl.exists)
         capture("realistic-contiguous-bar-preview", app: app)
-        let removeNavigation = app.buttons["Remove Navigation Row"]; reveal(removeNavigation, app: app); removeNavigation.tap()
-        let addRow = app.buttons["terminal-add-row"]; reveal(addRow, app: app); addRow.tap(); app.buttons["Function Keys"].tap()
+        let addRow = app.buttons["terminal-preset-add-Function Keys"]; reveal(addRow, app: app); addRow.tap()
         let esc = app.buttons["terminal-preview-item-palette-key-escape"]
         revealPreviewKey(esc, app: app)
         let f1 = app.buttons["terminal-preview-item-palette-key-f1"]
@@ -517,12 +547,71 @@ import UIKit
         app.buttons["Restore Layout"].tap()
         XCTAssertTrue(ctrl.exists)
         reveal(undo, app: app, up: false); undo.tap()
-        XCTAssertTrue(app.buttons["terminal-preview-item-palette-key-f12"].exists)
+        XCTAssertTrue(app.buttons["terminal-preview-item-palette-key-f1"].exists)
         reveal(restore, app: app); restore.tap(); app.buttons["Restore Layout"].tap()
         capture("restore-default-keeps-saved-items", app: app)
         app.buttons["terminal-controls-save"].tap()
         XCTAssertEqual(app.staticTexts["controls-qa-count"].label, "Saved items: 1")
         XCTAssertEqual(app.staticTexts["controls-qa-placements"].label, "Row: off; Menu: on")
+    }
+    func testCanvasPresetDragSixRowsAndAppearancePreviews() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        openCanvas(app)
+        XCTAssertEqual(app.buttons.matching(identifier: "terminal-preview-item-palette-key-up").count, 1)
+        XCTAssertFalse(app.buttons["terminal-preset-add-Navigation"].isEnabled)
+        capture("canvas-all-rows-and-template-library", app: app)
+        let functions = app.buttons["terminal-preset-add-Function Keys"]
+        reveal(functions, app: app)
+        let main = app.buttons["terminal-row-handle-00000000-0000-0000-0000-000000000101"]
+        XCTAssertTrue(main.isHittable, "The row library and insertion destination must be reachable together")
+        functions.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.8, thenDragTo: main.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1)))
+        let f1 = app.buttons["terminal-preview-item-palette-key-f1"]
+        capture("canvas-after-preset-drop", app: app)
+        XCTAssertTrue(f1.waitForExistence(timeout: 5))
+        capture("canvas-preset-dragged-into-position", app: app)
+        let mode = app.segmentedControls["terminal-preview-mode"]
+        reveal(mode, app: app, up: false); mode.buttons["Collapsed"].tap()
+        XCTAssertFalse(f1.exists)
+        XCTAssertFalse(app.buttons["terminal-preview-item-palette-key-up"].exists)
+        capture("canvas-collapsed-appearance", app: app)
+        mode.buttons["Expanded"].tap()
+        XCTAssertTrue(f1.exists)
+        capture("canvas-expanded-appearance", app: app)
+        mode.buttons["Arrange"].tap()
+        let blank = app.buttons["terminal-preset-add-Blank"]
+        for _ in 0..<2 { reveal(blank, app: app); blank.tap() }
+        XCTAssertFalse(blank.isEnabled)
+        let count = app.staticTexts["terminal-row-count"]; reveal(count, app: app, up: false)
+        XCTAssertEqual(count.label, "6 of 6")
+        XCTAssertTrue(app.staticTexts["terminal-row-space-warning"].exists || app.otherElements["terminal-row-space-warning"].exists)
+        capture("canvas-six-rows-space-warning", app: app)
+        app.buttons["terminal-controls-save"].tap()
+        XCTAssertEqual(app.staticTexts["controls-qa-count"].label, "Saved items: 1")
+        XCTAssertEqual(app.staticTexts["controls-qa-placements"].label, "Row: on; Menu: on")
+    }
+    func testCanvasAddsAnIndividualPresetKeyWithoutAddingARow() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        openCanvas(app)
+        let source = app.buttons["terminal-template-item-Function Keys-palette-key-f1"]
+        reveal(source, app: app)
+        let escape = app.buttons["terminal-preview-item-palette-key-escape"]
+        XCTAssertTrue(escape.isHittable)
+        source.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.8, thenDragTo: escape.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.5)))
+        let added = app.buttons["terminal-preview-item-palette-key-f1"]
+        XCTAssertTrue(added.waitForExistence(timeout: 5))
+        XCTAssertLessThan(added.frame.minX, escape.frame.minX)
+        let tab = app.buttons["terminal-preview-item-palette-key-tab"]
+        added.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.8, thenDragTo: tab.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.5)))
+        XCTAssertGreaterThan(added.frame.minX, escape.frame.minX, "The copied key can also reorder within its row")
+        XCTAssertEqual(app.staticTexts["terminal-row-count"].label, "3 of 6")
+        XCTAssertEqual(source.value as? String, "Already placed")
+        capture("individual-template-key-dragged-without-adding-row", app: app)
+        app.buttons["terminal-controls-save"].tap()
+        XCTAssertEqual(app.staticTexts["controls-qa-row-order"].label, "Rows: Numbers | Navigation | Main Row")
+        XCTAssertEqual(app.staticTexts["controls-qa-count"].label, "Saved items: 1")
+        openCanvas(app)
+        XCTAssertTrue(added.exists)
+        try await cancel(app)
     }
     func testAllBottomControlsScrollAndFloatingButtonStaysFixed() async throws {
         let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }

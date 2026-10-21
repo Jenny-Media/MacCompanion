@@ -22,12 +22,11 @@ The keyboard bar keeps **the same configured rows** in portrait, landscape,
 and with the native keyboard shown or hidden. The entire Main strip scrolls,
 including the keyboard toggle and expansion control. Only the floating-menu
 button stays fixed at the right. Session provides keyboard show/hide recovery. Esc, Tab,
-Ctrl, Alt/Option and Shift use compact symbols. Quick up/down arrows are enabled
-by default; Command is optional. The real bar renderer also supplies the
+Ctrl, Alt/Option and Shift use compact symbols. Arrows live in Navigation without duplicate Main placements; Command is optional. The real bar renderer also supplies the
 input-free editor preview. Built-ins and saved placements can be reordered,
-moved or removed, with editable row presets, layout-only restore and Undo. Numbers have a dedicated 1–0 row above Main by
+moved or removed, with draggable row handles, full visual row presets, layout-only restore and Undo. Numbers have a dedicated 1–0 row above Main by
 default. The visual editor can reorder whole rows and move shared placements
-between Main and up to two extra navigation/custom rows. Expand Rows explicitly
+between up to six total rows, including Main and Numbers. Expand Rows explicitly
 shows those extra rows; 123 independently toggles Numbers. No keyboard visibility
 change silently expands or collapses the layout. Legacy flat placements remain
 on Main and legacy expanded values are retained without rewriting content.
