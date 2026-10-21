@@ -35,7 +35,7 @@ import UIKit
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         reveal(field, app: app, up: up)
         field.tap()
-        try await waitForPadKeyboard(app)
+        try await waitForSoftwareKeyboard(app)
         field.press(forDuration: 1)
         let menuItem = app.menuItems["Select All"]
         let button = app.buttons["Select All"]
@@ -73,6 +73,7 @@ import UIKit
         let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.controlsqa.ios")
         app.launchArguments = ["-UIPreferredContentSizeCategoryName", (name.contains("testAccessibility") ? UIContentSizeCategory.accessibilityExtraExtraExtraLarge : .large).rawValue]
         if name.contains("testInteractiveReview"), ProcessInfo.processInfo.environment["MACCOMPANION_TERMINAL_CONTROLS_REVIEW"] == "1" { app.launchEnvironment["MACCOMPANION_TERMINAL_CONTROLS_REVIEW"] = "1" }
+        if name.contains("testCommand") { app.launchEnvironment["MACCOMPANION_COMMAND_QA"] = "1" }
         app.launch()
         XCTAssertTrue(app.staticTexts["controls-qa-pro"].waitForExistence(timeout: 10))
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "LifetimePro", withExtension: "storekit"))
@@ -126,7 +127,9 @@ import UIKit
         let sent = NSPredicate(format: "label CONTAINS %@", "6f726967696e616c")
         let received = expectation(for: sent, evaluatedWith: app.staticTexts["controls-qa-input"])
         await fulfillment(of: [received], timeout: 5)
-        app.buttons["terminal-keyboard-toggle"].tap(); app.typeText("q")
+        app.buttons["terminal-keyboard-toggle"].tap()
+        try await waitForSoftwareKeyboard(app)
+        app.typeText("q")
         try await assertInput("6f726967696e616c71", app: app)
         controls.tap()
         XCTAssertTrue(app.buttons["customize-quick-actions"].waitForExistence(timeout: 5))
@@ -148,24 +151,91 @@ import UIKit
     private func searchSaved(_ text: String, app: XCUIApplication) async throws {
         let field = app.textFields["terminal-saved-search"]
         XCTAssertTrue(field.waitForExistence(timeout: 5)); field.tap(); field.typeText(text)
-        try await waitForPadKeyboard(app)
+        try await waitForSoftwareKeyboard(app)
     }
-    private func waitForPadKeyboard(_ app: XCUIApplication) async throws {
-        guard UIDevice.current.userInterfaceIdiom == .pad else { return }
-        // Focus/text injection can finish before iPad presents its keyboard.
+    private func waitForSoftwareKeyboard(_ app: XCUIApplication) async throws {
+        // Focus can be reported before the keyboard and automatic scrolling
+        // finish. This also matters on iPhone with accessibility text sizes;
+        // an early long press can otherwise hit the moving prediction row.
         // Resolve tap/press coordinates after visible keys arrive so the sheet
         // or focused field cannot move under the synthesized touch.
         let keyboard = app.keyboards.firstMatch
-        let visible = NSPredicate { _, _ in keyboard.exists && keyboard.frame.height > 250 }
+        // The first AX key can be a zero-size padding placeholder, and the
+        // keyboard frame excludes prediction/bottom rows on iPhone.
+        let space = keyboard.keys["space"]
+        let visible = NSPredicate { _, _ in keyboard.exists && space.isHittable }
         await fulfillment(of: [expectation(for: visible, evaluatedWith: nil)], timeout: 5)
-        guard keyboard.exists && keyboard.frame.height > 250 else { throw NSError(domain: "TerminalControlsJourneyTests.Keyboard", code: 1) }
+        guard keyboard.exists && space.isHittable else { throw NSError(domain: "TerminalControlsJourneyTests.Keyboard", code: 1) }
     }
+    func testCommandModifierFromNegotiatedRemoteApplication() async throws {
+        let (app, store) = try await launchPro()
+        defer { app.terminate(); store.clearTransactions() }
+        live(app)
+        app.buttons["terminal-controls"].tap(); app.buttons["session-action-moreKeys"].tap()
+        let command = app.buttons["terminal-keypad-Cmd"]
+        XCTAssertTrue(command.waitForExistence(timeout: 5)); XCTAssertTrue(command.isEnabled)
+        command.tap(); XCTAssertTrue(command.label.contains("Next Key"))
+        app.buttons["terminal-keypad-home"].tap()
+        try await assertInput("1b5b313b39481b5b313b393a3348", app: app)
+        XCTAssertTrue(command.label.contains("Off"))
+        capture("command-one-shot-negotiated-remote", app: app)
+        app.buttons["Done"].tap()
+    }
+
+    func testStableBarAndDraggableCompactKeypad() async throws {
+        let (app, store) = try await launchPro()
+        defer { app.terminate(); store.clearTransactions() }
+        live(app)
+        let arrow = app.buttons["↑"], number = app.buttons["9"]
+        XCTAssertTrue(arrow.waitForExistence(timeout: 5)); XCTAssertTrue(number.exists)
+        for title in ["Esc", "Tab", "Ctrl", "Alt", "Shift", "Cmd"] {
+            let key = app.buttons[title]
+            XCTAssertTrue(key.exists)
+            XCTAssertGreaterThanOrEqual(key.frame.minX, app.frame.minX)
+            XCTAssertLessThanOrEqual(key.frame.maxX, app.frame.maxX, "Default modifiers must fit without scrolling")
+        }
+        capture("bar-native-keyboard-hidden", app: app)
+        app.buttons["terminal-keyboard-toggle"].tap()
+        XCTAssertTrue(arrow.exists); XCTAssertTrue(number.exists)
+        capture("bar-native-keyboard-shown", app: app)
+        app.buttons["terminal-keyboard-toggle"].tap()
+        XCTAssertTrue(arrow.exists); XCTAssertTrue(number.exists)
+        app.buttons["terminal-controls"].tap()
+        let session = app.buttons["session-action-session"], settings = app.buttons["session-action-inputMenu"], keypad = app.buttons["session-action-moreKeys"]
+        XCTAssertTrue(session.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(session.frame.midX, app.buttons["session-action-appearance"].frame.midX)
+        XCTAssertGreaterThan(session.frame.midY, settings.frame.midY)
+        capture("floating-menu-session-bottom-right", app: app)
+        keypad.tap()
+        let navigation = app.navigationBars["Keypad"]
+        XCTAssertTrue(navigation.waitForExistence(timeout: 5))
+        let halfY = navigation.frame.minY
+        if UIDevice.current.userInterfaceIdiom == .phone { XCTAssertGreaterThan(halfY, app.frame.height * 0.35) }
+        capture("keypad-half-sheet-navigation", app: app)
+        app.buttons["terminal-keypad-up"].tap()
+        try await assertInput("1b5b41", app: app)
+        app.buttons["F1–F12"].tap()
+        capture("keypad-half-sheet-function-keys", app: app)
+        app.buttons["terminal-keypad-f12"].tap()
+        try await assertInput("1b5b411b5b32347e", app: app)
+        let grabber = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: app.frame.midX, dy: halfY - 10))
+        let expanded = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: app.frame.midX, dy: 130))
+        grabber.press(forDuration: 0.2, thenDragTo: expanded)
+        if UIDevice.current.userInterfaceIdiom == .phone { XCTAssertLessThan(navigation.frame.minY, halfY - 100) }
+        capture("keypad-dragged-full-height", app: app)
+        app.buttons["Numbers"].tap(); app.buttons["terminal-keypad-number-7"].tap()
+        app.buttons["Done"].tap()
+        try await assertInput("1b5b411b5b32347e37", app: app)
+        XCTAssertTrue(arrow.exists); XCTAssertTrue(number.exists)
+    }
+
     func testRuntimeKeyboardKeypadAndSearchableSavedText() async throws {
         let (app, store) = try await launchPro()
         defer { app.terminate(); store.clearTransactions() }
         live(app)
-        app.buttons["terminal-number-toggle"].tap()
-        XCTAssertTrue(app.navigationBars["Number Keypad"].waitForExistence(timeout: 5))
+        app.buttons["terminal-controls"].tap(); app.buttons["session-action-moreKeys"].tap()
+        XCTAssertTrue(app.navigationBars["Keypad"].waitForExistence(timeout: 5))
+        app.buttons["Numbers"].tap()
         capture("number-keypad-with-keyboard-hidden", app: app)
         app.buttons["Done"].tap()
         app.buttons["terminal-keyboard-toggle"].tap()
@@ -195,7 +265,9 @@ import UIKit
         XCTAssertTrue(ctrl.label.contains("Locked"))
         app.buttons["Unlock Ctrl"].tap()
         capture("keypad-explicit-modifier-states", app: app)
+        app.buttons["F1–F12"].tap()
         reveal(app.buttons["terminal-keypad-f1"], app: app); app.buttons["terminal-keypad-f1"].tap()
+        app.buttons["Actions"].tap()
         let interrupt = app.buttons["terminal-keypad-interrupt"]; reveal(interrupt, app: app); interrupt.tap()
         app.buttons["Done"].tap()
         try await assertInput("1b5b411b5b411b5b44391b5b313b35481b5b313b35461b4f5003", app: app)
@@ -225,6 +297,7 @@ import UIKit
         capture("terminal-landscape-keyboard-compact", app: app)
         if UIDevice.current.userInterfaceIdiom == .phone { app.buttons["terminal-number-toggle"].tap() }
         else { app.buttons["terminal-controls"].tap(); app.buttons["session-action-moreKeys"].tap() }
+        app.buttons["Numbers"].tap()
         reveal(app.buttons["terminal-keypad-number-7"], app: app)
         XCTAssertTrue(app.buttons["terminal-keypad-number-7"].exists)
         app.buttons["terminal-keypad-number-7"].tap(); app.buttons["Done"].tap()

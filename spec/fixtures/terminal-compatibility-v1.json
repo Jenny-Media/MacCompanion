@@ -473,6 +473,86 @@
       "modifiers": 0,
       "flags": 31,
       "expectedHex": "1b5b3233333a3230313b323b323031751b5b3233333a3230313b323a3375"
+    },
+    {
+      "name": "command-legacy",
+      "key": "text",
+      "text": "b",
+      "modifiers": 8,
+      "flags": 0,
+      "expectedHex": ""
+    },
+    {
+      "name": "command-unrelated-flags",
+      "key": "text",
+      "text": "b",
+      "modifiers": 8,
+      "flags": 2,
+      "expectedHex": ""
+    },
+    {
+      "name": "command-b",
+      "key": "text",
+      "text": "b",
+      "modifiers": 8,
+      "flags": 1,
+      "expectedHex": "1b5b39383b3975"
+    },
+    {
+      "name": "command-shift-b",
+      "key": "text",
+      "text": "b",
+      "modifiers": 9,
+      "flags": 1,
+      "expectedHex": "1b5b39383b313075"
+    },
+    {
+      "name": "command-ctrl-b",
+      "key": "text",
+      "text": "b",
+      "modifiers": 12,
+      "flags": 3,
+      "expectedHex": "1b5b39383b3133751b5b39383b31333a3375"
+    },
+    {
+      "name": "command-tab",
+      "key": "tab",
+      "text": null,
+      "modifiers": 8,
+      "flags": 3,
+      "expectedHex": "1b5b393b39751b5b393b393a3375"
+    },
+    {
+      "name": "command-enter",
+      "key": "enter",
+      "text": null,
+      "modifiers": 8,
+      "flags": 3,
+      "expectedHex": "1b5b31333b39751b5b31333b393a3375"
+    },
+    {
+      "name": "command-backspace",
+      "key": "backspace",
+      "text": null,
+      "modifiers": 8,
+      "flags": 3,
+      "expectedHex": "1b5b3132373b39751b5b3132373b393a3375"
+    },
+    {
+      "name": "command-left",
+      "key": "left",
+      "text": null,
+      "modifiers": 8,
+      "flags": 3,
+      "expectedHex": "1b5b313b39441b5b313b393a3344"
+    },
+    {
+      "name": "command-uppercase",
+      "key": "text",
+      "text": "B",
+      "modifiers": 8,
+      "flags": 1,
+      "expectedHex": "1b5b39383b313075"
     }
   ],
   "replacementParserSeeds": [

@@ -140,7 +140,9 @@ import Security
         item.kind = .key; XCTAssertFalse(item.valid)
         item.key = .f12; XCTAssertTrue(item.valid)
         item.kind = .shortcut; item.character = 0x42; XCTAssertTrue(item.valid)
-        item.modifiers = [0xffeb]; XCTAssertFalse(item.valid, "Terminal cannot import Command chords")
+        item.modifiers = [0xffeb]; XCTAssertTrue(item.valid, "Command chords are saved intact and admitted only with negotiated support")
+        XCTAssertTrue(item.shortcut.terminalBytes().isEmpty)
+        XCTAssertEqual(item.shortcut.terminalBytes(encoding: .init(flags: [.disambiguate])), Array("\u{1b}[98;10u".utf8))
     }
     func testInvalidLegacyPayloadStopsMigrationWithoutTruncation() throws {
         let memory = Memory(), mac = UUID()

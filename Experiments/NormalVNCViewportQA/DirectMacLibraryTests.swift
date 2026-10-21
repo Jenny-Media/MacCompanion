@@ -141,7 +141,8 @@ import SwiftUI
         let mode = DirectControlMode.terminal, id = mode.profileID
         VNCSessionPreferences.clear(id); defer { VNCSessionPreferences.clear(id) }
         XCTAssertThrowsError(try VNCSessionPreferences.saveProfile([.init(title: "Fit", kind: .fit)], mode: mode))
-        XCTAssertThrowsError(try VNCSessionPreferences.saveProfile([.init(title: "Command", kind: .shortcut, key: 0x63, modifiers: [0xffeb])], mode: mode))
+        try VNCSessionPreferences.saveProfile([.init(title: "Command", kind: .shortcut, key: 0x63, modifiers: [0xffeb])], mode: mode)
+        VNCSessionPreferences.clear(id)
         XCTAssertThrowsError(try VNCSessionPreferences.saveProfile([.init(title: "Unsafe text", kind: .text, text: "\u{1b}[A")], mode: mode))
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "media.jenny.maccompanion.direct-actions.v1", kSecAttrAccount as String: id.uuidString.lowercased(), kSecAttrSynchronizable as String: false, kSecValueData as String: Data("unreadable".utf8)]
         XCTAssertEqual(SecItemAdd(query as CFDictionary, nil), errSecSuccess)

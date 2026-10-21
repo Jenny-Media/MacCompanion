@@ -83,7 +83,7 @@ struct TerminalControlsHarness: View {
 }
 
 @MainActor @Observable final class TerminalControlsLiveHost {
-    let record = SSHTestRecord(echoInput: false, initialOutput: "\u{1b}[?25lSynthetic Terminal UX QA\r\nConnected to local test SSH server\r\n")
+    let record = SSHTestRecord(echoInput: false, initialOutput: "\u{1b}[?25lSynthetic Terminal UX QA\r\nConnected to local test SSH server\r\n" + (ProcessInfo.processInfo.environment["MACCOMPANION_COMMAND_QA"] == "1" ? "\u{1b}[=3u" : ""))
     var session: DirectTerminalSession?
     private var server: Channel?
     var inputHex = ""

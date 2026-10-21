@@ -369,6 +369,9 @@ struct DirectQuickActionInspector: View {
                             LazyVGrid(columns: [GridItem(.adaptive(minimum: 108))], alignment: .leading, spacing: 8) { modifierButtons }
                         }
                     }
+                    if mode == .terminal && action.modifiers.contains(0xffeb) {
+                        Text("Command requires support from the remote terminal app. This shortcut is unavailable in a plain shell.").font(.caption).foregroundStyle(.secondary)
+                    }
                     TextField("Letter or symbol", text: Binding(get: {
                         action.key > 0 && action.key < 0xff00 ? UnicodeScalar(action.key).map(String.init) ?? "" : ""
                     }, set: { value in
@@ -403,7 +406,7 @@ struct DirectQuickActionInspector: View {
         nameFocused = true
     }
     private var modifierButtons: some View {
-        ForEach(modifiers.filter { mode != .terminal || $0.key != 0xffeb }, id: \.key) { modifier in
+        ForEach(modifiers.filter { allowsCommand || $0.key != 0xffeb }, id: \.key) { modifier in
             Button {
                 if action.modifiers.contains(modifier.key) { action.modifiers.removeAll { $0 == modifier.key } }
                 else { action.modifiers.append(modifier.key) }
@@ -413,6 +416,13 @@ struct DirectQuickActionInspector: View {
                 .accessibilityLabel(modifier.name).help(modifier.name)
                 .accessibilityValue(action.modifiers.contains(modifier.key) ? "Selected" : "Off")
         }
+    }
+    private var allowsCommand: Bool {
+        #if os(iOS)
+        true
+        #else
+        mode != .terminal
+        #endif
     }
 }
 

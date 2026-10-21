@@ -85,7 +85,12 @@ import XCTest
         #else
         XCTAssertTrue(DirectQuickActionEditing.standards(.desktop).contains { $0.kind == .mode })
         #endif
-        XCTAssertFalse(DirectQuickActionEditing.valid([.init(title: "Copy", kind: .shortcut, key: 0x63, modifiers: [0xffeb])], mode: .terminal))
+        let command = VNCQuickAction(title: "Copy", kind: .shortcut, key: 0x63, modifiers: [0xffeb])
+        #if os(iOS)
+        XCTAssertTrue(DirectQuickActionEditing.valid([command], mode: .terminal))
+        #else
+        XCTAssertFalse(DirectQuickActionEditing.valid([command], mode: .terminal))
+        #endif
         XCTAssertFalse(DirectQuickActionEditing.valid([.init(title: "Text", kind: .text)], mode: .desktop))
         XCTAssertFalse(DirectQuickActionEditing.valid((0..<13).map { .init(title: "Text \($0)", kind: .text, text: "synthetic") }, mode: .terminal))
         let same = VNCQuickAction(title: "Escape", kind: .escape)

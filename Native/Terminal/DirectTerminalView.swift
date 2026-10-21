@@ -667,9 +667,9 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         controls.button.accessibilityLabel = "Terminal Controls"
         controls.button.accessibilityIdentifier = "terminal-controls"
         controls.categoryActions = [
-            ["kind": "moreKeys", "title": "Keypad", "symbol": "keyboard"],
+            ["kind": "moreKeys", "title": "Keypad", "symbol": "rectangle.grid.3x2"],
             ["kind": "savedText", "title": "Shortcuts & Text", "symbol": "text.quote"],
-            ["kind": "inputMenu", "title": "Keyboard & Input", "symbol": "keyboard"],
+            ["kind": "inputMenu", "title": "Keyboard & Input", "symbol": "gearshape"],
             ["kind": "appearance", "title": "Appearance", "symbol": "circle.lefthalf.filled"],
             ["kind": "session", "title": "Session", "symbol": "link"]]
         controls.actionHandler = { [weak self] item in self?.performQuickAction(item) }
@@ -680,7 +680,14 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         session.received = { [weak self] bytes in
             guard let self, session.connected else { return }
             prepareForPTY(session.outputGeneration)
+            let supportedCommand = terminal.keyEncoding.supportsCommand
             terminal.feed(byteArray: bytes[...])
+            if supportedCommand != terminal.keyEncoding.supportsCommand {
+                keyboardBar.refresh()
+                keypadState?.supportsCommand = terminal.keyEncoding.supportsCommand
+                keypadState?.armed = terminal.keyboardState.armed
+                keypadState?.locked = terminal.keyboardState.locked
+            }
             if bytes.isEmpty { updateControls() } // A completed resume delivers an empty refresh.
         }
         if session.connected { prepareForPTY(session.outputGeneration) }
@@ -744,6 +751,9 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     }
     private func inputItem(_ item: [String: Any]) -> [String: Any] {
         var item = item
+        if item["requiresCommand"] as? Bool == true && !terminal.keyEncoding.supportsCommand {
+            item["disabled"] = true
+        }
         item["inputEpoch"] = terminal.customInputEpoch()?.uuidString ?? "unavailable"
         if item["kind"] as? String == "terminalAction" { item["controlsRevision"] = controlProfile.revision.uuidString }
         return item
@@ -751,6 +761,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     func performControlAction(_ id: UUID, feedback: String? = nil) {
         guard DirectProAccess.shared.hasPro, DirectAppLockV1.shared.canAccess,
               let item = controlProfile.actions.first(where: { $0.id == id }), item.valid else { return }
+        guard !item.requiresCommand || terminal.keyEncoding.supportsCommand else { return }
         switch item.kind {
         case .builtIn: performControl(item.builtIn?.rawValue ?? "", inputFeedback: feedback)
         case .key:
@@ -1062,6 +1073,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         }
         let sync: (TerminalController) -> Void = { [weak state] controller in
             state?.ready = admitted(controller)
+            state?.supportsCommand = controller.terminal.keyEncoding.supportsCommand
             state?.armed = controller.terminal.keyboardState.armed
             state?.locked = controller.terminal.keyboardState.locked
         }
@@ -1084,13 +1096,18 @@ private struct TerminalSurface: UIViewControllerRepresentable {
                 }
             }
         }))
-        panel.sheetPresentationController?.detents = [.large()]
+        if let sheet = panel.sheetPresentationController {
+            sheet.detents = [.medium(), .large()]
+            sheet.selectedDetentIdentifier = .medium
+            sheet.prefersGrabberVisible = true
+            sheet.prefersScrollingExpandsWhenScrolledToEdge = false
+        }
         inputPanel = panel; present(panel, animated: true)
     }
     private func showSavedItems() {
         guard presentedViewController == nil else { return }
         let epoch = terminal.customInputEpoch(), revision = controlProfile.revision
-        let panel = UIHostingController(rootView: TerminalSavedItems(items: controlProfile.actions, macName: session.mac.name, select: { [weak self] id in
+        let panel = UIHostingController(rootView: TerminalSavedItems(items: controlProfile.actions, macName: session.mac.name, supportsCommand: terminal.keyEncoding.supportsCommand, select: { [weak self] id in
             guard let self, let epoch, terminal.customInputEpoch() == epoch, controlProfile.revision == revision else { return }
             dismiss(animated: true) { [weak self] in
                 guard let self, terminal.customInputEpoch() == epoch, controlProfile.revision == revision else { return }

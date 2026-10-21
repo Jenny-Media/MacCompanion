@@ -29,6 +29,7 @@ struct TerminalControlAction: Codable, Identifiable, Equatable {
     var shortcut: VNCQuickAction {
         .init(id: id, title: title, kind: .shortcut, key: character, modifiers: modifiers)
     }
+    var requiresCommand: Bool { kind == .shortcut && modifiers.contains(0xffeb) }
     var valid: Bool {
         guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, title.count <= 40 else { return false }
         switch kind {
@@ -46,6 +47,7 @@ struct TerminalControlAction: Codable, Identifiable, Equatable {
     }
     var native: [String: Any] {
         ["id": id.uuidString, "kind": "terminalAction", "title": title, "symbol": symbol, "enabled": true,
+         "requiresCommand": requiresCommand,
          "inputAction": kind != .builtIn || builtIn != .composeText]
     }
 }

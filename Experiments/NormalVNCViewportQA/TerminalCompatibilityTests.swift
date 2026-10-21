@@ -227,6 +227,22 @@ import Citadel
         }
     }
 
+    func testCommandAvailabilityAndLocksFollowRemoteNegotiation() async throws {
+        try await withHarness { rig in
+            let bar = rig.controller.keyboardBar
+            try await rig.record.emit("\u{1b}[=3u")
+            try await terminalWait("Command negotiation") { rig.controller.terminal.keyEncoding.supportsCommand }
+            bar.toggle(.command, lock: true)
+            XCTAssertEqual(rig.controller.terminal.keyboardState.locked, .command)
+            try await rig.record.emit("\u{1b}[=0u")
+            try await terminalWait("Command mode exit clears software state") {
+                !rig.controller.terminal.keyEncoding.supportsCommand && rig.controller.terminal.keyboardState.active.isEmpty
+            }
+            bar.toggle(.command)
+            XCTAssertTrue(rig.controller.terminal.keyboardState.active.isEmpty)
+        }
+    }
+
     func testNegotiatedExplicitKeysMatchGoldenVectors() async throws {
         let fixture = try vectors()
         try await withHarness { rig in

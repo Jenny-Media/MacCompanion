@@ -146,7 +146,7 @@ import UIKit
             XCTAssertLessThanOrEqual(button.maxY, controller.keyboardCeiling(), "The dock must stay above the keyboard")
             XCTAssertTrue(toolbar.contains(button), "The menu button must occupy the modifier bar")
             XCTAssertLessThan(toolbar.minY - controller.terminal.frame.maxY, controller.terminal.caretFrame.height + 1, "Only whole-row rounding may separate output from the toolbar")
-            XCTAssertEqual(toolbar.height, keyboard ? 156 : 60, accuracy: 1, "Keyboard requested: \(keyboard); first responder: \(controller.terminal.isFirstResponder); ceiling: \(controller.keyboardCeiling())")
+            XCTAssertEqual(toolbar.height, 156, accuracy: 1, "The expanded bar stays consistent when the native keyboard changes")
             XCTAssertNil(controller.terminal.inputAccessoryView, "A second accessory would duplicate the toolbar and keyboard avoidance")
             if !keyboard { continue }
             XCTAssertLessThan(controller.keyboardCeiling(), controller.view.bounds.height - 100)
@@ -204,6 +204,7 @@ import UIKit
         // A narrow toolbar keeps both end controls reachable without shrinking
         // the terminal keys; the fixed controls remain reachable and the core keys scroll.
         let narrow = TerminalKeyboardBar(terminal: controller.terminal, preferences: .init())
+        narrow.expanded = false
         narrow.translatesAutoresizingMaskIntoConstraints = true
         narrow.frame = CGRect(x: 0, y: 0, width: 320, height: 60); controller.view.addSubview(narrow)
         narrow.layoutIfNeeded()
@@ -332,7 +333,7 @@ import UIKit
         _ = restored.terminal.resignFirstResponder()
         try await Task.sleep(for: .milliseconds(550)); window.layoutIfNeeded()
         restored.controls.actionHandler?(["kind": "numberRow"]); window.layoutIfNeeded()
-        XCTAssertEqual(restored.keyboardBar.bounds.height, 60, accuracy: 1, "A closed keyboard keeps only the persistent modifier bar")
+        XCTAssertEqual(restored.keyboardBar.bounds.height, 108, accuracy: 1, "Hiding the native keyboard preserves the expanded bar and its number-row toggle")
     }
 
     func testSessionMenuContainsOnlyActiveSessionActionsAndPreservesTerminal() async throws {

@@ -221,11 +221,15 @@ void CompanionVNCPlayInterfaceFeedback(NSString *kind) {
         UIView *parent = i < self.quickCount || scrollingCategories ? self.scroll : self.panel.contentView;
         if (self.choices[i].superview != parent) [parent addSubview:self.choices[i]];
         if (i < self.quickCount) {
-            self.choices[i].frame = CGRectMake(8 + (i % columns) * (tileWidth + 8), scrollHeaderHeight + headingHeight + (i / columns) * (tileHeight + 8), tileWidth, tileHeight);
+            NSUInteger rowItems = MIN(columns, self.quickCount - (i / columns) * columns);
+            NSUInteger column = i % columns + columns - rowItems;
+            self.choices[i].frame = CGRectMake(8 + column * (tileWidth + 8), scrollHeaderHeight + headingHeight + (i / columns) * (tileHeight + 8), tileWidth, tileHeight);
         } else {
             NSUInteger category = i - self.quickCount;
+            NSUInteger rowItems = MIN(categoryColumns, categoryCount - (category / categoryColumns) * categoryColumns);
+            NSUInteger column = category % categoryColumns + categoryColumns - rowItems;
             CGFloat categoryY = scrollingCategories ? scrollHeaderHeight + gridHeight + 8 : height - fixedFooter;
-            self.choices[i].frame = CGRectMake(8 + (category % categoryColumns) * categoryWidth,
+            self.choices[i].frame = CGRectMake(8 + column * categoryWidth,
                 categoryY + (category / categoryColumns) * categoryHeight, categoryWidth, categoryHeight);
         }
     }

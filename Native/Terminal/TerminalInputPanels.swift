@@ -6,6 +6,7 @@ import Observation
     var armed: TerminalModifiers = []
     var locked: TerminalModifiers = []
     var ready = true
+    var supportsCommand = false
     var toggle: (TerminalModifiers, Bool) -> Void = { _, _ in }
     var send: (String) -> Void = { _ in }
 }
@@ -17,79 +18,98 @@ struct TerminalKeypad: View {
     var numbersFirst = false
     var onClose: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
-    @ScaledMetric(relativeTo: .body) private var keyWidth = 72.0
+    private enum Page: String, CaseIterable, Identifiable {
+        case navigation = "Navigation", function = "F1–F12", numbers = "Numbers", actions = "Actions"
+        var id: String { rawValue }
+    }
+    @State private var page: Page
+    @ScaledMetric(relativeTo: .body) private var keyWidth = 48.0
     @Environment(\.dynamicTypeSize) private var textSize
-    private var columns: [GridItem] { [GridItem(.adaptive(minimum: min(320, keyWidth)), spacing: 8)] }
+    private var columns: [GridItem] { [GridItem(.adaptive(minimum: min(320, keyWidth)), spacing: 6)] }
+    init(state: TerminalKeypadState, macName: String, numbersFirst: Bool = false, onClose: (() -> Void)? = nil) {
+        self.state = state; self.macName = macName; self.numbersFirst = numbersFirst; self.onClose = onClose
+        _page = State(initialValue: numbersFirst ? .numbers : .navigation)
+    }
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    Text(macName).font(.subheadline).foregroundStyle(.secondary)
-                    if !numbersFirst { Text("Tap a key to send it once. The keypad stays open.").font(.subheadline) }
-                    if numbersFirst { numbers }
-                    VStack(spacing: 8) {
-                        ForEach(["Ctrl", "Alt", "Shift"], id: \.self) { title in
-                            let modifier: TerminalModifiers = title == "Ctrl" ? .ctrl : title == "Alt" ? .alt : .shift
-                            let locked = state.locked.contains(modifier)
-                            let active = locked || state.armed.contains(modifier)
-                            if textSize.isAccessibilitySize {
-                                VStack { modifierButtons(title, modifier: modifier, locked: locked, active: active) }
-                            } else {
-                                HStack { modifierButtons(title, modifier: modifier, locked: locked, active: active) }
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Tap a key to send once. Tap a modifier for the next key; use its lock for repeated keys.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: textSize.isAccessibilitySize ? 260 : 140), spacing: 6)], spacing: 6) {
+                        ForEach([TerminalModifiers.ctrl, .alt, .shift, .command], id: \.rawValue) { modifier in
+                            modifierButtons(modifier)
+                        }
+                    }
+                    if !state.supportsCommand { Text("Command becomes available when the remote app supports it.").font(.caption).foregroundStyle(.secondary) }
+                    if textSize.isAccessibilitySize {
+                        Picker("Keys", selection: $page) { ForEach(Page.allCases) { Text($0.rawValue).tag($0) } }
+                            .pickerStyle(.menu).accessibilityIdentifier("terminal-keypad-page")
+                    } else {
+                        Picker("Keys", selection: $page) { ForEach(Page.allCases) { Text($0.rawValue).tag($0) } }
+                            .pickerStyle(.segmented).accessibilityIdentifier("terminal-keypad-page")
+                    }
+                    switch page {
+                    case .navigation: keyGroup(keys: [.escape, .tab, .left, .down, .up, .right, .home, .end, .pageUp, .pageDown, .delete])
+                    case .function: keyGroup(keys: [.f1, .f2, .f3, .f4, .f5, .f6, .f7, .f8, .f9, .f10, .f11, .f12])
+                    case .numbers:
+                        LazyVGrid(columns: columns, spacing: 6) {
+                            ForEach(["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"], id: \.self) { number in
+                                Button { state.send("terminalNumber-" + number) } label: { Text(number).frame(maxWidth: .infinity, minHeight: 44) }
+                                    .buttonStyle(TerminalKeypadButtonStyle()).accessibilityIdentifier("terminal-keypad-number-" + number)
+                            }
+                        }
+                    case .actions:
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 6)], spacing: 6) {
+                            ForEach([("copySelection", "Copy Selection"), ("paste", "Paste"), ("interrupt", "Interrupt · Ctrl-C"), ("endInput", "End Input · Ctrl-D"), ("suspendProcess", "Suspend · Ctrl-Z")], id: \.0) { kind, title in
+                                Button { state.send(kind) } label: { Text(title).frame(maxWidth: .infinity, minHeight: 44) }
+                                    .buttonStyle(TerminalKeypadButtonStyle()).accessibilityIdentifier("terminal-keypad-" + kind)
                             }
                         }
                     }
-                    keyGroup("Navigation", keys: [.escape, .tab, .left, .down, .up, .right, .home, .end, .pageUp, .pageDown, .delete])
-                    keyGroup("Function Keys", keys: [.f1, .f2, .f3, .f4, .f5, .f6, .f7, .f8, .f9, .f10, .f11, .f12])
-                    if !numbersFirst { numbers }
-                    Text("Clipboard").font(.headline)
-                    if textSize.isAccessibilitySize { VStack { clipboardButtons } }
-                    else { HStack { clipboardButtons } }
-                    Text("Process Controls").font(.headline)
-                    ForEach([("interrupt", "Interrupt · Ctrl-C"), ("endInput", "End Input · Ctrl-D"), ("suspendProcess", "Suspend · Ctrl-Z")], id: \.0) { kind, title in
-                        Button { state.send(kind) } label: { Text(title).frame(maxWidth: .infinity, minHeight: 44) }.buttonStyle(.bordered).accessibilityIdentifier("terminal-keypad-" + kind)
-                    }
-                }.padding(16).disabled(!state.ready)
+                }.padding(12).disabled(!state.ready)
             }.navigationTitle(numbersFirst ? "Number Keypad" : "Keypad").directInlineNavigationTitle()
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { if let onClose { onClose() } else { dismiss() } } } }
         }.directAppearance().onDisappear { state.ready = false }
     }
-    private var numbers: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Numbers").font(.headline)
-            LazyVGrid(columns: columns, spacing: 8) {
-                ForEach(["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"], id: \.self) { number in
-                    Button { state.send("terminalNumber-" + number) } label: { Text(number).frame(maxWidth: .infinity, minHeight: 44) }
-                        .buttonStyle(.bordered).accessibilityIdentifier("terminal-keypad-number-" + number)
-                }
-            }
+    private func modifierButtons(_ modifier: TerminalModifiers) -> some View {
+        let locked = state.locked.contains(modifier), active = locked || state.armed.contains(modifier)
+        let title = modifier.title
+        return HStack(spacing: 0) {
+            Button { state.toggle(modifier, false) } label: {
+                VStack(spacing: 0) { Text(title); Text(locked ? "Locked" : active ? "Next Key" : "Off").font(.caption2) }
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }.accessibilityIdentifier("terminal-keypad-" + title)
+            Button { state.toggle(modifier, true) } label: {
+                Image(systemName: locked ? "lock.fill" : "lock.open").frame(minWidth: 44, minHeight: 44)
+            }.accessibilityLabel((locked ? "Unlock " : "Lock ") + title)
+        }.buttonStyle(TerminalKeypadButtonStyle()).tint(active ? .accentColor : .primary)
+            .disabled(modifier == .command && !state.supportsCommand)
+    }
+    private func keyGroup(keys: [TerminalAccessoryKey]) -> some View {
+        LazyVGrid(columns: columns, spacing: 6) {
+            ForEach(keys) { key in Button { state.send("terminalKey-" + key.rawValue) } label: { Text(key.title).frame(maxWidth: .infinity, minHeight: 44) }
+                .buttonStyle(TerminalKeypadButtonStyle()).accessibilityIdentifier("terminal-keypad-" + key.rawValue) }
         }
     }
-    @ViewBuilder private var clipboardButtons: some View {
-        Button { state.send("copySelection") } label: { Text("Copy Selection").frame(maxWidth: .infinity, minHeight: 44) }.buttonStyle(.bordered)
-        Button { state.send("paste") } label: { Text("Paste").frame(maxWidth: .infinity, minHeight: 44) }.buttonStyle(.bordered)
-    }
-    @ViewBuilder private func modifierButtons(_ title: String, modifier: TerminalModifiers, locked: Bool, active: Bool) -> some View {
-        Button { state.toggle(modifier, false) } label: {
-            Text(title + " · " + (locked ? "Locked" : active ? "Next Key" : "Off")).frame(maxWidth: .infinity, minHeight: 44)
-        }.buttonStyle(.bordered).tint(active ? .accentColor : .primary).accessibilityIdentifier("terminal-keypad-" + title)
-        Button { state.toggle(modifier, true) } label: { Label(locked ? "Unlock" : "Lock", systemImage: locked ? "lock.open" : "lock").frame(minHeight: 44) }
-            .buttonStyle(.bordered).accessibilityLabel((locked ? "Unlock " : "Lock ") + title)
-    }
-    private func keyGroup(_ title: String, keys: [TerminalAccessoryKey]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title).font(.headline)
-            LazyVGrid(columns: columns, spacing: 8) {
-                ForEach(keys) { key in Button { state.send("terminalKey-" + key.rawValue) } label: { Text(key.title).frame(maxWidth: .infinity, minHeight: 44) }
-                    .buttonStyle(.bordered).accessibilityIdentifier("terminal-keypad-" + key.rawValue) }
-            }
-        }
+}
+
+private struct TerminalKeypadButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var enabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .foregroundStyle(.tint)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+            .contentShape(Rectangle())
+            .opacity(!enabled ? 0.4 : configuration.isPressed ? 0.65 : 1)
     }
 }
 
 struct TerminalSavedItems: View {
     let items: [TerminalControlAction]
     let macName: String
+    var supportsCommand = false
     let select: (UUID) -> Void
     let customize: () -> Void
     @State private var search = ""
@@ -119,11 +139,11 @@ struct TerminalSavedItems: View {
                             HStack {
                                 Image(systemName: item.symbol)
                                 VStack(alignment: .leading, spacing: 4) {
-                                    Text(item.title); Text(item.kind == .text ? "Paste text · no added Return" : item.detail).font(.caption).foregroundStyle(.secondary)
+                                    Text(item.title); Text(item.requiresCommand && !supportsCommand ? "Requires Command support from the remote app" : item.kind == .text ? "Paste text · no added Return" : item.detail).font(.caption).foregroundStyle(.secondary)
                                 }
                                 Spacer(); Image(systemName: item.kind == .text ? "doc.on.clipboard" : "arrow.up.forward")
                             }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
-                        }.accessibilityIdentifier("terminal-saved-" + item.id.uuidString)
+                        }.disabled(item.requiresCommand && !supportsCommand).accessibilityIdentifier("terminal-saved-" + item.id.uuidString)
                     }
                     if filtered.isEmpty { Text("No matching saved items.").foregroundStyle(.secondary) }
                 } header: { Text(macName) } footer: { Text("Tap a shortcut to send it, or text to paste it. Multiline text asks for confirmation.") }

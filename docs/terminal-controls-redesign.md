@@ -1,20 +1,33 @@
 # Shared iOS Terminal controls
 
 The floating menu exposes **Keypad**, **Shortcuts & Text**, **Keyboard & Input**,
-Appearance and Session. Keypad is a persistent grouped key grid: tapping a key
-sends once; modifiers show Off, Next Key or Locked, with explicit Lock buttons.
+Appearance and Session. Keypad uses a grid icon; Keyboard & Input uses a settings
+gear. Incomplete rows align right, with Session at the bottom right. Keypad starts
+in the standard half-height draggable sheet and can expand to full height. Compact
+Navigation, F1–F12, Numbers and Actions groups avoid one long oversized grid.
+Tapping a key sends once; modifiers show Off, Next Key or Locked, with separate lock buttons.
 There is no Fn or All Actions entry.
 
-The keyboard bar keeps Esc, Tab, Ctrl and Alt, an obvious **123** toggle and an
+The keyboard bar keeps Esc, Tab, Ctrl, Alt/Option, Shift and Command, an obvious **123** toggle and an
 expand/collapse control. Expanded bars show navigation arrows, optional numbers
-and pinned custom actions. Collapsing never erases settings. Short windows automatically reserve terminal
+and pinned custom actions. Keyboard/123/expand controls share the arrow row,
+leaving all six core keys visible in the default expanded modifier row.
+Collapsing never erases settings. Short windows automatically reserve terminal
 space by compacting the bar; its number and expand buttons then open Keypad.
 Returning to a taller layout restores the saved expanded preference. The 123
 button opens Number Keypad directly in compact layouts. Keypad hides the native
 keyboard while open and restores it on Done when it was previously visible. Navigation is on
-by default, restoring the common arrow workflow. With no onscreen keyboard,
-only the compact persistent bar is reserved; 123 and the Keypad
-button open usable panels instead of toggling invisible rows in those states.
+by default, restoring the common arrow workflow. Showing or hiding the native
+keyboard keeps the same bar layout and toggle meanings; the person's expanded
+or collapsed preference changes only when they explicitly toggle it. Short
+landscape windows can still temporarily compact the bar to preserve terminal space.
+
+Command is a remote Kitty Super modifier on iOS, enabled only when the remote
+terminal application negotiates disambiguation or report-all support. It never
+falls back to ordinary text, Ctrl or Alt. Saved Command shortcuts remain intact
+but unavailable in legacy shells. Ending negotiated support clears armed and
+locked Command. Native hardware Command copy/paste remains local, and the
+macOS client's shortcut availability is unchanged.
 
 Customization starts with two separate destinations: **Keyboard Bar** and
 **Floating Menu**. Each editor previews only its destination, supports selection,
@@ -58,8 +71,8 @@ queue admission; there is no transport-timing change or input replay.
 
 ## Verification
 
-Coverage includes 14 profile/migration tests, seven hosted UI/input tests and six
-native UI journeys, plus an opt-in hands-on review. Tests exercise the real
+Coverage includes profile/migration tests, hosted UI/input tests and native
+UI journeys, plus an opt-in hands-on review. Tests exercise the real
 floating-menu renderer, canonical input fixtures and the production settings
 sheet. The isolated QA app purchases the local StoreKit test product and
 requires verified Pro access; no entitlement bypass enters the normal app.
@@ -69,9 +82,10 @@ from button animations. The server requests a hidden cursor to keep cursor
 blinking from preventing XCTest quiescence; normal application code is unchanged.
 Native rename journeys use the system Select All menu instead of assuming a
 caret position, including UIKit's Next Page menu at accessibility text sizes.
-The iPad journeys wait for the software keyboard before resolving selection
-presses or search-result coordinates, because focused fields and centered
-sheets move when that keyboard appears.
+Rename and search journeys wait for the software keyboard before resolving
+selection presses or search-result coordinates on both phone and tablet.
+Focused fields and sheets move when that keyboard appears; an early press at
+accessibility text sizes can otherwise hit the keyboard prediction row.
 Protocol cases mount the production native Terminal controller in a UIKit
 window and observe the same session state projected by `TerminalSurface`.
 This avoids introducing another SwiftUI root during the host application's
@@ -82,6 +96,8 @@ view and settings sheets; no input/transport settling delay is added.
 | --- | --- |
 | Repeated history/cursor navigation | Native arrow taps and received SSH bytes |
 | Ctrl/Alt/Shift next-key and locks | Native Keypad journey, hosted state and wire checks |
+| Remote Command support | Native SSH negotiation and one-shot Command; golden vectors and clearing on mode exit |
+| Stable bar and compact sheet | Native keyboard show/hide, half-sheet drag to full height, grouped key sends and menu alignment |
 | Interrupt with keyboard hidden | Native Keypad Ctrl-C and received byte |
 | Occasional function/navigation keys | Native F1/Home/End, canonical key vectors |
 | Numbers and more terminal space | 123, collapse/expand, short-window Keypad and restoration |

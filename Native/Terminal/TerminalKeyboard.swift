@@ -10,6 +10,8 @@ struct TerminalModifiers: OptionSet, Equatable {
     static let shift = Self(rawValue: 1)
     static let alt = Self(rawValue: 2)
     static let ctrl = Self(rawValue: 4)
+    static let command = Self(rawValue: 8)
+    var title: String { self == .ctrl ? "Ctrl" : self == .alt ? "Alt" : self == .command ? "Cmd" : "Shift" }
 }
 struct TerminalKeyboardState {
     var armed: TerminalModifiers = []
@@ -63,8 +65,10 @@ struct TerminalKeyEncoding {
     var flags: KittyKeyboardFlags = []
     var applicationCursor = false
     var backspaceSendsControlH = false
+    var supportsCommand: Bool { flags.contains(.disambiguate) || flags.contains(.reportAllKeys) }
 
     func bytes(_ key: TerminalKeyInput, modifiers: TerminalModifiers = []) -> [UInt8] {
+        guard !modifiers.contains(.command) || supportsCommand else { return [] }
         let all = flags.contains(.reportAllKeys)
         let disambiguate = all || flags.contains(.disambiguate)
         let events = flags.contains(.reportEvents)
@@ -73,7 +77,7 @@ struct TerminalKeyEncoding {
             var value = code
             if !modifiers.isEmpty || release { value += ";\(parameter)" + (release ? ":3" : "") }
             if let text, all, flags.contains(.reportText), !release,
-               !modifiers.contains(.ctrl), !modifiers.contains(.alt) {
+               modifiers.intersection([.ctrl, .alt, .command]).isEmpty {
                 value += modifiers.isEmpty ? ";;" : ";"
                 value += text.unicodeScalars.map { String($0.value) }.joined(separator: ":")
             }
@@ -91,30 +95,30 @@ struct TerminalKeyEncoding {
             // Keep explicit Ctrl chords and the existing Alt inference intact.
             let lower = value.lowercased()
             let uppercaseSavedKey = all && modifiers.isEmpty && value == lower.uppercased()
-            if modifiers.contains(.alt) || uppercaseSavedKey,
+            if !modifiers.intersection([.alt, .command]).isEmpty || uppercaseSavedKey,
                !modifiers.contains(.shift), value.unicodeScalars.count == 1,
                lower.unicodeScalars.count == 1, lower != value {
                 return bytes(.text(lower), modifiers: modifiers.union(.shift))
             }
             if flags.isEmpty { return TerminalKeyboardState.text(value, modifiers: modifiers) }
-            let legacy = !all && (!disambiguate || modifiers.intersection([.ctrl, .alt]).isEmpty) &&
+            let legacy = !all && (!disambiguate || modifiers.intersection([.ctrl, .alt, .command]).isEmpty) &&
                 (flags.isEmpty || !modifiers.contains([.ctrl, .shift]))
             return value.unicodeScalars.flatMap { scalar -> [UInt8] in
                 let original = String(scalar)
-                let base = modifiers.intersection([.ctrl, .shift]).isEmpty ? scalar : (original.lowercased().unicodeScalars.first ?? scalar)
+                let base = modifiers.intersection([.ctrl, .shift, .command]).isEmpty ? scalar : (original.lowercased().unicodeScalars.first ?? scalar)
                 var code = String(base.value)
                 let text = modifiers.contains(.shift) ? TerminalKeyboardState.shifted(original) : original
                 if flags.contains(.reportAlternates), modifiers.contains(.shift), text.unicodeScalars.count == 1, let shifted = text.unicodeScalars.first {
                     code += ":\(shifted.value)"
                 }
                 let press = legacy ? TerminalKeyboardState.text(original, modifiers: modifiers) : csi(code, text: text)
-                let release = events && (!legacy || !modifiers.intersection([.ctrl, .alt]).isEmpty) ? csi(code, release: true) : []
+                let release = events && (!legacy || !modifiers.intersection([.ctrl, .alt, .command]).isEmpty) ? csi(code, release: true) : []
                 return press + release
             }
         case .enter:
-            return unicode("13", legacy: TerminalKeyboardState.text("\r", modifiers: modifiers), releaseAllowed: all)
+            return unicode("13", legacy: TerminalKeyboardState.text("\r", modifiers: modifiers), releaseAllowed: all || modifiers.contains(.command))
         case .backspace:
-            return unicode("127", legacy: TerminalKeyboardState.backspace(modifiers: modifiers, controlH: backspaceSendsControlH), releaseAllowed: all)
+            return unicode("127", legacy: TerminalKeyboardState.backspace(modifiers: modifiers, controlH: backspaceSendsControlH), releaseAllowed: all || modifiers.contains(.command))
         case .accessory(let key):
             if flags.isEmpty {
                 if key == .tab && modifiers.contains(.shift) {
@@ -125,7 +129,7 @@ struct TerminalKeyEncoding {
             if key == .escape { return unicode("27", legacy: key.bytes(modifiers: modifiers)) }
             if key == .tab {
                 let legacy = modifiers.contains(.shift) ? (modifiers.contains(.alt) ? [UInt8(0x1b)] : []) + Array("\u{1b}[Z".utf8) : key.bytes(modifiers: modifiers)
-                return unicode("9", legacy: legacy, releaseAllowed: all)
+                return unicode("9", legacy: legacy, releaseAllowed: all || modifiers.contains(.command))
             }
             let letter: String? = switch key {
             case .up: "A"; case .down: "B"; case .right: "C"; case .left: "D"; case .home: "H"; case .end: "F"
@@ -154,6 +158,7 @@ extension VNCQuickAction {
         if modifiers.contains(0xffe1) { flags.insert(.shift) }
         if modifiers.contains(0xffe3) { flags.insert(.ctrl) }
         if modifiers.contains(0xffe9) { flags.insert(.alt) }
+        if modifiers.contains(0xffeb) { flags.insert(.command) }
         let special: [UInt32: TerminalAccessoryKey] = [0xff1b: .escape, 0xff09: .tab, 0xffff: .delete, 0xff51: .left, 0xff52: .up, 0xff53: .right, 0xff54: .down]
         if key == 0xff08 { return encoding.bytes(.backspace, modifiers: flags) }
         if let special = special[key] { return encoding.bytes(.accessory(special), modifiers: flags) }
@@ -221,6 +226,7 @@ struct TerminalKeyboardPreferences: Codable {
     lazy var keyFeedback = CompanionVNCInterfaceFeedback(view: self)
     private let rows = UIStackView()
     private var modifierButtons: [(UIButton, TerminalModifiers)] = []
+    private var commandShortcuts: [UIButton] = []
     let keyboardButton = UIButton(type: .system)
     let menuAnchor = UIView()
     let keyScroll = UIScrollView()
@@ -239,6 +245,8 @@ struct TerminalKeyboardPreferences: Codable {
     private let numberScroll = UIScrollView()
     private let customScroll = UIScrollView()
     private let modifierKeys = UIStackView()
+    private let modifierRow = UIStackView()
+    private var navigationKeys: [UIButton] = []
     private var keyRows: [(UIStackView, NSLayoutConstraint, NSLayoutConstraint)] = []
     private var naturalHeights: [ObjectIdentifier: CGFloat] = [:]
     private var modifierHeight: NSLayoutConstraint!
@@ -251,10 +259,10 @@ struct TerminalKeyboardPreferences: Codable {
     }
     var expandedHeight: CGFloat {
         8 + (modifierHeight?.constant ?? 52) + (showsNumberRow ? naturalHeight(numbers) + 4 : 0)
-            + (hasCustomKeys ? naturalHeight(custom) + 4 : 0) + (showsNavigation ? naturalHeight(navigation) + 4 : 0)
+            + (hasCustomKeys ? naturalHeight(custom) + 4 : 0) + naturalHeight(navigation) + 4
     }
     var height: CGFloat {
-        softwareKeyboardVisible && !composerVisible && expandedRowsVisible ? expandedHeight : 8 + (modifierHeight?.constant ?? 52)
+        !composerVisible && expandedRowsVisible ? expandedHeight : 8 + (modifierHeight?.constant ?? 52)
     }
     init(terminal: SessionTerminalView, preferences: TerminalKeyboardPreferences) {
         self.terminal = terminal
@@ -285,25 +293,30 @@ struct TerminalKeyboardPreferences: Codable {
         numbers.accessibilityIdentifier = "terminal-number-row"
         navigation.accessibilityIdentifier = "terminal-navigation-row"
         for key in [TerminalAccessoryKey.left, .down, .up, .right] {
-            navigation.addArrangedSubview(button(key.title) { [weak self] in self?.send(key) })
+            let value = button(key.title) { [weak self] in self?.send(key) }
+            value.widthAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+            navigationKeys.append(value); navigation.addArrangedSubview(value)
         }
         for (value, title, id) in [(numberButton, "123", "terminal-number-toggle"), (expandButton, "", "terminal-expand-toggle")] {
             var configuration = UIButton.Configuration.gray(); configuration.title = title; configuration.cornerStyle = .medium
             configuration.contentInsets = .init(top: 2, leading: 0, bottom: 2, trailing: 0)
             if value === numberButton { configuration.title = nil; configuration.image = UIImage(systemName: "textformat.123") }
             value.configuration = configuration; value.accessibilityIdentifier = id
-            value.widthAnchor.constraint(equalToConstant: 44).isActive = true
+            let width = value.widthAnchor.constraint(equalToConstant: 44); width.priority = .defaultHigh; width.isActive = true
+            value.widthAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
         }
         numberButton.addAction(UIAction { [weak self] _ in
-            guard let self else { return }; if compactLayout || !softwareKeyboardVisible { openKeypad?(true); return }; if !expanded { showsNumberRow = true; expanded = true } else { showsNumberRow.toggle() }; layoutChanged?()
+            guard let self else { return }; if compactLayout { openKeypad?(true); return }; if !expanded { showsNumberRow = true; expanded = true } else { showsNumberRow.toggle() }; layoutChanged?()
         }, for: .touchUpInside)
         expandButton.addAction(UIAction { [weak self] _ in
-            guard let self else { return }; if compactLayout || !softwareKeyboardVisible { openKeypad?(false); return }; expanded.toggle(); layoutChanged?()
+            guard let self else { return }; if compactLayout { openKeypad?(false); return }; expanded.toggle(); layoutChanged?()
         }, for: .touchUpInside)
         var keyboardConfiguration = UIButton.Configuration.gray()
         keyboardConfiguration.image = UIImage(systemName: "keyboard")
         keyboardConfiguration.cornerStyle = .medium
         keyboardButton.configuration = keyboardConfiguration
+        let keyboardWidth = keyboardButton.widthAnchor.constraint(equalToConstant: 44)
+        keyboardWidth.priority = .defaultHigh; keyboardWidth.isActive = true
         keyboardButton.accessibilityIdentifier = "terminal-keyboard-toggle"
         keyboardButton.addAction(UIAction { [weak self] _ in
             guard let self, let terminal = self.terminal else { return }
@@ -317,7 +330,9 @@ struct TerminalKeyboardPreferences: Codable {
         let controls = modifierKeys; controls.axis = .horizontal; controls.distribution = .fillEqually; controls.spacing = 3
         controls.translatesAutoresizingMaskIntoConstraints = false; keyScroll.addSubview(controls)
         menuAnchor.isUserInteractionEnabled = false
-        let bar = UIStackView(arrangedSubviews: [keyboardButton, keyScroll, numberButton, expandButton, menuAnchor]); bar.spacing = 4
+        let bar = modifierRow
+        for item in [keyboardButton, keyScroll, numberButton, expandButton, menuAnchor] { bar.addArrangedSubview(item) }
+        bar.spacing = 4
         rows.addArrangedSubview(bar)
         let fill = controls.widthAnchor.constraint(equalTo: keyScroll.frameLayoutGuide.widthAnchor); fill.priority = .init(750)
         modifierHeight = bar.heightAnchor.constraint(equalToConstant: 52)
@@ -326,7 +341,7 @@ struct TerminalKeyboardPreferences: Codable {
         NSLayoutConstraint.activate([
             fill,
             modifierHeight,
-            keyboardButton.widthAnchor.constraint(equalToConstant: 48), menuAnchor.widthAnchor.constraint(equalToConstant: 52),
+            keyboardButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 44), menuAnchor.widthAnchor.constraint(equalToConstant: 52),
             controls.leadingAnchor.constraint(equalTo: keyScroll.contentLayoutGuide.leadingAnchor),
             controls.trailingAnchor.constraint(equalTo: keyScroll.contentLayoutGuide.trailingAnchor),
             controls.topAnchor.constraint(equalTo: keyScroll.contentLayoutGuide.topAnchor),
@@ -337,7 +352,8 @@ struct TerminalKeyboardPreferences: Codable {
         ])
         controls.addArrangedSubview(button("Esc") { [weak self] in self?.send(.escape) })
         controls.addArrangedSubview(button("Tab") { [weak self] in self?.send(.tab) })
-        for (title, modifier) in [("Ctrl", TerminalModifiers.ctrl), ("Alt", .alt)] {
+        for modifier in [TerminalModifiers.ctrl, .alt, .shift, .command] {
+            let title = modifier.title
             let value = button(title) { [weak self] in self?.toggle(modifier) }; modifierButtons.append((value, modifier))
             let hold = UILongPressGestureRecognizer(target: self, action: #selector(lockModifier(_:))); value.addGestureRecognizer(hold)
             controls.addArrangedSubview(value)
@@ -358,15 +374,21 @@ struct TerminalKeyboardPreferences: Codable {
         updateKeyMetrics(refreshFonts: true)
     }
     func configure(_ profile: TerminalControlsProfile, perform: @escaping (UUID) -> Void) {
+        commandShortcuts = []
         for key in custom.arrangedSubviews { custom.removeArrangedSubview(key); key.removeFromSuperview() }
         let actions = DirectProAccess.shared.hasPro ? profile.placed(.keyboard) : []
         expanded = profile.expandedBar ?? true; showsNavigation = profile.navigationRow ?? true
         hasCustomKeys = !actions.isEmpty
         for item in actions {
-            custom.addArrangedSubview(button(item.title) { [weak self] in
+            let key = button(item.title) { [weak self] in
                 guard self?.terminal?.customInputEpoch() != nil else { return }
                 perform(item.id)
-            })
+            }
+            if item.requiresCommand {
+                commandShortcuts.append(key)
+                key.accessibilityHint = "Requires Command support from the remote terminal application."
+            }
+            custom.addArrangedSubview(key)
         }
         updateRows(); updateKeyMetrics(refreshFonts: true); refresh()
     }
@@ -383,14 +405,27 @@ struct TerminalKeyboardPreferences: Codable {
         composerVisible = visible; updateRows()
     }
     private func updateRows() {
-        let usesKeypad = compactLayout || !softwareKeyboardVisible
+        let expanded = !composerVisible && expandedRowsVisible
+        let utilityRow = expanded ? navigation : modifierRow
+        if keyboardButton.superview !== utilityRow {
+            for item in [keyboardButton, numberButton, expandButton] {
+                (item.superview as? UIStackView)?.removeArrangedSubview(item); item.removeFromSuperview()
+            }
+            utilityRow.insertArrangedSubview(keyboardButton, at: 0)
+            if expanded {
+                utilityRow.insertArrangedSubview(numberButton, at: 1); utilityRow.addArrangedSubview(expandButton)
+            } else {
+                utilityRow.insertArrangedSubview(numberButton, at: 2); utilityRow.insertArrangedSubview(expandButton, at: 3)
+            }
+        }
+        for key in navigationKeys { key.isHidden = !showsNavigation }
+        let usesKeypad = compactLayout
         numberButton.accessibilityLabel = usesKeypad ? "Open Number Keypad" : showsNumberRow && expanded ? "Hide Number Row" : "Show Number Row"
         numberButton.accessibilityValue = usesKeypad ? nil : (showsNumberRow && expandedRowsVisible ? "On" : "Off")
         numberButton.isSelected = showsNumberRow && expandedRowsVisible
         expandButton.configuration?.image = UIImage(systemName: usesKeypad ? "rectangle.grid.3x2" : expanded ? "chevron.down" : "chevron.up")
         expandButton.accessibilityLabel = usesKeypad ? "Open Keypad" : expanded ? "Collapse Keyboard Bar" : "Expand Keyboard Bar"
-        let expanded = softwareKeyboardVisible && !composerVisible && expandedRowsVisible
-        for (index, shown) in [expanded && showsNumberRow, expanded && hasCustomKeys, expanded && showsNavigation].enumerated() {
+        for (index, shown) in [expanded && showsNumberRow, expanded && hasCustomKeys, expanded].enumerated() {
             let (row, height, _) = keyRows[index]
             let scroll = [numberScroll, customScroll, navigationScroll][index]
             // Keep arranged views attached. Explicit zero heights avoid UIKit's
@@ -412,7 +447,7 @@ struct TerminalKeyboardPreferences: Codable {
         var changed = false
         let font = keyFont
         for (row, height, width) in keyRows {
-            let buttons = row.arrangedSubviews.compactMap { $0 as? UIButton }
+            let buttons = row.arrangedSubviews.compactMap { $0 as? UIButton }.filter { !$0.isHidden }
             if refreshFonts { for button in buttons { button.setNeedsUpdateConfiguration(); button.updateConfiguration() } }
             // Trait callbacks can precede UILabel's configuration update. Measure
             // the new font directly so growing captions cannot retain old bounds.
@@ -455,6 +490,7 @@ struct TerminalKeyboardPreferences: Codable {
     }
     func toggle(_ modifier: TerminalModifiers, lock: Bool = false) {
         guard let terminal, terminal.customInputEpoch() != nil else { return }
+        guard modifier != .command || terminal.keyEncoding.supportsCommand else { return }
         terminal.keyboardState.toggle(modifier, lock: lock); keyFeedback.feedback("selection"); refresh()
     }
     @objc private func lockModifier(_ gesture: UILongPressGestureRecognizer) {
@@ -465,18 +501,31 @@ struct TerminalKeyboardPreferences: Codable {
     func refresh() {
         guard let terminal else { return }
         let ready = terminal.customInputEpoch() != nil
+        if !terminal.keyEncoding.supportsCommand {
+            terminal.keyboardState.armed.remove(.command); terminal.keyboardState.locked.remove(.command)
+        }
         if !ready { terminal.keyboardState.reset(); terminal.controlModifier = false; terminal.metaModifier = false }
         for (row, _, _) in keyRows {
             for case let key as UIButton in row.arrangedSubviews { key.isEnabled = ready; key.alpha = ready ? 1 : 0.4 }
         }
         for (button, modifier) in modifierButtons {
+            button.isEnabled = ready && (modifier != .command || terminal.keyEncoding.supportsCommand)
+            button.alpha = button.isEnabled ? 1 : 0.4
+            button.accessibilityHint = modifier == .command ? "Requires Command support from the remote terminal application." : modifier == .alt ? "Option on Mac. Tap for the next key; hold to lock." : "Tap for the next key; hold to lock."
             button.isSelected = terminal.keyboardState.active.contains(modifier)
             button.configuration?.baseBackgroundColor = button.isSelected ? .systemBlue : .secondarySystemFill
             button.configuration?.baseForegroundColor = button.isSelected ? .white : .label
-            let name = modifier == .ctrl ? "Ctrl" : "Alt"
+            let name = modifier.title
             button.configuration?.title = name + (terminal.keyboardState.locked.contains(modifier) ? " 🔒" : button.isSelected ? " •" : "")
-            button.accessibilityValue = terminal.keyboardState.locked.contains(modifier) ? "Locked" : (button.isSelected ? "Next key" : "Off")
+            button.accessibilityValue = modifier == .command && !terminal.keyEncoding.supportsCommand ? "Unavailable in this application" : terminal.keyboardState.locked.contains(modifier) ? "Locked" : (button.isSelected ? "Next key" : "Off")
         }
+        for button in commandShortcuts {
+            button.isEnabled = ready && terminal.keyEncoding.supportsCommand
+            button.alpha = button.isEnabled ? 1 : 0.4
+            button.accessibilityValue = terminal.keyEncoding.supportsCommand ? nil : "Unavailable in this application"
+        }
+        // These change local presentation even while remote input is suspended.
+        for button in [keyboardButton, numberButton, expandButton] { button.isEnabled = true; button.alpha = 1 }
         updateKeyMetrics(refreshFonts: false)
     }
     private func send(_ key: TerminalAccessoryKey) {

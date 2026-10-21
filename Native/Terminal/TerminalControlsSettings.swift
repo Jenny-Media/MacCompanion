@@ -118,8 +118,8 @@ struct TerminalControlsEditor: View {
                     if destination == .keyboard {
                         if profile.numberRow ?? true { previewLabels(["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]) }
                         ScrollView(.horizontal) { HStack { ForEach(placed) { item in actionButton(item) } } }
-                        if profile.navigationRow ?? true { previewLabels(["←", "↓", "↑", "→"]) }
-                        previewLabels(["⌨", "Esc", "Tab", "Ctrl", "Alt", "123", "⌄", "•••"])
+                        previewLabels(["⌨", "123"] + ((profile.navigationRow ?? true) ? ["←", "↓", "↑", "→"] : []) + ["⌄"])
+                        previewLabels(["Esc", "Tab", "Ctrl", "Alt", "Shift", "Cmd", "•••"])
                         if placed.isEmpty { Text("Add your most-used keys, shortcuts or text below.").foregroundStyle(.secondary) }
                     } else {
                         TerminalMenuEditingPreview(actions: placed, selected: selected, editable: editable, select: { selected = $0 }, move: move).id(dynamicTypeSize)
