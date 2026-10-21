@@ -379,12 +379,15 @@ import StoreKit
             bar.layoutIfNeeded()
             let stack = bar.subviews.compactMap { $0 as? UIStackView }.first!
             let main = try! XCTUnwrap(stack.arrangedSubviews.compactMap { $0 as? UIStackView }.first)
-            XCTAssertTrue(main.arrangedSubviews.first === bar.keyboardButton)
+            XCTAssertTrue(main.arrangedSubviews.first === bar.keyScroll)
             XCTAssertEqual(bar.height, height)
             XCTAssertGreaterThan(bar.keyScroll.contentSize.width, bar.keyScroll.bounds.width)
-            let original = bar.keyboardButton.frame
+            bar.keyScroll.setContentOffset(.zero, animated: false)
+            let original = bar.keyboardButton.convert(bar.keyboardButton.bounds, to: bar)
+            let anchor = bar.menuAnchor.convert(bar.menuAnchor.bounds, to: bar)
             bar.keyScroll.setContentOffset(CGPoint(x: 120, y: 0), animated: false)
-            XCTAssertEqual(bar.keyboardButton.frame, original, "The keyboard toggle stays fixed while keys scroll")
+            XCTAssertLessThan(bar.keyboardButton.convert(bar.keyboardButton.bounds, to: bar).minX, original.minX - 100, "The keyboard toggle scrolls with all other keys")
+            XCTAssertEqual(bar.menuAnchor.convert(bar.menuAnchor.bounds, to: bar), anchor, "Only the floating anchor stays fixed")
             bar.numberButton.sendActions(for: .touchUpInside)
             XCTAssertLessThan(bar.height, height, "Numbers have a dedicated, independently hidden row")
             bar.numberButton.sendActions(for: .touchUpInside)
@@ -414,7 +417,7 @@ import StoreKit
         XCTAssertFalse(buttons.contains { $0.accessibilityLabel == "Cmd" })
         var profile = TerminalControlsProfile.defaults; profile.commandInBar = true
         bar.configure(profile) { _ in }
-        let command = try XCTUnwrap(descendants(bar).compactMap { $0 as? UIButton }.first { $0.accessibilityLabel == "Cmd" })
+        let command = try XCTUnwrap(descendants(bar).compactMap { $0 as? UIButton }.first { $0.accessibilityLabel == "Command" })
         XCTAssertFalse(command.isEnabled)
         bar.toggle(.command); XCTAssertTrue(terminal.keyboardState.active.isEmpty)
         terminal.feed(text: "\u{1b}[=3u"); bar.refresh()
@@ -457,6 +460,42 @@ import StoreKit
             XCTAssertTrue(bar.keyScroll.bounds.intersects(project.convert(project.bounds, to: bar.keyScroll)))
             XCTAssertGreaterThan(bar.height, 90)
         }
+    }
+
+    func testRealBarEditingPreviewSelectsAndMovesWithoutAnInputOwner() throws {
+        let bar = TerminalKeyboardBar(terminal: nil, preferences: .init())
+        bar.editingPreview = true
+        var selected: TerminalBarItem?
+        bar.previewSelect = { item, _ in selected = item }
+        bar.configure(.defaults) { _ in XCTFail("Preview cannot send saved input") }
+        let ctrl = try XCTUnwrap(descendants(bar).compactMap { $0 as? UIButton }.first { $0.accessibilityIdentifier == "terminal-preview-item-control-ctrl" })
+        ctrl.sendActions(for: .touchUpInside)
+        XCTAssertEqual(selected, .control(.ctrl)); XCTAssertNil(bar.terminal)
+        let action = try XCTUnwrap(ctrl.accessibilityCustomActions?.first { $0.name == "Remove from Keyboard Bar" })
+        var removed: TerminalBarItem?
+        bar.previewRemove = { item, _ in removed = item }
+        XCTAssertTrue(action.actionHandler?(action) == true); XCTAssertEqual(removed, .control(.ctrl))
+        XCTAssertNotNil(ctrl.configuration?.image, "Preview uses production symbols and button metrics")
+    }
+
+    func testReconfiguringEditableBuiltinsRetiresOldKeyAndModifierCallbacks() throws {
+        let session = DirectTerminalSession(mac: .init(id: UUID(), name: "Synthetic", addresses: ["127.0.0.1"]))
+        session.connected = true; defer { session.stop() }
+        let controller = ControlsInputController(session: session, customize: {})
+        controller.loadViewIfNeeded()
+        let bar = controller.keyboardBar
+        bar.configure(.defaults) { _ in XCTFail("Only built-in input is exercised") }
+        let old = descendants(bar).compactMap { $0 as? UIButton }
+        let escape = try XCTUnwrap(old.first { $0.accessibilityLabel == "Esc" })
+        let ctrl = try XCTUnwrap(old.first { $0.accessibilityLabel == "Ctrl" })
+        var profile = TerminalControlsProfile.defaults
+        profile.removeBarItem(.key("key-escape"), in: TerminalKeyboardRow.mainID)
+        bar.configure(profile) { _ in XCTFail("Only built-in input is exercised") }
+        escape.sendActions(for: .touchUpInside); ctrl.sendActions(for: .touchUpInside)
+        XCTAssertTrue(controller.output.isEmpty); XCTAssertTrue(controller.terminal.keyboardState.active.isEmpty)
+        let tab = try XCTUnwrap(descendants(bar).compactMap { $0 as? UIButton }.first { $0.accessibilityLabel == "Tab" })
+        tab.sendActions(for: .touchUpInside)
+        XCTAssertEqual(controller.output, [9])
     }
 
 }

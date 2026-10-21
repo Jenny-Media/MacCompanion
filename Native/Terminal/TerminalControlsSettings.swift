@@ -100,6 +100,8 @@ struct TerminalControlsEditor: View {
     @State private var adding = false
     @State private var search = ""
     @State private var confirmingDelete = false
+    @State private var history: [TerminalControlsProfile] = []
+    @State private var undoTarget: TerminalControlsProfile?
     private var placed: [TerminalControlAction] {
         if destination == .keyboard, let selected, let row = profile.resolvedRows.first(where: { $0.actionIDs.contains(selected) }) { return profile.placed(in: row) }
         return profile.placed(destination)
@@ -117,6 +119,9 @@ struct TerminalControlsEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             if !libraryOnly {
+                HStack { Spacer(); Button("Undo", systemImage: "arrow.uturn.backward") {
+                    guard let previous = history.popLast() else { return }; undoTarget = previous; profile = previous; selected = nil
+                }.disabled(history.isEmpty).accessibilityIdentifier("terminal-editor-undo") }
                 VStack(alignment: .leading, spacing: 12) {
                     Label(destination.title + " Preview", systemImage: destination.symbol).font(.headline)
                     if destination == .keyboard {
@@ -124,21 +129,19 @@ struct TerminalControlsEditor: View {
                     } else {
                         TerminalMenuEditingPreview(actions: placed, selected: selected, editable: editable, select: { selected = $0 }, move: move).id(dynamicTypeSize)
                     }
-                    Text(destination == .keyboard ? "Select a row to add keys. Tap a custom item to edit. Preview sends nothing." : "Tap an action to edit. This preview sends nothing.").font(.caption).foregroundStyle(.secondary)
+                    Text(destination == .keyboard ? "Tap any key to select it. Drag to rearrange or move between rows. Preview sends nothing." : "Tap an action to edit. This preview sends nothing.").font(.caption).foregroundStyle(.secondary)
                 }.padding(12).background(.background, in: RoundedRectangle(cornerRadius: 16))
                 if destination == .keyboard {
                     Toggle("Numbers", isOn: Binding(get: { profile.numberRow ?? true }, set: { profile.numberRow = $0 })).accessibilityIdentifier("terminal-setting-numbers")
-                    Toggle("Quick Up / Down", isOn: Binding(get: { profile.navigationRow ?? true }, set: { profile.navigationRow = $0 })).accessibilityIdentifier("terminal-setting-arrows")
                     Toggle("Expanded Rows", isOn: Binding(get: { profile.rowsExpanded ?? false }, set: { profile.rowsExpanded = $0 })).accessibilityIdentifier("terminal-setting-expanded")
-                    Toggle("Command in Main Row", isOn: Binding(get: { profile.commandInBar ?? false }, set: { profile.commandInBar = $0 })).accessibilityIdentifier("terminal-setting-command")
-                    Text("Numbers have a dedicated row. Extra rows appear only when expanded. The same layout stays above the keyboard and at the bottom when it is hidden. Command requires support from the remote app.").font(.caption).foregroundStyle(.secondary)
+                    Text("Every key can move or be removed. Extra rows appear when expanded unless set to Always Visible. Command requires remote application support.").font(.caption).foregroundStyle(.secondary)
                 }
             }
             if let selection {
                 TerminalControlInspector(action: selection).id(selection.wrappedValue.id)
                     .padding(12).background(.background, in: RoundedRectangle(cornerRadius: 16)).disabled(!editable)
                 Text("Content edits apply everywhere this item is used.").font(.caption).foregroundStyle(.secondary)
-                if !libraryOnly {
+                if !libraryOnly && destination != .keyboard {
                     HStack {
                         Button("Earlier", systemImage: "arrow.left") { moveSelected(-1) }.disabled(placed.first?.id == selected)
                         Button("Later", systemImage: "arrow.right") { moveSelected(1) }.disabled(placed.last?.id == selected)
@@ -170,6 +173,10 @@ struct TerminalControlsEditor: View {
             Button(libraryOnly ? "Create Shortcut or Text" : "Add to " + destination.title, systemImage: "plus") { adding = true }
                 .buttonStyle(.borderedProminent).disabled(!editable || profile.actions.count >= 4096).accessibilityIdentifier("terminal-control-add")
         }.disabled(!editable).privacySensitive()
+            .onChange(of: profile) { old, new in
+                if new == undoTarget { undoTarget = nil; return }
+                history.append(old); if history.count > 20 { history.removeFirst() }
+            }
             .sheet(isPresented: $adding) { addPicker }
             .confirmationDialog("Delete this item from the keyboard bar, floating menu and saved collection?", isPresented: $confirmingDelete, titleVisibility: .visible) {
                 Button("Delete Item", role: .destructive) { if let selected { profile.delete(selected) }; selected = nil }
@@ -194,12 +201,19 @@ struct TerminalControlsEditor: View {
                             }.accessibilityLabel(item.title).accessibilityValue(item.detail)
                         }
                     }
+                    if destination == .keyboard {
+                        Section("Bar Controls & Modifiers") {
+                            ForEach(TerminalBarItem.Control.allCases, id: \.self) { control in
+                                Button(TerminalBarItem.control(control).title(in: profile)) { profile.placeBarItem(.control(control), in: selectedRow); adding = false }
+                            }
+                        }
+                    }
                     ForEach(TerminalKeyCatalog.groups) { group in
                         Section(group.title) { ForEach(TerminalKeyCatalog.matching(search, in: group)) { key in
                             Button(key.name) {
-                                let id = profile.pin(key, in: destination)
-                                if destination == .keyboard { profile.place(id, in: selectedRow) }
-                                selected = id; adding = false
+                                if destination == .keyboard { profile.placeBarItem(.key(key.id), in: selectedRow); selected = nil }
+                                else { selected = profile.pin(key, in: destination) }
+                                adding = false
                             }
                         } }
                     }
@@ -228,71 +242,101 @@ struct TerminalControlsEditor: View {
     }
 }
 
-/// A value-only layout editor; it has no terminal or input callbacks.
+/// Real bar rendering in selection-only mode. No terminal, transport, clipboard
+/// or input execution handler is supplied to the preview.
 private struct TerminalKeyboardEditingPreview: View {
     @Binding var profile: TerminalControlsProfile
     let selected: UUID?
     @Binding var selectedRow: UUID
-    let select: (UUID) -> Void
+    let select: (UUID?) -> Void
+    @State private var selectedItem: TerminalBarItem?
+    @State private var restore: String?
+    private var currentRow: TerminalKeyboardRow? { profile.resolvedRows.first { $0.id == selectedRow } }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            TerminalKeyboardBarPreview(profile: profile, selected: selectedItem, row: selectedRow, select: { item, row in
+                selectedItem = item; selectedRow = row; select(item?.savedID)
+            }, move: { item, source, row, target in
+                profile.placeBarItem(item, in: row, from: source, before: target); selectedRow = row; selectedItem = item; select(item.savedID)
+            }, remove: { item, row in profile.removeBarItem(item, in: row); selectedItem = nil; select(nil) })
+                .background(Color(uiColor: .secondarySystemGroupedBackground), in: .rect(cornerRadius: 12))
+                .accessibilityIdentifier("terminal-live-bar-preview")
+            if let selectedItem, let row = currentRow {
+                Text("Selected: " + selectedItem.title(in: profile)).font(.subheadline.weight(.semibold))
+                let items = profile.barItems(in: row)
+                HStack {
+                    Button("Earlier", systemImage: "arrow.left") { moveSelected(-1) }.disabled(items.first == selectedItem)
+                    Button("Later", systemImage: "arrow.right") { moveSelected(1) }.disabled(items.last == selectedItem)
+                }
+                Picker("Place in Row", selection: Binding(get: { selectedRow }, set: { id in profile.placeBarItem(selectedItem, in: id, from: selectedRow); selectedRow = id })) {
+                    ForEach(profile.resolvedRows) { Text($0.title).tag($0.id) }
+                }.accessibilityIdentifier("terminal-item-row")
+                Button("Remove from Keyboard Bar", systemImage: "minus.circle") { profile.removeBarItem(selectedItem, in: selectedRow); self.selectedItem = nil; select(nil) }.accessibilityIdentifier("terminal-remove-placement")
+            }
+            Text("Rows").font(.headline)
             ForEach(profile.resolvedRows) { row in
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
-                        Button { selectedRow = row.id } label: {
-                            Label(row.title, systemImage: row.id == selectedRow ? "checkmark.circle.fill" : "circle")
-                        }.buttonStyle(.plain).disabled(row.kind == .numbers).accessibilityIdentifier("terminal-select-row-" + row.id.uuidString)
+                        Button { selectedRow = row.id; selectedItem = nil; select(nil) } label: { Label(row.title, systemImage: row.id == selectedRow ? "checkmark.circle.fill" : "circle") }
+                            .accessibilityIdentifier("terminal-select-row-" + row.id.uuidString)
                         Spacer()
                         Button { profile.moveRow(row.id, offset: -1) } label: { Image(systemName: "arrow.up").frame(width: 44, height: 44) }.accessibilityLabel("Move " + row.title + " Up").disabled(profile.resolvedRows.first?.id == row.id)
                         Button { profile.moveRow(row.id, offset: 1) } label: { Image(systemName: "arrow.down").frame(width: 44, height: 44) }.accessibilityLabel("Move " + row.title + " Down").disabled(profile.resolvedRows.last?.id == row.id)
-                        if row.extra {
-                            Button { profile.removeRow(row.id); if selectedRow == row.id { selectedRow = TerminalKeyboardRow.mainID } } label: { Image(systemName: "minus.circle").frame(width: 44, height: 44) }
-                                .accessibilityLabel("Remove " + row.title + " Row")
+                        if row.kind != .main {
+                            Button { profile.removeRow(row.id); selectedRow = TerminalKeyboardRow.mainID; selectedItem = nil; select(nil) } label: { Image(systemName: "minus.circle").frame(width: 44, height: 44) }.accessibilityLabel("Remove " + row.title + " Row")
                         }
-                    }.font(.subheadline).buttonStyle(.borderless).frame(minHeight: 44)
-                    if row.kind == .custom {
-                        TextField("Row Name", text: Binding(get: { profile.resolvedRows.first { $0.id == row.id }?.title ?? row.title }, set: { name in
-                            var rows = profile.resolvedRows
-                            if let index = rows.firstIndex(where: { $0.id == row.id }) { rows[index].title = name; profile.keyboardRows = rows }
+                    }.buttonStyle(.borderless)
+                    if selectedRow == row.id {
+                        TextField("Row Name", text: Binding(get: { currentRow?.title ?? row.title }, set: { name in
+                            var rows = profile.resolvedRows; if let index = rows.firstIndex(where: { $0.id == row.id }) { rows[index].title = name; profile.keyboardRows = rows }
                         })).textFieldStyle(.roundedBorder).accessibilityIdentifier("terminal-row-name-" + row.id.uuidString)
-                    }
-                    ScrollView(.horizontal) {
-                        HStack(spacing: 4) {
-                            if row.kind == .main {
-                                symbol("keyboard", name: "Keyboard")
-                                ForEach(["escape", "arrow.right.to.line", "control", "option", "shift"], id: \.self) { symbol($0, name: $0) }
-                                if profile.commandInBar ?? false { symbol("command", name: "Command") }
-                                if profile.navigationRow ?? true { symbol("arrow.up", name: "Up"); symbol("arrow.down", name: "Down") }
-                            }
-                            if row.kind == .numbers { ForEach(Array("1234567890"), id: \.self) { Text(String($0)).frame(minWidth: 32, minHeight: 44).background(.quaternary, in: .rect(cornerRadius: 8)) } }
-                            if row.kind == .navigation { ForEach(["←", "↓", "↑", "→", "Home", "End", "PgUp", "PgDn"], id: \.self) { Text($0).frame(minWidth: 44, minHeight: 44).background(.quaternary, in: .rect(cornerRadius: 8)) } }
-                            ForEach(profile.placed(in: row)) { item in
-                                Button(item.title) { selectedRow = row.id; select(item.id) }.buttonStyle(.bordered)
-                                    .tint(selected == item.id ? .accentColor : .secondary).frame(minHeight: 44)
-                                    .draggable(item.id.uuidString).dropDestination(for: String.self) { values, _ in
-                                        guard let id = values.first.flatMap(UUID.init(uuidString:)), profile.actions.contains(where: { $0.id == id }) else { return false }
-                                        profile.place(id, in: row.id); profile.move(id, to: item.id, in: .keyboard); return true
-                                    }.accessibilityIdentifier("terminal-row-preview-" + item.id.uuidString)
-                            }
-                            if row.kind == .custom && profile.placed(in: row).isEmpty { Text("Select this row, then Add to Keyboard Bar").font(.caption).foregroundStyle(.secondary) }
-                            if row.kind == .main { symbol("chevron.up.chevron.down", name: "Expand Rows"); symbol("ellipsis", name: "Floating Menu") }
+                        if row.kind != .main && row.kind != .numbers {
+                            Toggle("Always Visible", isOn: Binding(get: { !(currentRow?.extra ?? true) }, set: { visible in
+                                var rows = profile.resolvedRows; if let index = rows.firstIndex(where: { $0.id == row.id }) { rows[index].expandedOnly = !visible; profile.keyboardRows = rows }
+                            }))
                         }
-                    }.accessibilityIdentifier(row.kind == .main ? "terminal-row-preview-scroll" : "terminal-row-preview-scroll-" + row.id.uuidString)
-                    if row.kind == .numbers && !(profile.numberRow ?? true) { Text("Hidden · turn on Numbers below").font(.caption).foregroundStyle(.secondary) }
-                    if row.extra { Text((profile.rowsExpanded ?? false) ? "Visible when expanded" : "Hidden until you expand the bar").font(.caption).foregroundStyle(.secondary) }
-                }.padding(8).background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 12))
+                        Button("Restore This Row", systemImage: "arrow.counterclockwise") { restore = "row" }.accessibilityIdentifier("terminal-restore-row")
+                    }
+                }
             }
             Menu("Add Row", systemImage: "plus") {
-                if !profile.resolvedRows.contains(where: { $0.kind == .navigation }) { Button("Navigation") { if let id = profile.addRow(title: "Navigation", navigation: true) { selectedRow = id } } }
-                Button("Shortcuts") { if let id = profile.addRow(title: "Shortcuts") { selectedRow = id } }
-                Button("Custom Row") { if let id = profile.addRow() { selectedRow = id } }
+                ForEach(TerminalRowPreset.allCases) { preset in Button(preset.rawValue) { if let id = profile.addPreset(preset) { selectedRow = id; selectedItem = nil; select(nil) } } }
             }.disabled(profile.resolvedRows.count >= 4).accessibilityIdentifier("terminal-add-row")
-            Text("Add up to two extra rows. Move entire rows up or down. Removing a row keeps its saved items.").font(.caption).foregroundStyle(.secondary)
-        }
+            Text("Choose a starting layout, then edit every key. Up to four rows; the floating button stays available.").font(.caption).foregroundStyle(.secondary)
+            Button("Restore Keyboard Bar…", systemImage: "arrow.counterclockwise") { restore = "bar" }.accessibilityIdentifier("terminal-restore-bar")
+        }.confirmationDialog(restore == "row" ? "Restore this row’s starting layout?" : "Restore the default keyboard bar?", isPresented: Binding(get: { restore != nil }, set: { if !$0 { restore = nil } }), titleVisibility: .visible) {
+            Button("Restore Layout") {
+                if restore == "row" { profile.restoreRow(selectedRow) } else { profile.restoreKeyboardBar(); selectedRow = TerminalKeyboardRow.mainID }
+                selectedItem = nil; select(nil); restore = nil
+            }
+        } message: { Text("Saved shortcuts, text and floating-menu favorites are kept. You can Undo before saving.") }
     }
-    private func symbol(_ name: String, name title: String) -> some View {
-        Image(systemName: name).frame(minWidth: 44, minHeight: 44).background(.quaternary, in: .rect(cornerRadius: 8)).accessibilityLabel(title)
+    private func moveSelected(_ offset: Int) {
+        guard let selectedItem, let row = currentRow, let index = profile.barItems(in: row).firstIndex(of: selectedItem) else { return }
+        let items = profile.barItems(in: row), target = index + offset
+        guard items.indices.contains(target) else { return }
+        // Moving later inserts after the next item.
+        let before = offset > 0 ? (items.indices.contains(target + 1) ? items[target + 1] : nil) : items[target]
+        profile.placeBarItem(selectedItem, in: row.id, from: row.id, before: before)
     }
+}
+
+private struct TerminalKeyboardBarPreview: UIViewRepresentable {
+    let profile: TerminalControlsProfile
+    let selected: TerminalBarItem?
+    let row: UUID
+    let select: (TerminalBarItem?, UUID) -> Void
+    let move: (TerminalBarItem, UUID, UUID, TerminalBarItem?) -> Void
+    let remove: (TerminalBarItem, UUID) -> Void
+    func makeUIView(context: Context) -> TerminalKeyboardBar { let bar = TerminalKeyboardBar(terminal: nil, preferences: .init()); bar.editingPreview = true; return bar }
+    func updateUIView(_ bar: TerminalKeyboardBar, context: Context) {
+        bar.selectedPreviewItem = selected; bar.selectedPreviewRow = row
+        let enabled = context.environment.isEnabled
+        bar.isUserInteractionEnabled = enabled
+        bar.previewSelect = enabled ? select : nil; bar.previewMove = enabled ? move : nil; bar.previewRemove = enabled ? remove : nil
+        bar.configure(profile) { _ in }
+    }
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: TerminalKeyboardBar, context: Context) -> CGSize? { .init(width: proposal.width ?? 360, height: uiView.height) }
 }
 
 private struct TerminalControlInspector: View {

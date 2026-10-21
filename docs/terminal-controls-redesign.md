@@ -13,15 +13,19 @@ Send Text adds no Return, and multiline text still requires confirmation.
 Keypad uses a grid icon and starts in the standard half-height draggable sheet.
 It can expand to full height. Its searchable All Keys catalog groups Essentials,
 Navigation, Function Keys, Common Shortcuts, Symbols and Numbers. Every built-in
-key is available without Pro or pinning. Modifiers show Off, Next Key or Locked,
-with separate lock buttons. Hold a key to pin it without sending input. There is
+key is available without Pro or pinning. Modifiers show Off, Next Key or On:
+tap for the next key, long-press to keep on, and tap again to turn off. Each is
+one compact button with explicit state; there are no separate lock icons. Hold a key to pin it without sending input. There is
 no Fn or All Actions entry; saved Shortcuts and Text have their own tabs.
 
 The keyboard bar keeps **the same configured rows** in portrait, landscape,
-and with the native keyboard shown or hidden. The keyboard toggle stays fixed
-at the far left and the floating-menu button at the right of Main. Esc, Tab,
+and with the native keyboard shown or hidden. The entire Main strip scrolls,
+including the keyboard toggle and expansion control. Only the floating-menu
+button stays fixed at the right. Session provides keyboard show/hide recovery. Esc, Tab,
 Ctrl, Alt/Option and Shift use compact symbols. Quick up/down arrows are enabled
-by default; Command is optional. Numbers have a dedicated 1–0 row above Main by
+by default; Command is optional. The real bar renderer also supplies the
+input-free editor preview. Built-ins and saved placements can be reordered,
+moved or removed, with editable row presets, layout-only restore and Undo. Numbers have a dedicated 1–0 row above Main by
 default. The visual editor can reorder whole rows and move shared placements
 between Main and up to two extra navigation/custom rows. Expand Rows explicitly
 shows those extra rows; 123 independently toggles Numbers. No keyboard visibility
@@ -114,7 +118,7 @@ view and settings sheets; no input/transport settling delay is added.
 | Stable bar and compact sheet | Native keyboard show/hide, half-sheet drag to full height, grouped key sends and menu alignment |
 | Interrupt with keyboard hidden | Native Keypad Ctrl-C and received byte |
 | Occasional function/navigation keys | Native F1/Home/End, canonical key vectors |
-| Numbers and more terminal space | Independent number row, explicit expansion, fixed keyboard control and All Keys |
+| Numbers and more terminal space | Independent number row, explicit expansion, scrolling keyboard controls, a fixed menu and All Keys |
 | Reusable Unicode/path/multiline text | Search, exact SSH bytes, cancel/confirm, no added Return |
 | Create a shortcut | Name/key editing and final chord preview; explicit deletion |
 | Many saved items and favorite placement | Search over 43 saved texts; reuse and unpin preserve one definition |
@@ -128,7 +132,7 @@ A Save notification is deferred in the editing session until its settings sheet
 finishes dismissing. Other sessions reload immediately. The editor no longer
 invokes a second synchronous reload. Native navigation keeps Back separate from editable content; toolbar actions
 belong only to the active destination. The bar retains its configured rows across keyboard and composer transitions.
-Frame regressions check fixed keyboard placement, symbol hit areas, reachable
+Frame regressions check scrolling keyboard placement and a fixed floating anchor, symbol hit areas, reachable
 custom keys, explicit row heights and stable layout across keyboard focus changes at narrow phone and tablet widths.
 Each Keypad presentation has independent
 state; reopening it cannot revive a retained callback from an earlier panel.

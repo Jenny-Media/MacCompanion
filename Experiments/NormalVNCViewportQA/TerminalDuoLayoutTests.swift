@@ -162,9 +162,9 @@ import UIKit
             XCTAssertEqual(menu.navigationItem.rightBarButtonItem?.title, "Done")
             let panel = nav.view.convert(nav.view.bounds, to: controller.view)
             XCTAssertLessThanOrEqual(panel.maxY, controller.keyboardCeiling() + 1)
-            menu.tableView.scrollToRow(at: IndexPath(row: 0, section: 1), at: .bottom, animated: false)
+            menu.tableView.scrollToRow(at: IndexPath(row: 0, section: menu.sections.count - 1), at: .bottom, animated: false)
             menu.tableView.layoutIfNeeded()
-            let exit = menu.tableView.convert(menu.tableView.rectForRow(at: IndexPath(row: 0, section: 1)), to: nav.view)
+            let exit = menu.tableView.convert(menu.tableView.rectForRow(at: IndexPath(row: 0, section: menu.sections.count - 1)), to: nav.view)
             XCTAssertLessThanOrEqual(exit.maxY, nav.view.bounds.maxY + 1)
             // UIKit restores keyboard focus while dismissing the popover. Finish
             // that transition before the next iteration hides the keyboard.
@@ -282,11 +282,11 @@ import UIKit
         for _ in 0..<100 where navigation.transitionCoordinator != nil { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertEqual(navigation.traitCollection.userInterfaceStyle, .dark, "Menus must follow the terminal palette even when the app is light")
         let items = menu.sections.flatMap { $0["items"] as? [[String: Any]] ?? [] }
-        XCTAssertEqual(items.compactMap { $0["kind"] as? String }, ["files", "connectionInfo", "appSettings", "exit"])
+        XCTAssertEqual(items.compactMap { $0["kind"] as? String }, ["keyboard", "numberRow", "expandRows", "files", "connectionInfo", "appSettings", "exit"])
         XCTAssertTrue(items.contains { $0["title"] as? String == "Disconnect" && $0["destructive"] as? Bool == true })
         XCTAssertEqual(navigation.viewControllers.count, 1)
-        XCTAssertLessThan(navigation.preferredContentSize.height, 400, "Four session actions should not reserve a full-size sheet")
-        let last = menu.tableView.rectForRow(at: IndexPath(row: 0, section: 1))
+        XCTAssertLessThan(navigation.preferredContentSize.height, 600, "Session and keyboard-recovery actions should fit a compact menu")
+        let last = menu.tableView.rectForRow(at: IndexPath(row: 0, section: menu.sections.count - 1))
         let visible = menu.tableView.convert(last, to: navigation.view)
         let bottomPadding = navigation.view.bounds.maxY - visible.maxY
         XCTAssertGreaterThanOrEqual(bottomPadding, 0, "The final action must be fully visible")

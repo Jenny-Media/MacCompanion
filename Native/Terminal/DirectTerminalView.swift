@@ -846,6 +846,10 @@ private struct TerminalSurface: UIViewControllerRepresentable {
             presentControlsMenu("Appearance", sections: [["title": "Terminal Colors", "items": choices]])
         case "session":
             presentControlsMenu(session.mac.name, sections: [
+                ["title": "Keyboard Bar", "items": [
+                    ["kind": "keyboard", "title": terminal.isFirstResponder ? "Hide Keyboard" : "Show Keyboard", "symbol": "keyboard"],
+                    ["kind": "numberRow", "title": keyboardBar.showsNumberRow ? "Hide Numbers" : "Show Numbers", "symbol": "textformat.123"],
+                    ["kind": "expandRows", "title": keyboardBar.showsExtraRows ? "Collapse Rows" : "Expand Rows", "symbol": "rectangle.expand.vertical"]]],
                 ["title": "Session", "items": [
                     ["kind": "files", "title": filesStatus.isEmpty ? "Files" : "Files · " + filesStatus, "symbol": "folder", "submenu": true],
                     ["kind": "connectionInfo", "title": "Connection Details", "symbol": "info.circle"],
@@ -861,6 +865,8 @@ private struct TerminalSurface: UIViewControllerRepresentable {
             let wasVisible = terminal.isFirstResponder
             session.toggleKeyboard?()
             if wasVisible != terminal.isFirstResponder && !feedbackHandled { keyboardBar.keyFeedback.feedback("selection") }
+        case "expandRows":
+            keyboardBar.showsExtraRows.toggle(); persistBarLayout(); view.setNeedsLayout()
         case "numberRow":
             keyboardBar.showsNumberRow.toggle()
             if !feedbackHandled { keyboardBar.keyFeedback.feedback("selection") }

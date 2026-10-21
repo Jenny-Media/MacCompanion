@@ -153,7 +153,7 @@ import UIKit
         let sent = NSPredicate(format: "label CONTAINS %@", "6f726967696e616c")
         let received = expectation(for: sent, evaluatedWith: app.staticTexts["controls-qa-input"])
         await fulfillment(of: [received], timeout: 5)
-        app.buttons["terminal-keyboard-toggle"].tap()
+        revealKey(app.buttons["terminal-keyboard-toggle"], app: app); app.buttons["terminal-keyboard-toggle"].tap()
         try await waitForSoftwareKeyboard(app)
         app.typeText("q")
         try await assertInput("6f726967696e616c71", app: app)
@@ -213,7 +213,7 @@ import UIKit
         let command = app.buttons["terminal-keypad-Cmd"]
         reveal(command, app: app)
         XCTAssertTrue(command.waitForExistence(timeout: 5)); XCTAssertTrue(command.isEnabled)
-        command.tap(); XCTAssertTrue(command.label.contains("Next Key"))
+        command.tap(); XCTAssertTrue((command.value as? String) == "Next Key")
         findKey("Home", app: app)
         app.buttons["terminal-keypad-home"].tap()
         try await assertInput("1b5b313b39481b5b313b393a3348", app: app)
@@ -221,7 +221,7 @@ import UIKit
         reveal(advanced, app: app)
         if advanced.value as? String != "Expanded" { advanced.tap() }
         reveal(command, app: app)
-        XCTAssertTrue(command.label.contains("Off"))
+        XCTAssertTrue((command.value as? String) == "Off")
         capture("command-one-shot-negotiated-remote", app: app)
         app.buttons["Done"].tap()
     }
@@ -239,12 +239,12 @@ import UIKit
         toggle.tap(); try await waitForSoftwareKeyboard(app)
         XCTAssertEqual(number.frame.midY - toggle.frame.midY, numberY, accuracy: 1)
         capture("compact-numbers-top-native-keyboard", app: app)
-        app.buttons["terminal-row-expand"].tap()
+        revealKey(app.buttons["terminal-row-expand"], app: app); app.buttons["terminal-row-expand"].tap()
         XCTAssertTrue(app.buttons["Home"].exists)
         capture("expanded-rows-native-keyboard", app: app)
-        toggle.tap(); XCTAssertTrue(app.buttons["Home"].exists)
+        revealKey(toggle, app: app); toggle.tap(); XCTAssertTrue(app.buttons["Home"].exists)
         capture("expanded-rows-keyboard-hidden", app: app)
-        app.buttons["terminal-row-expand"].tap()
+        revealKey(app.buttons["terminal-row-expand"], app: app); app.buttons["terminal-row-expand"].tap()
         app.buttons["terminal-controls"].tap()
         let session = app.buttons["session-action-session"], settings = app.buttons["session-action-customize"], keypad = app.buttons["session-action-moreKeys"]
         let shortcuts = app.buttons["session-action-savedShortcuts"], text = app.buttons["session-action-savedText"]
@@ -327,12 +327,12 @@ import UIKit
         let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
         live(app); palette(app)
         let ctrl = app.buttons["terminal-keypad-Ctrl"]
-        ctrl.tap(); XCTAssertTrue(ctrl.label.contains("Next Key"))
+        ctrl.tap(); XCTAssertTrue((ctrl.value as? String) == "Next Key")
         findKey("Home", app: app); app.buttons["terminal-keypad-home"].tap()
-        XCTAssertTrue(ctrl.label.contains("Off"))
-        app.buttons["Lock Ctrl"].tap()
+        XCTAssertTrue((ctrl.value as? String) == "Off")
+        ctrl.press(forDuration: 0.7)
         findKey("End", app: app); app.buttons["terminal-keypad-end"].tap()
-        XCTAssertTrue(ctrl.label.contains("Locked")); app.buttons["Unlock Ctrl"].tap()
+        XCTAssertEqual(ctrl.value as? String, "On"); capture("modifier-kept-on-without-lock-icon", app: app); ctrl.tap()
         capture("all-keys-modifier-states", app: app)
         findKey("F8", app: app)
         let f8 = app.buttons["terminal-keypad-f8"]; f8.press(forDuration: 1)
@@ -355,7 +355,7 @@ import UIKit
         capture("saved-multiline-review-confirmation", app: app)
         app.alerts.buttons["Cancel"].tap(); try await assertInput(before, app: app)
         app.buttons["compose-back"].tap()
-        app.buttons["terminal-keyboard-toggle"].tap()
+        revealKey(app.buttons["terminal-keyboard-toggle"], app: app); app.buttons["terminal-keyboard-toggle"].tap()
         XCUIDevice.shared.orientation = .landscapeLeft
         XCTAssertTrue(app.buttons["terminal-keyboard-toggle"].waitForExistence(timeout: 5))
         capture("stable-rows-landscape", app: app)
@@ -427,14 +427,14 @@ import UIKit
         XCTAssertTrue(app.buttons["terminal-keypad-Ctrl"].waitForExistence(timeout: 5))
         capture("keypad-accessibility-xxxl", app: app)
         app.buttons["terminal-keypad-Ctrl"].tap()
-        XCTAssertTrue(app.buttons["terminal-keypad-Ctrl"].label.contains("Next Key"))
+        XCTAssertTrue((app.buttons["terminal-keypad-Ctrl"].value as? String) == "Next Key")
         app.buttons["Done"].tap()
     }
     func testRowEditorAddsReordersAndMovesOneSharedItem() async throws {
         let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
         open(app)
         let addRow = app.buttons["terminal-add-row"]; reveal(addRow, app: app); addRow.tap()
-        app.buttons["Shortcuts"].tap()
+        app.buttons["Blank"].tap()
         let name = app.textFields.matching(NSPredicate(format: "identifier BEGINSWITH %@", "terminal-row-name-")).firstMatch
         XCTAssertTrue(name.waitForExistence(timeout: 5))
         capture("row-editor-custom-row-preview", app: app)
@@ -445,7 +445,7 @@ import UIKit
         XCTAssertEqual(app.staticTexts["controls-qa-count"].label, "Saved items: 1")
         open(app)
         let picker = app.buttons["terminal-item-row"]; reveal(picker, app: app)
-        picker.tap(); app.buttons.matching(NSPredicate(format: "label == %@ AND NOT identifier BEGINSWITH %@", "Shortcuts", "terminal-select-row-")).firstMatch.tap()
+        picker.tap(); app.buttons.matching(NSPredicate(format: "label == %@ AND NOT identifier BEGINSWITH %@", "Custom Row", "terminal-select-row-")).firstMatch.tap()
         capture("row-editor-move-shared-item", app: app)
         app.buttons["terminal-controls-save"].tap()
         XCTAssertEqual(app.staticTexts["controls-qa-count"].label, "Saved items: 1")
@@ -486,13 +486,58 @@ import UIKit
         revealKey(app.buttons["Esc"], app: app)
         try await assertInput("", app: app)
         capture("reading-mode-keyboard-hidden", app: app)
-        app.buttons["terminal-keyboard-toggle"].tap(); try await waitForSoftwareKeyboard(app)
+        revealKey(app.buttons["terminal-keyboard-toggle"], app: app); app.buttons["terminal-keyboard-toggle"].tap(); try await waitForSoftwareKeyboard(app)
         XCTAssertFalse(app.buttons["9"].exists)
         capture("reading-mode-native-keyboard", app: app)
-        app.buttons["terminal-keyboard-toggle"].tap()
+        revealKey(app.buttons["terminal-keyboard-toggle"], app: app); app.buttons["terminal-keyboard-toggle"].tap()
         revealKey(numbers, app: app); numbers.tap()
         XCTAssertTrue(app.buttons["9"].waitForExistence(timeout: 5))
         try await assertInput("", app: app)
+    }
+    func testRealPreviewBuiltinDragPresetsRestoreAndUndoKeepSavedText() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        open(app)
+        let ctrl = app.buttons["terminal-preview-item-control-ctrl"]
+        revealPreviewKey(ctrl, app: app); ctrl.tap()
+        let remove = app.buttons["terminal-remove-placement"]; reveal(remove, app: app); remove.tap()
+        XCTAssertFalse(ctrl.exists)
+        let undo = app.buttons["terminal-editor-undo"]; reveal(undo, app: app, up: false); undo.tap()
+        XCTAssertTrue(ctrl.exists)
+        capture("realistic-contiguous-bar-preview", app: app)
+        let removeNavigation = app.buttons["Remove Navigation Row"]; reveal(removeNavigation, app: app); removeNavigation.tap()
+        let addRow = app.buttons["terminal-add-row"]; reveal(addRow, app: app); addRow.tap(); app.buttons["Function Keys"].tap()
+        let esc = app.buttons["terminal-preview-item-palette-key-escape"]
+        revealPreviewKey(esc, app: app)
+        let f1 = app.buttons["terminal-preview-item-palette-key-f1"]
+        reveal(f1, app: app, up: false)
+        esc.press(forDuration: 0.8, thenDragTo: f1)
+        XCTAssertFalse(app.scrollViews["terminal-row-preview-scroll"].buttons["terminal-preview-item-palette-key-escape"].exists)
+        capture("builtin-dragged-between-rows", app: app)
+        let restore = app.buttons["terminal-restore-bar"]; reveal(restore, app: app); restore.tap()
+        app.buttons["Restore Layout"].tap()
+        XCTAssertTrue(ctrl.exists)
+        reveal(undo, app: app, up: false); undo.tap()
+        XCTAssertTrue(app.buttons["terminal-preview-item-palette-key-f12"].exists)
+        reveal(restore, app: app); restore.tap(); app.buttons["Restore Layout"].tap()
+        capture("restore-default-keeps-saved-items", app: app)
+        app.buttons["terminal-controls-save"].tap()
+        XCTAssertEqual(app.staticTexts["controls-qa-count"].label, "Saved items: 1")
+        XCTAssertEqual(app.staticTexts["controls-qa-placements"].label, "Row: off; Menu: on")
+    }
+    func testAllBottomControlsScrollAndFloatingButtonStaysFixed() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        live(app)
+        let floating = app.buttons["terminal-controls"], anchor = floating.frame
+        let toggle = app.buttons["terminal-keyboard-toggle"], start = toggle.frame
+        revealKey(app.buttons["terminal-row-expand"], app: app)
+        XCTAssertLessThan(toggle.frame.minX, start.minX - 50)
+        XCTAssertEqual(floating.frame, anchor)
+        capture("whole-bottom-row-scrolls", app: app)
+        floating.tap(); app.buttons["session-action-session"].tap()
+        let show = app.descendants(matching: .any).matching(identifier: "session-menu-keyboard").firstMatch; XCTAssertTrue(show.waitForExistence(timeout: 5)); show.tap()
+        try await waitForSoftwareKeyboard(app)
+        try await assertInput("", app: app)
+        capture("keyboard-recovery-from-floating-menu", app: app)
     }
     func testInteractiveReview() async throws {
         guard ProcessInfo.processInfo.environment["MACCOMPANION_TERMINAL_CONTROLS_REVIEW"] == "1" else { throw XCTSkip("Opt-in interactive review") }

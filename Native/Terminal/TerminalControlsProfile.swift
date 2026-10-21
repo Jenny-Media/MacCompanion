@@ -59,16 +59,64 @@ enum TerminalControlsDestination: String, CaseIterable, Identifiable, Hashable {
     var symbol: String { self == .keyboard ? "keyboard" : "ellipsis.circle" }
 }
 
+/// A bar placement is independent from a saved definition. Built-in keys are
+/// editable without creating duplicate shortcuts in the shared library.
+enum TerminalBarItem: Codable, Hashable, Identifiable {
+    case control(Control), key(String), saved(UUID)
+    enum Control: String, Codable, CaseIterable { case keyboard, ctrl, alt, shift, command, numbers, keypad, expand }
+    var id: String {
+        switch self { case .control(let value): "control-" + value.rawValue; case .key(let value): "palette-" + value; case .saved(let value): "saved-" + value.uuidString }
+    }
+    var savedID: UUID? { if case .saved(let id) = self { id } else { nil } }
+    var control: Control? { if case .control(let value) = self { value } else { nil } }
+    var palette: TerminalPaletteKey? { if case .key(let id) = self { TerminalKeyCatalog.key(id) } else { nil } }
+    var modifier: TerminalModifiers? {
+        switch control { case .ctrl: .ctrl; case .alt: .alt; case .shift: .shift; case .command: .command; default: nil }
+    }
+    func title(in profile: TerminalControlsProfile) -> String {
+        if let id = savedID { return profile.actions.first { $0.id == id }?.title ?? "Saved Item" }
+        if let palette { return palette.name }
+        switch control {
+        case .keyboard: return "Keyboard"; case .ctrl: return "Ctrl"; case .alt: return "Alt"
+        case .shift: return "Shift"; case .command: return "Command"; case .numbers: return "Numbers Toggle"
+        case .keypad: return "Keypad"; case .expand: return "Expand Rows"; case nil: return "Key"
+        }
+    }
+    var symbol: String? {
+        if let key = palette?.accessory {
+            return switch key { case .escape: "escape"; case .tab: "arrow.right.to.line"; case .up: "arrow.up"; case .down: "arrow.down"; case .left: "arrow.left"; case .right: "arrow.right"; default: nil }
+        }
+        return switch control {
+        case .keyboard: "keyboard"; case .ctrl: "control"; case .alt: "option"; case .shift: "shift"; case .command: "command"
+        case .numbers: "textformat.123"; case .keypad: "rectangle.grid.3x2"; case .expand: "rectangle.expand.vertical"; case nil: nil
+        }
+    }
+}
+
+enum TerminalRowPreset: String, Codable, CaseIterable, Identifiable {
+    case numbers = "Numbers", essentials = "Essentials", navigation = "Navigation", functions = "Function Keys", symbols = "Symbols", shell = "Shell Shortcuts", blank = "Blank"
+    var id: String { rawValue }
+    var items: [TerminalBarItem] {
+        if self == .blank { return [] }
+        if self == .essentials { return [.control(.keyboard), .key("key-escape"), .key("key-tab"), .control(.ctrl), .control(.alt), .control(.shift), .key("key-up"), .key("key-down"), .control(.numbers), .control(.keypad), .control(.expand)] }
+        let group = self == .shell ? "Common Shortcuts" : rawValue
+        return (TerminalKeyCatalog.groups.first { $0.title == group }?.keys ?? []).map { .key($0.id) }
+    }
+}
+
 struct TerminalKeyboardRow: Codable, Identifiable, Equatable {
     enum Kind: String, Codable { case main, numbers, navigation, custom }
     var id = UUID()
     var kind: Kind
     var title: String
     var actionIDs: [UUID] = []
+    var items: [TerminalBarItem]?
+    var preset: TerminalRowPreset?
+    var expandedOnly: Bool?
     static let mainID = UUID(uuidString: "00000000-0000-0000-0000-000000000101")!
     static let numbersID = UUID(uuidString: "00000000-0000-0000-0000-000000000102")!
     static let navigationID = UUID(uuidString: "00000000-0000-0000-0000-000000000103")!
-    var extra: Bool { kind == .navigation || kind == .custom }
+    var extra: Bool { expandedOnly ?? (kind == .navigation || kind == .custom) }
 }
 
 struct TerminalControlsProfile: Codable, Equatable {
@@ -94,19 +142,74 @@ struct TerminalControlsProfile: Codable, Equatable {
             .init(id: TerminalKeyboardRow.mainID, kind: .main, title: "Main Row")]
         let assigned = Set(rows.flatMap(\.actionIDs))
         if let main = rows.firstIndex(where: { $0.kind == .main }) {
-            rows[main].actionIDs += placed(.keyboard).map(\.id).filter { !assigned.contains($0) }
+            let missing = placed(.keyboard).map(\.id).filter { !assigned.contains($0) }
+            rows[main].actionIDs += missing
+            if rows[main].items != nil { rows[main].items! += missing.map { .saved($0) } }
         }
         return rows
+    }
+    func barItems(in row: TerminalKeyboardRow) -> [TerminalBarItem] {
+        if let items = row.items { return items }
+        var items: [TerminalBarItem] = switch row.kind {
+        case .main: TerminalRowPreset.essentials.items
+        case .numbers: TerminalRowPreset.numbers.items
+        case .navigation: TerminalRowPreset.navigation.items
+        case .custom: []
+        }
+        if row.kind == .main {
+            if commandInBar == true { items.insert(.control(.command), at: 6) }
+            if navigationRow == false { items.removeAll { $0 == .key("key-up") || $0 == .key("key-down") } }
+        }
+        return items + row.actionIDs.map { .saved($0) }
+    }
+    private mutating func editRows(_ edit: (inout [TerminalKeyboardRow]) -> Void) {
+        var rows = resolvedRows
+        for index in rows.indices { rows[index].items = barItems(in: rows[index]) }
+        edit(&rows)
+        for index in rows.indices { rows[index].actionIDs = (rows[index].items ?? []).compactMap(\.savedID) }
+        let placed = Set(rows.flatMap(\.actionIDs))
+        for index in actions.indices { actions[index].inRow = placed.contains(actions[index].id) }
+        keyboardRows = rows
+    }
+    mutating func placeBarItem(_ item: TerminalBarItem, in rowID: UUID, from sourceRowID: UUID? = nil, before target: TerminalBarItem? = nil) {
+        guard resolvedRows.contains(where: { $0.id == rowID }) else { return }
+        editRows { rows in
+            for index in rows.indices where item.control != nil || item.savedID != nil || rows[index].id == sourceRowID || rows[index].id == rowID { rows[index].items?.removeAll { $0 == item } }
+            let index = rows.firstIndex { $0.id == rowID }!
+            let position = target.flatMap { rows[index].items?.firstIndex(of: $0) } ?? rows[index].items!.endIndex
+            rows[index].items!.insert(item, at: position)
+        }
+    }
+    mutating func removeBarItem(_ item: TerminalBarItem, in rowID: UUID? = nil) {
+        editRows { rows in for index in rows.indices where rowID == nil || rows[index].id == rowID { rows[index].items?.removeAll { $0 == item } } }
+    }
+    mutating func restoreRow(_ id: UUID) {
+        guard let row = resolvedRows.first(where: { $0.id == id }) else { return }
+        let preset = row.preset ?? (row.kind == .main ? .essentials : row.kind == .numbers ? .numbers : row.kind == .navigation ? .navigation : .blank)
+        // Move any existing preset keys here; restore never duplicates a control.
+        for item in barItems(in: row) { removeBarItem(item, in: id) }
+        for item in preset.items { placeBarItem(item, in: id) }
+    }
+    mutating func restoreKeyboardBar() {
+        for index in actions.indices { actions[index].inRow = false }
+        rowOrder = nil; keyboardRows = nil; numberRow = true; navigationRow = true; rowsExpanded = false; commandInBar = false
+    }
+    @discardableResult mutating func addPreset(_ preset: TerminalRowPreset) -> UUID? {
+        guard let id = addRow(title: preset == .blank ? "Custom Row" : preset.rawValue) else { return nil }
+        editRows { rows in
+            let index = rows.firstIndex { $0.id == id }!
+            rows[index].preset = preset
+            if preset == .numbers && !rows.contains(where: { $0.kind == .numbers }) { rows[index].kind = .numbers; rows[index].expandedOnly = false }
+        }
+        for item in preset.items { placeBarItem(item, in: id) }
+        return id
     }
     func placed(in row: TerminalKeyboardRow) -> [TerminalControlAction] {
         row.actionIDs.compactMap { id in actions.first { $0.id == id && $0.inRow } }
     }
     mutating func place(_ id: UUID, in rowID: UUID) {
-        var rows = resolvedRows
-        guard let row = rows.firstIndex(where: { $0.id == rowID && $0.kind != .numbers }),
-              let item = actions.firstIndex(where: { $0.id == id }) else { return }
-        for index in rows.indices { rows[index].actionIDs.removeAll { $0 == id } }
-        rows[row].actionIDs.append(id); actions[item].inRow = true; keyboardRows = rows
+        guard actions.contains(where: { $0.id == id }) else { return }
+        placeBarItem(.saved(id), in: rowID)
     }
     mutating func moveRow(_ id: UUID, offset: Int) {
         var rows = resolvedRows
@@ -115,9 +218,8 @@ struct TerminalControlsProfile: Codable, Equatable {
     }
     mutating func removeRow(_ id: UUID) {
         let rows = resolvedRows
-        guard let row = rows.first(where: { $0.id == id && $0.extra }) else { return }
-        for item in row.actionIDs { pin(item, in: .keyboard, enabled: false) }
-        keyboardRows = rows.filter { $0.id != id }
+        guard rows.contains(where: { $0.id == id && $0.kind != .main }) else { return }
+        editRows { $0.removeAll { $0.id == id } }
     }
     @discardableResult mutating func addRow(title: String = "Custom Row", navigation: Bool = false) -> UUID? {
         var rows = resolvedRows
@@ -135,6 +237,10 @@ struct TerminalControlsProfile: Codable, Equatable {
         }.map(\.element)
     }
     mutating func move(_ id: UUID, to target: UUID, in destination: TerminalControlsDestination) {
+        if destination == .keyboard, let rows = keyboardRows,
+           let row = rows.first(where: { $0.items != nil && $0.actionIDs.contains(id) && $0.actionIDs.contains(target) }) {
+            placeBarItem(.saved(id), in: row.id, before: .saved(target)); return
+        }
         if destination == .keyboard, var rows = keyboardRows,
            let row = rows.firstIndex(where: { $0.actionIDs.contains(id) && $0.actionIDs.contains(target) }),
            let from = rows[row].actionIDs.firstIndex(of: id), let to = rows[row].actionIDs.firstIndex(of: target), from != to {
@@ -147,13 +253,13 @@ struct TerminalControlsProfile: Codable, Equatable {
     }
     mutating func delete(_ id: UUID) {
         actions.removeAll { $0.id == id }; rowOrder?.removeAll { $0 == id }; menuOrder?.removeAll { $0 == id }
-        if keyboardRows != nil { for index in keyboardRows!.indices { keyboardRows![index].actionIDs.removeAll { $0 == id } } }
+        if keyboardRows != nil { for index in keyboardRows!.indices { keyboardRows![index].actionIDs.removeAll { $0 == id }; keyboardRows![index].items?.removeAll { $0.savedID == id } } }
     }
     mutating func pin(_ id: UUID, in destination: TerminalControlsDestination, enabled: Bool) {
         guard let index = actions.firstIndex(where: { $0.id == id }) else { return }
         if destination == .keyboard { actions[index].inRow = enabled } else { actions[index].inMenu = enabled }
         if destination == .keyboard, !enabled, keyboardRows != nil {
-            for row in keyboardRows!.indices { keyboardRows![row].actionIDs.removeAll { $0 == id } }
+            for row in keyboardRows!.indices { keyboardRows![row].actionIDs.removeAll { $0 == id }; keyboardRows![row].items?.removeAll { $0.savedID == id } }
         }
     }
     var valid: Bool {
@@ -168,11 +274,26 @@ struct TerminalControlsProfile: Codable, Equatable {
     private var validRows: Bool {
         guard let rows = keyboardRows else { return true }
         let ids = rows.flatMap(\.actionIDs)
-        return (2...4).contains(rows.count) && Set(rows.map(\.id)).count == rows.count
-            && rows.filter { $0.kind == .main }.count == 1 && rows.filter { $0.kind == .numbers }.count == 1
+        return (1...4).contains(rows.count) && Set(rows.map(\.id)).count == rows.count
+            && rows.filter { $0.kind == .main }.count == 1 && rows.filter { $0.kind == .numbers }.count <= 1
             && rows.filter { $0.kind == .navigation }.count <= 1
-            && rows.allSatisfy { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.title.count <= 40 && ($0.kind != .numbers || $0.actionIDs.isEmpty) }
+            && rows.allSatisfy { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.title.count <= 40 && ($0.kind != .numbers || $0.items != nil || $0.actionIDs.isEmpty) }
             && ids.count <= 4096 && Set(ids).count == ids.count && Set(ids).isSubset(of: Set(actions.map(\.id)))
+            && validBarItems(rows)
+    }
+    private func validBarItems(_ rows: [TerminalKeyboardRow]) -> Bool {
+        let items = rows.flatMap { $0.items ?? [] }
+        let singular = items.filter { $0.control != nil || $0.savedID != nil }
+        return items.count <= 4096 && Set(singular).count == singular.count && rows.allSatisfy { row in
+            guard row.items == nil || Set(row.items!).count == row.items!.count else { return false }
+            return row.items == nil || row.actionIDs == row.items!.compactMap(\.savedID)
+        } && items.allSatisfy { item in
+            switch item {
+            case .control: true
+            case .key(let id): TerminalKeyCatalog.key(id) != nil
+            case .saved(let id): actions.contains { $0.id == id && $0.inRow }
+            }
+        }
     }
     static var defaults: Self { .init(actions: DirectControlMode.terminal.defaults.map(TerminalControlAction.init)) }
     mutating func importKeyboard(_ preferences: TerminalKeyboardPreferences, macID: UUID) {

@@ -34,8 +34,8 @@ struct TerminalKeypad: View {
     @FocusState private var searching: Bool
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var textSize
-    @ScaledMetric(relativeTo: .body) private var keyWidth = 48.0
-    private var columns: [GridItem] { [GridItem(.adaptive(minimum: min(320, keyWidth)), spacing: 6)] }
+    @ScaledMetric(relativeTo: .body) private var keyWidth = 44.0
+    private var columns: [GridItem] { [GridItem(.adaptive(minimum: min(320, keyWidth)), spacing: 4)] }
     init(state: TerminalKeypadState, macName: String, numbersFirst: Bool = false, onClose: (() -> Void)? = nil) {
         self.state = state; self.macName = macName; self.onClose = onClose
         _query = State(initialValue: numbersFirst ? "Numbers" : "")
@@ -43,7 +43,7 @@ struct TerminalKeypad: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
                     if textSize.isAccessibilitySize {
                         pagePicker.pickerStyle(.menu)
                     } else { pagePicker.pickerStyle(.segmented) }
@@ -52,7 +52,7 @@ struct TerminalKeypad: View {
                         .accessibilityIdentifier("terminal-keypad-search")
                     if let notice = state.notice { Text(notice).font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("terminal-keypad-notice") }
                     if page == .keys { allKeys } else { savedItems }
-                }.padding(12).disabled(!state.ready)
+                }.padding(8).disabled(!state.ready)
             }.scrollDismissesKeyboard(.interactively).navigationTitle("Keypad").directInlineNavigationTitle()
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { if let onClose { onClose() } else { dismiss() } } } }
                 .onChange(of: page) { _, _ in query = "" }
@@ -64,16 +64,16 @@ struct TerminalKeypad: View {
             .accessibilityIdentifier("terminal-keypad-page")
     }
     private var allKeys: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Tap to send once. Hold a key to pin it. Modifiers apply to the next key; lock for repeated keys.").font(.caption).foregroundStyle(.secondary)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: textSize.isAccessibilitySize ? 260 : 90), spacing: 6)], spacing: 6) {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 4) {
                 ForEach([TerminalModifiers.ctrl, .alt, .shift], id: \.rawValue) { modifierButtons($0) }
             }
+            Text("Tap for next key · Long-press to keep on").font(.caption2).foregroundStyle(.secondary)
             ForEach(TerminalKeyCatalog.groups) { group in
                 let keys = TerminalKeyCatalog.matching(query, in: group)
                 if !keys.isEmpty {
                     Text(group.title).font(.subheadline.weight(.semibold))
-                    LazyVGrid(columns: columns, spacing: 6) { ForEach(keys) { keyButton($0) } }
+                    LazyVGrid(columns: columns, spacing: 4) { ForEach(keys) { keyButton($0) } }
                 }
             }
             if query.isEmpty {
@@ -99,7 +99,7 @@ struct TerminalKeypad: View {
         }
     }
     private func keyButton(_ key: TerminalPaletteKey) -> some View {
-        Button { searching = false; state.send("paletteKey-" + key.id) } label: { Text(key.title).frame(maxWidth: .infinity, minHeight: 44) }
+        Button { searching = false; state.send("paletteKey-" + key.id) } label: { Text(key.title).lineLimit(1).minimumScaleFactor(textSize.isAccessibilitySize ? 1 : 0.8).frame(maxWidth: .infinity, minHeight: 44) }
             .buttonStyle(TerminalKeypadButtonStyle()).accessibilityLabel(key.name)
             .accessibilityIdentifier("terminal-keypad-" + (key.accessory?.rawValue ?? key.id))
             .contextMenu {
@@ -138,16 +138,24 @@ struct TerminalKeypad: View {
     private func modifierButtons(_ modifier: TerminalModifiers) -> some View {
         let locked = state.locked.contains(modifier), active = locked || state.armed.contains(modifier)
         let title = modifier.title
-        return HStack(spacing: 0) {
-            Button { state.toggle(modifier, false) } label: {
-                VStack(spacing: 0) { Text(title); Text(locked ? "Locked" : active ? "Next Key" : "Off").font(.caption2) }
-                    .frame(maxWidth: .infinity, minHeight: 44)
-            }.accessibilityIdentifier("terminal-keypad-" + title)
-            Button { state.toggle(modifier, true) } label: {
-                Image(systemName: locked ? "lock.fill" : "lock.open").frame(minWidth: 44, minHeight: 44)
-            }.accessibilityLabel((locked ? "Unlock " : "Lock ") + title)
-        }.buttonStyle(TerminalKeypadButtonStyle()).tint(active ? .accentColor : .primary)
+        return VStack(spacing: 0) {
+            Text(title).font(.subheadline.weight(.medium))
+            Text(locked ? "On" : active ? "Next" : "Off").font(.caption2)
+        }.frame(maxWidth: .infinity, minHeight: 44)
+            .foregroundStyle(active ? Color.white : Color.primary)
+            .background(active ? Color.accentColor : Color(uiColor: .secondarySystemFill), in: .rect(cornerRadius: 8))
+            .contentShape(Rectangle())
+            .gesture(LongPressGesture(minimumDuration: 0.5).exclusively(before: TapGesture()).onEnded { value in
+                switch value { case .first: state.toggle(modifier, true); case .second: state.toggle(modifier, false) }
+            })
+            .accessibilityElement(children: .ignore).accessibilityAddTraits(.isButton)
+            .accessibilityLabel(title).accessibilityValue(locked ? "On" : active ? "Next Key" : "Off")
+            .accessibilityHint("Tap for the next key. Long-press to keep on. Tap again to turn off.")
+            .accessibilityIdentifier("terminal-keypad-" + title)
+            .accessibilityAction { state.toggle(modifier, false) }
+            .accessibilityAction(named: locked ? "Turn " + title + " Off" : "Keep " + title + " On") { state.toggle(modifier, true) }
             .disabled(modifier == .command && !state.supportsCommand)
+
     }
 }
 

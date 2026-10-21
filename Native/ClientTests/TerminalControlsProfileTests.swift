@@ -245,5 +245,69 @@ import Security
         XCTAssertFalse(profile.valid)
     }
 
+    func testEditableBuiltinsSurviveRoundTripWithoutCreatingSavedDefinitions() throws {
+        var profile = TerminalControlsProfile.defaults
+        let original = profile.actions, main = TerminalKeyboardRow.mainID
+        profile.placeBarItem(.control(.keyboard), in: main, before: .control(.shift))
+        profile.removeBarItem(.key("key-escape"), in: main)
+        let row = try XCTUnwrap(profile.resolvedRows.first { $0.id == main })
+        XCTAssertFalse(profile.barItems(in: row).contains(.key("key-escape")))
+        XCTAssertTrue(profile.valid); XCTAssertEqual(profile.actions, original)
+        profile.removeRow(TerminalKeyboardRow.numbersID)
+        let numbers = try XCTUnwrap(profile.addPreset(.numbers))
+        XCTAssertEqual(profile.resolvedRows.first { $0.id == numbers }?.kind, .numbers)
+        XCTAssertTrue(profile.valid)
+        XCTAssertEqual(try JSONDecoder().decode(TerminalControlsProfile.self, from: JSONEncoder().encode(profile)), profile)
+    }
+    func testMovingOneBuiltinPlacementPreservesItsCopyInAnotherRow() throws {
+        var profile = TerminalControlsProfile.defaults
+        let main = TerminalKeyboardRow.mainID, nav = TerminalKeyboardRow.navigationID
+        let custom = try XCTUnwrap(profile.addPreset(.blank))
+        profile.placeBarItem(.key("key-up"), in: custom, from: main)
+        XCTAssertTrue(profile.valid)
+        XCTAssertFalse(profile.barItems(in: profile.resolvedRows.first { $0.id == main }!).contains(.key("key-up")))
+        XCTAssertTrue(profile.barItems(in: profile.resolvedRows.first { $0.id == nav }!).contains(.key("key-up")))
+        profile.removeBarItem(.key("key-up"), in: custom)
+        XCTAssertTrue(profile.barItems(in: profile.resolvedRows.first { $0.id == nav }!).contains(.key("key-up")))
+    }
+    func testRestoreLayoutKeepsLibraryMenuAndImportJournalAndSavedBytes() throws {
+        let saved = TerminalControlAction(title: "Keep", kind: .text, text: "  中文😀\n", inRow: true)
+        var profile = TerminalControlsProfile(actions: [saved]); profile.importedMacs = [UUID()]
+        let journal = profile.importedMacs, menu = profile.placed(.menu)
+        let custom = try XCTUnwrap(profile.addPreset(.functions)); profile.place(saved.id, in: custom)
+        XCTAssertTrue(profile.valid)
+        profile.restoreRow(custom)
+        XCTAssertTrue(profile.valid); XCTAssertEqual(profile.actions.first?.text, saved.text)
+        XCTAssertFalse(profile.actions[0].inRow); XCTAssertEqual(profile.placed(.menu).map(\.id), menu.map(\.id))
+        profile.restoreKeyboardBar()
+        XCTAssertTrue(profile.valid); XCTAssertEqual(profile.importedMacs, journal)
+        XCTAssertEqual(profile.actions[0].id, saved.id); XCTAssertEqual(profile.actions[0].text, saved.text)
+        XCTAssertTrue(profile.actions[0].inMenu); XCTAssertFalse(profile.actions[0].inRow)
+        XCTAssertNil(profile.keyboardRows); XCTAssertEqual(profile.numberRow, true)
+    }
+    func testEachPresetIsEditableAndDoesNotPolluteSavedCollection() throws {
+        for preset in TerminalRowPreset.allCases {
+            var profile = TerminalControlsProfile.defaults
+            let actions = profile.actions
+            let id = try XCTUnwrap(profile.addPreset(preset))
+            XCTAssertTrue(profile.valid, preset.rawValue); XCTAssertEqual(profile.actions, actions)
+            let row = try XCTUnwrap(profile.resolvedRows.first { $0.id == id })
+            XCTAssertEqual(profile.barItems(in: row), preset.items)
+            if let first = preset.items.first { profile.removeBarItem(first, in: id) }
+            profile.restoreRow(id)
+            XCTAssertEqual(profile.barItems(in: profile.resolvedRows.first { $0.id == id }!), preset.items)
+            XCTAssertTrue(profile.valid)
+        }
+    }
+    func testEditableRowsRejectUnknownKeysDuplicateControlsAndMissingSavedItems() throws {
+        var profile = TerminalControlsProfile.defaults
+        profile.placeBarItem(.key("not-in-catalog"), in: TerminalKeyboardRow.mainID)
+        XCTAssertFalse(profile.valid)
+        profile.restoreKeyboardBar(); profile.placeBarItem(.control(.ctrl), in: TerminalKeyboardRow.mainID)
+        profile.keyboardRows![0].items!.append(.control(.ctrl)); XCTAssertFalse(profile.valid)
+        profile.restoreKeyboardBar(); profile.placeBarItem(.saved(UUID()), in: TerminalKeyboardRow.mainID)
+        XCTAssertFalse(profile.valid)
+    }
+
 }
 #endif
