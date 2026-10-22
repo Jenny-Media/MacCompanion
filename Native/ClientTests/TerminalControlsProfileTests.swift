@@ -245,14 +245,14 @@ import Security
         XCTAssertNil(profile.rowsExpanded); XCTAssertNil(profile.commandInBar)
         let custom = try XCTUnwrap(profile.addRow(title: "Shortcuts"))
         profile.place(snippet.id, in: custom)
-        XCTAssertEqual(profile.resolvedRows.filter { $0.actionIDs.contains(snippet.id) }.map(\.id), [custom])
+        XCTAssertEqual(profile.resolvedRows.filter { $0.actionIDs.contains(snippet.id) }.map(\.id), [custom, TerminalKeyboardRow.mainID])
         profile.moveRow(TerminalKeyboardRow.numbersID, offset: 1)
         profile.rowsExpanded = false
         let decoded = try JSONDecoder().decode(TerminalControlsProfile.self, from: JSONEncoder().encode(profile))
         XCTAssertEqual(decoded, profile); XCTAssertTrue(decoded.valid)
         profile.removeRow(custom)
-        XCTAssertEqual(profile.actions, [.init(id: snippet.id, title: snippet.title, kind: .text, text: snippet.text, inRow: false)])
-        XCTAssertTrue(profile.valid); XCTAssertFalse(profile.resolvedRows.flatMap(\.actionIDs).contains(snippet.id))
+        XCTAssertEqual(profile.actions, [.init(id: snippet.id, title: snippet.title, kind: .text, text: snippet.text, inRow: true)])
+        XCTAssertTrue(profile.valid); XCTAssertTrue(profile.resolvedRows.flatMap(\.actionIDs).contains(snippet.id))
     }
     func testCatalogPinReusesDefinitionAcrossSurfacesAndPreservesEdits() throws {
         let key = try XCTUnwrap(TerminalKeyCatalog.all.first { $0.accessory == .f8 })
@@ -269,7 +269,7 @@ import Security
         XCTAssertEqual(Set(TerminalKeyCatalog.all.map(\.id)).count, TerminalKeyCatalog.all.count)
         XCTAssertTrue(TerminalKeyCatalog.all.allSatisfy { $0.definition.valid })
     }
-    func testRowValidationRejectsDuplicatePlacementAndPreservesSavedCommand() throws {
+    func testRowValidationRejectsInconsistentPlacementsAndPreservesSavedCommand() throws {
         var item = TerminalControlAction(title: "Command B", kind: .shortcut, inRow: true)
         item.character = 0x42; item.modifiers = [0xffeb]
         var profile = TerminalControlsProfile(actions: [item]); profile.keyboardRows = profile.resolvedRows
@@ -306,7 +306,7 @@ import Security
         let custom = try XCTUnwrap(profile.addPreset(.blank))
         profile.placeBarItem(.key("key-up"), in: custom, from: main)
         XCTAssertTrue(profile.valid)
-        XCTAssertFalse(profile.barItems(in: profile.resolvedRows.first { $0.id == main }!).contains(.key("key-up")))
+        XCTAssertEqual(profile.barItems(in: profile.resolvedRows.first { $0.id == main }!).filter { $0 == .key("key-up") }.count, 1)
         XCTAssertTrue(profile.barItems(in: profile.resolvedRows.first { $0.id == nav }!).contains(.key("key-up")))
         profile.removeBarItem(.key("key-up"), in: custom)
         XCTAssertTrue(profile.barItems(in: profile.resolvedRows.first { $0.id == nav }!).contains(.key("key-up")))
@@ -319,7 +319,7 @@ import Security
         XCTAssertTrue(profile.valid)
         profile.restoreRow(custom)
         XCTAssertTrue(profile.valid); XCTAssertEqual(profile.actions.first?.text, saved.text)
-        XCTAssertFalse(profile.actions[0].inRow); XCTAssertEqual(profile.placed(.menu).map(\.id), menu.map(\.id))
+        XCTAssertTrue(profile.actions[0].inRow); XCTAssertEqual(profile.placed(.menu).map(\.id), menu.map(\.id))
         profile.restoreKeyboardBar()
         XCTAssertTrue(profile.valid); XCTAssertEqual(profile.importedMacs, journal)
         XCTAssertEqual(profile.actions[0].id, saved.id); XCTAssertEqual(profile.actions[0].text, saved.text)
@@ -351,25 +351,27 @@ import Security
         XCTAssertFalse(profile.valid)
     }
 
-    func testDefaultRowsHaveOneHomeForEachBuiltinAndExplicitLegacyCopiesSurvive() throws {
+    func testDefaultsHaveFourArrowsAndExpandSecondAndAllowIntentionalCopies() throws {
         var profile = TerminalControlsProfile.defaults
         let items = profile.resolvedRows.flatMap { profile.barItems(in: $0) }
-        XCTAssertEqual(items.count, Set(items).count)
-        XCTAssertFalse(profile.barItems(in: profile.resolvedRows.first { $0.kind == .main }!).contains(.key("key-up")))
+        XCTAssertEqual(items.filter { $0 == .key("key-up") }.count, 2)
+        let main = profile.resolvedRows.first { $0.kind == .main }!
+        XCTAssertEqual(profile.barItems(in: main), TerminalRowPreset.essentials.items)
+        XCTAssertEqual(Array(profile.barItems(in: main).prefix(2)), [.control(.keyboard), .control(.expand)])
+        XCTAssertEqual(main.resolvedAlignment, .fill)
         profile.placeBarItem(.key("key-up"), in: TerminalKeyboardRow.mainID)
         let decoded = try JSONDecoder().decode(TerminalControlsProfile.self, from: JSONEncoder().encode(profile))
         XCTAssertEqual(decoded, profile); XCTAssertTrue(decoded.valid)
-        XCTAssertEqual(decoded.resolvedRows.flatMap { decoded.barItems(in: $0) }.filter { $0 == .key("key-up") }.count, 2)
+        XCTAssertEqual(decoded.resolvedRows.flatMap { decoded.barItems(in: $0) }.filter { $0 == .key("key-up") }.count, 3)
     }
 
-    func testAddingPresetShowsExactMissingKeysAndDoesNotStealOrDuplicatePlacements() throws {
+    func testAddingPresetShowsAllKeysAndNeverStealsExistingPlacements() throws {
         var profile = TerminalControlsProfile.defaults
         let before = profile.resolvedRows
-        XCTAssertTrue(profile.availableItems(for: .navigation).isEmpty)
-        XCTAssertNil(profile.addPreset(.navigation))
+        XCTAssertEqual(profile.availableItems(for: .navigation), TerminalRowPreset.navigation.items)
         profile.placeBarItem(.key("key-f1"), in: TerminalKeyboardRow.mainID)
         let additions = profile.availableItems(for: .functions)
-        XCTAssertFalse(additions.contains(.key("key-f1")))
+        XCTAssertTrue(additions.contains(.key("key-f1")))
         let id = try XCTUnwrap(profile.addPreset(.functions, before: TerminalKeyboardRow.numbersID))
         XCTAssertEqual(profile.resolvedRows.first?.id, id)
         XCTAssertEqual(profile.barItems(in: profile.resolvedRows.first!), additions)
@@ -403,9 +405,9 @@ import Security
     func testPresetRecognizesAnAlreadyPlacedLegacySavedKeyWithoutChangingItsDefinition() throws {
         let saved = TerminalControlAction(title: "My F1", kind: .key, key: .f1, inRow: true)
         var profile = TerminalControlsProfile(actions: [saved])
-        XCTAssertFalse(profile.availableItems(for: .functions).contains(.key("key-f1")))
+        XCTAssertTrue(profile.availableItems(for: .functions).contains(.key("key-f1")))
         let row = try XCTUnwrap(profile.addPreset(.functions))
-        XCTAssertFalse(profile.barItems(in: profile.resolvedRows.first { $0.id == row }!).contains(.key("key-f1")))
+        XCTAssertTrue(profile.barItems(in: profile.resolvedRows.first { $0.id == row }!).contains(.key("key-f1")))
         XCTAssertEqual(profile.actions, [saved]); XCTAssertTrue(profile.valid)
     }
 

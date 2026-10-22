@@ -91,10 +91,9 @@ struct TerminalKeypad: View {
             .accessibilityIdentifier("terminal-keypad-" + (key.accessory?.rawValue ?? key.id))
             .contextMenu {
                 ForEach(TerminalControlsDestination.allCases) { destination in
-                    let pinned = state.items.contains { key.matches($0) && (destination == .keyboard ? $0.inRow : $0.inMenu) }
-                    Button(pinned ? "Pinned to " + destination.title : "Pin to " + destination.title, systemImage: pinned ? "checkmark" : destination.symbol) {
+                    Button("Pin to " + destination.title, systemImage: destination.symbol) {
                         state.pin(key.id, destination)
-                    }.disabled(!state.canPin || pinned)
+                    }.disabled(!state.canPin)
                 }
             }
             .accessibilityAction(named: "Pin to Keyboard Bar") { if state.canPin { state.pin(key.id, .keyboard) } }

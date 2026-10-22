@@ -166,9 +166,12 @@ struct TerminalKeyboardRowOptions: View {
             Form {
                 if let row {
                     Section {
-                        Text(row.title).font(.headline)
+                        Text(profile.rowTitle(row.id)).font(.headline)
                         Picker("Alignment", selection: Binding(get: { self.row?.resolvedAlignment ?? .left }, set: { value in edit { $0.alignment = value } })) {
                             ForEach(TerminalKeyboardRow.Alignment.allCases, id: \.self) { Label($0.rawValue, systemImage: $0.symbol).tag($0) }
+                        }
+                        Picker("Scroll Start", selection: Binding(get: { self.row?.scrollStart ?? .automatic }, set: { value in edit { $0.scrollStart = value } })) {
+                            ForEach(TerminalKeyboardRow.ScrollStart.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                         }
                         if row.kind != .main {
                             Picker("Visibility", selection: Binding(get: { self.row?.visibility ?? .always }, set: { value in edit { $0.visibility = value } })) {
@@ -232,6 +235,10 @@ struct TerminalKeyboardBarPreview: UIViewRepresentable {
     var catalogDragBegan: (() -> Void)? = nil
     var addToRow: ((UUID) -> Void)? = nil
     var rowAction: ((UUID, TerminalKeyboardRow.MenuAction) -> Void)? = nil
+    var placementSelect: ((TerminalBarPlacement, UUID) -> Void)? = nil
+    var placementMove: ((String, UUID, UUID, String?) -> Void)? = nil
+    var placementRemove: ((String, UUID) -> Void)? = nil
+    var placementAdd: ((TerminalBarItem, UUID, String?) -> Void)? = nil
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeUIView(context: Context) -> TerminalKeyboardBar {
         let bar = TerminalKeyboardBar(terminal: nil, preferences: .init()); bar.editingPreview = true; return bar
@@ -242,6 +249,10 @@ struct TerminalKeyboardBarPreview: UIViewRepresentable {
         bar.selectedPreviewItem = selected; bar.selectedPreviewRow = row
         bar.previewShowsAllRows = allRows; bar.previewShowsRowHandles = handles; bar.previewPreset = preset
         bar.previewUnavailableItems = unavailable; bar.previewCanAddPreset = canAddPreset
+        bar.previewPlacementSelect = enabled ? placementSelect : nil
+        bar.previewPlacementMove = enabled ? placementMove : nil
+        bar.previewPlacementRemove = enabled ? placementRemove : nil
+        bar.previewPlacementAdd = enabled ? placementAdd : nil
         bar.previewSelect = enabled ? select : nil; bar.previewMove = enabled ? move : nil; bar.previewRemove = enabled ? remove : nil
         bar.previewSelectRow = enabled ? selectRow : nil; bar.previewMoveRow = enabled ? moveRow : nil
         bar.previewAddToRow = enabled ? addToRow : nil

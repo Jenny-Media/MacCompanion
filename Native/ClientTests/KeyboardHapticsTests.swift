@@ -120,7 +120,7 @@ private final class KeyboardMenuSession: CompanionVNCSession {
             for digit in "1234567890" { try button(String(digit), in: controller.keyboardBar).sendActions(for: .touchUpInside) }
             for key in [TerminalAccessoryKey.escape, .tab, .left, .down, .up, .right] {
                 if key == .escape || key == .tab {
-                    try button(key.title, in: controller.keyboardBar).sendActions(for: .touchUpInside)
+                    try button(key == .escape ? "Escape" : key.title, in: controller.keyboardBar).sendActions(for: .touchUpInside)
                 } else { controller.makeMoreKeysMenu().selectionHandler?(["kind": "terminalKey-" + key.rawValue]) }
             }
             let expected = Array("1234567890".utf8) + [TerminalAccessoryKey.escape, .tab, .left, .down, .up, .right].flatMap { $0.bytes() }

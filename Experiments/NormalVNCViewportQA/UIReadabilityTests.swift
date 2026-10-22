@@ -92,7 +92,7 @@ import SwiftUI
         defer { window.isHidden = true; window.rootViewController = nil }
         holder.view.layoutIfNeeded()
         let ctrl = try XCTUnwrap(descendants(bar).compactMap { $0 as? UIButton }.first { $0.accessibilityLabel == "Ctrl" })
-        let escape = try XCTUnwrap(descendants(bar).compactMap { $0 as? UIButton }.first { $0.accessibilityLabel == "Esc" })
+        let escape = try XCTUnwrap(descendants(bar).compactMap { $0 as? UIButton }.first { $0.accessibilityLabel == "Escape" })
         XCTAssertFalse(descendants(bar).compactMap { $0 as? UIButton }.contains { $0.configuration?.title == "Fn" })
         let normal = try XCTUnwrap(ctrl.imageView?.image?.size.height), normalBarHeight = bar.height
         bar.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge

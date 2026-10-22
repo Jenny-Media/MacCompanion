@@ -15,52 +15,119 @@ import XCTest
             XCTAssertNil(saved.keyboardRows)
         }
     }
-    func testFocusedTemplateMovesTheWholeRowWithoutDuplicatingKeysOrSavedDefinitions() throws {
+    func testTemplatesAddCompleteIndependentRowsAndLeaveExistingRowsIntact() throws {
         var profile = TerminalControlsProfile.defaults
         let source = try XCTUnwrap(profile.addRow(title: "Arrows"))
         profile.placeBarItem(.key("key-up"), in: source)
+        let before = profile.resolvedRows.map { ($0.id, profile.barItems(in: $0)) }
         let id = try XCTUnwrap(profile.installEditorPreset(.navigation, before: profile.resolvedRows.first?.id))
-        let installed = try XCTUnwrap(profile.resolvedRows.first { $0.id == id })
-        XCTAssertEqual(profile.barItems(in: installed), TerminalRowPreset.navigation.items)
-        for item in TerminalRowPreset.navigation.items {
-            XCTAssertEqual(profile.resolvedRows.flatMap { profile.barItems(in: $0) }.filter { $0 == item }.count, 1)
-        }
-        XCTAssertFalse(profile.resolvedRows.contains { $0.id == source })
+        XCTAssertEqual(profile.barItems(in: profile.resolvedRows.first { $0.id == id }!), TerminalRowPreset.navigation.items)
+        for (id, items) in before { XCTAssertEqual(profile.barItems(in: profile.resolvedRows.first { $0.id == id }!), items) }
         XCTAssertTrue(profile.valid)
     }
-    func testNumbersTemplateReusesExistingRowAndKeepsItOnTop() throws {
+    func testNumbersTemplateAlwaysAddsAnotherCompleteRow() throws {
         var profile = TerminalControlsProfile.defaults
         let first = try XCTUnwrap(profile.resolvedRows.first?.id)
-        XCTAssertEqual(profile.installEditorPreset(.numbers, before: first), first)
-        XCTAssertEqual(profile.resolvedRows.first?.id, first)
-        XCTAssertEqual(profile.resolvedRows.filter { $0.preset == .numbers }.count, 1)
-        XCTAssertEqual(profile.resolvedRows.first?.kind, .custom)
+        let added = try XCTUnwrap(profile.installEditorPreset(.numbers, before: first))
+        XCTAssertNotEqual(added, first)
+        XCTAssertEqual(profile.resolvedRows.first?.id, added)
+        XCTAssertEqual(profile.resolvedRows.filter { $0.preset == .numbers }.count, 2)
         XCTAssertEqual(profile.barItems(in: profile.resolvedRows[0]), TerminalRowPreset.numbers.items)
         XCTAssertTrue(profile.valid)
     }
-    func testCompleteTemplateDoesNotDiscardExtraCustomPlacements() throws {
+    func testCompleteTemplateKeepsExistingCustomAndPresetKeys() throws {
         var profile = TerminalControlsProfile.defaults
         let id = try XCTUnwrap(profile.add(TerminalShortcutPack.tmux.shortcuts[0]))
         profile.place(id, in: TerminalKeyboardRow.numbersID)
         let new = try XCTUnwrap(profile.installEditorPreset(.numbers, before: profile.resolvedRows.first?.id))
-        XCTAssertNotEqual(new, TerminalKeyboardRow.numbersID)
         let old = try XCTUnwrap(profile.resolvedRows.first { $0.id == TerminalKeyboardRow.numbersID })
-        XCTAssertEqual(profile.barItems(in: old), [.saved(id)])
-        XCTAssertTrue(profile.actions.first { $0.id == id }!.inRow)
+        XCTAssertEqual(profile.barItems(in: old), TerminalRowPreset.numbers.items + [.saved(id)])
         XCTAssertEqual(profile.barItems(in: profile.resolvedRows.first { $0.id == new }!), TerminalRowPreset.numbers.items)
         XCTAssertTrue(profile.valid)
     }
-    func testReplacingAKeyIsAtomicAndPreservesItsPosition() throws {
+    func testReplacingAnExactOccurrenceCanDuplicateAKeyAndPreservesItsIdentity() throws {
         var profile = TerminalControlsProfile.defaults
         let main = TerminalKeyboardRow.mainID
-        let before = profile
-        XCTAssertFalse(profile.replaceEditorItem(.key("key-tab"), in: main, with: .control(.ctrl)))
-        XCTAssertEqual(profile, before)
-        let old = profile.barItems(in: profile.resolvedRows.first { $0.id == main }!)
-        XCTAssertTrue(profile.replaceEditorItem(.key("key-tab"), in: main, with: .key("key-f12")))
-        let changed = profile.barItems(in: profile.resolvedRows.first { $0.id == main }!)
-        XCTAssertEqual(changed.firstIndex(of: .key("key-f12")), old.firstIndex(of: .key("key-tab")))
+        let old = profile.barPlacements(in: profile.resolvedRows.first { $0.id == main }!)
+        let tab = try XCTUnwrap(old.first { $0.item == .key("key-tab") })
+        XCTAssertTrue(profile.replaceEditorItem(tab.item, in: main, with: .control(.ctrl), placementID: tab.id))
+        let changed = profile.barPlacements(in: profile.resolvedRows.first { $0.id == main }!)
+        XCTAssertEqual(changed.map(\.id), old.map(\.id))
+        XCTAssertEqual(changed.filter { $0.item == .control(.ctrl) }.count, 2)
         XCTAssertTrue(profile.valid)
+    }
+    func testRepeatedKeypadPinsAddCopiesButReuseOneSavedDefinition() throws {
+        var profile = TerminalControlsProfile.defaults
+        let key = TerminalPaletteKey(.f8)
+        let id = profile.pin(key, in: .keyboard)
+        XCTAssertEqual(profile.pin(key, in: .keyboard), id)
+        XCTAssertEqual(profile.pin(key, in: .menu), id)
+        XCTAssertEqual(profile.pin(key, in: .menu), id)
+        let row = try XCTUnwrap(profile.resolvedRows.first { $0.kind == .main })
+        XCTAssertEqual(profile.barPlacements(in: row).filter { $0.item == .saved(id) }.count, 2)
+        XCTAssertEqual(profile.resolvedMenuPlacements.filter { $0.actionID == id }.count, 2)
+        XCTAssertEqual(profile.actions.filter { $0.id == id }.count, 1)
+        XCTAssertTrue(profile.valid)
+    }
+    func testRepeatedPlacementsMoveRemoveAndUndoOnlyTheSelectedCopy() throws {
+        var profile = TerminalControlsProfile.defaults
+        let id = try XCTUnwrap(profile.add(TerminalShortcutPack.herdr.shortcuts[1]))
+        let main = TerminalKeyboardRow.mainID
+        profile.place(id, in: main); profile.place(id, in: main)
+        profile.pin(id, in: .menu, enabled: true); profile.pin(id, in: .menu, enabled: true)
+        let row = try XCTUnwrap(profile.resolvedRows.first { $0.id == main })
+        let copies = profile.barPlacements(in: row).filter { $0.item == .saved(id) }
+        XCTAssertEqual(copies.count, 2); XCTAssertNotEqual(copies[0].id, copies[1].id)
+        let saved = profile
+        profile.moveBarPlacement(copies[1].id, from: main, to: TerminalKeyboardRow.numbersID)
+        XCTAssertTrue(profile.barPlacements(in: profile.resolvedRows.first { $0.id == main }!).contains(copies[0]))
+        profile.removeBarPlacement(copies[1].id, in: TerminalKeyboardRow.numbersID)
+        XCTAssertTrue(profile.actions.first { $0.id == id }!.inRow)
+        let favorites = profile.resolvedMenuPlacements.filter { $0.actionID == id }
+        XCTAssertEqual(favorites.count, 2)
+        profile.removeMenuPlacement(favorites[1].id)
+        XCTAssertEqual(profile.resolvedMenuPlacements.filter { $0.actionID == id }.map(\.id), [favorites[0].id])
+        XCTAssertTrue(profile.actions.first { $0.id == id }!.inMenu)
+        profile.actions[profile.actions.firstIndex { $0.id == id }!].title = "Shared edit"
+        XCTAssertEqual(profile.menuPreviewActions.first { $0.id == favorites[0].id }?.title, "Shared edit")
+        var history = TerminalLayoutHistory(); history.changed(from: saved, to: profile)
+        XCTAssertEqual(history.undo(), saved)
+        XCTAssertTrue(profile.valid)
+        XCTAssertEqual(try JSONDecoder().decode(TerminalControlsProfile.self, from: JSONEncoder().encode(profile)), profile)
+    }
+    func testLegacyPlacementIdentitiesPersistAcrossReorderingAndRejectCorruptIdentities() throws {
+        var profile = TerminalControlsProfile.defaults
+        let original = profile.resolvedRows[0]
+        let ids = profile.barPlacements(in: original).map(\.id)
+        profile.placeBarItem(.key("key-f8"), in: original.id)
+        profile.moveRow(original.id, before: nil)
+        XCTAssertEqual(profile.rowTitle(original.id), "Row 3")
+        let decoded = try JSONDecoder().decode(TerminalControlsProfile.self, from: JSONEncoder().encode(profile))
+        XCTAssertEqual(Array(decoded.barPlacements(in: decoded.resolvedRows.last!).map(\.id).prefix(ids.count)), ids)
+        XCTAssertTrue(decoded.valid)
+        profile.keyboardRows![0].placementIDs![0] = profile.keyboardRows![0].placementIDs![1]
+        XCTAssertFalse(profile.valid)
+    }
+    func testCompactLabelsPreserveExactCaseAndChordAndFullDetails() {
+        let tmux = TerminalShortcutPack.tmux.shortcuts, herdr = TerminalShortcutPack.herdr.shortcuts
+        XCTAssertEqual(tmux[0].action.keycapTitle, "⌃b")
+        XCTAssertEqual(tmux[1].action.keycapTitle, "c")
+        XCTAssertEqual(tmux[4].action.keycapTitle, "%")
+        XCTAssertEqual(herdr[1].action.keycapTitle, "N")
+        XCTAssertEqual(TerminalShortcutPack.zellij.shortcuts[0].action.keycapTitle, "⌃p")
+        XCTAssertEqual(tmux[1].action.title, "Tmux New Window")
+        XCTAssertEqual(tmux[1].action.usage, "After Tmux Prefix")
+    }
+    func testScrollStartPreferenceIsIndependentOfAlignmentAndRoundTrips() throws {
+        for alignment in TerminalKeyboardRow.Alignment.allCases {
+            for start in TerminalKeyboardRow.ScrollStart.allCases {
+                var profile = TerminalControlsProfile.defaults, rows = profile.resolvedRows
+                rows[0].alignment = alignment; rows[0].scrollStart = start; profile.keyboardRows = rows
+                let decoded = try JSONDecoder().decode(TerminalControlsProfile.self, from: JSONEncoder().encode(profile))
+                XCTAssertEqual(decoded.resolvedRows[0].startsAtRight, start == .right || start == .automatic && alignment == .right)
+                XCTAssertTrue(decoded.valid)
+            }
+        }
     }
     func testFavoriteReplacementKeepsOneIdentityAndItsKeyEditingBehavior() throws {
         var profile = TerminalControlsProfile.defaults

@@ -2,12 +2,13 @@
 import SwiftUI
 
 private enum TerminalLayoutPanel: Identifiable {
-    case rows, add(UUID?, TerminalBarItem?), item(TerminalBarItem, UUID?), preview
+    case rows, add(UUID?, TerminalBarItem?), item(TerminalBarItem, UUID?), placement(TerminalBarPlacement, UUID?), preview
     var id: String {
         switch self {
         case .rows: "rows"
         case .add(let row, let item): "add-\(row?.uuidString ?? "menu")-\(item?.id ?? "new")"
         case .item(let item, let row): "item-\(item.id)-\(row?.uuidString ?? "menu")"
+        case .placement(let value, let row): "placement-\(value.id)-\(row?.uuidString ?? "menu")"
         case .preview: "preview"
         }
     }
@@ -58,6 +59,7 @@ struct TerminalKeyboardEditingPreview: View {
     @State private var barHeight: CGFloat = 180
     @State private var editorHeight: CGFloat = 600
     @State private var pending: UUID?
+    @State private var started = false
     @State private var removing: UUID?
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     private var compact: Bool { verticalSizeClass == .compact }
@@ -99,7 +101,13 @@ struct TerminalKeyboardEditingPreview: View {
                     addToRow: { row in
                         selectedRow = row
                         if !placePending(in: row) { show(.add(row, nil)) }
-                    }, rowAction: rowAction)
+                    }, rowAction: rowAction,
+                    placementSelect: { placement, row in
+                        selectedRow = row
+                        if !placePending(in: row) { show(.placement(placement, row)) }
+                    }, placementMove: { id, source, target, before in profile.moveBarPlacement(id, from: source, to: target, before: before) },
+                    placementRemove: { id, row in profile.removeBarPlacement(id, in: row) },
+                    placementAdd: { item, row, before in profile.addBarPlacement(item, to: row, before: before) })
                     .accessibilityIdentifier("terminal-live-bar-preview")
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { if $0 > 0 { barHeight = $0 } }
             }.scrollBounceBehavior(.basedOnSize)
@@ -117,9 +125,8 @@ struct TerminalKeyboardEditingPreview: View {
             }
         }.onGeometryChange(for: CGFloat.self) { $0.size.height } action: { editorHeight = $0 }
             .onAppear {
-                pending = insertion.flatMap { id in
-                    profile.resolvedRows.contains { profile.barItems(in: $0).contains(.saved(id)) } ? nil : id
-                }
+                guard !started else { return }; started = true
+                pending = insertion
             }
             .onChange(of: profile) { old, new in history.changed(from: old, to: new) }
             .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -130,6 +137,7 @@ struct TerminalKeyboardEditingPreview: View {
                 case .rows: TerminalEditorRowPicker(profile: $profile) { self.panel = nil }
                 case .add(let row, let item): TerminalEditorItemPicker(profile: $profile, destination: .keyboard, rowID: row, replacing: item) { self.panel = nil }
                 case .item(let item, let row): TerminalEditorItemActions(profile: $profile, item: item, rowID: row) { self.panel = nil }
+                case .placement(let value, let row): TerminalEditorItemActions(profile: $profile, item: value.item, rowID: row, placementID: value.id) { self.panel = nil }
                 case .preview: EmptyView()
                 }
             }
@@ -152,6 +160,7 @@ struct TerminalKeyboardEditingPreview: View {
             guard row.kind != .main else { return }
             editRow(id) { $0.visibility = visibility }
         case .alignment(let alignment): editRow(id) { $0.alignment = alignment }
+        case .scrollStart(let value): editRow(id) { $0.scrollStart = value }
         case .remove: removing = id
         }
     }
@@ -174,6 +183,7 @@ struct TerminalFloatingMenuEditor: View {
     @State private var panel: TerminalLayoutPanel?
     @State private var history = TerminalLayoutHistory()
     @State private var restoring = false
+    @State private var started = false
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -189,8 +199,10 @@ struct TerminalFloatingMenuEditor: View {
                     } label: { Image(systemName: "ellipsis.circle").font(.system(size: 22)).frame(minWidth: 44, minHeight: 44) }
                         .accessibilityLabel("Menu Options").accessibilityIdentifier("terminal-menu-options")
                 }.dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-                TerminalMenuEditingPreview(actions: profile.placed(.menu), selected: nil, editable: true,
-                    select: { panel = .item(.saved($0), nil) }, move: { profile.move($0, to: $1, in: .menu) },
+                TerminalMenuEditingPreview(actions: profile.menuPreviewActions, selected: nil, editable: true,
+                    select: { id in
+                        if let value = profile.resolvedMenuPlacements.first(where: { $0.id == id }) { panel = .placement(.init(id: id.uuidString, item: .saved(value.actionID)), nil) }
+                    }, move: { profile.moveMenuPlacement($0, to: $1) },
                     add: { panel = .add(nil, nil) })
                     .accessibilityIdentifier("terminal-menu-preview")
                 Button("Preview Full Menu", systemImage: "arrow.up.right") { panel = .preview }
@@ -198,7 +210,10 @@ struct TerminalFloatingMenuEditor: View {
                     .accessibilityIdentifier("terminal-full-menu-preview")
                 Text("Applies to every Mac on this device.").font(.caption).foregroundStyle(.secondary).dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             }.padding(20)
-        }.onAppear { if let insertion { profile.pin(insertion, in: .menu, enabled: true) } }
+        }.onAppear {
+            guard !started else { return }; started = true
+            if let insertion { profile.pin(insertion, in: .menu, enabled: true) }
+        }
             .onChange(of: profile) { old, new in history.changed(from: old, to: new) }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if !history.values.isEmpty { TerminalLayoutUndoNotice(title: "Menu favorites updated", undo: undo) }
@@ -207,6 +222,7 @@ struct TerminalFloatingMenuEditor: View {
                 switch panel {
                 case .add: TerminalEditorItemPicker(profile: $profile, destination: .menu) { self.panel = nil }
                 case .item(let item, _): TerminalEditorItemActions(profile: $profile, item: item) { self.panel = nil }
+                case .placement(let value, _): TerminalEditorItemActions(profile: $profile, item: value.item, placementID: value.id) { self.panel = nil }
                 case .preview: TerminalFullMenuPreview(profile: profile)
                 default: EmptyView()
                 }
@@ -224,7 +240,7 @@ private struct TerminalFullMenuPreview: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                TerminalMenuEditingPreview(actions: profile.placed(.menu), selected: nil, editable: false,
+                TerminalMenuEditingPreview(actions: profile.menuPreviewActions, selected: nil, editable: false,
                     select: { _ in }, move: { _, _ in }, fullMenu: true)
                     .padding(.vertical, 20).frame(maxWidth: .infinity)
             }.navigationTitle("Menu Preview").directInlineNavigationTitle()
@@ -236,7 +252,6 @@ private struct TerminalFullMenuPreview: View {
 private struct TerminalEditorRowPicker: View {
     @Binding var profile: TerminalControlsProfile
     let finished: () -> Void
-    @State private var transferring: TerminalRowPreset?
     @State private var error: String?
     var body: some View {
         NavigationStack {
@@ -245,8 +260,7 @@ private struct TerminalEditorRowPicker: View {
                     if let error { Text(error).foregroundStyle(.red).accessibilityIdentifier("terminal-add-error") }
                     ForEach(TerminalRowPreset.allCases) { preset in
                         Button {
-                            if profile.availableItems(for: preset).count < preset.items.count { transferring = preset }
-                            else { install(preset) }
+                            install(preset)
                         } label: {
                             VStack(alignment: .leading, spacing: 8) {
                                 HStack { Text(preset == .blank ? "Empty Row" : preset.rawValue).font(.headline); Spacer(); Image(systemName: "plus") }
@@ -268,9 +282,7 @@ private struct TerminalEditorRowPicker: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Close", action: finished) }
             }
         }.presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
-            .confirmationDialog("Move existing keys into this row?", isPresented: Binding(get: { transferring != nil }, set: { if !$0 { transferring = nil } }), titleVisibility: .visible) {
-                if let transferring { Button("Add Row & Move Keys") { install(transferring) } }
-            } message: { Text("The complete row will use one of each key. Existing rows left empty are removed; your saved items remain available.") }
+
     }
     private func install(_ preset: TerminalRowPreset) {
         if profile.installEditorPreset(preset, before: profile.resolvedRows.first?.id) != nil { finished() }
@@ -283,6 +295,7 @@ private struct TerminalEditorItemPicker: View {
     let destination: TerminalControlsDestination
     var rowID: UUID?
     var replacing: TerminalBarItem?
+    var placementID: String?
     let finished: () -> Void
     @State private var page = "Keys"
     @State private var query = ""
@@ -290,7 +303,6 @@ private struct TerminalEditorItemPicker: View {
     @State private var presetPack: TerminalShortcutPack?
     @State private var completed = false
     @State private var error: String?
-    @State private var moving: TerminalBarItem?
     @Environment(\.dynamicTypeSize) private var typeSize
     private var title: String { replacing != nil ? "Replace Key" : destination == .menu ? "Add Favorite" : "Add to Row" }
     private var searchPrompt: String {
@@ -334,14 +346,7 @@ private struct TerminalEditorItemPicker: View {
                     profile = draft; completed = true; presetPack = nil; return true
                 }
             }
-            .confirmationDialog("Move this key to the selected row?", isPresented: Binding(get: { moving != nil }, set: { if !$0 { moving = nil } }), titleVisibility: .visible) {
-                if let moving, let rowID {
-                    Button("Move Key") {
-                        let source = profile.resolvedRows.first { profile.barItems(in: $0).contains(moving) }
-                        profile.placeBarItem(moving, in: rowID, from: source?.id); finished()
-                    }.accessibilityIdentifier("terminal-confirm-move")
-                }
-            } message: { Text("The key is already placed in another row. Moving it removes its previous placement.") }
+
     }
     @ViewBuilder private var keys: some View {
         let controls = TerminalBarItem.Control.allCases.filter {
@@ -381,8 +386,8 @@ private struct TerminalEditorItemPicker: View {
                         profile.pin(existing.id, in: .menu, enabled: true)
                     } else {
                         guard profile.actions.count < 4096 else { error = "The saved control limit has been reached."; return }
-                        var action = standard.definition; action.inMenu = true
-                        profile.actions.append(action)
+                        var action = standard.definition; action.inMenu = false
+                        profile.actions.append(action); profile.pin(action.id, in: .menu, enabled: true)
                     }
                     finished()
                 } label: {
@@ -390,7 +395,7 @@ private struct TerminalEditorItemPicker: View {
                         Image(systemName: standard.symbol).frame(width: 24)
                         Text(standard.title).foregroundStyle(.primary)
                         Spacer()
-                        Image(systemName: profile.actions.contains { $0.operation == standard && $0.inMenu } ? "checkmark" : "plus")
+                        Image(systemName: "plus")
                     }.frame(minHeight: 44)
                 }.accessibilityIdentifier("terminal-add-action-" + standard.rawValue)
             }
@@ -430,11 +435,8 @@ private struct TerminalEditorItemPicker: View {
     private func place(_ item: TerminalBarItem) {
         if destination == .keyboard, let rowID {
             if let replacing {
-                guard profile.replaceEditorItem(replacing, in: rowID, with: item) else { error = "That key is already placed. Move it from its current row, or choose another key."; return }
+                guard profile.replaceEditorItem(replacing, in: rowID, with: item, placementID: placementID) else { error = "This placement is no longer available."; return }
             } else {
-                let current = profile.resolvedRows.first { profile.barItems(in: $0).contains(item) }
-                if current?.id == rowID { error = "Already in this row. Choose another key."; return }
-                if current != nil { moving = item; return }
                 profile.placeBarItem(item, in: rowID)
             }
         } else if let replacing, let id = replacing.savedID, let key = item.palette {
@@ -449,16 +451,18 @@ private struct TerminalEditorItemActions: View {
     @Binding var profile: TerminalControlsProfile
     let item: TerminalBarItem
     var rowID: UUID?
+    var placementID: String?
     let finished: () -> Void
     @State private var editing: TerminalControlAction?
     @State private var replacing = false
     @State private var completed = false
     private var action: TerminalControlAction? { profile.actions.first { $0.id == item.savedID } }
-    private var items: [TerminalBarItem] {
-        if let row = profile.resolvedRows.first(where: { $0.id == rowID }) { return profile.barItems(in: row) }
-        return profile.placed(.menu).map { .saved($0.id) }
+    private var items: [TerminalBarPlacement] {
+        if let row = profile.resolvedRows.first(where: { $0.id == rowID }) { return profile.barPlacements(in: row) }
+        return profile.resolvedMenuPlacements.map { .init(id: $0.id.uuidString, item: .saved($0.actionID)) }
     }
-    private var position: Int { items.firstIndex(of: item) ?? 0 }
+    private var position: Int { items.firstIndex { placementID == nil ? $0.item == item : $0.id == placementID } ?? 0 }
+    private var selectedPlacement: TerminalBarPlacement? { items.indices.contains(position) ? items[position] : nil }
     var body: some View {
         NavigationStack {
             List {
@@ -477,14 +481,16 @@ private struct TerminalEditorItemActions: View {
                     if let rowID {
                         NavigationLink("Move to Another Row") {
                             List { ForEach(profile.resolvedRows.filter { $0.id != rowID }) { target in
-                                Button(target.title) { profile.placeBarItem(item, in: target.id, from: rowID); finished() }
+                                Button(profile.rowTitle(target.id)) { if let selectedPlacement { profile.moveBarPlacement(selectedPlacement.id, from: rowID, to: target.id) }; finished() }
                                     .accessibilityIdentifier("terminal-move-to-" + target.id.uuidString)
                             } }.navigationTitle("Move Key").directInlineNavigationTitle()
                         }.accessibilityIdentifier("terminal-item-row")
                     }
                     Button(rowID == nil ? "Remove from Favorites" : "Remove from Row", systemImage: "minus.circle", role: .destructive) {
-                        if let rowID { profile.removeBarItem(item, in: rowID) }
-                        else if let id = item.savedID { profile.pin(id, in: .menu, enabled: false) }
+                        if let id = selectedPlacement?.id {
+                            if let rowID { profile.removeBarPlacement(id, in: rowID) }
+                            else if let uuid = UUID(uuidString: id) { profile.removeMenuPlacement(uuid) }
+                        }
                         finished()
                     }.accessibilityIdentifier("terminal-remove-placement")
                 } footer: { if action != nil { Text("Removing this placement keeps the saved item available.") } }
@@ -498,7 +504,7 @@ private struct TerminalEditorItemActions: View {
                 })
             }
             .sheet(isPresented: $replacing) {
-                TerminalEditorItemPicker(profile: $profile, destination: rowID == nil ? .menu : .keyboard, rowID: rowID, replacing: item) {
+                TerminalEditorItemPicker(profile: $profile, destination: rowID == nil ? .menu : .keyboard, rowID: rowID, replacing: item, placementID: placementID) {
                     completed = true; replacing = false
                 }
             }.onChange(of: replacing) { _, value in if !value && completed { finished() } }
@@ -506,8 +512,8 @@ private struct TerminalEditorItemActions: View {
     private func move(_ offset: Int) {
         if let rowID {
             let before = offset < 0 ? items[position - 1] : (position + 2 < items.count ? items[position + 2] : nil)
-            profile.placeBarItem(item, in: rowID, from: rowID, before: before)
-        } else if let id = item.savedID, let target = items[position + offset].savedID { profile.move(id, to: target, in: .menu) }
+            if let selectedPlacement { profile.moveBarPlacement(selectedPlacement.id, from: rowID, to: rowID, before: before?.id) }
+        } else if let id = selectedPlacement.flatMap({ UUID(uuidString: $0.id) }), let target = UUID(uuidString: items[position + offset].id) { profile.moveMenuPlacement(id, to: target) }
         finished()
     }
 }

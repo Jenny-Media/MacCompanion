@@ -1,71 +1,82 @@
 # Terminal keyboard rows and All Keys
 
-The terminal keeps the same configured controls when the native keyboard is
-shown, hidden, or rotated. These are shared settings for all Macs on this device.
+Terminal controls are shared across all Macs on this device. Showing, hiding or
+rotating the native keyboard keeps the configured rows and their contents.
 
-- Main is always available. Its entire strip scrolls horizontally, including
-  the keyboard toggle and expansion control; only the floating menu stays fixed
-  at the right. Esc, Tab, Ctrl, Option and Shift use compact symbols.
-  Arrow keys live in Navigation by default, without duplicates in Main. Command is optional and requires
-  negotiated support from the remote application; existing saved Command chords
-  retain their original definition.
-- Numbers have an independent 1–0 row above Main by default. The number toggle
-  shows/hides this row. Whole rows can be reordered in Customize Controls.
-- Expand Rows explicitly reveals Navigation and any configured custom row.
-  Up to six total rows (including Numbers) can be configured; optional rows can also be Always Visible. Expansion is saved and does not depend
-  on the native keyboard’s visibility. Removing a row removes its placements,
-  keeping saved definitions and floating-menu placements.
-- Keypad opens the built-in All Keys catalog at the native medium sheet height;
-  drag the grabber to expand. Accessibility text sizes start at full height and
-  use a menu picker. Searching on a regular-width window expands the keypad
-  and retains that height through keyboard dismissal. Search keys or groups including Essentials,
-  Navigation, Function Keys, Common Shortcuts, Symbols and Numbers. Every built-in
-  key is usable without Pro or customization. Tap sends once and leaves the
-  sheet open. A compact grid preserves 44-point touch targets at normal text sizes.
-  Modifier keys expose Off, Next Key and On states. Tap arms the next key,
-  long-press keeps the modifier on, and tapping an active modifier turns it off.
-  There are no separate lock-icon buttons. Larger text reflows the grid.
-- Hold a key for optional Pin to Keyboard Bar / Pin to Floating Menu. Pinning
-  requires Pro, sends nothing and reuses the same saved definition. The visual
-  editor reuses the actual keyboard-bar renderer without a terminal/input owner.
-  Its rows form one continuous preview. At standard text sizes the canvas stays
-  visible while the row library and selected-key settings scroll below it. Typing
-  yields preview space to the local editor, and accessibility text sizes use one
-  scroll surface so every row and field stays reachable. Row count and Undo stay
-  in the editor header. Arrange shows every configured row,
-  including hidden Numbers and expanded-only rows. Drag each row's handle to
-  reorder; tap it for its own name, visibility, restore, removal and accessible
-  move controls. Every cell can drag within or between rows, with an insertion
-  marker before drop. Collapsed / Expanded preview modes show runtime appearance
-  without changing saved visibility or allowing input. Available Rows shows
-  full-size, horizontally scrollable Numbers, Essentials, Navigation, Function
-  Keys, Symbols, Shell Shortcuts and Blank presets. Drag a row into position or
-  tap Add; individual available cells also drag into the bar. Already-placed keys
-  are dimmed and excluded from additions, preserving existing placements.
-  Six rows are allowed; five or six show a terminal-space warning. Restore This
-  Row / Restore Keyboard Bar change placements only, keeping saved IDs, text,
-  import journals and floating-menu favorites. Explicit preexisting duplicate
-  key placements remain valid. Undo restores the previous draft before Save.
-  Session offers keyboard, numbers and expansion controls even if their bar
-  buttons are removed or scrolled away.
-- Shortcuts and Text remain separate floating-menu entries and use the same
-  collection as the keypad’s saved-item tabs. Saved text opens the composer for
-  review. Explicit Send Text adds no Return, and line breaks/tabs require
-  confirmation. An unsent draft is kept unless replacement is confirmed.
+## Rows and scrolling
+
+The default main row is Keyboard, Expand, Esc, Tab, Ctrl, Option, Shift and
+← ↓ ↑ →. Expand is second, immediately after Keyboard, and disappears when
+there are no nonhidden rows set to When Expanded. Only the floating menu stays
+fixed; every key in each row can scroll horizontally. The default main row uses
+Fill alignment. Numbers is a separate ordinary 1–0 row above it. Navigation
+includes all four arrows plus Home, End, PgUp and PgDn and starts collapsed.
+Command is optional and requires negotiated remote-application support.
+
+Rows are identified by their actual preview and their current position: Row 1,
+Row 2, etc. Reordering changes the displayed number, preserving identity and
+configuration. Numbers, Navigation and other preset names identify templates in
+Add Row; editing a row never leaves a misleading permanent name.
+
+Each trailing row menu offers Add Key, visibility (except the always-visible
+main row), alignment, Scroll Start and removal. Drag handles only reorder rows.
+Alignment positions fitting contents using Left, Center, Right or Fill. Scroll
+Start independently chooses Automatic, Left or Right for overflowing contents.
+Automatic starts right-aligned rows at their right edge and others at their left.
+The initial preference applies when opening a session or preview, or changing
+the preference. Manual scrolling survives typing, modifiers, keyboard show/hide
+and ordinary updates. Resizing keeps a visible right edge at the right edge;
+otherwise it preserves the offset within the new bounds.
+
+Up to six rows are configurable. Add Row offers full previews of Numbers,
+Essentials, Navigation, Function Keys, Symbols, Shell Shortcuts and Blank. A
+preset always adds its complete contents without moving or deleting existing
+placements. Add always creates another placement, including intentional copies
+in the same row or menu. Drag moves the exact copy; remove removes that copy.
+Undo restores the previous draft. Removing the final row clears it so the editor
+remains usable. Restoring layouts keeps saved definitions and menu favorites.
+
+Keyboard shortcut keycaps show the exact character or chord, such as ⌃b, c, %,
+N or ⌃p. Pickers, editing details and accessibility retain descriptive names,
+tool identity, chord and any After Prefix prerequisite. Tool commands send one
+key or chord each; they do not automatically send the prefix or a sequence.
+Prefix-dependent commands remain optional in the picker’s After Prefix section.
+Saved text retains its name. Repeated saved placements share one editable
+shortcut/text definition and have independent ordering/removal identities.
+
+## Editors, keypad and saved items
+
+The keyboard editor uses the real bar renderer without an input owner. Tap a
+key to edit; drag keys within or between rows and handles to reorder rows.
+Preview with Keyboard opens a separate read-only screen with the production bar
+attached directly to the system keyboard. It has no editor chrome or input
+execution and closing it leaves the draft unchanged.
+
+The floating-menu editor uses the production panel renderer. Favorites and
+fixed navigation match the real popup. Actions, Keys, Shortcuts and Text can be
+added directly. Shortcuts and Saved Text also have separate searchable libraries
+with native reorder, swipe-right edit and swipe-left delete. tmux, Zellij and
+Herdr presets can be placed directly while configuring either layout.
+
+Keypad opens All Keys at the native medium sheet height; drag the grabber to
+expand. Every built-in key is usable without customization or Pro. Compact
+keycaps preserve 44-point touch targets, with adaptive layouts at larger text
+sizes. Tap sends once and leaves the sheet open. A modifier tap arms the next
+key; long-press keeps it on; tapping again turns it off. Opaque accent fill and
+outline indicate active state and an underline indicates held state. VoiceOver
+announces the state. Saved text opens Compose Text for review; explicit Send
+Text adds no Return, and multiline text requires confirmation.
 
 ## Regression coverage
 
-`TerminalControlsProfileTests` covers old v1 records and per-Mac snippet migration,
-row order/placement round trips, shared identities and Command preservation,
-invalid layouts, optimistic saves and write failures. `TerminalControlsUITests`
-covers the fixed floating anchor and scrolling keyboard control, input-free real
-previews, independent number/extra rows, negotiated Command, pinning
-without input and stale presentation rejection. Terminal encoding assertions use
-`spec/fixtures/terminal-compatibility-v1.json`, including Insert and modified Insert.
-
-`Experiments/TerminalControlsQA/TerminalControlsJourneyTests.swift` drives native
-phone/tablet UI against a synthetic loopback SSH host. It captures compact and
-expanded bars with native keyboard shown/hidden, All Keys at medium/large sheet
-heights, search, modifier states, context-menu pinning, text review, row editing,
-Save/Cancel, rotation and accessibility text sizes. The harness is not linked into
-release targets. Screenshots and xcresult bundles remain outside Git.
+TerminalControlsProfileTests and TerminalControlsRedesignTests cover legacy
+migration, shared definitions, independent repeated placements, full preset
+additions, exact-copy removal/move/replace, Undo, ordinal row names, scroll-start
+persistence, validation, optimistic saves and write failures.
+TerminalControlsUITests exercises actual UIKit geometry, independent utility
+buttons, exact-copy callbacks, compact labels, scroll preservation, docked
+preview, negotiated Command and stale-input rejection. Native journeys in
+Experiments/TerminalControlsQA drive add/edit/reorder/remove, Save/Cancel, Undo,
+keyboard preview, tool presets and runtime input against synthetic data. The
+harness is not linked into release targets. Screenshots and result bundles stay
+outside Git. Encoding fixtures remain indexed solely by spec/fixtures/manifest.json.
