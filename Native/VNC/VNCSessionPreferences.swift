@@ -93,7 +93,10 @@ struct VNCQuickAction: Codable, Identifiable, Equatable, Sendable {
         #if os(macOS)
         if kind == .copyText { return false }
         #endif
-        if mode == .terminal { return ![.mode, .fit, .copyText, .rightClick].contains(kind) && !modifiers.contains(0xffeb) && (kind != .text || !text.contains("\u{1b}")) }
+        #if !os(iOS)
+        if mode == .terminal && modifiers.contains(0xffeb) { return false }
+        #endif
+        if mode == .terminal { return ![.mode, .fit, .copyText, .rightClick].contains(kind) && (kind != .text || !text.contains("\u{1b}")) }
         return ![.paste, .interrupt].contains(kind) && (mode != .trackpad || ![.mode, .fit, .copyText].contains(kind))
     }
     var symbol: String {

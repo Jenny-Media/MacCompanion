@@ -134,7 +134,7 @@ import StoreKitTest
             try await Task.sleep(for: .milliseconds(300)); try await capture("terminal-bar-closed-" + name)
             controller.keyboardBar.keyboardButton.sendActions(for: .touchUpInside)
             try await Task.sleep(for: .milliseconds(650)); window.layoutIfNeeded()
-            XCTAssertEqual(controller.keyboardBar.bounds.height, 108, accuracy: 1)
+            XCTAssertEqual(controller.keyboardBar.bounds.height, 156, accuracy: 1)
             let toolbar = controller.keyboardBar.convert(controller.keyboardBar.bounds, to: window)
             let button = controller.controls.button.convert(controller.controls.button.bounds, to: window)
             XCTAssertTrue(toolbar.contains(button))

@@ -26,90 +26,6 @@ import AppIntents
     func update(_ id: String, content: ActivityContent<RemoteSessionActivityAttributes.ContentState>) async { phase = content.state.phase; if blocked { await withCheckedContinuation { reply = $0 } } }
     func end(_ id: String) async { ids.removeAll { $0 == id } }
 }
-private final class SSHTestRecord: @unchecked Sendable {
-    let respondToInstall: Bool
-    init(respondToInstall: Bool = true) { self.respondToInstall = respondToInstall }
-    private let lock=NSLock()
-    private var auth=0, keyAuth=0
-    private var execs=0
-    private var shellOpens=0
-    private var gridChanges: [[Int]] = []
-    private var input: [UInt8] = []
-    private var shell: Channel?
-    private var transport: Channel?
-    func openedTransport(_ channel: Channel) { lock.lock(); transport = channel; lock.unlock() }
-    private func activeTransport() -> Channel? { lock.lock(); defer { lock.unlock() }; return transport }
-    func finish(status: Int?, signal: String? = nil, transportFailed: Bool = false) async throws {
-        guard let channel = activeShell() else { throw POSIXError(.ENOTCONN) }
-        if let status { try await channel.triggerUserOutboundEvent(SSHChannelRequestEvent.ExitStatus(exitStatus: status)).get() }
-        if let signal { try await channel.triggerUserOutboundEvent(SSHChannelRequestEvent.ExitSignal(signalName: signal, errorMessage: "", language: "", dumpedCore: false)).get() }
-        if transportFailed { try await activeTransport()?.close().get() }
-        else { try await channel.close().get() }
-    }
-    func opened(_ channel: Channel) { lock.lock(); shell = channel; shellOpens += 1; lock.unlock() }
-    var shellRequests: Int { lock.lock(); defer { lock.unlock() }; return shellOpens }
-    func emit(_ text: String) async throws {
-        let channel = activeShell()
-        try await channel?.writeAndFlush(SSHChannelData(type: .channel, data: .byteBuffer(ByteBuffer(string: text)))).get()
-    }
-    private func activeShell() -> Channel? { lock.lock(); defer { lock.unlock() }; return shell }
-    var received: [UInt8] { lock.lock(); defer { lock.unlock() }; return input }
-    func received(_ bytes: [UInt8]) { lock.lock(); defer { lock.unlock() }; input.append(contentsOf: bytes.prefix(max(0, 512 - input.count))) }
-    var commands: Int { lock.lock(); defer { lock.unlock() }; return execs }
-    func executed() { lock.lock(); execs += 1; lock.unlock() }
-    private var cols=0, rows=0
-    var passwordRequests: Int { lock.lock(); defer { lock.unlock() }; return auth }
-    var keyRequests: Int { lock.lock(); defer { lock.unlock() }; return keyAuth }
-    func keyAuthenticated() { lock.lock(); keyAuth += 1; lock.unlock() }
-    var size: [Int] { lock.lock(); defer { lock.unlock() }; return [cols,rows] }
-    var sizes: [[Int]] { lock.lock(); defer { lock.unlock() }; return gridChanges }
-    func authenticated() { lock.lock(); auth += 1; lock.unlock() }
-    func resized(_ cols:Int,_ rows:Int) { lock.lock(); self.cols=cols; self.rows=rows; gridChanges.append([cols,rows]); lock.unlock() }
-}
-private final class SSHTestAuth: NIOSSHServerUserAuthenticationDelegate, @unchecked Sendable {
-    let record:SSHTestRecord
-    let publicKey: NIOSSHPublicKey?
-    var supportedAuthenticationMethods:NIOSSHAvailableUserAuthenticationMethods { publicKey == nil ? .password : [.publicKey, .password] }
-    init(_ record:SSHTestRecord, publicKey: NIOSSHPublicKey? = nil) { self.record=record; self.publicKey=publicKey }
-    func requestReceived(request:NIOSSHUserAuthenticationRequest,responsePromise:EventLoopPromise<NIOSSHUserAuthenticationOutcome>) {
-        switch request.request {
-        case .publicKey(let login): record.keyAuthenticated(); responsePromise.succeed(request.username == "synthetic" && login.publicKey == publicKey ? .success : .failure)
-        case .password(let login): record.authenticated(); responsePromise.succeed(request.username == "synthetic" && login.password == "synthetic-only" ? .success : .failure)
-        default: responsePromise.succeed(.failure)
-        }
-    }
-}
-private final class SSHTestPTY: ChannelDuplexHandler, @unchecked Sendable {
-    typealias InboundIn=SSHChannelData
-    typealias OutboundIn=SSHChannelData
-    typealias OutboundOut=SSHChannelData
-    let record:SSHTestRecord
-    init(_ record:SSHTestRecord) { self.record=record }
-    func userInboundEventTriggered(context:ChannelHandlerContext,event:Any) {
-        if let request=event as? SSHChannelRequestEvent.PseudoTerminalRequest {
-            record.resized(request.terminalCharacterWidth,request.terminalRowHeight)
-            context.triggerUserOutboundEvent(ChannelSuccessEvent(),promise:nil)
-        } else if event is SSHChannelRequestEvent.ShellRequest {
-            record.opened(context.channel)
-            context.triggerUserOutboundEvent(ChannelSuccessEvent(),promise:nil)
-            context.writeAndFlush(wrapOutboundOut(SSHChannelData(type:.channel,data:.byteBuffer(ByteBuffer(string:"synthetic-ready\r\n")))),promise:nil)
-        } else if let request = event as? SSHChannelRequestEvent.ExecRequest {
-            guard request.command.hasPrefix("/bin/sh -c '"), request.command.contains("authorized_keys"), request.command.contains("ssh-ed25519") else { context.close(promise: nil); return }
-            record.executed(); guard record.respondToInstall else { return }
-            context.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil)
-            context.writeAndFlush(wrapOutboundOut(SSHChannelData(type: .channel, data: .byteBuffer(ByteBuffer(string: "MC_KEY_INSTALLED\n")))), promise: nil)
-            context.triggerUserOutboundEvent(SSHChannelRequestEvent.ExitStatus(exitStatus: 0), promise: nil)
-            context.close(promise: nil)
-        } else if let request=event as? SSHChannelRequestEvent.WindowChangeRequest { record.resized(request.terminalCharacterWidth,request.terminalRowHeight) }
-        else { context.fireUserInboundEventTriggered(event) }
-    }
-    func channelRead(context:ChannelHandlerContext,data:NIOAny) {
-        let value = unwrapInboundIn(data)
-        if case .byteBuffer(let buffer) = value.data { record.received(Array(buffer.readableBytesView)) }
-        context.writeAndFlush(wrapOutboundOut(value),promise:nil)
-    }
-    func errorCaught(context:ChannelHandlerContext,error:Error) { context.close(promise:nil) }
-}
 // Observe bytes, then forward them to the normal pipeline tail. Before the SSH
 // parser exists this reproduces NIO's discarded early-banner path.
 private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendable {
@@ -254,20 +170,23 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
             let probe = TerminalLoginFrameProbe(window: window)
             defer { probe.stop(); panel.close(); session.stop(); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible(); try? TerminalSecretStore.remove(mac.id) }
             if outcome == "lost" {
-                try await wait { session.connected && !panel.isVisible && host.presentedViewController == nil }
+                try await wait(outcome + " authenticated handoff") { session.connected && !panel.isVisible && host.presentedViewController == nil }
                 try await record.finish(status: nil, transportFailed: true)
-                try await wait { session.recovery?.reason == .terminalEnded && panel.isVisible }
+                try await wait(outcome + " visible recovery") { session.recovery?.reason == .terminalEnded && panel.isVisible }
                 XCTAssertEqual(record.passwordRequests, 1); XCTAssertEqual(record.shellRequests, 1)
             } else {
-                try await wait { panel.isVisible && probe.credentialFrames > 0 }
+                try await wait(outcome + " visible credentials") { panel.isVisible && probe.credentialFrames > 0 }
                 if outcome == "rejected" {
                     XCTAssertEqual(session.recovery?.reason, .loginRejected)
                     XCTAssertGreaterThan(record.passwordRequests, 0)
                 } else { XCTAssertEqual(record.passwordRequests, 0) }
             }
             XCTAssertNotNil(host.presentedViewController)
+            // A mounted rejected-login owner is allowed to show credentials on
+            // redraw. Retire it, as cancellation does, before closing its sheet.
+            probe.stop(); window.rootViewController = nil; session.stop()
             panel.close()
-            try await wait { host.presentedViewController == nil }
+            try await wait(outcome + " completed dismissal") { host.presentedViewController == nil }
         }
     }
 
@@ -393,6 +312,37 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
             XCTAssertEqual(record.passwordRequests, 1, "A return form cannot silently open a new shell")
         }
     }
+    func testCustomizationBlocksUserInputButKeepsTerminalRepliesAndRetiresOldActions() async throws {
+        let record = SSHTestRecord(echoInput: false), key = NIOSSHPrivateKey(ed25519Key: .init())
+        let server = try await server(record: record, key: key)
+        defer { _ = server.close() }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Controls", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+        try TerminalSecretStore.write(Data(String(openSSHPublicKey: key.publicKey).utf8), id: mac.id, kind: "host-key")
+        let session = DirectTerminalSession(mac: mac)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        let controller = TerminalController(session: session, customize: {})
+        window.rootViewController = controller; window.makeKeyAndVisible()
+        defer { session.stop(); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible(); try? TerminalSecretStore.remove(mac.id) }
+        session.connect(username: "synthetic", password: "synthetic-only", remember: false)
+        try await wait { session.connected && controller.terminal.customInputEpoch() != nil }
+        let before = try XCTUnwrap(controller.terminal.customInputEpoch())
+        record.clearReceived(); controller.beginCustomization()
+        XCTAssertNil(controller.terminal.customInputEpoch())
+        controller.terminal.insertText("must not send")
+        controller.send(source: controller.terminal, data: [0x78][...])
+        XCTAssertTrue(record.received.isEmpty)
+        try await record.emit("\u{1b}[6n")
+        try await wait("cursor-position reply while editing") { String(decoding: record.received, as: UTF8.self).hasSuffix("R") }
+        let reply = record.received
+        XCTAssertTrue(reply.starts(with: [0x1b, 0x5b]))
+        XCTAssertFalse(String(decoding: reply, as: UTF8.self).contains("must not send"))
+        controller.finishCustomization()
+        XCTAssertNotEqual(controller.terminal.customInputEpoch(), before)
+        controller.controls.actionHandler?(["kind": "tab", "inputEpoch": before.uuidString])
+        controller.terminal.insertText("q")
+        try await wait { record.received == reply + [0x71] }
+    }
     func testComposerUsesCurrentPTYBracketingAndNeverAddsReturnOrReplaysAfterStop() async throws {
         let record = SSHTestRecord(), key = NIOSSHPrivateKey(ed25519Key: .init())
         let server = try await server(record: record, key: key)
@@ -459,7 +409,8 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
         let controls = try XCTUnwrap(descendants(host.view).compactMap { $0 as? CompanionVNCControls }.first)
         controls.button.sendActions(for: .touchUpInside)
-        let interrupt = try XCTUnwrap(descendants(controls).first { $0.accessibilityIdentifier == "session-action-interrupt" } as? UIButton)
+        let interruptTitle = try XCTUnwrap(DirectControlMode.terminal.defaults.first { $0.kind == .interrupt }?.title)
+        let interrupt = try XCTUnwrap(descendants(controls).compactMap { $0 as? UIButton }.first { $0.configuration?.title == interruptTitle })
         interrupt.sendActions(for: .touchUpInside)
         try await wait("floating Ctrl-C reaches the PTY") { record.received.contains(3) }
         XCTAssertEqual(record.passwordRequests, 1)
@@ -476,22 +427,28 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
             throw error
         }
         try await wait("synthetic StoreKit entitlement is verified") { access.hasPro }
-        let text = VNCQuickAction(title: "Synthetic action", kind: .text, text: "synthetic-action-only")
-        try VNCSessionPreferences.saveProfile([text], mode: .terminal)
+        var saved = TerminalControlAction(title: "Synthetic action", kind: .shortcut)
+        saved.character = 0x62; saved.modifiers = [0xffe3]
+        let controlsStore = TerminalControlsStore()
+        var draft = try controlsStore.load(); draft.actions.append(saved)
+        _ = try controlsStore.save(draft)
+        defer { if var restored = try? controlsStore.load() { restored.delete(saved.id); _ = try? controlsStore.save(restored) } }
+        try await wait("shared controls refresh without reconnecting") { controls.quickActions.contains { $0["id"] as? String == saved.id.uuidString } }
+        let admittedItem = try XCTUnwrap(controls.quickActions.first { $0["id"] as? String == saved.id.uuidString })
         controls.button.sendActions(for: .touchUpInside)
-        let custom = try XCTUnwrap(descendants(controls).first { $0.accessibilityIdentifier == "session-action-text" } as? UIButton)
+        let custom = try XCTUnwrap(descendants(controls).compactMap { $0 as? UIButton }.first { $0.configuration?.title == saved.title })
         custom.sendActions(for: .touchUpInside)
-        try await wait("configured Terminal text reaches the same PTY") { String(decoding: record.received, as: UTF8.self).contains(text.text) }
+        try await wait("configured shortcut reaches the same PTY") { record.received.last == 0x02 }
         XCTAssertEqual(record.passwordRequests, 1, "Changing controls must not reconnect the shell")
         try await wait("the completed action panel finishes closing") {
-            !descendants(controls).contains { $0.accessibilityIdentifier == "session-action-text" }
+            !descendants(controls).compactMap { $0 as? UIButton }.contains { $0.configuration?.title == saved.title }
         }
         store.clearTransactions(); await access.refresh()
         try await wait("cleared StoreKit entitlement retires Pro input") { !access.hasPro }
         controls.button.sendActions(for: .touchUpInside)
-        XCTAssertFalse(descendants(controls).contains { $0.accessibilityIdentifier == "session-action-text" })
+        XCTAssertFalse(descendants(controls).compactMap { $0 as? UIButton }.contains { $0.configuration?.title == saved.title })
         let count = record.received.count
-        controls.actionHandler?(text.native)
+        controls.actionHandler?(admittedItem)
         try await Task.sleep(for: .milliseconds(50))
         XCTAssertEqual(record.received.count, count, "A stale Pro action cannot send input after entitlement ends")
     }

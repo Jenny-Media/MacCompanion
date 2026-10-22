@@ -43,7 +43,7 @@ import Security
         let store = try SKTestSession(contentsOf: url); store.disableDialogs = true; store.clearTransactions()
         DirectProAccess.shared.start()
         _ = try await store.buyProduct(identifier: DirectProAccess.productID)
-        for _ in 0..<100 {
+        for _ in 0..<250 {
             await DirectProAccess.shared.refresh()
             if DirectProAccess.shared.hasPro { break }
             try await Task.sleep(for: .milliseconds(20))

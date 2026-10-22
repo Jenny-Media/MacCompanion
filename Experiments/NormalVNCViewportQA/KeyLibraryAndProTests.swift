@@ -105,7 +105,8 @@ import UIKit
         let terminal = SessionTerminalView(frame: .zero)
         let accessory = TerminalKeyboardBar(terminal: terminal, preferences: .init())
         func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
-        let numbers = descendants(accessory).first { $0.accessibilityIdentifier == "terminal-number-row" } as? UIStackView
+        let numberScroll = try XCTUnwrap(descendants(accessory).first { $0.accessibilityIdentifier == "terminal-extra-row-" + TerminalKeyboardRow.numbersID.uuidString })
+        let numbers = descendants(numberScroll).compactMap { $0 as? UIStackView }.first
         XCTAssertEqual(numbers?.arrangedSubviews.compactMap { ($0 as? UIButton)?.configuration?.title }, ["1","2","3","4","5","6","7","8","9","0"])
         terminal.keyboardState.toggle(.ctrl); terminal.insertText("c"); XCTAssertTrue(terminal.keyboardState.active.isEmpty)
         terminal.keyboardState.toggle(.alt); terminal.deleteBackward(); XCTAssertTrue(terminal.keyboardState.active.isEmpty)

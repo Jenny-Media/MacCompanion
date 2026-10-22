@@ -403,9 +403,40 @@ profiles without requiring a connected Mac. Session input settings use the same
 profiles. A saved profile applies to all Macs in that mode; old per-Mac Desktop
 content remains intact and is used until a Desktop profile is saved. Profile
 accounts are separate from Mac UUID accounts in the existing local Keychain service.
-Terminal profiles reject macOS Command chords and desktop-only actions; Terminal
+Terminal profiles reject desktop-only actions. On iOS, Command shortcuts require negotiated
+Kitty disambiguation or report-all support and encode the Super modifier; no
+Command shortcut is substituted into a legacy shell. Terminal
 shortcuts use the existing xterm encoder and saved text uses bracketed paste when
 requested by the shell. Existing Pro customization and free standard controls remain.
+
+On iOS, Terminal controls use one device-local profile for every Mac connection.
+The floating menu exposes Keypad, Shortcuts & Text and Customize directly;
+Keyboard & Input uses a settings icon distinct from the Keypad grid icon.
+Incomplete action rows align to the trailing edge, with Session in the bottom-right slot.
+The software-keyboard row has no Fn menu. The Keypad uses the system draggable
+medium/large sheet, initially medium where supported, with a visible grabber.
+Navigation, function keys, numbers and actions occupy separate compact groups;
+keys send once and modifiers show Off, Next Key or On in one control: tap arms the next key, long-press keeps it on, and tap turns an active modifier off. A visual editor previews the custom row
+and floating menu. Preview selection/reordering never sends session input. Each
+action has one definition and independent row/menu placements. Cancel discards
+the draft; Save commits it once, rejecting a stale editor revision.
+
+Import existing shared Terminal quick actions and every local per-Mac Terminal
+keyboard record into that profile without deleting or rewriting the sources.
+Exclude never-saved identities still owned by the temporary-identity discard
+journal; migration must not retain their data beyond that cleanup.
+Preserve IDs where unique, order, disabled actions, modifier chords, all text
+including whitespace, and the existing 4096-byte Terminal snippet limit. Keep
+same-name snippets with different content. Journal completed source imports in
+the same atomic Keychain record as the actions so retries and later user removals
+cannot duplicate or resurrect imports. An unreadable source or destination must
+not be replaced with defaults. Custom content remains local, non-synchronizing,
+WhenUnlockedThisDeviceOnly and excluded from diagnostics and ActivityKit.
+Input continues through the existing ready-foreground, PTY-generation and
+whole-action queue admission policies. Retained menu actions are invalid after
+pause or connection replacement. Control presentation and local preference
+migration do not change SSH authentication. The negotiated iOS Command extension
+is defined in the Terminal keyboard encoding requirements below.
 
 Two-finger trackpad scrolling uses the existing balanced RFB wheel masks: one tick
 per six points, at most eight ticks per gesture update. Keep fractional deltas;
@@ -414,10 +445,13 @@ input after fingers stop or after a lifecycle transition. This changes local ges
 sensitivity, not the wire format or authentication.
 
 Quick actions can be reordered, hidden and augmented with explicitly configured
-shortcut chords or saved text (at most 256 Unicode scalars). Store custom content
+shortcut chords or saved text (at most 256 Unicode scalars in the legacy profiles;
+the shared iOS Terminal profile above supports 4096 UTF-8 bytes). Store custom content
 only in a distinct local, non-synchronizing WhenUnlockedThisDeviceOnly Keychain
-entry. Never include it in diagnostics or ActivityKit. Send saved text as balanced
-Unicode key events, not a remote clipboard claim. Shortcut modifiers and key are
+entry. Never include it in diagnostics or ActivityKit. Screen Sharing and Trackpad
+send saved text as balanced Unicode key events; Terminal uses its existing UTF-8
+PTY path and negotiated bracketed paste. Neither claims a remote clipboard write.
+Shortcut modifiers and key are
 one balanced group and clear one-shot modifiers. Actions require a ready foreground
 session; local display/input settings remain available during recovery.
 Admit the complete custom action into the bounded input queue or none of it.
@@ -697,6 +731,53 @@ default-on opt-out setting, identify Terminal, and offer scoped Resume/End actio
 Paused/stale wording MUST NOT promise an indefinitely live connection: iOS may
 suspend the app and the server/network may close SSH while it is away.
 Never replay shell input on reconnection.
+Each replacement PTY MUST publish its connection generation to the iOS surface
+before accepting input or rendering its first output. Reset parser, normal and
+alternate buffers, cursor/keypad, paste, mouse and enhanced-keyboard modes once
+at that boundary. Discard local composition, selection and armed/locked modifiers;
+retire old callbacks and key repeat. A reset MUST NOT send bytes, finish a stale
+OSC request or commit old composition to the new shell. Resize, palette updates
+and background/foreground of the same live PTY MUST NOT reset it. If surface
+preparation changes the grid after the PTY request, the owner MUST forward the
+latest dimensions once its writer is ready, before newly admitted input. The SSH owner
+continues to reject output and queued writes from retired generations.
+
+iOS toolbar keys and saved shortcut chords MUST use the renderer's current
+keyboard-enhancement flags and application cursor mode at invocation. Explicit
+software-modified single-character text and deletion use the same policy; native text-input/IME
+bookkeeping and physical-key reporting remain with the pinned frontend. Marked
+composition, multi-character commits and non-ASCII system text MUST retain the
+native commit/normalization path without software shortcut substitution or Shift
+transformation. A native hardware key press clears toolbar modifiers before
+entering the pinned frontend; its actual modifiers, repeat and release remain
+native, without a synthesized software release. Preserve
+all Shift/Alt/Ctrl combinations. Escape uses CSI 27 u under disambiguation;
+unmodified Enter, Tab and Backspace retain legacy bytes unless report-all is
+requested. Navigation/function keys retain their protocol-defined CSI/SS3 forms.
+For a discrete synthetic key action, send press and its release together when
+event reporting requests that release (Enter/Tab/Backspace need report-all).
+Report alternate/associated text only when requested and known; synthetic keys
+do not invent a physical base-layout key. Literal paste/snippets bypass key
+encoding and retain bracketed-paste admission. Software Command encodes Kitty
+Super (modifier bit 8) only after disambiguation or report-all is negotiated.
+Command chords MUST produce no bytes in legacy mode or with unrelated flags.
+Command-modified printable, Enter, Tab and Backspace keys use CSI-u even without
+report-all; requested event releases accompany those synthetic presses. Reset
+armed and locked Command when support ends. Command is optional in the main terminal row. The advanced keypad control stays
+visible but unavailable, with an explanation, while support is absent. Insert uses
+the xterm CSI 2 ~ form, including modifier and negotiated release parameters. Native hardware
+Command copy/paste shortcuts retain their existing local behavior.
+When report-all is requested, a saved uppercase character without explicit
+modifiers MUST use its single-scalar lowercase key identity and Shift, retaining
+the original uppercase associated text. This applies to reversible single-scalar
+case mappings; explicit Ctrl-only chords retain their case-insensitive identity.
+Legacy uppercase text MUST retain its existing bytes. A saved uppercase Command
+chord infers Shift, as an uppercase Alt chord does, while retaining the lowercase
+key identity; Ctrl-only saved chords remain case-insensitive.
+The indexed `terminal-compatibility-v1.json` contains authoritative byte vectors.
+The [Kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/)
+defines the negotiated flags and functional key encodings.
+
 Retain the SSH server's exit status or exit signal until PTY output has drained.
 Only a reported exit status of zero, followed by channel closure without a transport
 error, returns to My Macs and ends the session's Live Activity. Nonzero status,
@@ -742,7 +823,7 @@ Private keys and passphrases MUST NOT appear in logs, fixtures, diagnostics, cli
 
 The individual saved Mac settings page offers Install Key on This Mac. The user chooses a library key/account and explicitly supplies bootstrap password or an existing working key. Standard host verification precedes authentication. Installation sends only the public key to that account's ~/.ssh/authorized_keys, preserves all existing lines/options, rejects unsafe symlinks/file ownership, fixes private permissions, and avoids duplicating the same key even when its comment differs. Duplicate detection parses only the actual algorithm/blob fields after any quoted options, never trailing comments. It needs no helper, sudo or server configuration change. Do not automatically retry a command of uncertain outcome. Verify a fresh key-only SSH authentication before saving the selected key/account; retain the bootstrap login and report unverified installation if verification fails. Cancellation/background closes the connection and suppresses late success.
 
-Terminal keyboard accessories show a 1–0 number row whenever the software keyboard is open and standard Esc, Tab, Ctrl, Alt, arrows and additional navigation/function keys. Software modifiers apply once, including Backspace, then release; explicit long press locks them. Shift applies standard shifted symbols to the accessory number row. Legacy Ctrl-Backspace sends control-H and Alt prefixes Escape; enhanced keyboard mode uses its modifier parameter. IME composition deletion keeps the native text-input path. A grouped native range deletion produces only one Ctrl/Alt-modified deletion for the logical keypress; ordinary deletion retains the native count. Input is encoded as xterm data, respecting application cursor mode. Modifiers clear on keyboard dismissal, disconnect or background, and no input is replayed. Command shortcuts are local copy/paste actions, not fabricated remote macOS key events. Pro-only customization permits bounded layouts and saved snippets; the standard number/modifier rows remain free.
+Terminal keyboard accessories retain their configured row order, sizes and explicit expansion when the native keyboard appears or disappears and during rotation. The default main row has Esc, Tab, Ctrl, Alt/Option, Shift and quick up/down arrows; Command is optional. The independent 1–0 number row defaults above other controls. The input-free visual editor uses the real bar renderer. It can reorder up to four rows and every built-in or saved placement, with editable row presets, layout-only restore and draft Undo. The entire Main strip scrolls, including the keyboard and expansion controls; only the floating button is fixed. Session exposes keyboard/number/expansion recovery controls. Saved definitions, imports and menu favorites survive layout restore. Runtime expansion hides extra rows without deleting their definitions; it never occurs automatically on keyboard dismissal. All built-in terminal keys, numbers, symbols and common single-chord shortcuts remain freely available in one searchable All Keys keypad with native medium/large sheet detents. Tapping a key sends once and leaves the keypad open; its context menu may pin it to the keyboard bar or floating menu without sending input. Pinning reuses one definition and obeys the same optimistic revision, app-lock and connection-generation admission as the editor. Keypad/editor text fields send nothing to SSH. Software modifiers apply once, including Backspace, then release; explicit long-press keeps them on until tapped off. Shift applies standard shifted symbols to the accessory number row. Legacy Ctrl-Backspace sends control-H and Alt prefixes Escape; enhanced keyboard mode uses its modifier parameter. IME composition deletion keeps the native text-input path. A grouped native range deletion produces only one Ctrl/Alt-modified deletion for the logical keypress; ordinary deletion retains the native count. Input respects application cursor mode. Modifiers clear on keyboard dismissal, disconnect or background, and no input is replayed. Hardware Command copy/paste shortcuts remain local; software Command uses only negotiated Kitty Super encoding. Pro-only customization preserves existing snippets, identities and shared settings for all Macs on this device; built-in input never requires pinning or Pro.
 
 ## Lifetime Pro and permanent free access (2026-10-05)
 

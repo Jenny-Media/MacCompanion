@@ -132,7 +132,7 @@ import StoreKitTest
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "LifetimePro", withExtension: "storekit"))
         let store = try SKTestSession(contentsOf: url); store.disableDialogs = true; store.clearTransactions()
         DirectProAccess.shared.start(); _ = try await store.buyProduct(identifier: DirectProAccess.productID)
-        for _ in 0..<100 {
+        for _ in 0..<250 {
             await DirectProAccess.shared.refresh()
             if DirectProAccess.shared.hasPro { break }
             try await Task.sleep(for: .milliseconds(20))
@@ -150,8 +150,8 @@ import StoreKitTest
         }
         let bar = controller.keyboardBar
         let preferences = TerminalKeyboardPreferences(keys: [.f1, .f2])
-        bar.configure(preferences); bar.showsNumberRow = true; bar.setSoftwareKeyboardVisible(true)
-        XCTAssertEqual(bar.height, 156, accuracy: 1, "Reproduce the real three-row Terminal bar")
+        bar.configure(preferences); bar.setKeyboardFocused(true)
+        XCTAssertEqual(bar.height, 115, accuracy: 1, "Numbers have an independent row while optional Navigation starts collapsed")
         for landscape in [false, true] {
             scene.requestGeometryUpdate(.iOS(interfaceOrientations: landscape ? .landscapeRight : .portrait))
             for _ in 0..<300 {
@@ -172,14 +172,14 @@ import StoreKitTest
                 XCTAssertGreaterThan(panel.view.keyboardLayoutGuide.layoutFrame.height, 100)
                 controller.textComposer.draft.edit("retained landscape draft")
                 panel.view.setNeedsLayout(); panel.view.layoutIfNeeded()
-                XCTAssertEqual(bar.height, 60, accuracy: 1)
+                XCTAssertEqual(bar.height, 115, accuracy: 1)
                 XCTAssertEqual(controller.controls.isHidden, bar.isHidden, "Do not leave an orphan menu button when the row yields space")
                 XCTAssertGreaterThanOrEqual(panel.panelFrame.height, 112)
                 if bar.isHidden {
                     XCTAssertTrue(landscape, "Portrait must retain its visible shortcut row")
                     XCTAssertEqual(panel.panelFrame.maxY, panel.view.keyboardLayoutGuide.layoutFrame.minY - 8, accuracy: 1)
                 } else {
-                    XCTAssertEqual(bar.bounds.height, 60, accuracy: 1)
+                    XCTAssertEqual(bar.bounds.height, 115, accuracy: 1)
                     let shortcut = panel.view.convert(bar.bounds, from: bar)
                     XCTAssertEqual(panel.panelFrame.maxY, shortcut.minY - 8, accuracy: 1)
                     XCTAssertFalse(panel.panelFrame.intersects(shortcut))
@@ -192,11 +192,11 @@ import StoreKitTest
                     try await Task.sleep(for: .milliseconds(10))
                 }
                 XCTAssertNil(controller.presentedViewController)
-                bar.setSoftwareKeyboardVisible(true)
+                bar.setKeyboardFocused(true)
                 XCTAssertFalse(bar.isHidden, "Restore the shortcut row after either close path")
                 XCTAssertFalse(controller.controls.isHidden, "Restore the anchored menu with the row")
-                XCTAssertEqual(bar.height, 156, accuracy: 1, "Restore number and custom rows without reconfiguring preferences")
-                XCTAssertTrue(bar.showsNumberRow)
+                XCTAssertEqual(bar.height, 115, accuracy: 1, "Restore both rows with number and custom keys intact")
+                XCTAssertTrue(bar.subviews.flatMap { $0.subviews }.contains { !$0.isHidden && $0.accessibilityIdentifier == "terminal-extra-row-" + TerminalKeyboardRow.numbersID.uuidString })
             }
         }
     }
@@ -416,7 +416,10 @@ import StoreKitTest
                     XCTAssertGreaterThan(editor.bounds.width, 80); XCTAssertGreaterThan(editor.bounds.height, 35)
                     XCTAssertTrue(descendants(panel.view).contains(where: { $0 === editor })); XCTAssertEqual(editor.selectedRange, selection)
                     XCTAssertFalse(descendants(panel.view).contains { ["compose-dock", "compose-more", "compose-discard", "compose-destination"].contains($0.accessibilityIdentifier ?? "") })
-                    if !large { XCTAssertLessThanOrEqual(card.width, 284); XCTAssertLessThanOrEqual(card.height, 156) }
+                    if !large {
+                        XCTAssertLessThanOrEqual(card.width, 284)
+                        XCTAssertLessThanOrEqual(card.height, 156, "size=\(size), category=\(panel.traitCollection.preferredContentSizeCategory.rawValue), font=\(editor.font?.pointSize ?? 0), issue=\(issue)")
+                    }
                 }
             }
         }

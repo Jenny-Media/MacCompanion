@@ -27,7 +27,7 @@ import UIKit
         return controller
     }
     private func tap(_ title: String, in controller: ShortcutOutputController) throws {
-        let button = try XCTUnwrap(descendants(controller.keyboardBar).compactMap { $0 as? UIButton }.first { $0.configuration?.title == title })
+        let button = try XCTUnwrap(descendants(controller.keyboardBar).compactMap { $0 as? UIButton }.first { $0.accessibilityLabel == title || $0.configuration?.title == title })
         button.sendActions(for: .touchUpInside)
     }
     func testOnScreenAltNumberButtonsKeepEveryDigitInEachNegotiatedMode() throws {
@@ -36,7 +36,8 @@ import UIKit
             for digit in "1234567890" {
                 controller.output = []
                 try tap("Alt", in: controller); try tap(String(digit), in: controller)
-                let expected = flags == 0 || flags == 2 ? "\u{1b}\(digit)" : "\u{1b}[\(digit.asciiValue!);3u"
+                var expected = flags == 0 || flags == 2 ? "\u{1b}\(digit)" : "\u{1b}[\(digit.asciiValue!);3u"
+                if flags & 2 != 0 { expected += "\u{1b}[\(digit.asciiValue!);3:3u" }
                 XCTAssertEqual(controller.output, Array(expected.utf8), "flags=\(flags), Alt+\(digit)")
                 XCTAssertTrue(controller.terminal.keyboardState.active.isEmpty)
             }

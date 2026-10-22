@@ -1098,7 +1098,7 @@
           "text": "a",
           "alt": true,
           "flags": 3,
-          "expectedHex": "1b5b39373b3375"
+          "expectedHex": "1b5b39373b33751b5b39373b333a3375"
         },
         {
           "text": "1",
@@ -1116,7 +1116,7 @@
           "text": "1",
           "alt": true,
           "flags": 2,
-          "expectedHex": "1b31"
+          "expectedHex": "1b311b5b34393b333a3375"
         },
         {
           "text": "c",

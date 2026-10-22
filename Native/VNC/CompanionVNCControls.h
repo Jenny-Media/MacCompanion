@@ -38,6 +38,8 @@ NS_SWIFT_UI_ACTOR
 @property(nonatomic, copy, nullable) void (^customizeHandler)(void);
 /// Uses the session renderer, but gestures only select/reorder draft actions.
 @property(nonatomic) BOOL editingPreview;
+/// Passive preview of the complete production popup, including its header and categories.
+@property(nonatomic) BOOL fullMenuPreview;
 @property(nonatomic, copy, nullable) NSString *selectedPreviewID;
 @property(nonatomic, copy, nullable) void (^previewSelectionHandler)(NSString *);
 @property(nonatomic, copy, nullable) void (^previewMoveHandler)(NSString *, NSString *);

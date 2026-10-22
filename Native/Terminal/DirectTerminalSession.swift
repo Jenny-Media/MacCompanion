@@ -89,6 +89,7 @@ private enum TerminalPTY {
     // Native windows admit input independently of other active scenes.
     var inputAvailable: @MainActor () -> Bool = { true }
     var suspendInput: (@MainActor () -> Void)?
+    var finishControlsCustomization: (@MainActor () -> Void)?
     private(set) var suspended = false
     private(set) var activity: VNCSessionActivityController?
     private var pausedOutput: [UInt8] = []
@@ -108,8 +109,11 @@ private enum TerminalPTY {
     #endif
     private var lifecycleGeneration = UUID()
     private var writeGeneration = UUID()
-    #if os(visionOS)
+    #if os(iOS) || os(visionOS)
     var outputGeneration: UUID { generation }
+    #endif
+    #if os(iOS)
+    var prepareTerminal: (@MainActor (UUID) -> Void)?
     #endif
     #if os(macOS) || os(visionOS)
     private var nativeInputReleaseTail: Task<Void, Never>?
@@ -366,7 +370,8 @@ private enum TerminalPTY {
                 self.connectionProgress.advance(to: .startingSession)
                 #endif
                 self.phase = "Opening a new shell"
-                let exitStatus = try await TerminalPTY.run(client: client, columns: columns, rows: rows, ready: { writer in
+                let requestedColumns = columns, requestedRows = rows
+                let exitStatus = try await TerminalPTY.run(client: client, columns: requestedColumns, rows: requestedRows, ready: { writer in
                     guard self.generation == id, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { throw CancellationError() }
                     #if os(iOS)
                     if let establish = self.connectionEstablished {
@@ -379,8 +384,17 @@ private enum TerminalPTY {
                             else if remember { try DirectMacAccessStore.retain(.init(username: username, password: password), macID: self.mac.id, ssh: true, owner: owner) }
                         }
                     }
+                    self.prepareTerminal?(id)
+                    guard self.generation == id, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { throw CancellationError() }
                     #endif
                     self.writer = writer; self.connected = true; self.connecting = false; self.status = "Connected"; self.phase = "Shell open"; self.recovery = nil
+                    #if os(iOS)
+                    // Surface preparation can resize after the PTY request.
+                    // Queue that latest grid ahead of newly admitted typing.
+                    if self.columns != requestedColumns || self.rows != requestedRows {
+                        self.resize(columns: self.columns, rows: self.rows)
+                    }
+                    #endif
                     self.activity = VNCSessionActivityController(mac: self.mac, kind: .terminal, defaults: self.activityDefaults, backend: self.activityBackend)
                     self.activity?.setPhase("connected")
                 }, output: { bytes in

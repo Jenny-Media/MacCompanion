@@ -49,7 +49,7 @@ import XCTest
                 controller.keyboardBar.keyboardButton.sendActions(for: .touchUpInside)
                 XCTAssertEqual(feedback.events.count, 2)
                 defaults.set(false, forKey: CompanionVNCControlsHapticsPreference)
-                controller.controls.actionHandler?(["kind": "numberRow"])
+                controller.controls.actionHandler?(["kind": "expandRows"])
                 XCTAssertEqual(feedback.events.count, 2)
             }
         }
@@ -93,7 +93,7 @@ import XCTest
             action("fullscreen"); action("setTrackpad"); XCTAssertEqual(feedback.events.count, 3)
         }
     }
-    func testTerminalNumberRowAndPaletteMenusAvoidReselectionAndDuplicateFeedback() {
+    func testTerminalExpansionAndPaletteMenusAvoidReselectionAndDuplicateFeedback() {
         withFeedback { defaults, feedback in
             let appearance = DirectAppearanceV1.shared, previous = appearance.terminal
             defer { appearance.terminal = previous }
@@ -102,11 +102,11 @@ import XCTest
             let controller = TerminalController(session: session, customize: {}, defaults: defaults); session.connected = true; controller.loadViewIfNeeded()
             defer { session.stop() }
             controller.keyboardBar.keyFeedback = feedback
-            controller.controls.actionHandler?(["kind": "numberRow"])
+            controller.controls.actionHandler?(["kind": "expandRows"])
             controller.controls.actionHandler?(["kind": "colors-dark"])
             controller.controls.actionHandler?(["kind": "colors-dark"])
             XCTAssertEqual(feedback.events, ["selection", "selection"])
-            controller.controls.actionHandler?(["kind": "numberRow", "interfaceFeedbackHandled": true])
+            controller.controls.actionHandler?(["kind": "expandRows", "interfaceFeedbackHandled": true])
             XCTAssertEqual(feedback.events.count, 2)
         }
     }
@@ -181,7 +181,7 @@ import XCTest
             let controls = CompanionVNCControls(); controls.setValue(feedback, forKey: "interfaceFeedback")
             var received: [AnyHashable: Any]?
             controls.actionHandler = { received = $0 }
-            for kind in ["keyboard", "fullscreen", "setTrackpad", "numberRow", "virtualDisplay", "colors-dark", "escape", "tab", "returnKey", "shortcut", "text", "paste", "interrupt", "rightClick", "composeText"] {
+            for kind in ["keyboard", "fullscreen", "setTrackpad", "desktopSize", "virtualDisplay", "colors-dark", "escape", "tab", "returnKey", "shortcut", "text", "paste", "interrupt", "rightClick", "composeText"] {
                 controls.setValue(UIVisualEffectView(), forKey: "panel")
                 controls.setValue([["kind": kind]], forKey: "items")
                 let button = UIButton(); button.tag = 0
