@@ -556,13 +556,7 @@
     [self.view addSubview:self.input];
     [self prepareTabletopPad];
     [self prepareTrackpadFeedback];
-#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 270100
-    if (@available(iOS 27.1, *)) {
-        [self.view addInteraction:[[UIHingeInteraction alloc] initWithUpdateHandler:^(UIHingeInteraction *interaction, UIHingeInteractionUpdate *update) {
-            [weak.view setNeedsLayout]; // Query reserved regions when they change; never infer layout from angle.
-        }]];
-    }
-#endif
+    CompanionVNCObserveDivision(self.view);
     NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
     [center addObserver:self selector:@selector(keyboardFrame:) name:UIKeyboardWillChangeFrameNotification object:nil];
     self.displayViews = self.displayLayout[@"views"] ?: @[];

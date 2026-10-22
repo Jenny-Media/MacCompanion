@@ -944,6 +944,95 @@ import UIKit
         capture("favorite-save-persists-and-cancel-keeps-other-copy", app: app)
     }
 
+    func testReplaceKeyboardButtonWithSavedTextPresetAndInlineShortcut() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        openKeyboard(app)
+        let row = app.scrollViews["terminal-row-preview-scroll"]
+        let tab = app.buttons["terminal-preview-item-palette-key-tab"]
+        revealHorizontal(tab, scroll: row); tab.tap(); app.buttons["terminal-replace-key"].tap()
+        let pages = app.segmentedControls["terminal-add-page"]
+        XCTAssertTrue(pages.waitForExistence(timeout: 5))
+        pages.buttons["Text"].tap()
+        capture("replace-keyboard-button-text-catalog", app: app)
+        app.buttons["terminal-reuse-" + itemID].tap()
+        XCTAssertTrue(app.buttons["terminal-add-row"].waitForExistence(timeout: 5))
+        let projects = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "terminal-row-preview-", "Project"))
+        XCTAssertEqual(projects.count, 2)
+        let selected = projects.element(boundBy: 0)
+        revealHorizontal(selected, scroll: row); selected.tap(); app.buttons["terminal-replace-key"].tap()
+        pages.buttons["Shortcuts"].tap(); app.buttons["terminal-tool-presets-tmux"].tap()
+        let prefix = app.buttons["terminal-preset-tmux.prefix"], window = app.buttons["terminal-preset-tmux.window"]
+        XCTAssertTrue(prefix.waitForExistence(timeout: 5)); prefix.tap(); window.tap()
+        XCTAssertEqual(prefix.value as? String, "Not selected")
+        XCTAssertEqual(window.value as? String, "Selected")
+        XCTAssertEqual(app.buttons["terminal-presets-add"].label, "Replace")
+        capture("replace-one-button-single-tool-preset", app: app)
+        app.buttons["terminal-presets-add"].tap()
+        XCTAssertTrue(app.buttons["terminal-add-row"].waitForExistence(timeout: 5))
+        XCTAssertEqual(projects.count, 1)
+        let tmux = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "terminal-row-preview-", "Tmux New Window")).firstMatch
+        revealHorizontal(tmux, scroll: row); tmux.tap()
+        XCTAssertTrue(app.buttons["terminal-edit-selected"].exists, "Shared definition editing remains separate")
+        app.buttons["terminal-replace-key"].tap(); pages.buttons["Shortcuts"].tap()
+        app.buttons["terminal-create-inline"].tap()
+        XCTAssertTrue(app.textFields["terminal-control-name"].waitForExistence(timeout: 5))
+        app.textFields["terminal-control-name"].tap(); app.textFields["terminal-control-name"].typeText("My Prefix")
+        app.buttons["terminal-shortcut-modifier-Ctrl"].tap(); app.buttons["terminal-choose-key"].tap()
+        let character = app.textFields["terminal-key-character"]; character.tap(); character.typeText(XCUIKeyboardKey.delete.rawValue + "b")
+        app.buttons["terminal-use-character"].tap(); app.buttons["terminal-item-save"].tap()
+        XCTAssertTrue(app.buttons["terminal-add-row"].waitForExistence(timeout: 5))
+        let replacement = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "terminal-row-preview-", "My Prefix")).firstMatch
+        revealHorizontal(replacement, scroll: row)
+        XCTAssertFalse(tmux.exists); XCTAssertEqual(projects.count, 1)
+        capture("replacement-inline-shortcut-keeps-other-placement", app: app)
+        closeLayout(app, save: true); closeSettings(app)
+        XCTAssertEqual(app.staticTexts["controls-qa-writes"].label, "Writes: 1")
+        openKeyboard(app)
+        XCTAssertTrue(replacement.waitForExistence(timeout: 5)); XCTAssertEqual(projects.count, 1)
+        capture("keyboard-replacements-persist-after-save", app: app)
+    }
+
+    func testReplaceFavoriteAcrossActionsTextAndKeysWithoutAddingPlacements() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        openSettings(app); app.buttons["terminal-edit-menu"].tap()
+        let project = app.buttons["Project"]
+        XCTAssertTrue(project.waitForExistence(timeout: 5)); project.tap()
+        app.buttons["terminal-replace-key"].tap()
+        let pages = app.segmentedControls["terminal-add-page"]
+        XCTAssertTrue(pages.waitForExistence(timeout: 5)); pages.buttons["Actions"].tap()
+        capture("replace-favorite-app-actions", app: app)
+        app.buttons["terminal-add-action-composeText"].tap()
+        let compose = app.buttons["Compose Text"]
+        XCTAssertTrue(compose.waitForExistence(timeout: 5)); XCTAssertFalse(project.exists)
+        compose.tap(); app.buttons["terminal-replace-key"].tap(); pages.buttons["Text"].tap()
+        app.buttons["terminal-create-inline"].tap()
+        XCTAssertTrue(app.textFields["terminal-control-name"].waitForExistence(timeout: 5))
+        app.textFields["terminal-control-name"].tap(); app.textFields["terminal-control-name"].typeText("Status")
+        let text = app.textViews.firstMatch; text.tap(); text.typeText("git status --short")
+        app.buttons["terminal-item-save"].tap()
+        XCTAssertTrue(app.buttons["Status"].waitForExistence(timeout: 5)); XCTAssertFalse(compose.exists)
+        capture("replace-favorite-inline-saved-text", app: app)
+        app.buttons["Status"].tap(); app.buttons["terminal-replace-key"].tap()
+        searchCatalog("Home", app: app); app.buttons["terminal-add-key-home"].tap()
+        XCTAssertTrue(app.buttons["Home"].waitForExistence(timeout: 5)); XCTAssertFalse(app.buttons["Status"].exists)
+        capture("replace-saved-text-with-key", app: app)
+        app.buttons["terminal-editor-undo"].tap()
+        XCTAssertTrue(app.buttons["Status"].waitForExistence(timeout: 5)); XCTAssertFalse(app.buttons["Home"].exists)
+        closeLayout(app, save: true); closeSettings(app)
+        XCTAssertEqual(app.staticTexts["controls-qa-menu-order"].label, "Favorites: Status")
+        openSettings(app); app.buttons["terminal-edit-menu"].tap()
+        XCTAssertTrue(app.buttons["Status"].waitForExistence(timeout: 5))
+        app.buttons["Status"].tap(); app.buttons["terminal-replace-key"].tap()
+        searchCatalog("Home", app: app); app.buttons["terminal-add-key-home"].tap()
+        XCTAssertTrue(app.buttons["Home"].waitForExistence(timeout: 5))
+        closeLayout(app, save: false); closeSettings(app)
+        XCTAssertEqual(app.staticTexts["controls-qa-menu-order"].label, "Favorites: Status")
+        library(app, text: true)
+        XCTAssertTrue(app.staticTexts["Project"].exists, "Replacement keeps the original shared definition")
+        XCTAssertTrue(app.staticTexts["Status"].exists)
+        capture("replacement-saved-definitions-retained", app: app)
+    }
+
     func testIndependentCopiesAndOrdinalRowsWithScrollStartSaveAndCancel() async throws {
         let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
         openKeyboard(app)

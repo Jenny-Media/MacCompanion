@@ -17,7 +17,12 @@ static inline BOOL CompanionVNCTabletopRegions(CGRect safe, CGRect division, CGR
 static inline CGRect CompanionVNCActiveDivision(UIView *view) {
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 270100
     if (@available(iOS 27.1, *)) {
-        for (UIViewReservedRegion *region in [view reservedRegionsOfKind:UIViewReservedRegionKind.divisionRegionKind]) {
+        // Resolve new UIKit classes dynamically: the SDK currently emits strong
+        // class references even inside an availability check, preventing launch
+        // on older supported systems before this function can run.
+        Class kindClass = NSClassFromString(@"UIViewReservedRegionKind");
+        if (!kindClass) return CGRectNull;
+        for (UIViewReservedRegion *region in [view reservedRegionsOfKind:[kindClass divisionRegionKind]]) {
             if (region.isActive && !CGRectIsEmpty(region.frame)) return region.frame;
         }
     }
@@ -28,8 +33,10 @@ static inline CGRect CompanionVNCActiveDivision(UIView *view) {
 static inline void CompanionVNCObserveDivision(UIView *view) {
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 270100
     if (@available(iOS 27.1, *)) {
+        Class interactionClass = NSClassFromString(@"UIHingeInteraction");
+        if (!interactionClass) return;
         __weak UIView *weakView = view;
-        [view addInteraction:[[UIHingeInteraction alloc] initWithUpdateHandler:^(UIHingeInteraction *interaction, UIHingeInteractionUpdate *update) {
+        [view addInteraction:[[interactionClass alloc] initWithUpdateHandler:^(UIHingeInteraction *interaction, UIHingeInteractionUpdate *update) {
             [weakView setNeedsLayout];
         }]];
     }

@@ -304,7 +304,7 @@ private struct TerminalEditorItemPicker: View {
     @State private var completed = false
     @State private var error: String?
     @Environment(\.dynamicTypeSize) private var typeSize
-    private var title: String { replacing != nil ? "Replace Key" : destination == .menu ? "Add Favorite" : "Add to Row" }
+    private var title: String { replacing != nil ? "Replace Button" : destination == .menu ? "Add Favorite" : "Add to Row" }
     private var searchPrompt: String {
         switch page { case "Actions": "Find an action"; case "Keys": "Find a key"; case "Shortcuts": "Find a shortcut"; default: "Find saved text" }
     }
@@ -312,36 +312,37 @@ private struct TerminalEditorItemPicker: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    if replacing == nil {
-                        Picker("Add", selection: $page) { ForEach(destination == .menu ? ["Actions", "Keys", "Shortcuts", "Text"] : ["Keys", "Shortcuts", "Text"], id: \.self) { Text($0) } }
-                            .pickerStyle(.segmented).accessibilityIdentifier("terminal-add-page")
-                    }
+                    Picker(replacing == nil ? "Add" : "Replace", selection: $page) { ForEach(destination == .menu ? ["Actions", "Keys", "Shortcuts", "Text"] : ["Keys", "Shortcuts", "Text"], id: \.self) { Text($0) } }
+                        .pickerStyle(.segmented).accessibilityIdentifier("terminal-add-page")
                     if let error { Text(error).font(.subheadline).foregroundStyle(.red).accessibilityIdentifier("terminal-add-error") }
-                    if page == "Actions" && replacing == nil { actions }
-                    else if page == "Keys" || replacing != nil { keys }
+                    if page == "Actions" { actions }
+                    else if page == "Keys" { keys }
                     else { saved }
                 }.padding(20)
             }.navigationTitle(title).directInlineNavigationTitle()
                 .searchable(text: $query, prompt: searchPrompt)
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close", action: finished) } }
         }.presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
-            .onAppear { if destination == .menu && replacing == nil { page = "Actions" } }
+            .onAppear {
+                if let id = replacing?.savedID, let action = profile.actions.first(where: { $0.id == id }) {
+                    page = action.kind == .text ? "Text" : action.kind == .shortcut ? "Shortcuts" : action.kind == .builtIn && destination == .menu ? "Actions" : "Keys"
+                } else if destination == .menu && replacing == nil { page = "Actions" }
+            }
             .sheet(item: $creation, onDismiss: { if completed { finished() } }) { item in
                 TerminalSavedControlEditor(action: item, profile: profile, localDraft: true, creating: true, apply: { value in
-                    guard value.valid, profile.actions.count < 4096 else { return false }
-                    profile.actions.append(value)
-                    if destination == .keyboard, let rowID { profile.place(value.id, in: rowID) }
-                    else { profile.pin(value.id, in: .menu, enabled: true) }
+                    guard profile.placeEditorItem(.saved(value.id), in: destination, rowID: rowID,
+                        replacing: replacing, placementID: placementID, definition: value) else { return false }
                     completed = true; creation = nil; return true
                 })
             }
             .sheet(item: $presetPack, onDismiss: { if completed { finished() } }) { pack in
-                TerminalShortcutPresetPicker(profile: profile, initialPack: pack, placement: true) { choices in
+                TerminalShortcutPresetPicker(profile: profile, initialPack: pack, placement: true, replacing: replacing != nil) { choices in
                     var draft = profile
+                    guard !choices.isEmpty, replacing == nil || choices.count == 1 else { return false }
                     for preset in choices {
                         guard let id = draft.add(preset) else { return false }
-                        if destination == .keyboard, let rowID { draft.place(id, in: rowID) }
-                        else { draft.pin(id, in: .menu, enabled: true) }
+                        guard draft.placeEditorItem(.saved(id), in: destination, rowID: rowID,
+                            replacing: replacing, placementID: placementID) else { return false }
                     }
                     profile = draft; completed = true; presetPack = nil; return true
                 }
@@ -360,7 +361,7 @@ private struct TerminalEditorItemPicker: View {
                     let item = TerminalBarItem.control(control)
                     Button { place(item) } label: { Image(systemName: item.symbol ?? "keyboard").font(.body) }
                         .buttonStyle(TerminalKeycapStyle()).accessibilityLabel(item.title(in: profile))
-                        .accessibilityHint("Add to the selected keyboard row")
+                        .accessibilityHint(replacing == nil ? "Add to the selected keyboard row" : "Replace the selected button")
                         .accessibilityIdentifier("terminal-add-control-" + control.rawValue)
                 }
             }
@@ -383,19 +384,17 @@ private struct TerminalEditorItemPicker: View {
             ForEach(TerminalAppAction.allCases.filter { query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) || $0.detail.localizedCaseInsensitiveContains(query) }) { standard in
                 Button {
                     if let existing = profile.actions.first(where: { $0.operation == standard }) {
-                        profile.pin(existing.id, in: .menu, enabled: true)
+                        place(.saved(existing.id))
                     } else {
-                        guard profile.actions.count < 4096 else { error = "The saved control limit has been reached."; return }
                         var action = standard.definition; action.inMenu = false
-                        profile.actions.append(action); profile.pin(action.id, in: .menu, enabled: true)
+                        place(.saved(action.id), definition: action)
                     }
-                    finished()
                 } label: {
                     HStack(spacing: 12) {
                         Image(systemName: standard.symbol).frame(width: 24)
                         Text(standard.title).foregroundStyle(.primary)
                         Spacer()
-                        Image(systemName: "plus")
+                        Image(systemName: replacing == nil ? "plus" : "arrow.triangle.2.circlepath")
                     }.frame(minHeight: 44)
                 }.accessibilityIdentifier("terminal-add-action-" + standard.rawValue)
             }
@@ -426,28 +425,17 @@ private struct TerminalEditorItemPicker: View {
             Text(page == "Text" ? "Saved Text" : "Your Shortcuts").font(.headline).padding(.top, 8)
             ForEach(profile.savedItems(page == "Text" ? .text : .shortcuts).filter { query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) || $0.detail.localizedCaseInsensitiveContains(query) }) { item in
                 Button { place(.saved(item.id)) } label: {
-                    HStack { VStack(alignment: .leading, spacing: 4) { Text(item.title); Text(item.detail).font(.caption).foregroundStyle(.secondary).lineLimit(2) }; Spacer(); Image(systemName: "plus") }
+                    HStack { VStack(alignment: .leading, spacing: 4) { Text(item.title); Text(item.detail).font(.caption).foregroundStyle(.secondary).lineLimit(2) }; Spacer(); Image(systemName: replacing == nil ? "plus" : "arrow.triangle.2.circlepath") }
                         .frame(minHeight: 48)
                 }.accessibilityIdentifier("terminal-reuse-" + item.id.uuidString)
             }
         }
     }
-    private func place(_ item: TerminalBarItem) {
-        if destination == .keyboard, let rowID {
-            if let replacing {
-                guard profile.replaceEditorItem(replacing, in: rowID, with: item, placementID: placementID) else { error = "This placement is no longer available."; return }
-            } else {
-                profile.placeBarItem(item, in: rowID)
-            }
-        } else if let replacing, let id = replacing.savedID, let key = item.palette {
-            let favoriteID: UUID?
-            if let placementID { favoriteID = UUID(uuidString: placementID) }
-            else { favoriteID = profile.resolvedMenuPlacements.first { $0.actionID == id }?.id }
-            guard let favoriteID, profile.replaceEditorFavorite(favoriteID, with: key) else {
-                error = "This favorite couldn’t be replaced. Close and try again."; return
-            }
-        } else if let id = item.savedID { profile.pin(id, in: .menu, enabled: true) }
-        else if let key = item.palette { profile.pin(key, in: .menu) }
+    private func place(_ item: TerminalBarItem, definition: TerminalControlAction? = nil) {
+        guard profile.placeEditorItem(item, in: destination, rowID: rowID, replacing: replacing,
+            placementID: placementID, definition: definition) else {
+            error = "This placement couldn’t be updated. Close and try again."; return
+        }
         finished()
     }
 }
@@ -478,9 +466,8 @@ private struct TerminalEditorItemActions: View {
                 Section {
                     if let action, action.kind == .shortcut || action.kind == .text {
                         Button(action.kind == .text ? "Edit Text" : "Edit Shortcut", systemImage: "pencil") { editing = action }.accessibilityIdentifier("terminal-edit-selected")
-                    } else if action?.kind != .builtIn {
-                        Button("Replace Key", systemImage: "pencil") { replacing = true }.accessibilityIdentifier("terminal-replace-key")
                     }
+                    Button("Replace Button", systemImage: "arrow.triangle.2.circlepath") { replacing = true }.accessibilityIdentifier("terminal-replace-key")
                     if position > 0 { Button("Move Earlier", systemImage: "arrow.left") { move(-1) }.accessibilityIdentifier("terminal-move-earlier") }
                     if position + 1 < items.count { Button("Move Later", systemImage: "arrow.right") { move(1) }.accessibilityIdentifier("terminal-move-later") }
                     if let rowID {
