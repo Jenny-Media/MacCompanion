@@ -1,0 +1,509 @@
+{
+  "profile": "maccompanion.terminal-compatibility.v1",
+  "scope": "Synthetic golden vectors; real tool acceptance is recorded separately.",
+  "legacyKeys": [
+    {
+      "name": "tmux-herdr-prefix",
+      "text": "b",
+      "ctrl": true,
+      "expectedHex": "02"
+    },
+    {
+      "name": "screen-prefix",
+      "text": "a",
+      "ctrl": true,
+      "expectedHex": "01"
+    },
+    {
+      "name": "zellij-pane-mode",
+      "text": "p",
+      "ctrl": true,
+      "expectedHex": "10"
+    },
+    {
+      "name": "combined-meta-control",
+      "text": "h",
+      "ctrl": true,
+      "alt": true,
+      "expectedHex": "1b08"
+    }
+  ],
+  "applicationArrow": {
+    "enable": "\u001b[?1h",
+    "expectedUpHex": "1b4f41",
+    "expectedCtrlLeftHex": "1b5b313b3544"
+  },
+  "queries": {
+    "request": "\u001b[?u\u001b[6n",
+    "keyboardReplyHex": "1b5b3f3075",
+    "cursorReplyPrefixHex": "1b5b"
+  },
+  "screen": {
+    "enter": "\u001b[?1049h\u001b[2J\u001b[H",
+    "leave": "\u001b[?1049l",
+    "normalText": "MCQA_NORMAL",
+    "alternateText": "MCQA_ALT_中文😀é"
+  },
+  "paste": {
+    "enable": "\u001b[?2004h",
+    "text": "one\n  中文😀",
+    "expectedHex": "1b5b3230307e6f6e650a2020e4b8ade69687f09f98801b5b3230317e"
+  },
+  "modeSeed": "\u001b[?1049h\u001b[?1h\u001b[?2004h\u001b[?1000h\u001b[>1u\u001b[?25l\u001b[?1004h\u001b[?1006h\u001b[?1016h\u001b=",
+  "enhancedEscape": {
+    "enable": "\u001b[>1u",
+    "expectedHex": "1b5b323775"
+  },
+  "enhancedQuickAction": {
+    "enable": "\u001b[>1u",
+    "text": "b",
+    "expectedHex": "1b5b39383b3575"
+  },
+  "encodingCases": [
+    {
+      "name": "escape",
+      "key": "escape",
+      "text": null,
+      "modifiers": 0,
+      "flags": 1,
+      "expectedHex": "1b5b323775"
+    },
+    {
+      "name": "ctrl-shift-escape",
+      "key": "escape",
+      "text": null,
+      "modifiers": 5,
+      "flags": 1,
+      "expectedHex": "1b5b32373b3675"
+    },
+    {
+      "name": "enter",
+      "key": "enter",
+      "text": null,
+      "modifiers": 0,
+      "flags": 1,
+      "expectedHex": "0d"
+    },
+    {
+      "name": "ctrl-alt-enter",
+      "key": "enter",
+      "text": null,
+      "modifiers": 6,
+      "flags": 1,
+      "expectedHex": "1b5b31333b3775"
+    },
+    {
+      "name": "tab",
+      "key": "tab",
+      "text": null,
+      "modifiers": 0,
+      "flags": 1,
+      "expectedHex": "09"
+    },
+    {
+      "name": "shift-alt-tab",
+      "key": "tab",
+      "text": null,
+      "modifiers": 3,
+      "flags": 1,
+      "expectedHex": "1b5b393b3475"
+    },
+    {
+      "name": "backspace",
+      "key": "backspace",
+      "text": null,
+      "modifiers": 0,
+      "flags": 1,
+      "expectedHex": "7f"
+    },
+    {
+      "name": "ctrl-alt-backspace",
+      "key": "backspace",
+      "text": null,
+      "modifiers": 6,
+      "flags": 1,
+      "expectedHex": "1b5b3132373b3775"
+    },
+    {
+      "name": "legacy-shift-alt-tab",
+      "key": "tab",
+      "text": null,
+      "modifiers": 3,
+      "flags": 0,
+      "expectedHex": "1b1b5b5a"
+    },
+    {
+      "name": "up",
+      "key": "up",
+      "text": null,
+      "modifiers": 0,
+      "flags": 1,
+      "expectedHex": "1b5b41"
+    },
+    {
+      "name": "ctrl-shift-left",
+      "key": "left",
+      "text": null,
+      "modifiers": 5,
+      "flags": 1,
+      "expectedHex": "1b5b313b3644"
+    },
+    {
+      "name": "delete",
+      "key": "delete",
+      "text": null,
+      "modifiers": 6,
+      "flags": 1,
+      "expectedHex": "1b5b333b377e"
+    },
+    {
+      "name": "f1",
+      "key": "f1",
+      "text": null,
+      "modifiers": 0,
+      "flags": 1,
+      "expectedHex": "1b5b50"
+    },
+    {
+      "name": "f3",
+      "key": "f3",
+      "text": null,
+      "modifiers": 0,
+      "flags": 1,
+      "expectedHex": "1b5b31337e"
+    },
+    {
+      "name": "alt-f12",
+      "key": "f12",
+      "text": null,
+      "modifiers": 2,
+      "flags": 1,
+      "expectedHex": "1b5b32343b337e"
+    },
+    {
+      "name": "ctrl-shift-b",
+      "key": "text",
+      "text": "b",
+      "modifiers": 5,
+      "flags": 1,
+      "expectedHex": "1b5b39383b3675"
+    },
+    {
+      "name": "shift-symbol",
+      "key": "text",
+      "text": "1",
+      "modifiers": 1,
+      "flags": 1,
+      "expectedHex": "21"
+    },
+    {
+      "name": "events-escape",
+      "key": "escape",
+      "text": null,
+      "modifiers": 0,
+      "flags": 3,
+      "expectedHex": "1b5b3237751b5b32373b313a3375"
+    },
+    {
+      "name": "events-ctrl-b",
+      "key": "text",
+      "text": "b",
+      "modifiers": 4,
+      "flags": 3,
+      "expectedHex": "1b5b39383b35751b5b39383b353a3375"
+    },
+    {
+      "name": "events-enter-no-release",
+      "key": "enter",
+      "text": null,
+      "modifiers": 0,
+      "flags": 3,
+      "expectedHex": "0d"
+    },
+    {
+      "name": "all-events-enter",
+      "key": "enter",
+      "text": null,
+      "modifiers": 0,
+      "flags": 11,
+      "expectedHex": "1b5b3133751b5b31333b313a3375"
+    },
+    {
+      "name": "all-events-tab",
+      "key": "tab",
+      "text": null,
+      "modifiers": 1,
+      "flags": 11,
+      "expectedHex": "1b5b393b32751b5b393b323a3375"
+    },
+    {
+      "name": "all-events-backspace",
+      "key": "backspace",
+      "text": null,
+      "modifiers": 0,
+      "flags": 11,
+      "expectedHex": "1b5b313237751b5b3132373b313a3375"
+    },
+    {
+      "name": "all-text-shift-b",
+      "key": "text",
+      "text": "b",
+      "modifiers": 1,
+      "flags": 31,
+      "expectedHex": "1b5b39383a36363b323b3636751b5b39383a36363b323a3375"
+    },
+    {
+      "name": "all-text-plain-b",
+      "key": "text",
+      "text": "b",
+      "modifiers": 0,
+      "flags": 31,
+      "expectedHex": "1b5b39383b3b3938751b5b39383b313a3375"
+    },
+    {
+      "name": "all-text-ctrl-b",
+      "key": "text",
+      "text": "b",
+      "modifiers": 4,
+      "flags": 31,
+      "expectedHex": "1b5b39383b35751b5b39383b353a3375"
+    },
+    {
+      "name": "events-up",
+      "key": "up",
+      "text": null,
+      "modifiers": 0,
+      "flags": 3,
+      "expectedHex": "1b5b411b5b313b313a3341"
+    },
+    {
+      "name": "events-ctrl-c",
+      "key": "text",
+      "text": "c",
+      "modifiers": 4,
+      "flags": 3,
+      "expectedHex": "1b5b39393b35751b5b39393b353a3375"
+    },
+    {
+      "name": "all-text-uppercase",
+      "key": "text",
+      "text": "B",
+      "modifiers": 0,
+      "flags": 31,
+      "expectedHex": "1b5b39383a36363b323b3636751b5b39383a36363b323a3375"
+    },
+    {
+      "name": "all-text-expanded-shift",
+      "key": "text",
+      "text": "ß",
+      "modifiers": 1,
+      "flags": 31,
+      "expectedHex": "1b5b3232333b323b38333a3833751b5b3232333b323a3375"
+    },
+    {
+      "name": "events-only-ctrl-b",
+      "key": "text",
+      "text": "b",
+      "modifiers": 4,
+      "flags": 2,
+      "expectedHex": "021b5b39383b353a3375",
+      "applicationCursor": false
+    },
+    {
+      "name": "events-only-escape",
+      "key": "escape",
+      "text": null,
+      "modifiers": 0,
+      "flags": 2,
+      "expectedHex": "1b",
+      "applicationCursor": false
+    },
+    {
+      "name": "alternates-only-ctrl-shift",
+      "key": "text",
+      "text": "b",
+      "modifiers": 5,
+      "flags": 4,
+      "expectedHex": "1b5b39383a36363b3675",
+      "applicationCursor": false
+    },
+    {
+      "name": "alternates-only-application-up",
+      "key": "up",
+      "text": null,
+      "modifiers": 0,
+      "flags": 4,
+      "expectedHex": "1b4f41",
+      "applicationCursor": true
+    },
+    {
+      "name": "alternates-only-shift-alt-tab",
+      "key": "tab",
+      "text": null,
+      "modifiers": 3,
+      "flags": 4,
+      "expectedHex": "1b1b5b5a",
+      "applicationCursor": false
+    },
+    {
+      "name": "all-only-tab",
+      "key": "tab",
+      "text": null,
+      "modifiers": 0,
+      "flags": 8,
+      "expectedHex": "1b5b3975",
+      "applicationCursor": false
+    },
+    {
+      "name": "alt-uppercase",
+      "key": "text",
+      "text": "B",
+      "modifiers": 2,
+      "flags": 1,
+      "expectedHex": "1b5b39383b3475"
+    },
+    {
+      "name": "all-text-alt-uppercase",
+      "key": "text",
+      "text": "B",
+      "modifiers": 2,
+      "flags": 31,
+      "expectedHex": "1b5b39383a36363b34751b5b39383a36363b343a3375"
+    },
+    {
+      "name": "alternates-only-ctrl-slash",
+      "key": "text",
+      "text": "/",
+      "modifiers": 4,
+      "flags": 4,
+      "expectedHex": "1f"
+    },
+    {
+      "name": "events-only-ctrl-tilde",
+      "key": "text",
+      "text": "~",
+      "modifiers": 4,
+      "flags": 2,
+      "expectedHex": "1e1b5b3132363b353a3375"
+    },
+    {
+      "name": "alternates-only-ctrl-alt-slash",
+      "key": "text",
+      "text": "/",
+      "modifiers": 6,
+      "flags": 4,
+      "expectedHex": "1b1f"
+    },
+    {
+      "name": "saved-uppercase-legacy",
+      "key": "text",
+      "text": "B",
+      "modifiers": 0,
+      "flags": 0,
+      "expectedHex": "42"
+    },
+    {
+      "name": "saved-uppercase-disambiguate",
+      "key": "text",
+      "text": "B",
+      "modifiers": 0,
+      "flags": 1,
+      "expectedHex": "42"
+    },
+    {
+      "name": "saved-uppercase-all",
+      "key": "text",
+      "text": "B",
+      "modifiers": 0,
+      "flags": 8,
+      "expectedHex": "1b5b39383b3275"
+    },
+    {
+      "name": "saved-uppercase-events",
+      "key": "text",
+      "text": "B",
+      "modifiers": 0,
+      "flags": 10,
+      "expectedHex": "1b5b39383b32751b5b39383b323a3375"
+    },
+    {
+      "name": "saved-uppercase-alternates",
+      "key": "text",
+      "text": "B",
+      "modifiers": 0,
+      "flags": 12,
+      "expectedHex": "1b5b39383a36363b3275"
+    },
+    {
+      "name": "saved-uppercase-associated-text",
+      "key": "text",
+      "text": "B",
+      "modifiers": 0,
+      "flags": 24,
+      "expectedHex": "1b5b39383b323b363675"
+    },
+    {
+      "name": "saved-uppercase-explicit-shift",
+      "key": "text",
+      "text": "B",
+      "modifiers": 1,
+      "flags": 31,
+      "expectedHex": "1b5b39383a36363b323b3636751b5b39383a36363b323a3375"
+    },
+    {
+      "name": "saved-uppercase-control",
+      "key": "text",
+      "text": "B",
+      "modifiers": 4,
+      "flags": 31,
+      "expectedHex": "1b5b39383b35751b5b39383b353a3375"
+    },
+    {
+      "name": "saved-uppercase-alt",
+      "key": "text",
+      "text": "B",
+      "modifiers": 2,
+      "flags": 31,
+      "expectedHex": "1b5b39383a36363b34751b5b39383a36363b343a3375"
+    },
+    {
+      "name": "all-text-uppercase-unicode",
+      "key": "text",
+      "text": "É",
+      "modifiers": 0,
+      "flags": 31,
+      "expectedHex": "1b5b3233333a3230313b323b323031751b5b3233333a3230313b323a3375"
+    }
+  ],
+  "replacementParserSeeds": [
+    "\u001b[?2004",
+    "\u001b]52;c;c3RhbGU=",
+    "\u001bP1;2|pending",
+    "\u001b_pending"
+  ],
+  "freshModeQuery": {
+    "request": "\u001b[?25$p\u001b[?1004$p\u001b[?1006$p\u001b[?1016$p",
+    "expectedHex": "1b5b3f32353b3124791b5b3f313030343b3224791b5b3f313030363b3224791b5b3f313031363b322479"
+  },
+  "replacementGrid": {
+    "columns": 109,
+    "rows": 31
+  },
+  "nativeInput": {
+    "hardware": {
+      "flags": 10,
+      "text": "b",
+      "expectedHex": "1b5b3938751b5b39383b313a3375"
+    },
+    "composition": {
+      "flags": 1,
+      "text": "中文",
+      "expectedHex": "e4b8ade69687"
+    },
+    "multiCharacter": {
+      "flags": 1,
+      "text": "spoken words",
+      "expectedHex": "73706f6b656e20776f726473"
+    }
+  }
+}

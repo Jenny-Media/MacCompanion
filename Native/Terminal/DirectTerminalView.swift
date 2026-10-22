@@ -480,7 +480,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         controller.updateControls()
         controller.applyAppearance(style)
     }
-    static func dismantleUIViewController(_ controller: TerminalController, coordinator: ()) { controller.textComposer.invalidate(); controller.session.received = nil; controller.session.toggleKeyboard = nil; controller.session.reloadKeyboard = nil; controller.session.suspendInput = nil }
+    static func dismantleUIViewController(_ controller: TerminalController, coordinator: ()) { controller.textComposer.invalidate(); controller.session.received = nil; controller.session.prepareTerminal = nil; controller.session.toggleKeyboard = nil; controller.session.reloadKeyboard = nil; controller.session.suspendInput = nil }
 }
 
 @MainActor final class SessionTerminalView: TerminalView {
@@ -489,11 +489,31 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     weak var keyboardBar: TerminalKeyboardBar?
     private var deletingModifiers: TerminalModifiers?
     private var deletionEncoded = false
-    private var insertedShortcut: [UInt8]?
-    private var shortcutEncoded = false
     var customInputEpoch: () -> UUID? = { nil }
     var admitCustomInput: ([UInt8]) -> Bool = { _ in false }
     private var customInputBytes: [UInt8]?
+    private var modifiedText: [UInt8]?
+    private var modifiedTextEncoded = false
+    var keyEncoding: TerminalKeyEncoding {
+        .init(flags: getTerminal().keyboardEnhancementFlags, applicationCursor: getTerminal().applicationCursor,
+              backspaceSendsControlH: backspaceSendsControlH)
+    }
+    func sendKey(_ key: TerminalKeyInput, modifiers: TerminalModifiers = []) {
+        send(data: keyEncoding.bytes(key, modifiers: modifiers)[...])
+    }
+    func sendShortcut(_ action: VNCQuickAction) {
+        resetModifiers(); send(data: action.terminalBytes(encoding: keyEncoding)[...])
+    }
+    func retireInput() {
+        // Detach the delegate first: native responder/composition cleanup must
+        // never write to the replacement shell, even through a delayed callback.
+        terminalDelegate = nil; focusChanged = nil
+        customInputEpoch = { nil }; admitCustomInput = { _ in false }; customInputBytes = nil
+        _ = resignFirstResponder()
+        resetModifiers(); clearSelection()
+        setMarkedText("", selectedRange: NSRange(location: 0, length: 0)); unmarkText()
+        super.insertText("\n")
+    }
     // SwiftTerm pins short buffers to zero. With a canvas extending behind the
     // status bar, that resting offset must include the leading scroll inset.
     // Leave finger-driven scrolling and deceleration owned by UIScrollView.
@@ -532,19 +552,27 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         if performCustomInput(feedbackKind: feedbackKind, ignoringFramingBytes: framing, { super.paste(nil) }) { resetModifiers() }
     }
     func resetModifiers() { keyboardState.reset(); controlModifier = false; metaModifier = false; keyboardBar?.refresh() }
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        // Hardware keys own their real modifier/repeat/release metadata. Do not
+        // replace their later UITextInput commit with a discrete software key.
+        if presses.contains(where: { $0.key != nil }) { resetModifiers() }
+        super.pressesBegan(presses, with: event)
+    }
     override func insertText(_ text: String) {
         let modifiers = keyboardState.consume()
-        if markedTextRange == nil, let bytes = TerminalKeyboardState.altShortcut(text, modifiers: modifiers, flags: getTerminal().keyboardEnhancementFlags) {
-            insertedShortcut = bytes; shortcutEncoded = false
-            defer { insertedShortcut = nil; shortcutEncoded = false }
-            // Keep selection, input-buffer and IME bookkeeping in the existing
-            // editor; replace only this synchronous commit's outbound bytes.
+        if markedTextRange != nil || text.unicodeScalars.count != 1 || !text.unicodeScalars.allSatisfy({ $0.isASCII }) {
+            // IME, dictation and native normalization can emit several edits.
+            // Preserve those emissions rather than replacing the first one.
             controlModifier = false; metaModifier = false
-            super.insertText(modifiers.contains(.shift) ? TerminalKeyboardState.shifted(text) : text)
-        } else if modifiers.isEmpty { super.insertText(text) }
-        else if getTerminal().keyboardEnhancementFlags.isEmpty { send(data: TerminalKeyboardState.text(text, modifiers: modifiers)[...]) }
-        else { controlModifier = modifiers.contains(.ctrl); metaModifier = modifiers.contains(.alt); super.insertText(modifiers.contains(.shift) ? TerminalKeyboardState.shifted(text) : text) }
-        keyboardBar?.refresh()
+            super.insertText(text); keyboardBar?.refresh()
+            return
+        }
+        modifiedText = modifiers.isEmpty ? nil : keyEncoding.bytes(text == "\n" || text == "\r" ? .enter : .text(text), modifiers: modifiers)
+        modifiedTextEncoded = false
+        defer { modifiedText = nil; modifiedTextEncoded = false; keyboardBar?.refresh() }
+        // Keep the frontend's native range/composition bookkeeping, replacing
+        // only the outbound bytes for explicit software modifiers.
+        super.insertText(modifiers.contains(.shift) ? TerminalKeyboardState.shifted(text) : text)
     }
     override func deleteBackward() {
         let modifiers = keyboardState.consume()
@@ -567,15 +595,14 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         return encoded
     }
     private func encodeKeyboardOutput(_ bytes: ArraySlice<UInt8>) -> [UInt8] {
-        if let insertedShortcut {
-            guard !shortcutEncoded else { return [] }; shortcutEncoded = true
-            return insertedShortcut
+        if let modifiedText {
+            guard !modifiedTextEncoded else { return [] }; modifiedTextEncoded = true
+            return modifiedText
         }
         guard let deletingModifiers else { return Array(bytes) }
         // Native range deletion may emit several backspaces for one logical keypress.
         guard !deletionEncoded else { return [] }; deletionEncoded = true
-        return TerminalKeyboardState.backspace(modifiers: deletingModifiers, controlH: backspaceSendsControlH,
-            enhanced: !getTerminal().keyboardEnhancementFlags.isEmpty)
+        return keyEncoding.bytes(.backspace, modifiers: deletingModifiers)
     }
     override func becomeFirstResponder() -> Bool {
         let result = super.becomeFirstResponder(); if result { focusChanged?(true) }; return result
@@ -589,7 +616,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     static let numberRowPreference = "direct-terminal-number-row"
     var filesStatus = ""
     let session: DirectTerminalSession
-    let terminal = SessionTerminalView(frame: .zero)
+    private(set) var terminal = SessionTerminalView(frame: .zero)
     let controls = CompanionVNCControls()
     lazy var textComposer: DirectTextComposer = {
         let composer = DirectTextComposer(macName: session.mac.name, mode: "terminal")
@@ -605,6 +632,8 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     private var reportedGrid: (columns: Int, rows: Int)?
     private var composerVisible = false
     private var paletteIsDark: Bool?
+    private(set) var preparedGeneration: UUID?
+    private var resettingPTY = false
     private var normalBottom: NSLayoutConstraint!
     private var foldedBottom: NSLayoutConstraint!
     private let customize: @MainActor () -> Void
@@ -618,6 +647,44 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     override var preferredStatusBarStyle: UIStatusBarStyle { paletteIsDark == true ? .lightContent : .darkContent }
     override func viewDidLoad() {
         super.viewDidLoad(); view.backgroundColor = .systemBackground
+        installTerminalSurface()
+        controls.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(controls)
+        NSLayoutConstraint.activate([controls.topAnchor.constraint(equalTo: view.topAnchor), controls.bottomAnchor.constraint(equalTo: view.bottomAnchor), controls.leadingAnchor.constraint(equalTo: view.leadingAnchor), controls.trailingAnchor.constraint(equalTo: view.trailingAnchor)])
+        controls.buttonAnchorView = keyboardBar.menuAnchor
+        controls.button.accessibilityLabel = "Terminal Controls"
+        controls.button.accessibilityIdentifier = "terminal-controls"
+        controls.categoryActions = [
+            ["kind": "inputMenu", "title": "Keyboard & Input", "symbol": "keyboard"],
+            ["kind": "appearance", "title": "Appearance", "symbol": "circle.lefthalf.filled"],
+            ["kind": "session", "title": "Session", "symbol": "link"]]
+        controls.actionHandler = { [weak self] item in self?.performQuickAction(item) }
+        controls.customizeHandler = { [weak self] in self?.action("quickActions") }
+        controls.openingHandler = { [weak self] in self?.updateControls() }
+        CompanionVNCObserveDivision(view)
+        session.prepareTerminal = { [weak self] generation in self?.prepareForPTY(generation) }
+        session.received = { [weak self] bytes in
+            guard let self, session.connected else { return }
+            prepareForPTY(session.outputGeneration)
+            terminal.feed(byteArray: bytes[...])
+            if bytes.isEmpty { updateControls() } // A completed resume delivers an empty refresh.
+        }
+        if session.connected { prepareForPTY(session.outputGeneration) }
+        configureKeyboard()
+        session.reloadKeyboard = { [weak self] in self?.configureKeyboard(); self?.updateControls() }
+        session.suspendInput = { [weak self] in
+            guard let self else { return }
+            if textComposer.sending { session.interruptComposedText() }
+            textComposer.invalidate(); terminal.resetModifiers(); controls.cancelSlideForLayoutChange(); controls.close()
+        }
+        session.toggleKeyboard = { [weak self] in
+            guard let self else { return }
+            if terminal.isFirstResponder { _ = terminal.resignFirstResponder() }
+            else { _ = terminal.becomeFirstResponder() }
+        }
+        updatePalette()
+        updateControls()
+    }
+    private func installTerminalSurface() {
         terminal.customInputEpoch = { [weak session] in session?.customInputEpoch }
         terminal.admitCustomInput = { [weak session] bytes in session?.trySend(bytes) == true }
         terminal.terminalDelegate = self; terminal.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(terminal)
@@ -640,40 +707,9 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         setContentScrollView(terminal, for: .top)
         if #available(iOS 26, *) { terminal.topEdgeEffect.style = .automatic }
         NSLayoutConstraint.activate([terminal.topAnchor.constraint(equalTo: view.topAnchor), normalBottom, terminal.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor), terminal.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor)])
-        controls.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(controls)
-        NSLayoutConstraint.activate([controls.topAnchor.constraint(equalTo: view.topAnchor), controls.bottomAnchor.constraint(equalTo: view.bottomAnchor), controls.leadingAnchor.constraint(equalTo: view.leadingAnchor), controls.trailingAnchor.constraint(equalTo: view.trailingAnchor)])
-        controls.buttonAnchorView = keyboardBar.menuAnchor
-        controls.button.accessibilityLabel = "Terminal Controls"
-        controls.button.accessibilityIdentifier = "terminal-controls"
-        controls.categoryActions = [
-            ["kind": "inputMenu", "title": "Keyboard & Input", "symbol": "keyboard"],
-            ["kind": "appearance", "title": "Appearance", "symbol": "circle.lefthalf.filled"],
-            ["kind": "session", "title": "Session", "symbol": "link"]]
-        controls.actionHandler = { [weak self] item in self?.performQuickAction(item) }
-        controls.customizeHandler = { [weak self] in self?.action("quickActions") }
-        controls.openingHandler = { [weak self] in self?.updateControls() }
-        CompanionVNCObserveDivision(view)
-        session.received = { [weak self] bytes in
-            self?.terminal.feed(byteArray: bytes[...])
-            if bytes.isEmpty { self?.updateControls() } // A completed resume delivers an empty refresh.
-        }
-        configureKeyboard()
-        session.reloadKeyboard = { [weak self] in self?.configureKeyboard(); self?.updateControls() }
-        session.suspendInput = { [weak self] in
-            guard let self else { return }
-            if textComposer.sending { session.interruptComposedText() }
-            textComposer.invalidate(); terminal.resetModifiers(); controls.cancelSlideForLayoutChange(); controls.close()
-        }
         terminal.focusChanged = { [weak self, weak session] visible in session?.keyboardVisible = visible; self?.updateControls(); self?.view.setNeedsLayout() }
         keyboardBar.toggleKeyboard = { [weak session] in session?.toggleKeyboard?() }
-        session.toggleKeyboard = { [weak self] in
-            guard let self else { return }
-            if terminal.isFirstResponder { _ = terminal.resignFirstResponder() }
-            else { _ = terminal.becomeFirstResponder() }
-        }
         terminal.registerForTraitChanges([UITraitUserInterfaceStyle.self]) { [weak self] (_: TerminalView, _: UITraitCollection) in self?.updatePalette() }
-        updatePalette()
-        updateControls()
     }
     func updateControls() {
         keyboardBar.refresh()
@@ -699,7 +735,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
                     let text = terminal.getTerminal().bracketedPasteMode ? "\u{1b}[200~" + saved.text + "\u{1b}[201~" : saved.text
                     terminal.send(data: Array(text.utf8)[...])
                 } else {
-                    terminal.send(data: saved.terminalBytes(applicationCursor: terminal.getTerminal().applicationCursor)[...])
+                    terminal.sendShortcut(saved)
                 }
             }
             terminal.keyboardBar?.refresh()
@@ -746,14 +782,13 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         case "escape", "tab", "returnKey":
             terminal.performCustomInput(feedbackKind: inputFeedback) {
                 terminal.resetModifiers()
-                let bytes: [UInt8] = kind == "escape" ? [0x1b] : kind == "tab" ? [0x09] : [0x0d]
-                terminal.send(data: bytes[...])
+                terminal.sendKey(kind == "escape" ? .accessory(.escape) : kind == "tab" ? .accessory(.tab) : .enter)
             }
             terminal.keyboardBar?.refresh()
         case "interrupt":
             terminal.performCustomInput(feedbackKind: inputFeedback) {
                 terminal.resetModifiers()
-                terminal.send(data: TerminalKeyboardState.text("c", modifiers: .ctrl)[...])
+                terminal.sendKey(.text("c"), modifiers: .ctrl)
             }
             terminal.keyboardBar?.refresh()
         default:
@@ -892,6 +927,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         terminal.setNeedsDisplay()
     }
     func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
+        guard source === terminal else { return }
         let cell = source.caretFrame.height
         guard cell > 0, source.bounds.height > source.contentInset.top else { return }
         // Keep the interactive grid in the unobscured viewport. Extra space
@@ -902,20 +938,60 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         guard reportedGrid?.columns != newCols || reportedGrid?.rows != rows else { return }
         reportedGrid = (newCols, rows); session.resize(columns: newCols, rows: rows)
     }
-    func send(source: TerminalView, data: ArraySlice<UInt8>) { session.send(terminal.encodeOutput(data)) }
+    private func prepareForPTY(_ generation: UUID) {
+        guard preparedGeneration != generation, generation == session.outputGeneration else { return }
+        resettingPTY = true
+        defer { resettingPTY = false }
+        if presentedViewController is UIAlertController { dismiss(animated: false) }
+        textComposer.invalidate(); controls.cancelSlideForLayoutChange(); controls.close()
+        let retired = terminal, grid = terminal.getTerminal()
+        let columns = grid.cols, rows = grid.rows, style = retired.overrideUserInterfaceStyle
+        let inset = retired.contentInset
+        retired.retireInput()
+        session.keyboardVisible = false
+        normalBottom.isActive = false; foldedBottom.isActive = false
+        retired.removeFromSuperview(); keyboardBar.removeFromSuperview()
+        // A new frontend also resets private parser, UTF-8, mouse protocol,
+        // cursor visibility, IME and pending physical-key state. The pinned
+        // renderer's RIS reset intentionally preserves some of those values.
+        terminal = SessionTerminalView(frame: retired.frame)
+        keyboardBar = TerminalKeyboardBar(terminal: terminal, preferences: .init())
+        installTerminalSurface()
+        terminal.contentInset = inset; terminal.overrideUserInterfaceStyle = style
+        terminal.getTerminal().resize(cols: columns, rows: rows)
+        configureKeyboard()
+        controls.buttonAnchorView = keyboardBar.menuAnchor; view.bringSubviewToFront(controls)
+        paletteIsDark = nil; reportedGrid = nil; updatePalette()
+        preparedGeneration = generation
+        view.setNeedsLayout(); view.layoutIfNeeded()
+    }
+    func send(source: TerminalView, data: ArraySlice<UInt8>) {
+        guard source === terminal, !resettingPTY, preparedGeneration == session.outputGeneration else { return }
+        session.send(terminal.encodeOutput(data))
+    }
     func setTerminalTitle(source: TerminalView, title: String) {}
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
     func scrolled(source: TerminalView, position: Double) {}
     func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
+        guard source === terminal, !resettingPTY, preparedGeneration == session.outputGeneration, session.connected, DirectAppLockV1.shared.canAccess else { return }
+        let generation = session.outputGeneration
         guard let url = URL(string: link), ["https", "http"].contains(url.scheme?.lowercased() ?? "") else { return }
         let alert = UIAlertController(title: "Open terminal link?", message: url.host, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel)); alert.addAction(UIAlertAction(title: "Open", style: .default) { _ in UIApplication.shared.open(url) })
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel)); alert.addAction(UIAlertAction(title: "Open", style: .default) { [weak self] _ in
+            guard let self, session.outputGeneration == generation, session.connected, DirectAppLockV1.shared.canAccess else { return }
+            UIApplication.shared.open(url)
+        })
         present(alert, animated: true)
     }
     func clipboardCopy(source: TerminalView, content: Data) {
+        guard source === terminal, !resettingPTY, preparedGeneration == session.outputGeneration, session.connected, DirectAppLockV1.shared.canAccess else { return }
+        let generation = session.outputGeneration
         guard content.count <= 65536, let text = String(data: content, encoding: .utf8) else { return }
         let alert = UIAlertController(title: "Copy terminal text?", message: "The Mac requested copying text to your iPhone clipboard.", preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel)); alert.addAction(UIAlertAction(title: "Copy", style: .default) { _ in UIPasteboard.general.string = text })
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel)); alert.addAction(UIAlertAction(title: "Copy", style: .default) { [weak self] _ in
+            guard let self, session.outputGeneration == generation, session.connected, DirectAppLockV1.shared.canAccess else { return }
+            UIPasteboard.general.string = text
+        })
         present(alert, animated: true)
     }
     func clipboardRead(source: TerminalView) -> Data? { nil }

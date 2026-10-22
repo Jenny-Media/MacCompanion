@@ -1,0 +1,2 @@
+# Test host only; never linked or bundled with the app.
+paramiko==4.0.0

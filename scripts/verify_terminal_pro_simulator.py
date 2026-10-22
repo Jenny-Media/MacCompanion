@@ -71,6 +71,8 @@ def main():
     parser.add_argument('--settings-ui', action='store_true', help='Also test gear navigation and live sheet appearance using native UI interactions')
     parser.add_argument('--screen-text-ui', action='store_true', help='Generate the simulator-only native/area text selection UI journey')
     parser.add_argument('--mac-shortcuts-ui', action='store_true', help='Generate the simulator-only per-Mac shortcuts and native swipe tests')
+    parser.add_argument('--only-testing', action='append', default=[], help='Run a focused XCTest identifier; repeat to select multiple suites')
+    parser.add_argument('--terminal-tool-host', type=Path, help='Private descriptor from the opt-in loopback terminal-tool test host')
     args = parser.parse_args()
     with compiler_workspace(args.build, ROOT) as compiler:
         execute(args, parser, compiler)
@@ -98,6 +100,7 @@ def execute(args, parser, compiler):
     resources = [ROOT / 'spec/fixtures/manifest.json', ROOT / 'spec/fixtures/direct-screen-sharing-v1.json', ROOT / 'spec/fixtures/vnc-desktop-tunnel-v0.1.json',
                  ROOT / 'spec/fixtures/direct-files-v1.json', ROOT / 'spec/fixtures/ios-text-composer-v1.json',
                  ROOT / 'spec/fixtures/ios-dynamic-resolution-prototype-v1.json',
+                 ROOT / 'spec/fixtures/terminal-compatibility-v1.json',
                  ROOT / 'spec/storekit/v0/LifetimePro.storekit', qa / 'synthetic-ed25519', qa / 'synthetic-ed25519.pub', qa / 'synthetic-rsa']
     spec['targets']['DirectClientTests'] = {
         'type': 'bundle.unit-test', 'platform': 'iOS',
@@ -128,6 +131,7 @@ def execute(args, parser, compiler):
     spec['schemes']['DirectClientQA']['run'].update({'executable': 'MacCompanionIOS', 'macroExpansion': 'MacCompanionIOS', 'storeKitConfiguration': 'LifetimePro.storekit'})
     if args.screenshots:
         spec['schemes']['DirectClientQA']['run']['environmentVariables'] = {'MACCOMPANION_SCREENSHOT_REVIEW': '1'}
+        spec['schemes']['DirectClientQA']['test'].setdefault('environmentVariables', {})['MACCOMPANION_SCREENSHOT_REVIEW'] = '1'
     if args.duo_review:
         spec['schemes']['DirectClientQA']['run']['environmentVariables'] = {'MACCOMPANION_DUO_REVIEW': '1'}
     if args.composer_ui:
@@ -212,6 +216,9 @@ def execute(args, parser, compiler):
             'test': {'config': 'Debug', 'macroExpansion': 'MacShortcutsApp', 'targets': [{'name': 'MacShortcutsUITests', 'parallelizable': False}]}}
         for action in ['run', 'profile', 'analyze', 'archive']:
             spec['schemes']['MacShortcutsQA'][action] = {'config': 'Debug'}
+    if args.terminal_tool_host:
+        descriptor = json.loads(args.terminal_tool_host.read_text())
+        spec['schemes']['DirectClientQA']['test'].setdefault('environmentVariables', {})['MACCOMPANION_TERMINAL_TOOL_HOST'] = json.dumps(descriptor)
     spec_path = qa / 'project.json'; spec_path.write_text(json.dumps(spec, indent=2))
     run('/opt/homebrew/bin/xcodegen', 'generate', '--spec', spec_path, '--project', qa)
     lock = qa / 'DirectClientQA.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
@@ -226,9 +233,10 @@ def execute(args, parser, compiler):
             '-destination', 'platform=iOS Simulator,id=' + args.simulator, '-derivedDataPath', compiler / 'DerivedData',
             '-onlyUsePackageVersionsFromResolvedFile', '-skipPackagePluginValidation', '-parallel-testing-enabled', 'NO',
             *(['-only-testing:DirectClientTests/DuoComparisonTests/testInteractiveCapture'] if args.duo_review else []),
+            *['-only-testing:' + identifier for identifier in args.only_testing],
             '-collect-test-diagnostics', args.test_diagnostics, '-resultBundlePath', result, 'test', stdout=log, stderr=subprocess.STDOUT)
     container = subprocess.check_output(['xcrun', 'simctl', 'get_app_container', args.simulator, bundle, 'data'], text=True).strip()
-    if not args.duo_review:
+    if not args.duo_review and not args.only_testing:
         verify_external(Path(container) / 'Documents/synthetic-key-interop')
     for name in ['synthetic-ed25519', 'synthetic-ed25519.pub', 'synthetic-rsa', 'synthetic-rsa.pub']:
         (qa / name).unlink(missing_ok=True)

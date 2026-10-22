@@ -692,6 +692,43 @@ default-on opt-out setting, identify Terminal, and offer scoped Resume/End actio
 Paused/stale wording MUST NOT promise an indefinitely live connection: iOS may
 suspend the app and the server/network may close SSH while it is away.
 Never replay shell input on reconnection.
+Each replacement PTY MUST publish its connection generation to the iOS surface
+before accepting input or rendering its first output. Reset parser, normal and
+alternate buffers, cursor/keypad, paste, mouse and enhanced-keyboard modes once
+at that boundary. Discard local composition, selection and armed/locked modifiers;
+retire old callbacks and key repeat. A reset MUST NOT send bytes, finish a stale
+OSC request or commit old composition to the new shell. Resize, palette updates
+and background/foreground of the same live PTY MUST NOT reset it. If surface
+preparation changes the grid after the PTY request, the owner MUST forward the
+latest dimensions once its writer is ready, before newly admitted input. The SSH owner
+continues to reject output and queued writes from retired generations.
+
+iOS toolbar keys and saved shortcut chords MUST use the renderer's current
+keyboard-enhancement flags and application cursor mode at invocation. Explicit
+software-modified single-character text and deletion use the same policy; native text-input/IME
+bookkeeping and physical-key reporting remain with the pinned frontend. Marked
+composition, multi-character commits and non-ASCII system text MUST retain the
+native commit/normalization path without software shortcut substitution or Shift
+transformation. A native hardware key press clears toolbar modifiers before
+entering the pinned frontend; its actual modifiers, repeat and release remain
+native, without a synthesized software release. Preserve
+all Shift/Alt/Ctrl combinations. Escape uses CSI 27 u under disambiguation;
+unmodified Enter, Tab and Backspace retain legacy bytes unless report-all is
+requested. Navigation/function keys retain their protocol-defined CSI/SS3 forms.
+For a discrete synthetic key action, send press and its release together when
+event reporting requests that release (Enter/Tab/Backspace need report-all).
+Report alternate/associated text only when requested and known; synthetic keys
+do not invent a physical base-layout key. Literal paste/snippets bypass key
+encoding and retain bracketed-paste admission. No Command chord is sent remotely.
+When report-all is requested, a saved uppercase character without explicit
+modifiers MUST use its single-scalar lowercase key identity and Shift, retaining
+the original uppercase associated text. This applies to reversible single-scalar
+case mappings; explicit Ctrl-only chords retain their case-insensitive identity.
+Legacy uppercase text MUST retain its existing bytes.
+The indexed `terminal-compatibility-v1.json` contains authoritative byte vectors.
+The [Kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/)
+defines the negotiated flags and functional key encodings.
+
 Retain the SSH server's exit status or exit signal until PTY output has drained.
 Only a reported exit status of zero, followed by channel closure without a transport
 error, returns to My Macs and ends the session's Live Activity. Nonzero status,

@@ -26,9 +26,10 @@ import AppIntents
     func update(_ id: String, content: ActivityContent<RemoteSessionActivityAttributes.ContentState>) async { phase = content.state.phase; if blocked { await withCheckedContinuation { reply = $0 } } }
     func end(_ id: String) async { ids.removeAll { $0 == id } }
 }
-private final class SSHTestRecord: @unchecked Sendable {
+final class SSHTestRecord: @unchecked Sendable {
     let respondToInstall: Bool
-    init(respondToInstall: Bool = true) { self.respondToInstall = respondToInstall }
+    let echoInput: Bool
+    init(respondToInstall: Bool = true, echoInput: Bool = true) { self.respondToInstall = respondToInstall; self.echoInput = echoInput }
     private let lock=NSLock()
     private var auth=0, keyAuth=0
     private var execs=0
@@ -49,11 +50,15 @@ private final class SSHTestRecord: @unchecked Sendable {
     func opened(_ channel: Channel) { lock.lock(); shell = channel; shellOpens += 1; lock.unlock() }
     var shellRequests: Int { lock.lock(); defer { lock.unlock() }; return shellOpens }
     func emit(_ text: String) async throws {
+        try await emit(bytes: Array(text.utf8))
+    }
+    func emit(bytes: [UInt8]) async throws {
         let channel = activeShell()
-        try await channel?.writeAndFlush(SSHChannelData(type: .channel, data: .byteBuffer(ByteBuffer(string: text)))).get()
+        try await channel?.writeAndFlush(SSHChannelData(type: .channel, data: .byteBuffer(ByteBuffer(bytes: bytes)))).get()
     }
     private func activeShell() -> Channel? { lock.lock(); defer { lock.unlock() }; return shell }
     var received: [UInt8] { lock.lock(); defer { lock.unlock() }; return input }
+    func clearReceived() { lock.lock(); input.removeAll(); lock.unlock() }
     func received(_ bytes: [UInt8]) { lock.lock(); defer { lock.unlock() }; input.append(contentsOf: bytes.prefix(max(0, 512 - input.count))) }
     var commands: Int { lock.lock(); defer { lock.unlock() }; return execs }
     func executed() { lock.lock(); execs += 1; lock.unlock() }
@@ -66,7 +71,7 @@ private final class SSHTestRecord: @unchecked Sendable {
     func authenticated() { lock.lock(); auth += 1; lock.unlock() }
     func resized(_ cols:Int,_ rows:Int) { lock.lock(); self.cols=cols; self.rows=rows; gridChanges.append([cols,rows]); lock.unlock() }
 }
-private final class SSHTestAuth: NIOSSHServerUserAuthenticationDelegate, @unchecked Sendable {
+final class SSHTestAuth: NIOSSHServerUserAuthenticationDelegate, @unchecked Sendable {
     let record:SSHTestRecord
     let publicKey: NIOSSHPublicKey?
     var supportedAuthenticationMethods:NIOSSHAvailableUserAuthenticationMethods { publicKey == nil ? .password : [.publicKey, .password] }
@@ -79,7 +84,7 @@ private final class SSHTestAuth: NIOSSHServerUserAuthenticationDelegate, @unchec
         }
     }
 }
-private final class SSHTestPTY: ChannelDuplexHandler, @unchecked Sendable {
+final class SSHTestPTY: ChannelDuplexHandler, @unchecked Sendable {
     typealias InboundIn=SSHChannelData
     typealias OutboundIn=SSHChannelData
     typealias OutboundOut=SSHChannelData
@@ -106,7 +111,7 @@ private final class SSHTestPTY: ChannelDuplexHandler, @unchecked Sendable {
     func channelRead(context:ChannelHandlerContext,data:NIOAny) {
         let value = unwrapInboundIn(data)
         if case .byteBuffer(let buffer) = value.data { record.received(Array(buffer.readableBytesView)) }
-        context.writeAndFlush(wrapOutboundOut(value),promise:nil)
+        if record.echoInput { context.writeAndFlush(wrapOutboundOut(value),promise:nil) }
     }
     func errorCaught(context:ChannelHandlerContext,error:Error) { context.close(promise:nil) }
 }
