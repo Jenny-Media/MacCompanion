@@ -648,7 +648,9 @@ import UIKit
         XCTAssertEqual(app.staticTexts["controls-qa-writes"].label, "Writes: 2")
         openKeyboard(app)
         let saved = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "terminal-row-preview-", "Shared Prefix")).firstMatch
-        XCTAssertTrue(saved.waitForExistence(timeout: 5)); capture("focused-shared-edit-in-keyboard", app: app)
+        XCTAssertTrue(saved.waitForExistence(timeout: 5))
+        revealHorizontal(saved, scroll: app.scrollViews["terminal-row-preview-scroll"])
+        capture("focused-shared-edit-in-keyboard", app: app)
     }
 
     func testMenuFavoritesCancelAndRestoreRemainOneDraft() async throws {
