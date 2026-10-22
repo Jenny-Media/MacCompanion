@@ -168,7 +168,8 @@ import UIKit
         if name.contains("testFailedSave") { app.launchEnvironment["MACCOMPANION_CONTROLS_FAIL_WRITE"] = "1" }
         if failWriteOnce { app.launchEnvironment["MACCOMPANION_CONTROLS_FAIL_WRITE_ONCE"] = "1" }
         if name.contains("testDirectLibraryRecovery") { app.launchEnvironment["MACCOMPANION_CONTROLS_FAIL_READ_ONCE"] = "1" }
-        if name.contains("testUpgradedImplicitRows") { app.launchEnvironment["MACCOMPANION_CONTROLS_LEGACY_ROWS"] = "1" }
+        if name.contains("testOlderDevelopmentLayouts") { app.launchEnvironment["MACCOMPANION_CONTROLS_LEGACY_ROWS"] = "1" }
+        if name.contains("testNewerFormat") { app.launchEnvironment["MACCOMPANION_CONTROLS_FUTURE_FORMAT"] = "1" }
         if name.contains("testRightEdgeRowRotation") { app.launchEnvironment["MACCOMPANION_CONTROLS_ROTATION"] = "1" }
         if name.contains("testRepeatedUtilityControls") { app.launchEnvironment["MACCOMPANION_CONTROLS_REPEATED_UTILITIES"] = "1" }
         app.launch()
@@ -463,7 +464,7 @@ import UIKit
         try await rename("Unsaved", app: app); app.buttons["terminal-item-save"].tap()
         app.buttons["terminal-controls-save"].tap()
         XCTAssertTrue(app.buttons["terminal-layout-cancel"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "Couldn’t save.")).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Couldn’t save.")).firstMatch.exists)
         capture("redesign-failed-save-draft-remains-open", app: app)
         closeLayout(app, save: false); closeSettings(app)
         XCTAssertEqual(app.staticTexts["controls-qa-title"].label, "Project")
@@ -816,24 +817,44 @@ import UIKit
         capture("repeated-expand-control-collapses-without-input", app: app)
     }
 
-    func testUpgradedImplicitRowsKeepOldKeysUntilExplicitRestore() async throws {
+    func testOlderDevelopmentLayoutsResetOnceAndKeepSavedItems() async throws {
         let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
         openKeyboard(app)
-        let keypad = app.buttons["terminal-preview-item-control-keypad"]
-        XCTAssertTrue(keypad.exists)
-        XCTAssertFalse(app.scrollViews["terminal-row-preview-scroll"].buttons["Left"].exists)
-        revealHorizontal(keypad, scroll: app.scrollViews["terminal-row-preview-scroll"])
-        capture("upgrade-preserves-old-keypad-and-row-order", app: app)
-        closeLayout(app, save: true); closeSettings(app)
-        openKeyboard(app); XCTAssertTrue(keypad.exists)
-        app.buttons["terminal-row-options"].tap(); app.buttons["Restore Keyboard Bar…"].tap(); app.buttons["Restore Layout"].tap()
-        XCTAssertFalse(keypad.exists)
+        XCTAssertFalse(app.buttons["terminal-preview-item-control-keypad"].exists)
         XCTAssertTrue(app.scrollViews["terminal-row-preview-scroll"].buttons["Left"].exists)
-        capture("explicit-restore-installs-new-default-controls", app: app)
+        XCTAssertFalse(app.buttons["terminal-row-preview-" + itemID].exists)
+        capture("older-layout-reset-to-current-defaults", app: app)
+        closeLayout(app, save: false); closeSettings(app)
+        XCTAssertEqual(app.staticTexts["controls-qa-count"].label, "Saved items: 1")
+        XCTAssertEqual(app.staticTexts["controls-qa-placements"].label, "Row: off; Menu: on")
+        XCTAssertEqual(app.staticTexts["controls-qa-writes"].label, "Writes: 1")
+        library(app, text: true)
+        XCTAssertTrue(app.staticTexts["Project"].exists)
+        capture("saved-text-kept-after-layout-reset", app: app)
+        closeSettings(app)
+        openSettings(app); app.buttons["terminal-edit-menu"].tap()
+        XCTAssertTrue(app.buttons["Project"].exists)
+        capture("menu-favorite-kept-after-layout-reset", app: app)
+        closeLayout(app, save: false); closeSettings(app)
+        openKeyboard(app)
+        let menu = app.buttons["terminal-row-menu-" + mainID]
+        menu.tap(); app.buttons["Alignment"].tap(); app.collectionViews.buttons["Right"].tap()
         closeLayout(app, save: true); closeSettings(app)
-        openKeyboard(app); XCTAssertFalse(keypad.exists)
-        XCTAssertTrue(app.scrollViews["terminal-row-preview-scroll"].buttons["Right"].exists)
-        capture("restored-current-defaults-persist-after-reopen", app: app)
+        openKeyboard(app); menu.tap(); app.buttons["Alignment"].tap()
+        XCTAssertTrue(app.collectionViews.buttons["Right"].isSelected)
+        capture("current-layout-options-survive-reopen", app: app)
+    }
+    func testNewerFormatShowsUpdateMessageWithoutOverwritingSavedData() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        openSettings(app)
+        let notice = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "newer version of Mac Companion")).firstMatch
+        XCTAssertTrue(notice.waitForExistence(timeout: 5))
+        capture("newer-format-update-required-data-kept", app: app)
+        closeSettings(app)
+        XCTAssertEqual(app.staticTexts["controls-qa-writes"].label, "Writes: 0")
+        openSettings(app); XCTAssertTrue(notice.waitForExistence(timeout: 5))
+        closeSettings(app)
+        XCTAssertEqual(app.staticTexts["controls-qa-writes"].label, "Writes: 0")
     }
 
     func testRightEdgeRowRotationKeepsLastKeysAndRespectsManualScroll() async throws {

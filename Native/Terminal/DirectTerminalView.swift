@@ -1071,6 +1071,8 @@ private struct TerminalSurface: UIViewControllerRepresentable {
             let loaded = try controlsStore.load(); session.controlsRecovery = nil
             if loaded.revision == controlProfile.revision, appliedInputEpoch == terminal.customInputEpoch() { applyBarProfile(); return }
             controlProfile = loaded
+        } catch TerminalControlsStore.Failure.newerFormat {
+            controlProfile = .defaults; session.controlsRecovery = .make(.controlsUnavailable, message: TerminalControlsStore.newerFormatMessage)
         } catch { controlProfile = .defaults; session.controlsRecovery = .make(.controlsUnavailable, message: "Custom Terminal controls couldn’t be read. Existing data is kept; the standard keyboard remains available.") }
         controls.cancelSlideForLayoutChange(); controls.close()
         if let navigation = presentedViewController as? UINavigationController, navigation.topViewController is CompanionVNCMenu { dismiss(animated: false) }

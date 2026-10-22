@@ -175,7 +175,7 @@ import XCTest
                 if kind == .shortcut { target.character = 0x62; target.modifiers = [0xffe3] }
                 let retained = TerminalControlAction(title: "Keep", kind: .text, text: "keep this", inMenu: false)
                 var profile = TerminalControlsProfile.defaults
-                profile.actions += [target, retained]; profile.normalizeLegacyRows(); profile.restoreKeyboardBar()
+                profile.actions += [target, retained]; profile.freezeKeyboardLayout(); profile.restoreKeyboardBar()
                 if setting == "Order" { profile.moveRow(TerminalKeyboardRow.numbersID, offset: 1) }
                 else {
                     var rows = profile.resolvedRows
@@ -186,7 +186,7 @@ import XCTest
                 let store = TerminalControlsStore(read: { data }, write: { data = $0 }, legacyIDs: { [] })
                 var loaded = try store.load()
                 XCTAssertEqual(loaded.rowsSchema, TerminalControlsProfile.currentRowsSchema)
-                XCTAssertTrue(loaded.resolvedRows.allSatisfy { $0.items == nil })
+                XCTAssertTrue(loaded.resolvedRows.allSatisfy { $0.items != nil })
                 let rows = loaded.resolvedRows
                 let keys = rows.map { loaded.barItems(in: $0) }
                 loaded.delete(target.id)
@@ -228,12 +228,15 @@ import XCTest
     }
     func testDeletingPlacedSavedItemKeepsImplicitKeysAndOtherSavedPlacements() throws {
         var profile = TerminalControlsProfile.defaults
-        profile.normalizeLegacyRows(); profile.restoreKeyboardBar()
+        profile.freezeKeyboardLayout(); profile.restoreKeyboardBar()
         let removed = TerminalControlAction(title: "Remove", kind: .text, text: "remove", inRow: true, inMenu: false)
         let kept = TerminalControlAction(title: "Keep", kind: .text, text: "keep", inRow: true, inMenu: false)
         profile.actions += [removed, kept]
         var rows = profile.resolvedRows
         let main = try XCTUnwrap(rows.firstIndex { $0.kind == .main })
+        // Exercise an implicit in-memory draft explicitly; Restore now freezes
+        // persisted defaults instead of leaving their contents implicit.
+        rows[main].items = nil; rows[main].placementIDs = nil
         rows[main].actionIDs = [removed.id, kept.id]; profile.keyboardRows = rows
         let before = profile.resolvedRows.map { profile.barItems(in: $0) }
         profile.delete(removed.id)

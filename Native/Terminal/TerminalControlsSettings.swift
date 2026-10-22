@@ -95,6 +95,8 @@ struct TerminalControlsSettings: View {
         do {
             profile = try store.load()
             readable = true; issue = nil
+        } catch TerminalControlsStore.Failure.newerFormat {
+            readable = false; issue = .make(.controlsUnavailable, message: TerminalControlsStore.newerFormatMessage)
         } catch { readable = false; issue = .make(.controlsUnavailable) }
     }
     private func commit(_ draft: TerminalControlsProfile) -> Bool {
@@ -102,6 +104,8 @@ struct TerminalControlsSettings: View {
         do { profile = try store.save(draft); issue = nil; return true }
         catch TerminalControlsStore.Failure.staleDraft {
             issue = .make(.saveFailed, message: "Controls changed in another window. Close this editor and reload before trying again.")
+        } catch TerminalControlsStore.Failure.newerFormat {
+            readable = false; issue = .make(.controlsUnavailable, message: TerminalControlsStore.newerFormatMessage)
         } catch { issue = .make(.saveFailed) }
         return false
     }

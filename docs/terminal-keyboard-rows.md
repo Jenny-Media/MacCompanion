@@ -50,9 +50,18 @@ Replace Key changes only the selected placement, including repeated menu
 favorites; Edit Shortcut and Edit Text update the shared definition everywhere.
 Deleting a saved item removes its references while retaining every other key,
 including preset rows restored and then adjusted through row options.
-Upgrading older saved profiles freezes their previous implicit row contents
-and preserves their options. New default templates apply to new layouts or an
-explicit Restore Keyboard Bar action. Repeated Keyboard and Expand controls
+Before the first public layout format, older development keyboard layouts reset
+once to the current defaults. Saved shortcut/text definitions, library order,
+floating-menu favorites and the import journal are retained; old row placements
+are cleared. Current layouts persist explicit keys and placement identities, so
+changing a template later cannot silently rearrange a saved keyboard.
+
+The profile envelope and keyboard layout have independent version numbers.
+Serialized format changes must increment the relevant version. A newer profile
+or layout version is rejected before decoding its contents or importing legacy
+data; loading and saving leave the original bytes untouched and explain that an
+app update is required. Invalid current data is preserved rather than reset.
+Repeated Keyboard and Expand controls
 provide the same selection feedback as their first copy.
 
 ## Editors, keypad and saved items
@@ -80,8 +89,10 @@ Text adds no Return, and multiline text requires confirmation.
 
 ## Regression coverage
 
-TerminalControlsProfileTests and TerminalControlsRedesignTests cover legacy
-migration, shared definitions, independent repeated placements, full preset
+TerminalControlsProfileTests and TerminalControlsRedesignTests cover the
+one-time development-layout reset, saved-data preservation, future-format
+rejection without writes, legacy library imports, shared definitions,
+independent repeated placements, full preset
 additions, exact-copy removal/move/replace, Undo, ordinal row names, scroll-start
 persistence, validation, optimistic saves and write failures.
 TerminalControlsUITests exercises actual UIKit geometry, independent utility

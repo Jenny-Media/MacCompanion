@@ -121,86 +121,130 @@ import Security
             }
         }
     }
-    func testValidLegacyRowsMigrateOnceAndPreservePlacementsAndHiddenNumbers() throws {
-        let memory = Memory()
-        let item = TerminalControlAction(title: "Legacy", kind: .text, text: "synthetic", inRow: true)
-        var profile = TerminalControlsProfile(actions: [item])
-        profile.rowsSchema = nil
-        profile.numberRow = false
-        profile.keyboardRows = [
-            .init(id: TerminalKeyboardRow.numbersID, kind: .numbers, title: "Numbers"),
-            .init(id: TerminalKeyboardRow.mainID, kind: .main, title: "Main Row", actionIDs: [item.id],
-                  items: [.control(.keyboard), .control(.retiredNumbers), .saved(item.id)])]
-        memory.data = try JSONEncoder().encode(profile)
-        let migrated = try memory.store.load()
-        XCTAssertEqual(migrated.rowsSchema, TerminalControlsProfile.currentRowsSchema); XCTAssertNil(migrated.numberRow)
-        XCTAssertEqual(migrated.resolvedRows.first?.preset, .numbers)
-        XCTAssertEqual(migrated.resolvedRows.first?.hidden, true)
-        XCTAssertEqual(migrated.actions.first?.id, item.id)
-        XCTAssertEqual(migrated.actions.first?.text, item.text)
-        XCTAssertFalse(migrated.resolvedRows.flatMap { migrated.barItems(in: $0) }.contains(.control(.retiredNumbers)))
-        XCTAssertTrue(migrated.valid)
-        XCTAssertEqual(try memory.store.load(), migrated)
-        XCTAssertEqual(memory.writes, 1)
-    }
-    func testSchemaTwoImplicitRowsKeepPreviousContentsOptionsAndIdentityOnUpgrade() throws {
-        for implicitLayout in [false, true] {
-            let memory = Memory()
-            let saved = TerminalControlAction(title: "Keep", kind: .text, text: "synthetic", inRow: true, inMenu: false)
-            var old = TerminalControlsProfile(actions: [saved])
-            old.rowsSchema = 2; old.commandInBar = true
-            if !implicitLayout {
-                old.keyboardRows = [
-                    .init(id: TerminalKeyboardRow.mainID, kind: .main, title: "Main Row", actionIDs: [saved.id], alignment: .right, scrollStart: .right),
-                    .init(id: TerminalKeyboardRow.numbersID, kind: .custom, title: "Numbers", preset: .numbers, expandedOnly: true, hidden: true),
-                    .init(id: TerminalKeyboardRow.navigationID, kind: .navigation, title: "Navigation", expandedOnly: false)]
+    func testInterimLayoutsResetOnceAndKeepSavedPayloadsFavoritesAndLibraryOrder() throws {
+        for schema in [nil, 1, 2, 3] as [Int?] {
+            for explicitRows in [false, true] {
+                let memory = Memory()
+                var text = TerminalControlAction(title: "Keep text", kind: .text, text: "  中文😀\n", inRow: true)
+                text.presetID = "custom-text"
+                var shortcut = TerminalControlAction(title: "Keep shortcut", kind: .shortcut, inRow: true)
+                shortcut.character = 0x42; shortcut.modifiers = [0xffe3]; shortcut.usage = "After Prefix"
+                var old = TerminalControlsProfile(actions: [text, shortcut])
+                old.rowsSchema = schema; old.numberRow = false; old.commandInBar = true
+                old.importedMacs = [UUID()]; old.shortcutOrder = [shortcut.id]; old.textOrder = [text.id]
+                old.pin(text.id, in: .menu, enabled: true)
+                if explicitRows {
+                    var main = TerminalKeyboardRow(id: TerminalKeyboardRow.mainID, kind: .main, title: "Custom", alignment: .right, scrollStart: .right)
+                    main.placements = [.init(item: .key("key-f4")), .init(item: .saved(text.id)), .init(item: .saved(shortcut.id))]
+                    old.keyboardRows = [main]
+                }
+                memory.data = try JSONEncoder().encode(old)
+                let loaded = try memory.store.load()
+                var expected = old.actions
+                for index in expected.indices { expected[index].inRow = false }
+                XCTAssertEqual(loaded.actions, expected)
+                XCTAssertEqual(loaded.resolvedMenuPlacements, old.resolvedMenuPlacements)
+                XCTAssertEqual(loaded.menuOrder, old.menuOrder)
+                XCTAssertEqual(loaded.importedMacs, old.importedMacs)
+                XCTAssertEqual(loaded.shortcutOrder, old.shortcutOrder); XCTAssertEqual(loaded.textOrder, old.textOrder)
+                XCTAssertEqual(loaded.rowsSchema, TerminalControlsProfile.currentRowsSchema)
+                XCTAssertEqual(loaded.resolvedRows.map { loaded.barItems(in: $0) }, [TerminalRowPreset.numbers.items, TerminalRowPreset.navigation.items, TerminalRowPreset.essentials.items])
+                XCTAssertTrue(loaded.resolvedRows.allSatisfy { $0.items != nil && $0.placementIDs != nil })
+                XCTAssertEqual(loaded.resolvedRows.last?.resolvedAlignment, .fill)
+                XCTAssertEqual(try memory.store.load(), loaded); XCTAssertEqual(memory.writes, 1)
             }
-            memory.data = try JSONEncoder().encode(old)
-            let migrated = try memory.store.load()
-            let main = try XCTUnwrap(migrated.resolvedRows.first { $0.kind == .main })
-            XCTAssertEqual(migrated.barItems(in: main), [.control(.keyboard), .key("key-escape"), .key("key-tab"), .control(.ctrl), .control(.alt), .control(.shift), .control(.command), .control(.keypad), .control(.expand), .saved(saved.id)])
-            XCTAssertEqual(main.resolvedAlignment, implicitLayout ? .left : .right)
-            XCTAssertEqual(main.scrollStart, implicitLayout ? nil : .right)
-            XCTAssertEqual(migrated.resolvedRows.map(\.id), old.resolvedRows.map(\.id))
-            XCTAssertEqual(migrated.actions, old.actions)
-            XCTAssertEqual(migrated.rowsSchema, TerminalControlsProfile.currentRowsSchema)
-            if !implicitLayout {
-                let numbers = try XCTUnwrap(migrated.resolvedRows.first { $0.id == TerminalKeyboardRow.numbersID })
-                XCTAssertEqual(numbers.hidden, true); XCTAssertEqual(numbers.expandedOnly, true)
-            }
-            XCTAssertEqual(try memory.store.load(), migrated); XCTAssertEqual(memory.writes, 1)
-            var restored = migrated; restored.restoreKeyboardBar()
-            let restoredMain = try XCTUnwrap(restored.resolvedRows.first { $0.kind == .main })
-            XCTAssertEqual(restored.barItems(in: restoredMain), TerminalRowPreset.essentials.items)
-            XCTAssertEqual(restoredMain.resolvedAlignment, .fill)
         }
     }
-    func testUnversionedJSONUsesLegacyRowsAndExplicitPlacementsSurviveUpgrade() throws {
+    func testObsoleteRowRepresentationsResetButCorruptSavedDataIsKept() throws {
+        let memory = Memory()
+        var profile = TerminalControlsProfile.defaults; profile.rowsSchema = 2
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(profile)) as? [String: Any])
+        json["keyboardRows"] = [["kind": "retired-development-row", "payload": "obsolete"]]
+        json["rowOrder"] = ["obsolete-ordering"]
+        memory.data = try JSONSerialization.data(withJSONObject: json)
+        XCTAssertTrue(try memory.store.load().valid); XCTAssertEqual(memory.writes, 1)
+        json["actions"] = [["kind": "corrupt", "text": "keep these bytes"]]
+        memory.data = try JSONSerialization.data(withJSONObject: json)
+        let original = memory.data
+        XCTAssertThrowsError(try memory.store.load())
+        XCTAssertEqual(memory.data, original); XCTAssertEqual(memory.writes, 1)
+    }
+    func testCurrentExplicitLayoutSurvivesLoadSaveAndTemplateChanges() throws {
+        let memory = Memory()
+        let saved = TerminalControlAction(title: "Keep", kind: .text, text: "synthetic", inRow: true)
+        var profile = TerminalControlsProfile(actions: [saved])
+        var main = TerminalKeyboardRow(id: TerminalKeyboardRow.mainID, kind: .main, title: "Custom", alignment: .right, scrollStart: .right)
+        main.placements = [.init(item: .key("key-f4")), .init(item: .key("key-f4")), .init(item: .saved(saved.id))]
+        profile.keyboardRows = [main]; memory.data = try JSONEncoder().encode(profile)
+        XCTAssertEqual(try memory.store.load(), profile); XCTAssertEqual(memory.writes, 0)
+        profile.keyboardRows![0].alignment = .center
+        profile.keyboardRows![0].preset = .numbers
+        let updated = try memory.store.save(profile)
+        XCTAssertEqual(try memory.store.load(), updated)
+        XCTAssertEqual(updated.keyboardRows![0].placements, main.placements)
+        XCTAssertEqual(updated.keyboardRows![0].resolvedAlignment, .center)
+        XCTAssertEqual(updated.keyboardRows![0].scrollStart, .right)
+        XCTAssertEqual(memory.writes, 1)
+    }
+    func testCurrentImplicitRowsAreFrozenOnceBeforeSaving() throws {
         let memory = Memory()
         var profile = TerminalControlsProfile()
-        profile.rowsSchema = nil; profile.numberRow = false
+        profile.keyboardRows = [.init(id: TerminalKeyboardRow.mainID, kind: .main, title: "Main", preset: .essentials)]
         memory.data = try JSONEncoder().encode(profile)
-        XCTAssertNil(try JSONDecoder().decode(TerminalControlsProfile.self, from: XCTUnwrap(memory.data)).rowsSchema)
-        let migrated = try memory.store.load()
-        XCTAssertEqual(migrated.resolvedRows.first { $0.id == TerminalKeyboardRow.numbersID }?.hidden, true)
-        let main = try XCTUnwrap(migrated.resolvedRows.first { $0.kind == .main })
-        XCTAssertTrue(migrated.barItems(in: main).contains(.control(.keypad)))
-        XCTAssertFalse(migrated.barItems(in: main).contains(.key("key-left")))
-        XCTAssertEqual(main.resolvedAlignment, .left)
-
-        profile.rowsSchema = 2
-        var row = TerminalKeyboardRow(id: TerminalKeyboardRow.mainID, kind: .main, title: "Customized", alignment: .center)
-        row.placements = [.init(item: .key("key-f4")), .init(item: .key("key-f4"))]
-        profile.keyboardRows = [row]; memory.data = try JSONEncoder().encode(profile)
-        XCTAssertEqual(try memory.store.load().keyboardRows, [row])
+        var loaded = try memory.store.load()
+        XCTAssertEqual(loaded.keyboardRows![0].items, TerminalRowPreset.essentials.items)
+        let frozen = loaded.keyboardRows![0].placements
+        loaded.keyboardRows![0].preset = .numbers
+        let saved = try memory.store.save(loaded)
+        XCTAssertEqual(saved.keyboardRows![0].placements, frozen)
+        XCTAssertEqual(try memory.store.load(), saved); XCTAssertEqual(memory.writes, 2)
     }
-    func testNewProfilesUseCurrentDefaultsAndFailedUpgradeKeepsOriginalStorage() throws {
+    func testNewerFormatsRejectLoadsAndStaleSavesWithoutDecodingOrWriting() throws {
+        for field in ["version", "rowsSchema"] {
+            let memory = Memory()
+            let cached = try memory.store.load()
+            let writes = memory.writes
+            var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(cached)) as? [String: Any])
+            json[field] = field == "version" ? TerminalControlsProfile.currentVersion + 1 : TerminalControlsProfile.currentRowsSchema + 1
+            if field == "version" { json["rowsSchema"] = ["future": "representation"] }
+            json["keyboardRows"] = [["kind": "future-row", "unknown": ["preserve": "exactly"]]]
+            json["actions"] = [["kind": "future-action", "unknown": true]]
+            memory.data = try JSONSerialization.data(withJSONObject: json)
+            let original = memory.data
+            var imports = 0, store = memory.store
+            store.legacyIDs = { imports += 1; return [] }
+            for operation in [{ _ = try store.load() }, { _ = try store.save(cached) }] {
+                XCTAssertThrowsError(try operation()) { XCTAssertEqual($0 as? TerminalControlsStore.Failure, .newerFormat) }
+                XCTAssertEqual(memory.data, original); XCTAssertEqual(memory.writes, writes); XCTAssertEqual(imports, 0)
+            }
+        }
+    }
+    func testNewerDraftAndInvalidVersionsNeverWriteOrResetTheStoredLayout() throws {
+        let memory = Memory()
+        let current = try memory.store.load(), original = memory.data, writes = memory.writes
+        for field in ["version", "rowsSchema"] {
+            var newer = current
+            if field == "version" { newer.version += 1 } else { newer.rowsSchema = TerminalControlsProfile.currentRowsSchema + 1 }
+            XCTAssertThrowsError(try memory.store.save(newer)) { XCTAssertEqual($0 as? TerminalControlsStore.Failure, .newerFormat) }
+            XCTAssertEqual(memory.data, original); XCTAssertEqual(memory.writes, writes)
+            for invalid in [-1, 0] {
+                var bad = current
+                if field == "version" { bad.version = invalid } else { bad.rowsSchema = invalid }
+                memory.data = try JSONEncoder().encode(bad)
+                let bytes = memory.data
+                XCTAssertThrowsError(try memory.store.load()) { XCTAssertEqual($0 as? TerminalControlsStore.Failure, .unreadable) }
+                XCTAssertEqual(memory.data, bytes); XCTAssertEqual(memory.writes, writes)
+            }
+            memory.data = original
+        }
+    }
+    func testNewProfilesUseCurrentDefaultsAndFailedResetKeepsOriginalStorage() throws {
         let memory = Memory()
         let fresh = try memory.store.load()
         let main = try XCTUnwrap(fresh.resolvedRows.first { $0.kind == .main })
         XCTAssertEqual(fresh.barItems(in: main), TerminalRowPreset.essentials.items)
         XCTAssertEqual(main.resolvedAlignment, .fill)
-
+        XCTAssertTrue(fresh.resolvedRows.allSatisfy { $0.items != nil && $0.placementIDs != nil })
         var old = TerminalControlsProfile(); old.rowsSchema = 2
         memory.data = try JSONEncoder().encode(old)
         let original = memory.data, writes = memory.writes
@@ -209,7 +253,7 @@ import Security
         XCTAssertEqual(memory.data, original); XCTAssertEqual(memory.writes, writes)
         memory.failWrite = false
         let retried = try memory.store.load()
-        XCTAssertTrue(retried.barItems(in: retried.resolvedRows.first { $0.kind == .main }!).contains(.control(.keypad)))
+        XCTAssertEqual(retried.resolvedRows.last?.items, TerminalRowPreset.essentials.items)
         XCTAssertEqual(try memory.store.load(), retried); XCTAssertEqual(memory.writes, writes + 1)
     }
     func testEditingPlacementsAndOrderPreservesOnePayloadAndStableIdentity() throws {
@@ -394,7 +438,7 @@ import Security
         XCTAssertTrue(profile.valid); XCTAssertEqual(profile.importedMacs, journal)
         XCTAssertEqual(profile.actions[0].id, saved.id); XCTAssertEqual(profile.actions[0].text, saved.text)
         XCTAssertTrue(profile.actions[0].inMenu); XCTAssertFalse(profile.actions[0].inRow)
-        XCTAssertNil(profile.keyboardRows); XCTAssertNil(profile.numberRow)
+        XCTAssertNotNil(profile.keyboardRows); XCTAssertNil(profile.numberRow)
     }
     func testEachPresetIsEditableAndDoesNotPolluteSavedCollection() throws {
         for preset in TerminalRowPreset.allCases {

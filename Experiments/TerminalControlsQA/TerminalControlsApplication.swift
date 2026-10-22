@@ -40,10 +40,10 @@ final class TerminalControlsScene: UIResponder, UIWindowSceneDelegate {
             TerminalControlAction(id: TerminalControlsMemory.itemID, title: "Project", kind: .text, text: "original", inRow: true)])
         // Transaction journeys start after migration; migration has its own
         // hosted tests. A failed explicit Save must not fail the initial load.
-        profile.normalizeLegacyRows()
+        profile.freezeKeyboardLayout()
         if ProcessInfo.processInfo.environment["MACCOMPANION_CONTROLS_LEGACY_ROWS"] == "1" {
-            // Saved schema-2 layout from before the Essentials update. Keep its
-            // contents implicit to exercise the production upgrade path.
+            // An unreleased saved layout with custom row options. Its rows
+            // reset while its saved definitions and favorites remain intact.
             profile.rowsSchema = 2
             profile.keyboardRows = profile.resolvedRows
             let main = profile.keyboardRows!.firstIndex { $0.kind == .main }!
@@ -53,6 +53,7 @@ final class TerminalControlsScene: UIResponder, UIWindowSceneDelegate {
             profile.actions = []
             profile.keyboardRows = [.init(id: TerminalKeyboardRow.mainID, kind: .main, title: "Main", items: TerminalRowPreset.functions.items, alignment: .right, scrollStart: .right)]
         }
+        if ProcessInfo.processInfo.environment["MACCOMPANION_CONTROLS_FUTURE_FORMAT"] == "1" { profile.rowsSchema = TerminalControlsProfile.currentRowsSchema + 1 }
         return try! JSONEncoder().encode(profile)
     }()
     var profile: TerminalControlsProfile { try! JSONDecoder().decode(TerminalControlsProfile.self, from: data) }

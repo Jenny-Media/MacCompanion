@@ -262,7 +262,9 @@ struct TerminalKeyboardRow: Codable, Identifiable, Equatable {
 
 struct TerminalControlsProfile: Codable, Equatable {
     static let maximumKeyboardRows = 6
-    var version = 1
+    static let currentVersion = 1
+    static let currentRowsSchema = 4
+    var version = Self.currentVersion
     var revision = UUID()
     var actions: [TerminalControlAction] = []
     var importedMacs: Set<UUID> = []
@@ -270,7 +272,7 @@ struct TerminalControlsProfile: Codable, Equatable {
     var rowOrder: [UUID]?
     var menuOrder: [UUID]?
     var menuPlacements: [TerminalMenuPlacement]?
-    var numberRow: Bool? // Decode-only legacy preference; cleared by normalizeLegacyRows().
+    var numberRow: Bool? // Decode-only legacy preference; cleared when resetting an older layout.
     var expandedBar: Bool? // Legacy setting; new explicit expansion uses rowsExpanded.
     var navigationRow: Bool?
     var keyboardRows: [TerminalKeyboardRow]?
@@ -278,7 +280,6 @@ struct TerminalControlsProfile: Codable, Equatable {
     var commandInBar: Bool?
     var shortcutOrder: [UUID]?
     var textOrder: [UUID]?
-    static let currentRowsSchema = 3
     var rowsSchema: Int? = Self.currentRowsSchema
     /// Old flat placements remain on the main row. New rows reference the same
     /// saved definitions, and never copy or discard their content.
@@ -370,6 +371,7 @@ struct TerminalControlsProfile: Codable, Equatable {
         for index in actions.indices { actions[index].inRow = false }
         rowOrder = nil; keyboardRows = nil; numberRow = nil; navigationRow = true; rowsExpanded = false; commandInBar = false
         rowsSchema = Self.currentRowsSchema
+        freezeKeyboardLayout()
     }
     /// Adding a template creates independent placements and never moves existing keys.
     @discardableResult mutating func installEditorPreset(_ preset: TerminalRowPreset, before target: UUID?) -> UUID? {
@@ -548,7 +550,7 @@ struct TerminalControlsProfile: Codable, Equatable {
         } else if !enabled { removeBarItem(.saved(id)) }
     }
     var valid: Bool {
-        version == 1 && actions.count <= 4096 && importedMacs.count <= 4096
+        version == Self.currentVersion && (rowsSchema.map { (1...Self.currentRowsSchema).contains($0) } ?? true) && actions.count <= 4096 && importedMacs.count <= 4096
             && Set(actions.map(\.id)).count == actions.count && actions.allSatisfy(\.valid)
             && [rowOrder, menuOrder, shortcutOrder, textOrder].allSatisfy { order in
                 guard let order else { return true }
@@ -592,29 +594,11 @@ struct TerminalControlsProfile: Codable, Equatable {
     mutating func reorderLibrary(_ section: TerminalSavedItemsSection, ids: [UUID]) {
         if section == .shortcuts { shortcutOrder = ids } else { textOrder = ids }
     }
-    /// Freeze earlier implicit templates before applying newer defaults. Explicit
-    /// placements and row options remain authoritative throughout the upgrade.
-    mutating func normalizeLegacyRows(legacyNumbersVisible: Bool = true, preservingImplicitContents: Bool = true) {
-        guard rowsSchema != Self.currentRowsSchema else { return }
-        let retiredNumbers = rowsSchema != 2
+    /// Persist actual placements, not a template whose defaults may change.
+    mutating func freezeKeyboardLayout() {
         var rows = resolvedRows
-        if preservingImplicitContents, keyboardRows == nil,
-           let main = rows.firstIndex(where: { $0.kind == .main }) { rows[main].alignment = nil }
-        for index in rows.indices {
-            if preservingImplicitContents, rows[index].items == nil,
-               rows[index].kind == .main || rows[index].preset == .essentials {
-                var items: [TerminalBarItem] = [.control(.keyboard), .key("key-escape"), .key("key-tab"), .control(.ctrl), .control(.alt), .control(.shift), .control(.keypad), .control(.expand)]
-                if rows[index].kind == .main, commandInBar == true { items.insert(.control(.command), at: 6) }
-                rows[index].items = items + rows[index].actionIDs.map { .saved($0) }
-            }
-            rows[index].placements = barPlacements(in: rows[index]).filter { !retiredNumbers || $0.item.control != .retiredNumbers }
-            if retiredNumbers, rows[index].kind == .numbers || rows[index].id == TerminalKeyboardRow.numbersID {
-                rows[index].kind = .custom; rows[index].preset = .numbers
-                rows[index].expandedOnly = false
-                rows[index].hidden = !(numberRow ?? legacyNumbersVisible)
-            }
-        }
-        keyboardRows = rows; numberRow = nil; rowsSchema = Self.currentRowsSchema
+        for index in rows.indices { rows[index].placements = barPlacements(in: rows[index]) }
+        keyboardRows = rows
     }
     static var defaults: Self { .init(actions: DirectControlMode.terminal.defaults.map(TerminalControlAction.init)) }
     mutating func importKeyboard(_ preferences: TerminalKeyboardPreferences, macID: UUID) {
@@ -645,7 +629,26 @@ struct TerminalControlsProfile: Codable, Equatable {
     static let account = DirectControlMode.terminal.profileID
     static let kind = "terminal-controls-v2"
     static let changed = Notification.Name("TerminalControlsChangedV2")
-    enum Failure: Error { case unreadable, staleDraft }
+    enum Failure: Error, Equatable { case unreadable, staleDraft, newerFormat }
+    static let newerFormatMessage = "These controls were saved by a newer version of Mac Companion. Update the app to edit them. Your saved controls have been kept."
+    private struct Format: Decodable {
+        let version: Int
+        let rowsSchema: Int?
+        private enum CodingKeys: String, CodingKey { case version, rowsSchema }
+        init(version: Int, rowsSchema: Int?) { self.version = version; self.rowsSchema = rowsSchema }
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            version = try values.decode(Int.self, forKey: .version)
+            // A future envelope may change every field except its version.
+            guard version <= TerminalControlsProfile.currentVersion else { throw Failure.newerFormat }
+            rowsSchema = try values.decodeIfPresent(Int.self, forKey: .rowsSchema)
+        }
+        func checkSupported() throws {
+            if version > TerminalControlsProfile.currentVersion || (rowsSchema ?? 0) > TerminalControlsProfile.currentRowsSchema { throw Failure.newerFormat }
+            guard version == TerminalControlsProfile.currentVersion, rowsSchema.map({ $0 > 0 }) ?? true else { throw Failure.unreadable }
+        }
+    }
+    private static let keyboardFields = ["keyboardRows", "rowOrder", "numberRow", "expandedBar", "navigationRow", "rowsExpanded", "commandInBar"]
     var read: () throws -> Data? = { try TerminalSecretStore.read(account, kind: kind) }
     var write: (Data) throws -> Void = { try TerminalSecretStore.write($0, id: account, kind: kind) }
     var legacyIDs: () throws -> [UUID] = { try TerminalSecretStore.accounts(kind: "terminal-keyboard-v1") }
@@ -657,24 +660,29 @@ struct TerminalControlsProfile: Codable, Equatable {
         guard DirectAppLockV1.shared.canAccess else { throw TerminalSecretStore.Failure.locked }
         let stored = try read()
         var profile: TerminalControlsProfile
+        let resetKeyboard: Bool
         if let stored {
             guard stored.count <= 20 * 1024 * 1024 else { throw Failure.unreadable }
-            profile = try JSONDecoder().decode(TerminalControlsProfile.self, from: stored)
+            let format = try JSONDecoder().decode(Format.self, from: stored)
+            try format.checkSupported()
+            resetKeyboard = format.rowsSchema != TerminalControlsProfile.currentRowsSchema
+            if resetKeyboard {
+                // Unreleased layouts are disposable; decode saved definitions
+                // and favorites independently of obsolete row representations.
+                guard var record = try JSONSerialization.jsonObject(with: stored) as? [String: Any] else { throw Failure.unreadable }
+                for key in Self.keyboardFields { record.removeValue(forKey: key) }
+                record["rowsSchema"] = TerminalControlsProfile.currentRowsSchema
+                profile = try JSONDecoder().decode(TerminalControlsProfile.self, from: JSONSerialization.data(withJSONObject: record))
+            } else { profile = try JSONDecoder().decode(TerminalControlsProfile.self, from: stored) }
         } else {
             let actions = try legacyActions()
             guard DirectQuickActionEditing.valid(actions, mode: .terminal) else { throw Failure.unreadable }
             profile = .init(actions: actions.map(TerminalControlAction.init))
-            // No saved row layout exists yet; retain the legacy Numbers
-            // preference while installing the current default templates.
-            profile.rowsSchema = nil
+            resetKeyboard = true
         }
-        // Resolution builds ordering dictionaries. Reject malformed storage
-        // before migration can resolve rows; never rewrite a corrupt record.
+        // Corrupt definitions and favorites must never be replaced by defaults.
         guard profile.valid else { throw Failure.unreadable }
         let before = profile
-        let legacyPreference = "direct-terminal-number-row"
-        let legacyVisible = UserDefaults.standard.object(forKey: legacyPreference) == nil || UserDefaults.standard.bool(forKey: legacyPreference)
-        profile.normalizeLegacyRows(legacyNumbersVisible: legacyVisible, preservingImplicitContents: stored != nil)
         for index in profile.actions.indices { profile.actions[index].normalizeLegacyDefinition() }
         guard profile.valid else { throw Failure.unreadable }
         let excluded = excludedIDs()
@@ -683,6 +691,8 @@ struct TerminalControlsProfile: Codable, Equatable {
             try preferences.validate()
             profile.importKeyboard(preferences, macID: id)
         }
+        if resetKeyboard { profile.restoreKeyboardBar() }
+        else { profile.freezeKeyboardLayout() }
         guard profile.valid else { throw Failure.unreadable }
         if stored == nil || profile != before {
             profile.revision = UUID()
@@ -691,15 +701,19 @@ struct TerminalControlsProfile: Codable, Equatable {
         return profile
     }
     func save(_ draft: TerminalControlsProfile) throws -> TerminalControlsProfile {
+        try Format(version: draft.version, rowsSchema: draft.rowsSchema).checkSupported()
+        guard draft.rowsSchema == TerminalControlsProfile.currentRowsSchema else { throw Failure.unreadable }
         let current = try load()
         guard current.revision == draft.revision else { throw Failure.staleDraft }
         guard draft.valid, draft.importedMacs == current.importedMacs else { throw Failure.unreadable }
-        var result = draft; result.revision = UUID()
+        var result = draft; result.freezeKeyboardLayout(); result.revision = UUID()
         try persist(result)
         NotificationCenter.default.post(name: Self.changed, object: nil)
         return result
     }
     private func persist(_ profile: TerminalControlsProfile) throws {
+        try Format(version: profile.version, rowsSchema: profile.rowsSchema).checkSupported()
+        guard profile.rowsSchema == TerminalControlsProfile.currentRowsSchema, profile.valid else { throw Failure.unreadable }
         let data = try JSONEncoder().encode(profile)
         guard data.count <= 20 * 1024 * 1024 else { throw Failure.unreadable }
         try write(data)

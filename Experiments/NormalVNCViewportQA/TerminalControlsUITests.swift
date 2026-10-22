@@ -27,7 +27,7 @@ import StoreKit
 
 @MainActor final class TerminalControlsUITests: XCTestCase {
     private func currentProfileData(_ value: TerminalControlsProfile) throws -> Data {
-        var profile = value; profile.normalizeLegacyRows()
+        var profile = value; profile.freezeKeyboardLayout()
         return try JSONEncoder().encode(profile)
     }
     @Observable final class Draft { var profile = TerminalControlsProfile.defaults }
