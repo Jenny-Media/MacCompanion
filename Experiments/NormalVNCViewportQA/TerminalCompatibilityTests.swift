@@ -1,5 +1,6 @@
 import XCTest
-import SwiftUI
+import UIKit
+import Observation
 import SwiftTerm
 import NIO
 import NIOSSH
@@ -118,11 +119,16 @@ import Citadel
             let surface = rig.controller.terminal
             rig.controller.applyAppearance(.dark); rig.controller.applyAppearance(.light)
             XCTAssertEqual(rig.controller.preparedGeneration, generation)
+            // DECSET 1004 immediately reports focus. Drain that legitimate
+            // emulator reply before measuring whether paused user input replays.
+            // The cursor reply is an ordered barrier over the same SSH stream.
+            try await rig.record.emit(fixture.queries.request)
+            try await terminalWait("mode replies drained") { rig.record.received.last == 82 }
             rig.record.clearReceived()
             rig.session.background(); await rig.session.waitForLifecycleUpdates()
             rig.session.send(Array("must-not-replay".utf8))
             rig.session.resize(columns: 100, rows: 30)
-            XCTAssertTrue(rig.session.connected); XCTAssertTrue(rig.record.received.isEmpty)
+            XCTAssertTrue(rig.session.connected); XCTAssertTrue(rig.record.received.isEmpty, "Unexpected synthetic PTY bytes: " + self.hex(rig.record.received))
             rig.session.foreground(); await rig.session.waitForLifecycleUpdates()
             try await terminalWait("latest grid after resume") { rig.record.size == [100, 30] }
             XCTAssertEqual(rig.record.shellRequests, 1)
@@ -132,7 +138,7 @@ import Citadel
             XCTAssertTrue(rig.controller.terminal.getTerminal().isCurrentBufferAlternate)
             XCTAssertTrue(rig.controller.terminal.getTerminal().bracketedPasteMode)
             XCTAssertEqual(rig.controller.terminal.getTerminal().keyboardEnhancementFlags.rawValue, 1)
-            XCTAssertTrue(rig.record.received.isEmpty)
+            XCTAssertTrue(rig.record.received.isEmpty, "Unexpected synthetic PTY bytes: " + self.hex(rig.record.received))
         }
     }
 
@@ -218,6 +224,22 @@ import Citadel
                 XCTAssertEqual(self.hex(rig.record.received), value.expectedHex, value.name)
                 XCTAssertTrue(rig.controller.terminal.keyboardState.active.isEmpty)
             }
+        }
+    }
+
+    func testCommandAvailabilityAndLocksFollowRemoteNegotiation() async throws {
+        try await withHarness { rig in
+            let bar = rig.controller.keyboardBar
+            try await rig.record.emit("\u{1b}[=3u")
+            try await terminalWait("Command negotiation") { rig.controller.terminal.keyEncoding.supportsCommand }
+            bar.toggle(.command, lock: true)
+            XCTAssertEqual(rig.controller.terminal.keyboardState.locked, .command)
+            try await rig.record.emit("\u{1b}[=0u")
+            try await terminalWait("Command mode exit clears software state") {
+                !rig.controller.terminal.keyEncoding.supportsCommand && rig.controller.terminal.keyboardState.active.isEmpty
+            }
+            bar.toggle(.command)
+            XCTAssertTrue(rig.controller.terminal.keyboardState.active.isEmpty)
         }
     }
 
@@ -422,8 +444,9 @@ private final class CompatibilityPress: UIPress {
     let session: DirectTerminalSession
     let window: UIWindow
     let previous: UIWindow?
-    let host: UIViewController
-    private(set) var controller: TerminalController!
+    let host: TerminalController
+    var controller: TerminalController { host }
+    private var observingSession = true
     var renderedBytes = [UInt8]()
     var text: String { terminalCompatibilityText(controller.terminal.getTerminal()) }
     private init(record: SSHTestRecord, server: Channel, mac: DirectMacRecordV1, scene: UIWindowScene) {
@@ -431,8 +454,14 @@ private final class CompatibilityPress: UIPress {
         session = DirectTerminalSession(mac: mac)
         previous = scene.windows.first(where: \.isKeyWindow)
         window = UIWindow(windowScene: scene)
-        host = UIHostingController(rootView: DirectTerminalView(mac: mac, session: session, autoConnect: false, exit: {}).directAppearance())
+        // Protocol cases exercise the production native surface directly. The
+        // native journey target separately covers the complete SwiftUI flow.
+        // A second SwiftUI root during application launch can enter an unrelated
+        // appearance cycle before a representable controller is ever created.
+        host = TerminalController(session: session, customize: {})
         window.rootViewController = host; window.makeKeyAndVisible()
+        host.loadViewIfNeeded(); window.layoutIfNeeded()
+        projectSessionState()
     }
     static func make() async throws -> TerminalCompatibilityHarness {
         // Query replies must not be echoed back as new terminal requests.
@@ -447,10 +476,15 @@ private final class CompatibilityPress: UIPress {
         do {
             try TerminalSecretStore.write(Data(String(openSSHPublicKey: key.publicKey).utf8), id: mac.id, kind: "host-key")
             let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+            try await terminalWait("active QA window") {
+                UIApplication.shared.applicationState == .active && scene.activationState == .foregroundActive
+                    && scene.windows.contains { $0.isKeyWindow && $0.rootViewController?.viewIfLoaded?.window != nil }
+            }
             let rig = TerminalCompatibilityHarness(record: record, server: server, mac: mac, scene: scene)
             do {
-                try await terminalWait("hosted terminal") { rig.findController(rig.host) != nil }
-                rig.controller = rig.findController(rig.host)
+                try await terminalWait("hosted terminal") {
+                    rig.host.viewIfLoaded?.window === rig.window && rig.session.received != nil && rig.session.prepareTerminal != nil
+                }
                 let receive = rig.session.received
                 rig.session.received = { [weak rig] bytes in receive?(bytes); rig?.renderedBytes += bytes }
                 rig.connect()
@@ -462,16 +496,30 @@ private final class CompatibilityPress: UIPress {
         } catch { try? TerminalSecretStore.remove(mac.id); try? await server.close(); throw error }
     }
     func connect() { session.connect(username: "synthetic", password: "synthetic-only", remember: false) }
+    private func projectSessionState() {
+        guard observingSession else { return }
+        // Mirror TerminalSurface.updateUIViewController's observed projection.
+        // Keep genuine session state, input admission and controller callbacks.
+        withObservationTracking {
+            controller.terminal.isUserInteractionEnabled = session.connected
+            controller.updateControls()
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in self?.projectSessionState() }
+        }
+    }
     func tap(_ title: String) throws {
         func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
-        let button = try XCTUnwrap(descendants(controller.keyboardBar).compactMap { $0 as? UIButton }.first { $0.configuration?.title == title })
-        button.sendActions(for: .touchUpInside)
-    }
-    private func findController(_ root: UIViewController) -> TerminalController? {
-        if let match = root as? TerminalController { return match }
-        return root.children.lazy.compactMap { self.findController($0) }.first
+        if let button = descendants(controller.keyboardBar).compactMap({ $0 as? UIButton }).first(where: { $0.configuration?.title == title }) {
+            button.sendActions(for: .touchUpInside)
+        } else {
+            let key = try XCTUnwrap(TerminalAccessoryKey.allCases.first { $0.title == title })
+            let menu = controller.makeMoreKeysMenu(), kind = "terminalKey-" + key.rawValue
+            let item = try XCTUnwrap(menu.sections.flatMap { $0["items"] as? [[String: Any]] ?? [] }.first { $0["kind"] as? String == kind })
+            menu.selectionHandler?(item)
+        }
     }
     func close() async {
+        observingSession = false
         window.endEditing(true)
         session.stop(); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible()
         try? TerminalSecretStore.remove(session.mac.id)

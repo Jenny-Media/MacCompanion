@@ -121,6 +121,7 @@
     XCTAssertEqualWithAccuracy(choices[0].frame.origin.y,choices[1].frame.origin.y,.1);
     XCTAssertGreaterThan(choices[0].frame.size.width,150);
     XCTAssertGreaterThan(choices[2].frame.origin.y,choices[0].frame.origin.y);
+    XCTAssertEqualWithAccuracy(CGRectGetMaxX(choices[2].frame),CGRectGetMaxX(choices[1].frame),.1,@"An incomplete quick-action row aligns right");
     controls.traitOverrides.preferredContentSizeCategory=UIContentSizeCategoryAccessibilityExtraExtraExtraLarge;
     [controls updateTraitsIfNeeded];
     XCTAssertEqualObjects(controls.traitCollection.preferredContentSizeCategory,UIContentSizeCategoryAccessibilityExtraExtraExtraLarge);
@@ -680,7 +681,8 @@
     FeedbackControls *controls=[[FeedbackControls alloc] initWithFrame:CGRectMake(0,0,440,956)];
     controls.feedbackEvents=[NSMutableArray new]; BOOL original=controls.hapticsEnabled; controls.hapticsEnabled=YES;
     controls.quickActions=@[@{@"kind":@"mode",@"title":@"Switch Mode",@"enabled":@YES}];
-    __block NSUInteger calls=0;controls.actionHandler=^(NSDictionary *item){calls++;};
+    __block NSUInteger calls=0; __block NSDictionary *lastAction;
+    controls.actionHandler=^(NSDictionary *item){calls++; lastAction=item;};
     ControlsHold *gesture=[ControlsHold new];gesture.reference=controls;
     gesture.sampleState=UIGestureRecognizerStateBegan;[controls slide:gesture];
     UIButton *choice=[controls valueForKey:@"choices"][0];
@@ -688,7 +690,8 @@
     gesture.sampleState=UIGestureRecognizerStateChanged;[controls slide:gesture];[controls slide:gesture];
     XCTAssertEqualObjects(controls.feedbackEvents,(@[@"open",@"selection"]));XCTAssertEqual(calls,0);
     gesture.sampleState=UIGestureRecognizerStateEnded;[controls slide:gesture];
-    XCTAssertEqualObjects(controls.feedbackEvents.lastObject,@"commit");XCTAssertEqual(calls,1);
+    XCTAssertEqualObjects(controls.feedbackEvents.lastObject,@"selection",@"The session owner acknowledges a mode change after applying it");XCTAssertEqual(calls,1);
+    XCTAssertNil(lastAction[@"interfaceFeedbackHandled"]);
     [controls.feedbackEvents removeAllObjects];gesture.point=controls.button.center;gesture.sampleState=UIGestureRecognizerStateBegan;[controls slide:gesture];
     gesture.sampleState=UIGestureRecognizerStateCancelled;[controls slide:gesture];
     XCTAssertEqualObjects(controls.feedbackEvents,(@[@"open"]));XCTAssertEqual(calls,1);

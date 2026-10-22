@@ -177,8 +177,10 @@ void CompanionVNCPlayInterfaceFeedback(NSString *kind) {
     CGFloat headingHeight = self.quickCount && !self.editingPreview ? MAX(32, ceil([UIFont preferredFontForTextStyle:UIFontTextStyleFootnote compatibleWithTraitCollection:self.traitCollection].lineHeight) + 8) : 0;
     NSUInteger columns = largeText ? 1 : 2;
     NSUInteger categoryCount = self.items.count - self.quickCount;
+    NSUInteger categoryColumns = largeText ? 1 : MIN(3, MAX(1, categoryCount));
+    NSUInteger categoryRows = (categoryCount + categoryColumns - 1) / categoryColumns;
     CGFloat tileWidth = (width - 16 - (columns - 1) * 8) / columns;
-    CGFloat categoryWidth = largeText ? width - 16 : (width - 16) / MAX(1, categoryCount);
+    CGFloat categoryWidth = (width - 16) / categoryColumns;
     CGFloat tileHeight = largeText ? 44 : 72, categoryHeight = largeText ? 44 : 64;
     for (NSUInteger i = 0; i < self.choices.count; i++) {
         UIButton *choice = self.choices[i];
@@ -191,14 +193,14 @@ void CompanionVNCPlayInterfaceFeedback(NSString *kind) {
         if (i < self.quickCount) tileHeight = MAX(tileHeight, fittingHeight);
         else categoryHeight = MAX(categoryHeight, fittingHeight);
     }
-    BOOL scrollingHeader = panelRoom < headerHeight + categoryHeight + MIN(tileHeight, categoryHeight) + 20;
+    BOOL scrollingHeader = panelRoom < headerHeight + categoryHeight * categoryRows + MIN(tileHeight, categoryHeight) + 20;
     BOOL scrollingCategories = largeText || scrollingHeader;
     CGFloat scrollHeaderHeight = scrollingHeader ? headerHeight : 0;
     CGFloat gridHeight = self.quickCount ? headingHeight + ceil(self.quickCount / (CGFloat)columns) * (tileHeight + 8) : 0;
-    CGFloat categoryBody = scrollingCategories ? categoryHeight * (largeText ? categoryCount : (categoryCount ? 1 : 0)) + 8 : 0;
+    CGFloat categoryBody = scrollingCategories ? categoryHeight * categoryRows + 8 : 0;
     CGFloat contentHeight = scrollHeaderHeight + gridHeight + categoryBody + 8;
     CGFloat fixedHeader = scrollingHeader ? 0 : headerHeight;
-    CGFloat fixedFooter = scrollingCategories || !categoryCount ? 0 : categoryHeight + 8;
+    CGFloat fixedFooter = scrollingCategories || !categoryCount ? 0 : categoryHeight * categoryRows + 8;
     CGFloat height = MIN(fixedHeader + contentHeight + fixedFooter, panelRoom);
     CGFloat x = self.editingPreview ? CGRectGetMidX(available) - width / 2 : MAX(CGRectGetMinX(available) + 12, CGRectGetMaxX(self.button.frame) - width);
     CGFloat y = self.editingPreview ? CGRectGetMinY(available) : self.button.frame.origin.y - height - 12;
@@ -219,12 +221,16 @@ void CompanionVNCPlayInterfaceFeedback(NSString *kind) {
         UIView *parent = i < self.quickCount || scrollingCategories ? self.scroll : self.panel.contentView;
         if (self.choices[i].superview != parent) [parent addSubview:self.choices[i]];
         if (i < self.quickCount) {
-            self.choices[i].frame = CGRectMake(8 + (i % columns) * (tileWidth + 8), scrollHeaderHeight + headingHeight + (i / columns) * (tileHeight + 8), tileWidth, tileHeight);
+            NSUInteger rowItems = MIN(columns, self.quickCount - (i / columns) * columns);
+            NSUInteger column = i % columns + columns - rowItems;
+            self.choices[i].frame = CGRectMake(8 + column * (tileWidth + 8), scrollHeaderHeight + headingHeight + (i / columns) * (tileHeight + 8), tileWidth, tileHeight);
         } else {
             NSUInteger category = i - self.quickCount;
+            NSUInteger rowItems = MIN(categoryColumns, categoryCount - (category / categoryColumns) * categoryColumns);
+            NSUInteger column = category % categoryColumns + categoryColumns - rowItems;
             CGFloat categoryY = scrollingCategories ? scrollHeaderHeight + gridHeight + 8 : height - fixedFooter;
-            self.choices[i].frame = largeText ? CGRectMake(8, categoryY + category * categoryHeight, width - 16, categoryHeight)
-                : CGRectMake(8 + category * categoryWidth, categoryY, categoryWidth, categoryHeight);
+            self.choices[i].frame = CGRectMake(8 + column * categoryWidth,
+                categoryY + (category / categoryColumns) * categoryHeight, categoryWidth, categoryHeight);
         }
     }
 }
@@ -358,7 +364,7 @@ void CompanionVNCPlayInterfaceFeedback(NSString *kind) {
     }
     NSString *kind = item[@"kind"] ?: @"";
     // Input and state changes acknowledge their accepted result in the owner.
-    BOOL input = [@[@"escape", @"tab", @"returnKey", @"key", @"modifier", @"shortcut", @"text", @"paste", @"interrupt", @"rightClick"] containsObject:kind];
+    BOOL input = [@[@"escape", @"tab", @"returnKey", @"key", @"modifier", @"shortcut", @"text", @"paste", @"interrupt", @"rightClick"] containsObject:kind] || [item[@"inputAction"] boolValue];
     BOOL deferred = input || [@[@"keyboard", @"mode", @"setPointer", @"setTrackpad", @"inputOnly", @"fullscreen", @"numberRow", @"desktopSize", @"virtualDisplay", @"mirrorDisplay"] containsObject:kind] || [kind hasPrefix:@"colors-"];
     NSMutableDictionary *action = item.mutableCopy;
     if (input) action[@"inputFeedback"] = @YES;

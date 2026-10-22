@@ -27,7 +27,7 @@ import UIKit
         return controller
     }
     private func tap(_ title: String, in controller: ShortcutOutputController) throws {
-        let button = try XCTUnwrap(descendants(controller.keyboardBar).compactMap { $0 as? UIButton }.first { $0.configuration?.title == title })
+        let button = try XCTUnwrap(descendants(controller.keyboardBar).compactMap { $0 as? UIButton }.first { $0.accessibilityLabel == title || $0.configuration?.title == title })
         button.sendActions(for: .touchUpInside)
     }
     func testOnScreenAltNumberButtonsKeepEveryDigitInEachNegotiatedMode() throws {

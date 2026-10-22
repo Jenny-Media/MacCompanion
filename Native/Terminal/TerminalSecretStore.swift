@@ -20,6 +20,22 @@ enum TerminalSecretStore {
         guard status == errSecSuccess, let data = result as? Data else { throw Failure.storage }
         return data
     }
+    /// Read account identifiers only; migration reads each payload through the
+    /// ordinary validated loader and never logs or removes its source record.
+    static func accounts(kind: String) throws -> [UUID] {
+        var q = query(UUID(), kind)
+        q.removeValue(forKey: kSecAttrAccount as String)
+        q[kSecReturnAttributes as String] = true
+        q[kSecMatchLimit as String] = kSecMatchLimitAll
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(q as CFDictionary, &result)
+        if status == errSecItemNotFound { return [] }
+        guard status == errSecSuccess, let rows = result as? [[String: Any]] else { throw Failure.storage }
+        return try rows.map {
+            guard let account = $0[kSecAttrAccount as String] as? String, let id = UUID(uuidString: account) else { throw Failure.storage }
+            return id
+        }.sorted { $0.uuidString < $1.uuidString }
+    }
     static func write(_ data: Data, id: UUID, kind: String) throws {
         _ = try read(id, kind: kind)
         let fields: [String: Any] = [kSecValueData as String: data, kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly]
