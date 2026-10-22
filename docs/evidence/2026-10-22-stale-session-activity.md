@@ -53,3 +53,16 @@ valid paused connection, and repeat an old Disconnect action after starting a
 new session. Confirm the stopped activity disappears and the new session stays
 connected. Simulator lifecycle results do not establish physical Dynamic Island
 delivery or presentation acceptance.
+
+## Merge validation
+
+Before merging PR #35, main advanced through `901869c` (Terminal changes in
+PRs #30, #31 and #34). Integration commit `084606a` preserves both fixture
+updates and recomputes their combined canonical hash in the existing manifest;
+there are no additional runtime edits. A follow-up subagent integration review
+finds no issues. Stable Xcode 27.0 again passes the normal iOS Simulator build,
+all 76 focused hosted tests with zero failures, and required repository
+validation with 139 indexed fixtures. Evidence is retained under
+`/private/tmp/maccompanion-issue33-merge-simulator/` and
+`/private/tmp/maccompanion-issue33-merge-validation/runs/20261022T134651Z-144e9403bcef/`.
+Physical acceptance remains pending.
