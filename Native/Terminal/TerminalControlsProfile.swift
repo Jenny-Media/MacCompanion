@@ -389,20 +389,51 @@ struct TerminalControlsProfile: Codable, Equatable {
         return true
     }
     @discardableResult mutating func replaceEditorFavorite(_ placementID: UUID, with key: TerminalPaletteKey) -> Bool {
-        var placements = resolvedMenuPlacements
-        guard let index = placements.firstIndex(where: { $0.id == placementID }) else { return false }
+        guard let favorite = resolvedMenuPlacements.first(where: { $0.id == placementID }) else { return false }
+        return placeEditorItem(.key(key.id), in: .menu, replacing: .saved(favorite.actionID), placementID: placementID.uuidString)
+    }
+    /// Commit the definition and its placement together. A stale replacement or
+    /// full layout must not leave a newly created item orphaned in the library.
+    @discardableResult mutating func placeEditorItem(_ item: TerminalBarItem, in destination: TerminalControlsDestination,
+        rowID: UUID? = nil, replacing: TerminalBarItem? = nil, placementID: String? = nil,
+        definition: TerminalControlAction? = nil) -> Bool {
         var draft = self
-        let definitionID: UUID
-        if let existing = draft.actions.first(where: key.matches) { definitionID = existing.id }
-        else {
-            let replacement = key.definition
-            guard replacement.valid, draft.actions.count < 4096 else { return false }
-            draft.actions.append(replacement); definitionID = replacement.id
+        if let definition {
+            guard item.savedID == definition.id, definition.valid,
+                  !draft.actions.contains(where: { $0.id == definition.id }), draft.actions.count < 4096 else { return false }
+            draft.actions.append(definition)
         }
-        placements[index].actionID = definitionID
-        draft.menuPlacements = placements
-        let placed = Set(placements.map(\.actionID))
-        for index in draft.actions.indices { draft.actions[index].inMenu = placed.contains(draft.actions[index].id) }
+        if destination == .keyboard {
+            guard let rowID, draft.resolvedRows.contains(where: { $0.id == rowID }) else { return false }
+            if let replacing {
+                guard draft.replaceEditorItem(replacing, in: rowID, with: item, placementID: placementID) else { return false }
+            } else { draft.placeBarItem(item, in: rowID) }
+        } else {
+            let favoriteID = placementID.flatMap(UUID.init(uuidString:))
+                ?? (placementID == nil ? draft.resolvedMenuPlacements.first { $0.actionID == replacing?.savedID }?.id : nil)
+            if replacing != nil {
+                guard let favoriteID, draft.resolvedMenuPlacements.contains(where: { $0.id == favoriteID }) else { return false }
+            }
+            let definitionID: UUID
+            if let id = item.savedID {
+                guard draft.actions.contains(where: { $0.id == id }) else { return false }
+                definitionID = id
+            } else if let key = item.palette {
+                if let existing = draft.actions.first(where: key.matches) { definitionID = existing.id }
+                else {
+                    let replacement = key.definition
+                    guard replacement.valid, draft.actions.count < 4096 else { return false }
+                    draft.actions.append(replacement); definitionID = replacement.id
+                }
+            } else { return false }
+            if replacing != nil, let index = draft.resolvedMenuPlacements.firstIndex(where: { $0.id == favoriteID }) {
+                var placements = draft.resolvedMenuPlacements
+                placements[index].actionID = definitionID
+                draft.menuPlacements = placements
+                let placed = Set(placements.map(\.actionID))
+                for index in draft.actions.indices { draft.actions[index].inMenu = placed.contains(draft.actions[index].id) }
+            } else { draft.pin(definitionID, in: .menu, enabled: true) }
+        }
         guard draft.valid else { return false }
         self = draft; return true
     }

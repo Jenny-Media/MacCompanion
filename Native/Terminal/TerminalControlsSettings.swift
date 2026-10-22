@@ -297,6 +297,7 @@ struct TerminalShortcutPresetPicker: View {
     let profile: TerminalControlsProfile
     var initialPack: TerminalShortcutPack = .tmux
     var placement = false
+    var replacing = false
     let add: ([TerminalShortcutPreset]) -> Bool
     @State private var pack = TerminalShortcutPack.tmux
     @State private var selected: Set<String> = []
@@ -321,7 +322,9 @@ struct TerminalShortcutPresetPicker: View {
                     ForEach(pack.shortcuts.filter { ($0.action.usage != nil) == afterPrefix }) { preset in
                         let added = profile.actions.contains { $0.presetID == preset.id }
                         Button {
-                            if selected.contains(preset.id) { selected.remove(preset.id) } else { selected.insert(preset.id) }
+                            if selected.contains(preset.id) { selected.remove(preset.id) }
+                            else if replacing { selected = [preset.id] }
+                            else { selected.insert(preset.id) }
                         } label: {
                             HStack {
                                 VStack(alignment: .leading, spacing: 3) {
@@ -341,7 +344,7 @@ struct TerminalShortcutPresetPicker: View {
             }.navigationTitle(initialPack == .zellij || initialPack == .zellijUnlock ? "Zellij Shortcuts" : initialPack.title + " Shortcuts").directInlineNavigationTitle()
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                    ToolbarItem(placement: .confirmationAction) { Button("Add \(selected.count)") {
+                    ToolbarItem(placement: .confirmationAction) { Button(replacing ? "Replace" : "Add \(selected.count)") {
                         if add(all.filter { selected.contains($0.id) }) { dismiss() } else { failed = true }
                     }.buttonStyle(.borderedProminent).disabled(selected.isEmpty).accessibilityIdentifier("terminal-presets-add") }
                 }

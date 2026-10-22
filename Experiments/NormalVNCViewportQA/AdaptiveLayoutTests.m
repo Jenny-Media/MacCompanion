@@ -180,6 +180,29 @@
     XCTAssertFalse(CompanionVNCTabletopRegions(safe,CGRectMake(320,82,20,835),&content,&input));
     XCTAssertFalse(CompanionVNCTabletopRegions(safe,CGRectMake(0,100,669,20),&content,&input));
 }
+- (void)testDivisionObservationUsesNewUIKitWhenAvailableAndIsSafeOnOlderSystems {
+    UIView *view = [UIView new];
+    CompanionVNCObserveDivision(view);
+    XCTAssertTrue(CGRectIsNull(CompanionVNCActiveDivision(view)), @"An unattached view has no active division");
+    Class hinge = NSClassFromString(@"UIHingeInteraction");
+    NSUInteger expected = 0;
+    if (@available(iOS 27.1, *)) {
+        if (hinge) expected = 1;
+    }
+    // UIKit may also install its own interaction when reserved regions are
+    // queried. Count our observer without constraining those system details.
+    NSUInteger observed = 0;
+    for (id interaction in view.interactions) if (hinge && [interaction isKindOfClass:hinge]) observed++;
+    XCTAssertEqual(observed, expected);
+    // The ordinary viewer must share the same observer and remain launchable
+    // when the app is built with a newer SDK than the running OS.
+    CompanionVNCViewer *viewer = [CompanionVNCViewer new];
+    [viewer loadViewIfNeeded];
+    observed = 0;
+    for (id interaction in viewer.view.interactions) if (hinge && [interaction isKindOfClass:hinge]) observed++;
+    XCTAssertEqual(observed, expected);
+    [viewer stopViewer];
+}
 - (void)testRepeatedResizePreservesSessionDisplayZoomAndFocusAndReleasesInterruptedDrag {
     AdaptiveViewer *viewer = [AdaptiveViewer new]; viewer.division = CGRectNull; [viewer loadViewIfNeeded];
     viewer.view.frame = CGRectMake(0,0,440,956); [viewer.view layoutIfNeeded];

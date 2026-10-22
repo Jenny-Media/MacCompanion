@@ -3,6 +3,70 @@ import XCTest
 @testable import Mac_Companion
 
 @MainActor final class TerminalControlsRedesignTests: XCTestCase {
+    func testReplacementAcrossCategoriesPreservesOnlyTheSelectedOccurrence() throws {
+        for destination in TerminalControlsDestination.allCases {
+            var profile = TerminalControlsProfile.defaults
+            let original = try XCTUnwrap(profile.add(TerminalShortcutPack.tmux.shortcuts[0]))
+            let rowID = TerminalKeyboardRow.mainID
+            for _ in 0..<2 { profile.place(original, in: rowID); profile.pin(original, in: .menu, enabled: true) }
+            let rows = profile.keyboardRows
+            let favorites = profile.resolvedMenuPlacements
+            let row = try XCTUnwrap(profile.resolvedRows.first { $0.id == rowID })
+            let placements = profile.barPlacements(in: row)
+            let selected = destination == .menu ? favorites.last!.id.uuidString : placements.last!.id
+            let oldDefinition = profile.actions.first { $0.id == original }!
+            let replacement = TerminalControlAction(title: "Status", kind: .text, text: "git status", inMenu: false)
+            XCTAssertTrue(profile.placeEditorItem(.saved(replacement.id), in: destination, rowID: rowID,
+                replacing: .saved(original), placementID: selected, definition: replacement))
+            XCTAssertEqual(profile.resolvedMenuPlacements.map(\.id), favorites.map(\.id))
+            XCTAssertEqual(profile.barPlacements(in: profile.resolvedRows.first { $0.id == rowID }!).map(\.id), placements.map(\.id))
+            XCTAssertEqual(profile.actions.first { $0.id == original }, oldDefinition)
+            if destination == .menu {
+                XCTAssertEqual(profile.keyboardRows, rows)
+                XCTAssertEqual(profile.resolvedMenuPlacements.dropLast(), favorites.dropLast())
+                XCTAssertEqual(profile.resolvedMenuPlacements.last?.actionID, replacement.id)
+            } else {
+                XCTAssertEqual(profile.resolvedMenuPlacements, favorites)
+                XCTAssertEqual(profile.barPlacements(in: profile.resolvedRows.first { $0.id == rowID }!).dropLast(), placements.dropLast())
+            }
+            XCTAssertTrue(profile.valid)
+            XCTAssertEqual(try JSONDecoder().decode(TerminalControlsProfile.self, from: JSONEncoder().encode(profile)), profile)
+            // Reusing an existing shortcut must replace rather than append too.
+            XCTAssertTrue(profile.placeEditorItem(.saved(original), in: destination, rowID: rowID,
+                replacing: .saved(replacement.id), placementID: selected))
+            XCTAssertEqual(profile.actions.count, TerminalControlsProfile.defaults.actions.count + 2)
+            XCTAssertTrue(profile.valid)
+        }
+    }
+    func testReplacingWithPresetOrAppActionKeepsDefinitionAndPlacementIndependent() throws {
+        var profile = TerminalControlsProfile.defaults
+        let key = profile.pin(TerminalPaletteKey(.home), in: .menu)
+        let favorite = profile.resolvedMenuPlacements.last!
+        let prefix = try XCTUnwrap(profile.add(TerminalShortcutPack.tmux.shortcuts[0]))
+        XCTAssertTrue(profile.placeEditorItem(.saved(prefix), in: .menu, replacing: .saved(key), placementID: favorite.id.uuidString))
+        XCTAssertEqual(profile.resolvedMenuPlacements.last?.id, favorite.id)
+        XCTAssertEqual(profile.resolvedMenuPlacements.last?.actionID, prefix)
+        let appAction = TerminalAppAction.composeText.definition
+        XCTAssertTrue(profile.placeEditorItem(.saved(appAction.id), in: .menu, replacing: .saved(prefix),
+            placementID: favorite.id.uuidString, definition: appAction))
+        XCTAssertEqual(profile.resolvedMenuPlacements.last?.id, favorite.id)
+        XCTAssertEqual(profile.actions.first { $0.id == prefix }?.character, 98)
+        XCTAssertEqual(profile.actions.first { $0.id == key }?.key, .home)
+        XCTAssertEqual(profile.resolvedMenuPlacements.last?.actionID, appAction.id)
+        XCTAssertTrue(profile.valid)
+    }
+    func testFailedInlineReplacementDoesNotCreateOrPinAnOrphanedDefinition() throws {
+        for destination in TerminalControlsDestination.allCases {
+            var profile = TerminalControlsProfile.defaults
+            let original = profile
+            let text = TerminalControlAction(title: "New Text", kind: .text, text: "synthetic", inMenu: false)
+            XCTAssertFalse(profile.placeEditorItem(.saved(text.id), in: destination, rowID: TerminalKeyboardRow.mainID,
+                replacing: .key("key-tab"), placementID: UUID().uuidString, definition: text))
+            XCTAssertEqual(profile, original)
+            XCTAssertFalse(profile.placeEditorItem(.saved(UUID()), in: destination, rowID: TerminalKeyboardRow.mainID))
+            XCTAssertEqual(profile, original)
+        }
+    }
     func testRowAlignmentRoundTripsAndDraftCancellationRetainsOriginal() throws {
         let saved = TerminalControlsProfile.defaults
         for alignment in TerminalKeyboardRow.Alignment.allCases {

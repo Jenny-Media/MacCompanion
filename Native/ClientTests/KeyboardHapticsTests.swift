@@ -11,6 +11,25 @@ import XCTest
     override func emitFeedback(_ kind: String) { events.append(kind) }
 }
 
+@MainActor private final class KeyboardDragSession: NSObject, UIDragSession, UIDropSession {
+    var items: [UIDragItem] = []
+    var localContext: Any?
+    var allowsMoveOperation = true
+    var isRestrictedToDraggingApplication = true
+    var localDragSession: (any UIDragSession)? { self }
+    var progressIndicatorStyle = UIDropSessionProgressIndicatorStyle.none
+    nonisolated let progress = Progress(totalUnitCount: 1)
+    let source: UIView
+    var point = CGPoint.zero
+    init(source: UIView) { self.source = source }
+    func location(in view: UIView) -> CGPoint { source.convert(point, to: view) }
+    func hasItemsConforming(toTypeIdentifiers typeIdentifiers: [String]) -> Bool { true }
+    func canLoadObjects(ofClass aClass: any NSItemProviderReading.Type) -> Bool { false }
+    func loadObjects(ofClass aClass: any NSItemProviderReading.Type, completion: @escaping ([any NSItemProviderReading]) -> Void) -> Progress {
+        completion([]); return progress
+    }
+}
+
 @MainActor private final class KeyboardHold: UILongPressGestureRecognizer {
     var simulatedState: UIGestureRecognizer.State = .possible
     override var state: UIGestureRecognizer.State {
@@ -112,6 +131,53 @@ private final class KeyboardMenuSession: CompanionVNCSession {
         for state in [UIGestureRecognizer.State.began, .changed, .ended] {
             gesture.simulatedState = state
             _ = target.perform(NSSelectorFromString(selector), with: gesture)
+        }
+    }
+    func testIndividualKeyDragFeedbackTracksLiftInsertionAndCommitWithoutRepeating() throws {
+        try withFeedback { defaults, feedback in
+            let bar = TerminalKeyboardBar(terminal: nil, preferences: .init())
+            bar.editingPreview = true; bar.previewShowsAllRows = true
+            bar.configure(.defaults) { _ in XCTFail("Editing must not send input") }
+            bar.keyFeedback = feedback
+            bar.frame = CGRect(x: 0, y: 0, width: 430, height: bar.height); bar.layoutIfNeeded()
+            let source = try button("Tab", in: bar), target = try button("Home", in: bar)
+            let drag = try XCTUnwrap(source.interactions.compactMap { $0 as? UIDragInteraction }.first)
+            let drop = try XCTUnwrap(target.interactions.compactMap { $0 as? UIDropInteraction }.first)
+            let session = KeyboardDragSession(source: target)
+            var moved = 0
+            bar.previewPlacementMove = { _, _, _, _ in moved += 1 }
+            session.items = bar.dragInteraction(drag, itemsForBeginning: session)
+            XCTAssertEqual(session.items.count, 1)
+            bar.dragInteraction(drag, sessionWillBegin: session)
+            session.point = CGPoint(x: 1, y: target.bounds.midY)
+            for _ in 0..<5 { _ = bar.dropInteraction(drop, sessionDidUpdate: session) }
+            XCTAssertEqual(feedback.events, ["selection", "selection"])
+            session.point.x = target.bounds.maxX - 1
+            _ = bar.dropInteraction(drop, sessionDidUpdate: session)
+            XCTAssertEqual(feedback.events, ["selection", "selection", "selection"])
+            bar.dropInteraction(drop, performDrop: session)
+            XCTAssertEqual(moved, 1); XCTAssertEqual(feedback.events.last, "commit")
+            bar.dropInteraction(drop, sessionDidEnd: session)
+            // Cancellation has no successful-drop feedback.
+            feedback.events = []
+            bar.dragInteraction(drag, sessionWillBegin: session)
+            bar.dragInteraction(drag, sessionDidEnd: session, with: .cancel)
+            XCTAssertEqual(feedback.events, ["selection"])
+            // Dropping a key back on itself is also not a committed edit.
+            let ownDrop = try XCTUnwrap(source.interactions.compactMap { $0 as? UIDropInteraction }.first)
+            let ownSession = KeyboardDragSession(source: source); ownSession.items = session.items
+            ownSession.point = CGPoint(x: 1, y: source.bounds.midY)
+            bar.dropInteraction(ownDrop, performDrop: ownSession)
+            XCTAssertEqual(moved, 1); XCTAssertEqual(feedback.events, ["selection"])
+            for enabled in [false, true] {
+                feedback.events = []; defaults.set(enabled, forKey: CompanionVNCControlsHapticsPreference)
+                feedback.active = !enabled
+                bar.dragInteraction(drag, sessionWillBegin: session)
+                _ = bar.dropInteraction(drop, sessionDidUpdate: session)
+                bar.dropInteraction(drop, performDrop: session)
+                bar.dropInteraction(drop, sessionDidEnd: session)
+                XCTAssertTrue(feedback.events.isEmpty, "Disabled haptics and background drags stay silent")
+            }
         }
     }
     func testTerminalDigitsAndNavigationEmitOneQuietTickEachWithoutChangingOutput() throws {

@@ -455,6 +455,11 @@ private final class TerminalKeyScrollView: UIScrollView {
     private var previewHandles: Set<ObjectIdentifier> = []
     private var rowContainers: [UUID: UIView] = [:]
     private let dropIndicator = UIView()
+    private struct DropPosition: Equatable {
+        let row: UUID?
+        let before: String?
+    }
+    private var feedbackPosition: DropPosition?
     private struct RowReorder {
         let source: UUID
         let lifted: UIView
@@ -775,7 +780,7 @@ private final class TerminalKeyScrollView: UIScrollView {
             activeRowPan = pan
             let link = CADisplayLink(target: self, selector: #selector(scrollReorderingRow(_:)))
             link.add(to: .main, forMode: .common); rowScrollLink = link
-            UISelectionFeedbackGenerator().selectionChanged()
+            keyFeedback.feedback("selection")
             fallthrough
         case .changed:
             guard var reorder = rowReorder else { return }
@@ -785,7 +790,7 @@ private final class TerminalKeyScrollView: UIScrollView {
                 guard let view = rowContainers[row.id] else { return false }
                 return reorder.lifted.center.y < view.convert(view.bounds, to: self).midY
             }?.id
-            if before != reorder.before { UISelectionFeedbackGenerator().selectionChanged() }
+            if before != reorder.before { keyFeedback.feedback("selection") }
             reorder.before = before; rowReorder = reorder
             let target = before.flatMap { rowContainers[$0] }
             let y = target.map { $0.convert($0.bounds, to: self).minY } ?? rows.frame.maxY
@@ -802,7 +807,10 @@ private final class TerminalKeyScrollView: UIScrollView {
         guard let reorder = rowReorder else { return }
         rowReorder = nil; reorder.lifted.removeFromSuperview(); rowContainers[reorder.source]?.alpha = 1
         dropIndicator.removeFromSuperview()
-        if commit { previewMoveRow?(reorder.source, reorder.before) }
+        let originalNext = profileRows.drop(while: { $0.id != reorder.source }).dropFirst().first?.id
+        if commit, reorder.before != reorder.source, reorder.before != originalNext, let previewMoveRow {
+            previewMoveRow(reorder.source, reorder.before); keyFeedback.feedback("commit")
+        }
     }
     @objc private func scrollReorderingRow(_ link: CADisplayLink) {
         guard let pan = activeRowPan, pan.state == .changed else { return }
@@ -842,10 +850,15 @@ private final class TerminalKeyScrollView: UIScrollView {
     }
     func dragInteraction(_ interaction: UIDragInteraction, sessionIsRestrictedToDraggingApplication session: UIDragSession) -> Bool { true }
     func dragInteraction(_ interaction: UIDragInteraction, sessionWillBegin session: UIDragSession) {
+        feedbackPosition = nil
+        keyFeedback.feedback("selection")
         // The catalog lives in a popover. Once UIKit owns the lifted preview,
         // dismiss that presentation so its modal hit testing cannot cover the
         // real keyboard rows. The local drag item carries its value with it.
         if previewPreset != nil { previewCatalogDragBegan?() }
+    }
+    func dragInteraction(_ interaction: UIDragInteraction, sessionDidEnd session: UIDragSession, with operation: UIDropOperation) {
+        feedbackPosition = nil
     }
     func dropInteraction(_ interaction: UIDropInteraction, canHandle session: UIDropSession) -> Bool {
         guard editingPreview, previewPreset == nil, let content = session.items.first?.localObject as? DragContent else { return false }
@@ -865,7 +878,8 @@ private final class TerminalKeyScrollView: UIScrollView {
         return (row, nil, false)
     }
     func dropInteraction(_ interaction: UIDropInteraction, sessionDidUpdate session: UIDropSession) -> UIDropProposal {
-        guard dropInteraction(interaction, canHandle: session), let (row, _, after) = dropTarget(interaction, session: session), let container = rowContainers[row], let view = interaction.view else { return UIDropProposal(operation: .forbidden) }
+        guard dropInteraction(interaction, canHandle: session), let (row, item, after) = dropTarget(interaction, session: session), let container = rowContainers[row], let view = interaction.view,
+              let index = profileRows.firstIndex(where: { $0.id == row }) else { return UIDropProposal(operation: .forbidden) }
         dropIndicator.backgroundColor = .systemBlue; dropIndicator.layer.cornerRadius = 2; dropIndicator.isUserInteractionEnabled = false
         addSubview(dropIndicator)
         let frame = container.convert(container.bounds, to: self)
@@ -875,32 +889,55 @@ private final class TerminalKeyScrollView: UIScrollView {
             let cell = view.convert(view.bounds, to: self)
             dropIndicator.frame = CGRect(x: (after ? cell.maxX : cell.minX) - 2, y: frame.minY, width: 4, height: frame.height)
         }
+        let position: DropPosition
+        switch session.items.first?.localObject as? DragContent {
+        case .row, .preset:
+            position = .init(row: after ? (profileRows.indices.contains(index + 1) ? profileRows[index + 1].id : nil) : row, before: nil)
+        default:
+            position = .init(row: row, before: insertionItem(in: profileRows[index], item: item, after: after)?.id)
+        }
+        if position != feedbackPosition { keyFeedback.feedback("selection"); feedbackPosition = position }
         switch session.items.first?.localObject as? DragContent {
         case .preset, .catalogItem: return UIDropProposal(operation: .copy)
         default: return UIDropProposal(operation: .move)
         }
     }
     func dropInteraction(_ interaction: UIDropInteraction, sessionDidExit session: UIDropSession) { dropIndicator.removeFromSuperview() }
-    func dropInteraction(_ interaction: UIDropInteraction, sessionDidEnd session: UIDropSession) { dropIndicator.removeFromSuperview() }
+    func dropInteraction(_ interaction: UIDropInteraction, sessionDidEnd session: UIDropSession) { dropIndicator.removeFromSuperview(); feedbackPosition = nil }
+    private func insertionItem(in row: TerminalKeyboardRow, item: TerminalBarPlacement?, after: Bool) -> TerminalBarPlacement? {
+        guard after, let item, let index = row.placements.firstIndex(of: item) else { return item }
+        return row.placements.indices.contains(index + 1) ? row.placements[index + 1] : nil
+    }
     func dropInteraction(_ interaction: UIDropInteraction, performDrop session: UIDropSession) {
-        defer { dropIndicator.removeFromSuperview() }
+        defer { dropIndicator.removeFromSuperview(); feedbackPosition = nil }
         guard dropInteraction(interaction, canHandle: session), let content = session.items.first?.localObject as? DragContent,
               let (row, item, after) = dropTarget(interaction, session: session), let index = profileRows.firstIndex(where: { $0.id == row }) else { return }
         let targetRow = after ? (profileRows.indices.contains(index + 1) ? profileRows[index + 1].id : nil) : row
-        let items = profileRows[index].placements
-        let targetItem = after && item != nil ? item.flatMap { target in items.firstIndex(of: target).flatMap { items.indices.contains($0 + 1) ? items[$0 + 1] : nil } } : item
+        let targetItem = insertionItem(in: profileRows[index], item: item, after: after)
         switch content {
-        case .row(let source): previewMoveRow?(source, targetRow)
-        case .preset(let preset): previewAddPreset?(preset, targetRow)
+        case .row(let source):
+            guard let sourceIndex = profileRows.firstIndex(where: { $0.id == source }), let previewMoveRow else { return }
+            let next = profileRows.indices.contains(sourceIndex + 1) ? profileRows[sourceIndex + 1].id : nil
+            guard targetRow != source, targetRow != next else { return }
+            previewMoveRow(source, targetRow)
+        case .preset(let preset):
+            guard let previewAddPreset else { return }; previewAddPreset(preset, targetRow)
         case .item(let source, let sourceRow):
-            if source.id != targetItem?.id || sourceRow != row {
-                if let previewPlacementMove { previewPlacementMove(source.id, sourceRow, row, targetItem?.id) }
-                else { previewMove?(source.item, sourceRow, row, targetItem?.item) }
+            guard let sourceItems = profileRows.first(where: { $0.id == sourceRow })?.placements,
+                  let sourceIndex = sourceItems.firstIndex(where: { $0.id == source.id }) else { return }
+            if sourceRow == row {
+                let next = sourceItems.indices.contains(sourceIndex + 1) ? sourceItems[sourceIndex + 1].id : nil
+                guard targetItem?.id != source.id, targetItem?.id != next else { return }
             }
+            if let previewPlacementMove { previewPlacementMove(source.id, sourceRow, row, targetItem?.id) }
+            else if let previewMove { previewMove(source.item, sourceRow, row, targetItem?.item) }
+            else { return }
         case .catalogItem(let source):
             if let previewPlacementAdd { previewPlacementAdd(source, row, targetItem?.id) }
-            else { previewAddItem?(source, row, targetItem?.item) }
+            else if let previewAddItem { previewAddItem(source, row, targetItem?.item) }
+            else { return }
         }
+        keyFeedback.feedback("commit")
     }
     private func send(_ key: TerminalPaletteKey) {
         guard let terminal else { return }
