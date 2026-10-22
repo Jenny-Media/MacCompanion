@@ -12,8 +12,11 @@ import XCTest
     var attributes: RemoteSessionActivityAttributes?
     var content: ActivityContent<RemoteSessionActivityAttributes.ContentState>?
     var blockedEnds: Set<String> = []
-    var waitingEnds: [String: CheckedContinuation<Void, Never>] = [:]
-    func releaseEnd(_ id: String) { waitingEnds.removeValue(forKey: id)?.resume() }
+    var waitingEnds: [String: [CheckedContinuation<Void, Never>]] = [:]
+    func releaseEnd(_ id: String) {
+        blockedEnds.remove(id)
+        waitingEnds.removeValue(forKey: id)?.forEach { $0.resume() }
+    }
     func existingIDs() -> [String] { ids }
     func start(_ attributes: RemoteSessionActivityAttributes, content: ActivityContent<RemoteSessionActivityAttributes.ContentState>) throws -> String {
         self.attributes = attributes; self.content = content
@@ -23,7 +26,7 @@ import XCTest
         self.content = content; events.append("update:" + content.state.phase.rawValue)
     }
     func end(_ id: String) async {
-        if blockedEnds.contains(id) { await withCheckedContinuation { waitingEnds[id] = $0 } }
+        if blockedEnds.contains(id) { await withCheckedContinuation { waitingEnds[id, default: []].append($0) } }
         events.append("end:" + id); ids.removeAll { $0 == id }
     }
 }
@@ -32,11 +35,137 @@ private final class ActivityActionTestSession: CompanionVNCSession {
     var stops = 0
     var resumes = 0
     override var running: Bool { alive }
+    override var established: Bool { alive }
+    override var connected: Bool { alive }
+    override func pause(completion: (() -> Void)?) { completion?() }
     override func stop() { stops += 1; alive = false }
     override func resume() { resumes += 1 }
 }
 @MainActor final class SessionActivityTests: XCTestCase {
     private func defaults() -> UserDefaults { UserDefaults(suiteName: "session-qa-" + UUID().uuidString)! }
+    func testAppEntryRetiresIndexedOrphansAndPreservesLiveOwners() async throws {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-screen-sharing-v1", withExtension: "json"))
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        for vector in try XCTUnwrap(fixture["liveActivityOrphanRetirementCases"] as? [[String: Any]]) {
+            let backend = RecordingActivityBackend(); backend.nextID = "current"
+            let mac = try DirectMacRecordV1.normalized(name: "Synthetic Mac", address: "test.local")
+            let owner = VNCSessionActivityController(mac: mac, defaults: defaults(), backend: backend)
+            if let phase = vector["ownedPhase"] as? String {
+                owner.setPhase("connected"); await owner.waitForUpdates()
+                if phase == "paused" { owner.setForeground(false) }
+                owner.setPhase(phase); await owner.waitForUpdates()
+            }
+            backend.ids = try XCTUnwrap(vector["existingIDs"] as? [String]); backend.events = []
+            await VNCSessionActivityController.retireOrphanedActivities(backend: backend)
+            let retired = try XCTUnwrap(vector["retiredIDs"] as? [String])
+            XCTAssertEqual(backend.events, retired.map { "end:" + $0 })
+            XCTAssertEqual(backend.ids, (vector["existingIDs"] as? [String])?.filter { !retired.contains($0) })
+            owner.finish(); await owner.waitForUpdates()
+        }
+    }
+    func testStopIslandEntryAndCancelledReconnectCannotRetainActivity() async throws {
+        for kind in [RemoteSessionActivityAttributes.Kind.desktop, .terminal] {
+            let backend = RecordingActivityBackend(); backend.nextID = "stopped"
+            let mac = try DirectMacRecordV1.normalized(name: "Synthetic Mac", address: "test.local")
+            let owner = VNCSessionActivityController(mac: mac, kind: kind, defaults: defaults(), backend: backend)
+            owner.setPhase("connected"); await owner.waitForUpdates()
+            let route = try XCTUnwrap(RemoteSessionActivityAttributes.resumeRoute(from: try XCTUnwrap(backend.attributes).resumeURL))
+            backend.blockedEnds = ["stopped"]
+            owner.finish(); await settleActivityTasks()
+            XCTAssertFalse(owner.ownsActivity("stopped"))
+            XCTAssertFalse(route.automaticallyConnect)
+            let reconnect = VNCSessionActivityController(mac: mac, kind: route.kind, defaults: defaults(), backend: backend)
+            reconnect.setPhase("reconnecting"); await settleActivityTasks()
+            reconnect.setPhase("ended"); reconnect.finish()
+            backend.releaseEnd("stopped")
+            await owner.waitForUpdates(); await reconnect.waitForUpdates()
+            await VNCSessionActivityController.retireOrphanedActivities(backend: backend)
+            XCTAssertTrue(backend.ids.isEmpty)
+            XCTAssertEqual(backend.events.filter { $0.hasPrefix("start:") }, ["start:connected"])
+        }
+    }
+    func testConnectionLossAndAttemptCancellationEndOnlyOwnedActivity() async throws {
+        for ending in ["stop", "connection-loss", "cancel-attempt"] {
+            let backend = RecordingActivityBackend()
+            let mac = try DirectMacRecordV1.normalized(name: "Synthetic Mac", address: "test.local")
+            let owner = VNCSessionActivityController(mac: mac, defaults: defaults(), backend: backend)
+            let coordinator = VNCRemoteDesktopView.Coordinator(mac: mac, activityController: owner)
+            let viewer = CompanionVNCViewer(); viewer.loadViewIfNeeded(); coordinator.viewer = viewer
+            viewer.sessionPhaseHandler = { phase in MainActor.assumeIsolated { owner.setPhase(phase) } }
+            viewer.disconnectHandler = { MainActor.assumeIsolated { coordinator.disconnect() } }
+            owner.setPhase("connected"); await owner.waitForUpdates()
+            switch ending {
+            case "stop": viewer.stop()
+            case "connection-loss": viewer.session.stateHandler?("Disconnected", ["failureStage": 0])
+            default:
+                owner.setPhase("ended"); await owner.waitForUpdates()
+                owner.setPhase("reconnecting"); coordinator.endSession()
+            }
+            await owner.waitForUpdates()
+            XCTAssertTrue(backend.ids.isEmpty, ending)
+            XCTAssertEqual(backend.events.filter { $0.hasPrefix("start:") }, ["start:connected"], ending)
+            coordinator.stopObserving(); viewer.stop(); owner.finish(); await owner.waitForUpdates()
+        }
+    }
+    func testDelayedOrphanCleanupCannotEndNewerActivity() async throws {
+        let backend = RecordingActivityBackend(); backend.ids = ["orphan"]; backend.blockedEnds = ["orphan"]
+        let cleanup = Task { await VNCSessionActivityController.retireOrphanedActivities(backend: backend) }
+        await waitForStartupEnd(backend)
+        // ActivityKit can remove its local snapshot while end is still pending.
+        backend.ids = []; backend.nextID = "replacement"
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic Mac", address: "test.local")
+        let owner = VNCSessionActivityController(mac: mac, defaults: defaults(), backend: backend)
+        owner.setPhase("connected"); await owner.waitForUpdates()
+        backend.releaseEnd("orphan"); await cleanup.value
+        XCTAssertEqual(backend.ids, ["replacement"]); XCTAssertTrue(owner.ownsActivity("replacement"))
+        owner.finish(); await owner.waitForUpdates()
+    }
+    func testActualActivityKitAppCleanupPreservesOwnedActivity() async throws {
+        let backend = ActivityKitSessionBackend()
+        guard backend.enabled else { throw XCTSkip("Live Activities disabled in Simulator settings") }
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic Cleanup QA", address: "test.local")
+        let owner = VNCSessionActivityController(mac: mac, defaults: defaults(), backend: backend)
+        owner.setPhase("connected"); await owner.waitForUpdates()
+        let current = try XCTUnwrap(backend.existingIDs().first { owner.ownsActivity($0) })
+        let orphan = try backend.start(.init(macID: mac.id, macName: "Retired Cleanup QA", kind: .terminal),
+            content: ActivityContent(state: .init(phase: .paused), staleDate: Date().addingTimeInterval(60)))
+        await VNCSessionActivityController.retireOrphanedActivities(backend: backend)
+        XCTAssertFalse(backend.existingIDs().contains(orphan))
+        XCTAssertTrue(backend.existingIDs().contains(current))
+        owner.finish(); await owner.waitForUpdates()
+    }
+    func testNewControllerAndAppCleanupPreservePausedViewerResume() async throws {
+        let backend = RecordingActivityBackend(); backend.nextID = "paused"
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic Mac", address: "test.local")
+        let owner = VNCSessionActivityController(mac: mac, defaults: defaults(), backend: backend)
+        let viewer = CompanionVNCViewer(); viewer.loadViewIfNeeded()
+        let native = ActivityActionTestSession(); viewer.session = native
+        viewer.sessionPhaseHandler = { phase in MainActor.assumeIsolated { owner.setPhase(phase) } }
+        defer { viewer.stop(); owner.finish() }
+        owner.setPhase("connected"); await owner.waitForUpdates()
+        owner.setForeground(false); await viewer.background(); await owner.waitForUpdates()
+        let cancelled = VNCSessionActivityController(mac: mac, defaults: defaults(), backend: backend)
+        cancelled.finish(); await cancelled.waitForUpdates()
+        await VNCSessionActivityController.retireOrphanedActivities(backend: backend)
+        XCTAssertEqual(backend.ids, ["paused"]); XCTAssertEqual(native.stops, 0)
+        owner.setForeground(true); viewer.foregrounded(); await owner.waitForUpdates()
+        XCTAssertEqual(native.resumes, 1); XCTAssertEqual(backend.ids, ["paused"])
+        viewer.stop(); owner.finish(); await owner.waitForUpdates()
+    }
+    func testColdDesktopActivityOpensSavedLoginWithoutAutomaticConnection() async throws {
+        for preventsAutomaticConnection in [false, true] {
+            let viewer = CompanionVNCViewer()
+            viewer.savedUsername = "synthetic"; viewer.savedPassword = "synthetic"
+            viewer.preventsAutomaticConnection = preventsAutomaticConnection
+            var attempts = 0
+            viewer.connectHandler = { _, _, _ in MainActor.assumeIsolated { attempts += 1 } }
+            viewer.loadViewIfNeeded()
+            // Drain the native controller's queued saved-login action.
+            await settleActivityTasks()
+            XCTAssertEqual(attempts, preventsAutomaticConnection ? 0 : 1)
+            viewer.stop()
+        }
+    }
     private func compactImage(_ attributes: RemoteSessionActivityAttributes) throws -> Data {
         let renderer = ImageRenderer(content: RemoteSessionActivityCompactSymbol(attributes: attributes)
             .font(.system(size: 20)).foregroundStyle(.white)
@@ -293,6 +422,7 @@ private final class ActivityActionTestSession: CompanionVNCSession {
             let link = try XCTUnwrap(URL(string: try XCTUnwrap(c["url"] as? String)))
             XCTAssertEqual(RemoteSessionActivityAttributes.resumeMacID(from: link) != nil, c["valid"] as? Bool)
             if let kind = c["kind"] as? String { XCTAssertEqual(RemoteSessionActivityAttributes.resumeRoute(from: link)?.kind.rawValue, kind) }
+            if let automatic = c["automaticallyConnect"] as? Bool { XCTAssertEqual(RemoteSessionActivityAttributes.resumeRoute(from: link)?.automaticallyConnect, automatic) }
         }
     }
     func testTerminalResumeAndOldDesktopActivityDecoding() throws {
@@ -301,7 +431,7 @@ private final class ActivityActionTestSession: CompanionVNCSession {
         let encoded = try JSONEncoder().encode(RemoteSessionActivityAttributes(macID: id, macName: "Legacy Desktop"))
         let legacy = try JSONDecoder().decode(RemoteSessionActivityAttributes.self, from: encoded)
         XCTAssertFalse(try XCTUnwrap(RemoteSessionActivityAttributes.resumeRoute(from: terminal.resumeURL)).automaticallyConnect)
-        XCTAssertTrue(try XCTUnwrap(RemoteSessionActivityAttributes.resumeRoute(from: legacy.resumeURL)).automaticallyConnect)
+        XCTAssertFalse(try XCTUnwrap(RemoteSessionActivityAttributes.resumeRoute(from: legacy.resumeURL)).automaticallyConnect)
         XCTAssertNil(legacy.kind)
         XCTAssertEqual(RemoteSessionActivityAttributes.resumeRoute(from: legacy.resumeURL), .init(macID: id, kind: .desktop))
     }

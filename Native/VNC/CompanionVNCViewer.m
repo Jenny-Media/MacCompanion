@@ -583,7 +583,7 @@
     }
     [self applyPresentation];
     [self setTrackpadModeEnabled:self.preferredTrackpad || self.inputOnly]; [self updateConnectionChrome];
-    if (self.password.text.length) dispatch_async(dispatch_get_main_queue(), ^{ [weak start]; });
+    if (self.password.text.length && !self.preventsAutomaticConnection) dispatch_async(dispatch_get_main_queue(), ^{ [weak start]; });
 }
 - (NSString *)connectionProgressMessage {
     if (self.changingDisplayMode && self.mirrorFullRestartUsed) return @"Switching display mode…";

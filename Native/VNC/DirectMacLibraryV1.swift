@@ -556,6 +556,7 @@ struct DirectMacLibraryRootV1: View {
             }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active {
+                    Task { await VNCSessionActivityController.retireOrphanedActivities() }
                     updateTemporaryCleanup()
                     if pro.ready { Task { await pro.refresh() } } else { pro.start() }
                 } else {
@@ -591,7 +592,7 @@ struct DirectMacLibraryRootV1: View {
                             connectionEstablished: { saveConnectedMac(selection) }, exit: { endSession(selection) })
                     case .desktop, .trackpad:
                         DirectDesktopSessionView(mac: selection.mac, inputOnly: selection.connection.inputOnly,
-                            connectionMacNames: library.macs.map(\.name), libraryURL: library.storageURL,
+                            autoConnect: selection.autoConnect, connectionMacNames: library.macs.map(\.name), libraryURL: library.storageURL,
                             connectionPanel: connectionPanel, loginRetentionAllowed: !selection.temporary || selection.saveAfterConnect,
                             connectionEstablished: { saveConnectedMac(selection) }, showMacs: { endSession(selection) })
                             .ignoresSafeArea(.container, edges: .bottom)
@@ -608,6 +609,7 @@ struct DirectMacLibraryRootV1: View {
         .opacity(appLock.contentVisible ? 1 : 0)
         .allowsHitTesting(appLock.canInteract)
         .onAppear { appLock.install(); updateTemporaryCleanup() }
+        .task { await VNCSessionActivityController.retireOrphanedActivities() }
         .onOpenURL { openRoute($0) }
         .onReceive(NotificationCenter.default.publisher(for: DirectMacConnections.changed)) { _ in
             DirectTemporaryMacCleanup.shared.retry()
@@ -645,6 +647,7 @@ struct DirectMacLibraryRootV1: View {
     }
     private func openRoute(_ url: URL) {
         guard let route = RemoteSessionActivityAttributes.resumeRoute(from: url) else { return }
+        Task { await VNCSessionActivityController.retireOrphanedActivities() }
         if library.loading { loadingRoute = url; return }
         guard let mac = library.macs.first(where: { $0.id == route.macID }), session == nil else { return }
         request(.open(mac, route.kind == .terminal ? .terminal : .desktop, route.automaticallyConnect), deferUntilActive: true)

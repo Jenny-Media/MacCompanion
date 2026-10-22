@@ -42,6 +42,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy, nullable) void (^inputModeHandler)(BOOL);
 @property(nonatomic, copy, nullable) NSString *savedUsername;
 @property(nonatomic, copy, nullable) NSString *savedPassword;
+@property(nonatomic) BOOL preventsAutomaticConnection;
 @property(nonatomic, copy, nullable) NSDictionary *displayLayout;
 @property(nonatomic, copy, nullable) void (^connectHandler)(NSString *, NSString *, BOOL);
 @property(nonatomic, copy, nullable) void (^disconnectHandler)(void);

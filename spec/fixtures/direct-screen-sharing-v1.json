@@ -327,7 +327,8 @@
     "retainedResumeOpacity": 1,
     "interruptionAdmissionSeparateFromReview": true,
     "reviewInterruptedReturnRequiresFreshFrame": true,
-    "viewportDimensionScope": "selected-pixel-crop"
+    "viewportDimensionScope": "selected-pixel-crop",
+    "desktopColdActivityReturnRequiresExplicitConnect": true
   },
   "lifecycleCases": [
     {
@@ -374,7 +375,8 @@
   "resumeURLCases": [
     {
       "url": "maccompanion-session://resume/00000000-0000-0000-0000-000000000001",
-      "valid": true
+      "valid": true,
+      "automaticallyConnect": false
     },
     {
       "url": "maccompanion-session://resume/not-a-uuid",
@@ -395,7 +397,8 @@
     {
       "url": "maccompanion-session://resume-terminal/00000000-0000-0000-0000-000000000001",
       "valid": true,
-      "kind": "terminal"
+      "kind": "terminal",
+      "automaticallyConnect": false
     },
     {
       "url": "maccompanion-session://resume-terminal/00000000-0000-0000-0000-000000000001?login=other",
@@ -3682,6 +3685,53 @@
       "height": 128,
       "inputGeometryValid": false,
       "videoAdmitted": false
+    }
+  ],
+  "liveActivityOrphanRetirementCases": [
+    {
+      "name": "no-session-owner",
+      "existingIDs": [
+        "stopped-desktop",
+        "stopped-terminal"
+      ],
+      "ownedPhase": null,
+      "retiredIDs": [
+        "stopped-desktop",
+        "stopped-terminal"
+      ]
+    },
+    {
+      "name": "connected-owner",
+      "existingIDs": [
+        "orphan",
+        "current"
+      ],
+      "ownedPhase": "connected",
+      "retiredIDs": [
+        "orphan"
+      ]
+    },
+    {
+      "name": "paused-owner",
+      "existingIDs": [
+        "orphan",
+        "current"
+      ],
+      "ownedPhase": "paused",
+      "retiredIDs": [
+        "orphan"
+      ]
+    },
+    {
+      "name": "replacing-owner",
+      "existingIDs": [
+        "orphan",
+        "current"
+      ],
+      "ownedPhase": "reconnecting",
+      "retiredIDs": [
+        "orphan"
+      ]
     }
   ]
 }

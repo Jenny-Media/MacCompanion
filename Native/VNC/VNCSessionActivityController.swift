@@ -29,6 +29,21 @@ import Foundation
 }
 
 @MainActor final class VNCSessionActivityController {
+    private final class Owner {
+        weak var controller: VNCSessionActivityController?
+        init(_ controller: VNCSessionActivityController) { self.controller = controller }
+    }
+    private static var owners: [String: Owner] = [:]
+    private static func orphanedIDs(in backend: any RemoteSessionActivityBackend) -> [String] {
+        owners = owners.filter { $0.value.controller?.ownsActivity($0.key) == true }
+        return backend.existingIDs().filter { owners[$0] == nil }
+    }
+    static func retireOrphanedActivities(backend: any RemoteSessionActivityBackend = ActivityKitSessionBackend()) async {
+        // Capture IDs before the first suspension. A later session's activity
+        // must never become a target of this cleanup.
+        let orphaned = orphanedIDs(in: backend)
+        for id in orphaned { await backend.end(id) }
+    }
     static let preferenceKey = "direct-session-live-activity-enabled-v1"
     static func enabled(in defaults: UserDefaults = .standard) -> Bool {
         defaults.object(forKey: preferenceKey) == nil || defaults.bool(forKey: preferenceKey)
@@ -57,7 +72,7 @@ import Foundation
         self.now = now
         attributes = .init(macID: mac.id, macName: mac.name, kind: kind)
         // A process restart must not leave a previous socket labeled connected.
-        let orphaned = backend.existingIDs()
+        let orphaned = Self.orphanedIDs(in: backend)
         if !orphaned.isEmpty {
             // This prerequisite outlives canceled status work and early ends.
             startupRetirement = Task { [backend] in
@@ -117,6 +132,7 @@ import Foundation
         work?.cancel(); work = nil; dirty = false
         guard let id = activityID else { return }
         activityID = nil
+        Self.owners[id] = nil
         let token = UUID()
         retirements[token] = Task { [self] in
             await backend.end(id)
@@ -140,10 +156,10 @@ import Foundation
     }
     private func reconcile() async {
         guard !finished, Self.enabled(in: defaults), backend.enabled, let phase, connectedOnce else {
-            if let id = activityID { activityID = nil; await backend.end(id) }
+            if let id = activityID { activityID = nil; Self.owners[id] = nil; await backend.end(id) }
             return
         }
-        if let id = activityID, !backend.existingIDs().contains(id) { activityID = nil; dismissed = true }
+        if let id = activityID, !backend.existingIDs().contains(id) { activityID = nil; Self.owners[id] = nil; dismissed = true }
         let visiblePhase: RemoteSessionActivityAttributes.Phase = foreground ? phase : .paused
         let verified = visiblePhase == .connected ? evidenceDate : phaseDate
         let content = ActivityContent(state: RemoteSessionActivityAttributes.ContentState(phase: visiblePhase),
@@ -152,6 +168,7 @@ import Foundation
         else if foreground && !dismissed {
             // OS denial or user-disabled Live Activities never affects VNC.
             activityID = try? backend.start(attributes, content: content)
+            if let id = activityID { Self.owners[id] = Owner(self) }
         }
     }
 }
