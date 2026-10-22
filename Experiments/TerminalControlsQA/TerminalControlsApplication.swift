@@ -33,6 +33,7 @@ final class TerminalControlsScene: UIResponder, UIWindowSceneDelegate {
     var writes = 0
     var dismissals = 0
     var failWrites = ProcessInfo.processInfo.environment["MACCOMPANION_CONTROLS_FAIL_WRITE"] == "1"
+    var remainingWriteFailures = ProcessInfo.processInfo.environment["MACCOMPANION_CONTROLS_FAIL_WRITE_ONCE"] == "1" ? 1 : 0
     var remainingReadFailures = ProcessInfo.processInfo.environment["MACCOMPANION_CONTROLS_FAIL_READ_ONCE"] == "1" ? 1 : 0
     var data: Data = {
         var profile = TerminalControlsProfile(actions: [
@@ -47,7 +48,11 @@ final class TerminalControlsScene: UIResponder, UIWindowSceneDelegate {
         .init(read: {
             if self.remainingReadFailures > 0 { self.remainingReadFailures -= 1; throw TerminalControlsStore.Failure.unreadable }
             return self.data
-        }, write: { if self.failWrites { throw TerminalControlsStore.Failure.unreadable }; self.data = $0; self.writes += 1 }, legacyIDs: { [] })
+        }, write: {
+            if self.remainingWriteFailures > 0 { self.remainingWriteFailures -= 1; throw TerminalControlsStore.Failure.unreadable }
+            if self.failWrites { throw TerminalControlsStore.Failure.unreadable }
+            self.data = $0; self.writes += 1
+        }, legacyIDs: { [] })
     }
 }
 struct TerminalControlsHarness: View {

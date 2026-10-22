@@ -157,7 +157,7 @@ import UIKit
         XCTAssertEqual(field.value as? String, name)
         try await waitForSoftwareKeyboard(app)
     }
-    private func launchPro() async throws -> (XCUIApplication, SKTestSession) {
+    private func launchPro(failWriteOnce: Bool = false) async throws -> (XCUIApplication, SKTestSession) {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .portrait
         let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.controlsqa.ios")
@@ -166,6 +166,7 @@ import UIKit
         if name.contains("testInteractiveReview"), ProcessInfo.processInfo.environment["MACCOMPANION_TERMINAL_CONTROLS_REVIEW"] == "1" { app.launchEnvironment["MACCOMPANION_TERMINAL_CONTROLS_REVIEW"] = "1" }
         if name.contains("testCommand") { app.launchEnvironment["MACCOMPANION_COMMAND_QA"] = "1" }
         if name.contains("testFailedSave") { app.launchEnvironment["MACCOMPANION_CONTROLS_FAIL_WRITE"] = "1" }
+        if failWriteOnce { app.launchEnvironment["MACCOMPANION_CONTROLS_FAIL_WRITE_ONCE"] = "1" }
         if name.contains("testDirectLibraryRecovery") { app.launchEnvironment["MACCOMPANION_CONTROLS_FAIL_READ_ONCE"] = "1" }
         app.launch()
         XCTAssertTrue(app.staticTexts["controls-qa-pro"].waitForExistence(timeout: 10))
@@ -317,6 +318,12 @@ import UIKit
         XCUIDevice.shared.orientation = .landscapeLeft; capture("focused-keyboard-landscape", app: app)
         XCTAssertTrue(app.buttons["terminal-layout-cancel"].isHittable)
         XCUIDevice.shared.orientation = .portrait
+        let portraitWorkspace = NSPredicate { _, _ in
+            let options = app.buttons["terminal-row-options"]
+            return app.frame.height > app.frame.width && app.staticTexts["Your keyboard"].isHittable
+                && options.isHittable && options.frame.maxY < app.frame.midY
+        }
+        await fulfillment(of: [expectation(for: portraitWorkspace, evaluatedWith: nil)], timeout: 8)
         togglePreview(app); try await waitForSoftwareKeyboard(app)
         closeLayout(app, save: false)
         app.buttons["terminal-edit-keyboard"].tap(); togglePreview(app); try await waitForSoftwareKeyboard(app)
@@ -682,6 +689,35 @@ import UIKit
         closeSettings(app)
         XCTAssertEqual(app.staticTexts["controls-qa-title"].label, "Project")
         XCTAssertEqual(app.staticTexts["controls-qa-writes"].label, "Writes: 0")
+    }
+
+    func testLibrarySaveRecoveryClearsErrorAndAllowsRetry() async throws {
+        let (app, store) = try await launchPro(failWriteOnce: true)
+        defer { app.terminate(); store.clearTransactions() }
+        app.buttons["controls-qa-text"].tap()
+        let item = app.buttons["terminal-library-" + itemID]
+        XCTAssertTrue(item.waitForExistence(timeout: 5))
+        actions("Project", app: app); app.buttons["Delete…"].tap()
+        app.buttons["Delete Saved Item"].tap()
+        let reload = app.buttons["Reload Saved Controls"]
+        XCTAssertTrue(reload.waitForExistence(timeout: 5))
+        XCTAssertTrue(item.exists, "A failed delete must preserve the saved item")
+        capture("library-transient-save-failure", app: app)
+
+        reload.tap()
+        XCTAssertTrue(reload.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(item.exists)
+        XCTAssertFalse(app.staticTexts["Couldn’t save. Close and reload controls before trying again."].exists,
+                       "A successful reload must clear every stale save-error message")
+        capture("library-successful-reload-clears-save-error", app: app)
+
+        actions("Project", app: app); app.buttons["Delete…"].tap()
+        app.buttons["Delete Saved Item"].tap()
+        XCTAssertTrue(app.staticTexts["No Saved Text"].waitForExistence(timeout: 5))
+        XCTAssertFalse(reload.exists)
+        closeSettings(app)
+        XCTAssertEqual(app.staticTexts["controls-qa-writes"].label, "Writes: 1")
+        XCTAssertEqual(app.staticTexts["controls-qa-count"].label, "Saved items: 0")
     }
 
     func testDirectLibraryExplainsProAccessAndOffersUpgrade() async throws {

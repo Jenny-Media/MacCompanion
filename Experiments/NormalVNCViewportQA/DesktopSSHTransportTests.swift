@@ -751,6 +751,10 @@ private func desktopWriterFinished(_ group: DispatchGroup) -> Bool { group.wait(
             XCTAssertEqual((viewer.value(forKey: "cursorPosition") as? NSValue)?.cgPointValue,
                            CGPoint(x: Int(rect[0]), y: Int(rect[1])))
             window.layoutIfNeeded()
+            try await wait("host cursor presentation catches up with protocol diagnostics") {
+                (viewer.value(forKey: "cursorIndicator") as? UIView)?.isHidden == false &&
+                    (viewer.value(forKey: "fallbackCursor") as? CAShapeLayer)?.isHidden == true
+            }
             XCTAssertEqual((viewer.value(forKey: "cursorIndicator") as? UIView)?.isHidden, false)
             XCTAssertEqual((viewer.value(forKey: "fallbackCursor") as? CAShapeLayer)?.isHidden, true)
             coordinator.disconnect()

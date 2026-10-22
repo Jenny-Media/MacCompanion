@@ -177,14 +177,12 @@ struct TerminalSavedLibrary: View {
     @State private var editing: TerminalControlAction?
     @State private var presetPack: TerminalShortcutPack?
     @State private var deleting: TerminalControlAction?
-    @State private var failed = false
     @State private var editMode = EditMode.inactive
     private var items: [TerminalControlAction] {
         profile.savedItems(section).filter { query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) || $0.detail.localizedCaseInsensitiveContains(query) }
     }
     var body: some View {
         List {
-            if failed { Section { Text("Couldn’t save. Close and reload controls before trying again.").foregroundStyle(.red) } }
             Section {
                 ForEach(items) { item in
                     HStack(spacing: 8) {
@@ -276,7 +274,7 @@ struct TerminalSavedLibrary: View {
     }
     private func commit(_ draft: TerminalControlsProfile) -> Bool {
         guard editable else { return false }
-        let result = persist(draft); failed = !result; return result
+        return persist(draft)
     }
 }
 
