@@ -559,7 +559,8 @@ private final class ContinuitySession: CompanionVNCSession {
         active = false
         NotificationCenter.default.post(name: UIApplication.willResignActiveNotification, object: nil)
         XCTAssertFalse(lock.privacyCoverVisible); XCTAssertTrue(lock.contentVisible)
-        active = true; lock.becameActive()
+        active = true
+        NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
         XCTAssertFalse(lock.privacyCoverVisible); XCTAssertEqual(context.evaluations, 1)
     }
     func testSuccessfulInactiveAuthenticationRevealsLocalControlsBeforeSingleRemotePublication() async throws {
@@ -681,13 +682,14 @@ private final class ContinuitySession: CompanionVNCSession {
         let (coordinator, viewer, session, folder) = try coordinator(backend: backend)
         defer { backend.release(); coordinator.stopObserving(); coordinator.activity.finish(); viewer.stop(); try? FileManager.default.removeItem(at: folder) }
         coordinator.activity.setPhase("connected"); await coordinator.activity.waitForUpdates(); backend.blocked = true
-        NotificationCenter.default.post(name: UIApplication.willResignActiveNotification, object: nil)
-        XCTAssertEqual(session.pauses, 0)
-        NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
-        try await Task.sleep(for: .milliseconds(1150))
-        XCTAssertEqual(session.pauses, 1); XCTAssertEqual(session.stops, 0); XCTAssertTrue(session.alive)
-        backend.release(); await coordinator.activity.waitForUpdates()
-        NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+        try await withSyntheticApplicationBackground(beforeBackground: {
+            NotificationCenter.default.post(name: UIApplication.willResignActiveNotification, object: nil)
+            XCTAssertEqual(session.pauses, 0)
+        }) {
+            try await Task.sleep(for: .milliseconds(1150))
+            XCTAssertEqual(session.pauses, 1); XCTAssertEqual(session.stops, 0); XCTAssertTrue(session.alive)
+            backend.release(); await coordinator.activity.waitForUpdates()
+        }
         XCTAssertEqual(session.resumes, 1)
     }
     func testUnfinishedInputReleaseStillStopsAtBoundAndEndsActivity() async throws {
@@ -695,13 +697,14 @@ private final class ContinuitySession: CompanionVNCSession {
         let (coordinator, viewer, session, folder) = try coordinator(backend: backend)
         defer { backend.release(); coordinator.stopObserving(); coordinator.activity.finish(); viewer.stop(); try? FileManager.default.removeItem(at: folder) }
         coordinator.activity.setPhase("connected"); await coordinator.activity.waitForUpdates(); session.completeRelease = false; backend.blocked = true
-        NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
-        try await eventually { backend.reply != nil }
-        let id = try XCTUnwrap(backend.ids.first)
-        try await Task.sleep(for: .milliseconds(1150))
-        XCTAssertFalse(session.alive); XCTAssertGreaterThan(session.stops, 0); XCTAssertTrue(backend.ids.isEmpty)
-        XCTAssertTrue(backend.endedIDs.contains(id)); XCTAssertNotNil(backend.reply)
-        backend.release(); await coordinator.activity.waitForUpdates()
+        try await withSyntheticApplicationBackground {
+            try await eventually { backend.reply != nil }
+            let id = try XCTUnwrap(backend.ids.first)
+            try await Task.sleep(for: .milliseconds(1150))
+            XCTAssertFalse(session.alive); XCTAssertGreaterThan(session.stops, 0); XCTAssertTrue(backend.ids.isEmpty)
+            XCTAssertTrue(backend.endedIDs.contains(id)); XCTAssertNotNil(backend.reply)
+            backend.release(); await coordinator.activity.waitForUpdates()
+        }
     }
     private func capture(_ host: UIViewController, size: CGSize, name: String) throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
