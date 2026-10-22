@@ -761,8 +761,11 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         if !session.connected { controls.close() }
         controls.macName = session.mac.name
         controls.quickActions = DirectProAccess.shared.hasPro
-            ? controlProfile.placed(.menu).map { item in
+            ? controlProfile.resolvedMenuPlacements.compactMap { placement in
+                guard let item = controlProfile.actions.first(where: { $0.id == placement.actionID }) else { return nil }
                 var native = item.native
+                native["id"] = placement.id.uuidString
+                native["definitionID"] = item.id.uuidString
                 if item.operation == .keyboard { native["title"] = terminal.isFirstResponder ? "Hide Keyboard" : "Show Keyboard" }
                 if item.operation == .expandRows { native["title"] = keyboardBar.showsExtraRows ? "Collapse Rows" : "Expand Rows" }
                 return inputItem(native)
@@ -817,7 +820,12 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         let inputFeedback: String? = item["inputFeedback"] as? Bool == true && item["interfaceFeedbackHandled"] as? Bool != true ? "commit" : nil
         if kind == "terminalAction", let value = item["id"] as? String, let id = UUID(uuidString: value) {
             guard item["controlsRevision"] as? String == controlProfile.revision.uuidString else { return }
-            performControlAction(id, feedback: inputFeedback, feedbackHandled: item["interfaceFeedbackHandled"] as? Bool == true)
+            let definitionID: UUID
+            if let value = item["definitionID"] as? String {
+                guard let placement = controlProfile.resolvedMenuPlacements.first(where: { $0.id == id }), placement.actionID.uuidString == value else { return }
+                definitionID = placement.actionID
+            } else { definitionID = id }
+            performControlAction(definitionID, feedback: inputFeedback, feedbackHandled: item["interfaceFeedbackHandled"] as? Bool == true)
         } else if kind == "shortcut" || kind == "text" {
             guard DirectProAccess.shared.hasPro,
                   let id = item["id"] as? String,
@@ -1063,6 +1071,8 @@ private struct TerminalSurface: UIViewControllerRepresentable {
             let loaded = try controlsStore.load(); session.controlsRecovery = nil
             if loaded.revision == controlProfile.revision, appliedInputEpoch == terminal.customInputEpoch() { applyBarProfile(); return }
             controlProfile = loaded
+        } catch TerminalControlsStore.Failure.newerFormat {
+            controlProfile = .defaults; session.controlsRecovery = .make(.controlsUnavailable, message: TerminalControlsStore.newerFormatMessage)
         } catch { controlProfile = .defaults; session.controlsRecovery = .make(.controlsUnavailable, message: "Custom Terminal controls couldn’t be read. Existing data is kept; the standard keyboard remains available.") }
         controls.cancelSlideForLayoutChange(); controls.close()
         if let navigation = presentedViewController as? UINavigationController, navigation.topViewController is CompanionVNCMenu { dismiss(animated: false) }

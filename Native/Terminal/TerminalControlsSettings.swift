@@ -95,6 +95,8 @@ struct TerminalControlsSettings: View {
         do {
             profile = try store.load()
             readable = true; issue = nil
+        } catch TerminalControlsStore.Failure.newerFormat {
+            readable = false; issue = .make(.controlsUnavailable, message: TerminalControlsStore.newerFormatMessage)
         } catch { readable = false; issue = .make(.controlsUnavailable) }
     }
     private func commit(_ draft: TerminalControlsProfile) -> Bool {
@@ -102,6 +104,8 @@ struct TerminalControlsSettings: View {
         do { profile = try store.save(draft); issue = nil; return true }
         catch TerminalControlsStore.Failure.staleDraft {
             issue = .make(.saveFailed, message: "Controls changed in another window. Close this editor and reload before trying again.")
+        } catch TerminalControlsStore.Failure.newerFormat {
+            readable = false; issue = .make(.controlsUnavailable, message: TerminalControlsStore.newerFormatMessage)
         } catch { issue = .make(.saveFailed) }
         return false
     }
@@ -312,8 +316,9 @@ struct TerminalShortcutPresetPicker: View {
                     Text(pack.guidance)
                     Text("Each button sends one key or chord. Custom tool bindings may differ.").font(.caption).foregroundStyle(.secondary)
                 }
-                Section {
-                    ForEach(pack.shortcuts) { preset in
+                ForEach([false, true], id: \.self) { afterPrefix in
+                    Section(afterPrefix ? "After Prefix" : "Direct Shortcuts") {
+                    ForEach(pack.shortcuts.filter { ($0.action.usage != nil) == afterPrefix }) { preset in
                         let added = profile.actions.contains { $0.presetID == preset.id }
                         Button {
                             if selected.contains(preset.id) { selected.remove(preset.id) } else { selected.insert(preset.id) }
@@ -329,7 +334,9 @@ struct TerminalShortcutPresetPicker: View {
                         }.disabled(added && !placement).accessibilityValue(added && !placement ? "Already added" : selected.contains(preset.id) ? "Selected" : "Not selected")
                             .accessibilityIdentifier("terminal-preset-" + preset.id)
                     }
-                } footer: { Link("Default bindings reference", destination: pack.source) }
+                    }
+                }
+                Section { Link("Default bindings reference", destination: pack.source) }
                 if failed { Text("Couldn’t add presets. Your selection is kept.").foregroundStyle(.red) }
             }.navigationTitle(initialPack == .zellij || initialPack == .zellijUnlock ? "Zellij Shortcuts" : initialPack.title + " Shortcuts").directInlineNavigationTitle()
                 .toolbar {

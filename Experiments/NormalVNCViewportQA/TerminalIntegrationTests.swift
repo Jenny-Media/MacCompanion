@@ -407,6 +407,10 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         try await Task.sleep(for: .milliseconds(400))
         XCTAssertTrue(session.connected); XCTAssertEqual(record.passwordRequests, 1, "Trust-sheet dismissal must not trigger a second attempt")
         func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+        try await wait("connected terminal controls finish rendering") {
+            host.view.layoutIfNeeded()
+            return descendants(host.view).contains { $0 is CompanionVNCControls }
+        }
         let controls = try XCTUnwrap(descendants(host.view).compactMap { $0 as? CompanionVNCControls }.first)
         controls.button.sendActions(for: .touchUpInside)
         let interruptTitle = try XCTUnwrap(DirectControlMode.terminal.defaults.first { $0.kind == .interrupt }?.title)
@@ -427,14 +431,15 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
             throw error
         }
         try await wait("synthetic StoreKit entitlement is verified") { access.hasPro }
-        var saved = TerminalControlAction(title: "Synthetic action", kind: .shortcut)
+        var saved = TerminalControlAction(title: "Synthetic action", kind: .shortcut, inMenu: false)
         saved.character = 0x62; saved.modifiers = [0xffe3]
         let controlsStore = TerminalControlsStore()
         var draft = try controlsStore.load(); draft.actions.append(saved)
+        draft.pin(saved.id, in: .menu, enabled: true)
         _ = try controlsStore.save(draft)
         defer { if var restored = try? controlsStore.load() { restored.delete(saved.id); _ = try? controlsStore.save(restored) } }
-        try await wait("shared controls refresh without reconnecting") { controls.quickActions.contains { $0["id"] as? String == saved.id.uuidString } }
-        let admittedItem = try XCTUnwrap(controls.quickActions.first { $0["id"] as? String == saved.id.uuidString })
+        try await wait("shared controls refresh without reconnecting") { controls.quickActions.contains { $0["definitionID"] as? String == saved.id.uuidString } }
+        let admittedItem = try XCTUnwrap(controls.quickActions.first { $0["definitionID"] as? String == saved.id.uuidString })
         controls.button.sendActions(for: .touchUpInside)
         let custom = try XCTUnwrap(descendants(controls).compactMap { $0 as? UIButton }.first { $0.configuration?.title == saved.title })
         custom.sendActions(for: .touchUpInside)

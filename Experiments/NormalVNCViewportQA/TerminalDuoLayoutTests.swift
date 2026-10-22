@@ -232,7 +232,7 @@ import UIKit
         let session = DirectTerminalSession(mac: .init(id: UUID(), name: "Synthetic", addresses: ["127.0.0.1"]))
         session.connected = true
         var profile = TerminalControlsProfile.defaults
-        profile.normalizeLegacyRows()
+        profile.freezeKeyboardLayout()
         var data = try JSONEncoder().encode(profile)
         let store = TerminalControlsStore(read: { data }, write: { data = $0 }, legacyIDs: { [] })
         let controller = TerminalController(session: session, customize: {}, controlsStore: store)

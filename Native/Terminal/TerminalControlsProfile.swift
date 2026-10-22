@@ -55,6 +55,14 @@ struct TerminalControlAction: Codable, Identifiable, Equatable {
     var inMenu = true
     var presetID: String?
     var usage: String?
+    var keycapTitle: String {
+        guard kind == .shortcut else { return title }
+        let names: [(UInt32, String)] = [(0xffe3, "⌃"), (0xffe9, "⌥"), (0xffe1, "⇧"), (0xffeb, "⌘")]
+        let key = TerminalAccessoryKey.allCases.first { $0.shortcutCode == character }?.title
+            ?? (character == 0xff08 ? "⌫" : character == 0xff0d ? "↵" : character == 0x20 ? "Space" : UnicodeScalar(character).map(String.init) ?? title)
+        return names.filter { modifiers.contains($0.0) }.map(\.1).joined() + key
+    }
+
 
     init(_ saved: VNCQuickAction) {
         id = saved.id; title = saved.title; character = saved.key
@@ -135,10 +143,20 @@ struct TerminalControlAction: Codable, Identifiable, Equatable {
         }
     }
     func placements(in profile: TerminalControlsProfile) -> [String] {
-        var result = profile.resolvedRows.filter { profile.barItems(in: $0).contains(.saved(id)) }.map { "Keyboard Bar · " + $0.title }
+        var result = profile.resolvedRows.filter { profile.barItems(in: $0).contains(.saved(id)) }.map { "Keyboard Bar · " + profile.rowTitle($0.id) }
         if inMenu { result.append("Floating Menu") }
         return result
     }
+}
+
+struct TerminalBarPlacement: Codable, Hashable, Identifiable {
+    var id: String = UUID().uuidString
+    var item: TerminalBarItem
+}
+
+struct TerminalMenuPlacement: Codable, Equatable, Identifiable {
+    var id = UUID()
+    var actionID: UUID
 }
 
 enum TerminalControlsDestination: String, CaseIterable, Identifiable, Hashable {
@@ -191,7 +209,7 @@ enum TerminalRowPreset: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var items: [TerminalBarItem] {
         if self == .blank { return [] }
-        if self == .essentials { return [.control(.keyboard), .key("key-escape"), .key("key-tab"), .control(.ctrl), .control(.alt), .control(.shift), .control(.keypad), .control(.expand)] }
+        if self == .essentials { return [.control(.keyboard), .control(.expand), .key("key-escape"), .key("key-tab"), .control(.ctrl), .control(.alt), .control(.shift), .key("key-left"), .key("key-down"), .key("key-up"), .key("key-right")] }
         let group = self == .shell ? "Common Shortcuts" : rawValue
         return (TerminalKeyCatalog.groups.first { $0.title == group }?.keys ?? []).map { .key($0.id) }
     }
@@ -204,6 +222,13 @@ struct TerminalKeyboardRow: Codable, Identifiable, Equatable {
     var title: String
     var actionIDs: [UUID] = []
     var items: [TerminalBarItem]?
+    var placementIDs: [String]?
+    var placements: [TerminalBarPlacement] {
+        get { (items ?? []).enumerated().map { index, item in
+            .init(id: placementIDs?.count == items?.count ? placementIDs![index] : "legacy-\(id.uuidString)-\(index)", item: item)
+        } }
+        set { items = newValue.map(\.item); placementIDs = newValue.map(\.id); actionIDs = newValue.compactMap { $0.item.savedID } }
+    }
     var preset: TerminalRowPreset?
     var expandedOnly: Bool?
     var hidden: Bool?
@@ -220,8 +245,11 @@ struct TerminalKeyboardRow: Codable, Identifiable, Equatable {
     }
     var alignment: Alignment?
     var resolvedAlignment: Alignment { alignment ?? (preset == .numbers || kind == .numbers ? .fill : .left) }
+    enum ScrollStart: String, Codable, CaseIterable { case automatic = "Automatic", left = "Left", right = "Right" }
+    var scrollStart: ScrollStart?
+    var startsAtRight: Bool { scrollStart == .right || (scrollStart ?? .automatic) == .automatic && resolvedAlignment == .right }
     enum Visibility: String, CaseIterable { case always = "Always", expanded = "When Expanded", hidden = "Hidden" }
-    enum MenuAction { case visibility(Visibility), alignment(Alignment), remove }
+    enum MenuAction { case visibility(Visibility), alignment(Alignment), scrollStart(ScrollStart), remove }
     var visibility: Visibility {
         get { hidden == true ? .hidden : extra ? .expanded : .always }
         set { hidden = newValue == .hidden; expandedOnly = newValue == .expanded }
@@ -234,14 +262,17 @@ struct TerminalKeyboardRow: Codable, Identifiable, Equatable {
 
 struct TerminalControlsProfile: Codable, Equatable {
     static let maximumKeyboardRows = 6
-    var version = 1
+    static let currentVersion = 1
+    static let currentRowsSchema = 4
+    var version = Self.currentVersion
     var revision = UUID()
     var actions: [TerminalControlAction] = []
     var importedMacs: Set<UUID> = []
     // Optional fields decode existing v1 records without rewriting their content.
     var rowOrder: [UUID]?
     var menuOrder: [UUID]?
-    var numberRow: Bool? // Decode-only legacy preference; cleared by normalizeLegacyRows().
+    var menuPlacements: [TerminalMenuPlacement]?
+    var numberRow: Bool? // Decode-only legacy preference; cleared when resetting an older layout.
     var expandedBar: Bool? // Legacy setting; new explicit expansion uses rowsExpanded.
     var navigationRow: Bool?
     var keyboardRows: [TerminalKeyboardRow]?
@@ -249,21 +280,26 @@ struct TerminalControlsProfile: Codable, Equatable {
     var commandInBar: Bool?
     var shortcutOrder: [UUID]?
     var textOrder: [UUID]?
-    var rowsSchema: Int?
+    var rowsSchema: Int? = Self.currentRowsSchema
     /// Old flat placements remain on the main row. New rows reference the same
     /// saved definitions, and never copy or discard their content.
     var resolvedRows: [TerminalKeyboardRow] {
         var rows = keyboardRows ?? [
             .init(id: TerminalKeyboardRow.numbersID, kind: .custom, title: "Numbers", preset: .numbers, expandedOnly: false),
             .init(id: TerminalKeyboardRow.navigationID, kind: .navigation, title: "Navigation"),
-            .init(id: TerminalKeyboardRow.mainID, kind: .main, title: "Main Row")]
+            .init(id: TerminalKeyboardRow.mainID, kind: .main, title: "Main Row", alignment: .fill)]
         let assigned = Set(rows.flatMap(\.actionIDs))
         if let main = rows.firstIndex(where: { $0.kind == .main }) {
             let missing = placed(.keyboard).map(\.id).filter { !assigned.contains($0) }
-            rows[main].actionIDs += missing
-            if rows[main].items != nil { rows[main].items! += missing.map { .saved($0) } }
+            if rows[main].items != nil {
+                rows[main].placements += missing.map { .init(id: "legacy-saved-" + $0.uuidString, item: .saved($0)) }
+            } else { rows[main].actionIDs += missing }
         }
         return rows
+    }
+    func rowTitle(_ id: UUID) -> String { "Row \((resolvedRows.firstIndex { $0.id == id } ?? 0) + 1)" }
+    func barPlacements(in row: TerminalKeyboardRow) -> [TerminalBarPlacement] {
+        var row = row; row.items = barItems(in: row); return row.placements
     }
     func barItems(in row: TerminalKeyboardRow) -> [TerminalBarItem] {
         if let items = row.items { return items }
@@ -281,7 +317,7 @@ struct TerminalControlsProfile: Codable, Equatable {
     }
     private mutating func editRows(_ edit: (inout [TerminalKeyboardRow]) -> Void) {
         var rows = resolvedRows
-        for index in rows.indices { rows[index].items = barItems(in: rows[index]) }
+        for index in rows.indices { rows[index].placements = barPlacements(in: rows[index]) }
         edit(&rows)
         for index in rows.indices { rows[index].actionIDs = (rows[index].items ?? []).compactMap(\.savedID) }
         let placed = Set(rows.flatMap(\.actionIDs))
@@ -289,16 +325,40 @@ struct TerminalControlsProfile: Codable, Equatable {
         keyboardRows = rows
     }
     mutating func placeBarItem(_ item: TerminalBarItem, in rowID: UUID, from sourceRowID: UUID? = nil, before target: TerminalBarItem? = nil) {
+        let source = sourceRowID.flatMap { id in resolvedRows.first { $0.id == id } }.flatMap { barPlacements(in: $0).first { $0.item == item } }
+        let before = resolvedRows.first { $0.id == rowID }.flatMap { barPlacements(in: $0).first { $0.item == target } }?.id
+        if let source, let sourceRowID { moveBarPlacement(source.id, from: sourceRowID, to: rowID, before: before) }
+        else { addBarPlacement(item, to: rowID, before: before) }
+    }
+    mutating func addBarPlacement(_ item: TerminalBarItem, to rowID: UUID, before target: String? = nil) {
         guard resolvedRows.contains(where: { $0.id == rowID }) else { return }
         editRows { rows in
-            for index in rows.indices where item.control != nil || item.savedID != nil || rows[index].id == sourceRowID || rows[index].id == rowID { rows[index].items?.removeAll { $0 == item } }
             let index = rows.firstIndex { $0.id == rowID }!
-            let position = target.flatMap { rows[index].items?.firstIndex(of: $0) } ?? rows[index].items!.endIndex
-            rows[index].items!.insert(item, at: position)
+            var values = rows[index].placements
+            let position = target.flatMap { id in values.firstIndex { $0.id == id } } ?? values.endIndex
+            values.insert(.init(item: item), at: position); rows[index].placements = values
+        }
+    }
+    mutating func moveBarPlacement(_ id: String, from source: UUID, to target: UUID, before: String? = nil) {
+        guard id != before, resolvedRows.contains(where: { $0.id == source }), resolvedRows.contains(where: { $0.id == target }) else { return }
+        editRows { rows in
+            let from = rows.firstIndex { $0.id == source }!, to = rows.firstIndex { $0.id == target }!
+            var values = rows[from].placements
+            guard let index = values.firstIndex(where: { $0.id == id }) else { return }
+            let placement = values.remove(at: index); rows[from].placements = values
+            var destination = rows[to].placements
+            let position = before.flatMap { id in destination.firstIndex { $0.id == id } } ?? destination.endIndex
+            destination.insert(placement, at: position); rows[to].placements = destination
+        }
+    }
+    mutating func removeBarPlacement(_ id: String, in rowID: UUID) {
+        editRows { rows in
+            guard let index = rows.firstIndex(where: { $0.id == rowID }) else { return }
+            rows[index].placements.removeAll { $0.id == id }
         }
     }
     mutating func removeBarItem(_ item: TerminalBarItem, in rowID: UUID? = nil) {
-        editRows { rows in for index in rows.indices where rowID == nil || rows[index].id == rowID { rows[index].items?.removeAll { $0 == item } } }
+        editRows { rows in for index in rows.indices where rowID == nil || rows[index].id == rowID { rows[index].placements.removeAll { $0.item == item } } }
     }
     mutating func restoreRow(_ id: UUID) {
         guard let row = resolvedRows.first(where: { $0.id == id }) else { return }
@@ -310,57 +370,41 @@ struct TerminalControlsProfile: Codable, Equatable {
     mutating func restoreKeyboardBar() {
         for index in actions.indices { actions[index].inRow = false }
         rowOrder = nil; keyboardRows = nil; numberRow = nil; navigationRow = true; rowsExpanded = false; commandInBar = false
+        rowsSchema = Self.currentRowsSchema
+        freezeKeyboardLayout()
     }
-    /// The focused editor transfers a complete template only after explaining
-    /// existing placements. Legacy addPreset retains its non-moving semantics.
+    /// Adding a template creates independent placements and never moves existing keys.
     @discardableResult mutating func installEditorPreset(_ preset: TerminalRowPreset, before target: UUID?) -> UUID? {
-        var draft = self
-        let primary = preset == .essentials ? resolvedRows.first { $0.kind == .main }
-            : preset == .numbers ? resolvedRows.first { $0.preset == .numbers || $0.kind == .numbers } : nil
-        let existing = primary.flatMap { row -> UUID? in
-            let extras = barItems(in: row).filter { item in
-                !preset.items.contains(item) && !(item.savedID.flatMap { id in actions.first { $0.id == id } }.map { action in preset.items.contains { $0.palette?.matches(action) == true } } ?? false)
-            }
-            return extras.isEmpty ? row.id : nil
-        }
-        guard let id = existing ?? draft.addRow(title: preset == .blank ? "Custom Row" : preset.rawValue) else { return nil }
-        let originallyEmpty = Set(draft.resolvedRows.filter { draft.barItems(in: $0).isEmpty }.map(\.id))
-        let transferred = Set(preset.items)
-        let equivalent = Set(draft.actions.filter { action in preset.items.contains { $0.palette?.matches(action) == true } }.map(\.id))
-        draft.editRows { rows in
-            for index in rows.indices {
-                rows[index].items?.removeAll { transferred.contains($0) || $0.savedID.map(equivalent.contains) == true }
-            }
-            if let index = rows.firstIndex(where: { $0.id == id }) {
-                if preset != .blank { rows[index].title = preset.rawValue }
-                rows[index].items = preset.items; rows[index].preset = preset; rows[index].expandedOnly = false
-                rows[index].hidden = false
-            }
-            rows.removeAll { $0.id != id && $0.kind != .main && $0.items?.isEmpty == true && !originallyEmpty.contains($0.id) }
-        }
-        if target != id { draft.moveRow(id, before: target) }
-        guard draft.valid else { return nil }
-        self = draft; return id
+        addPreset(preset, before: target)
     }
-    @discardableResult mutating func replaceEditorItem(_ item: TerminalBarItem, in rowID: UUID, with replacement: TerminalBarItem) -> Bool {
-        guard let row = resolvedRows.first(where: { $0.id == rowID }), let index = barItems(in: row).firstIndex(of: item) else { return false }
-        if item == replacement { return true }
-        guard !resolvedRows.contains(where: { barItems(in: $0).contains(replacement) }) else { return false }
-        let values = barItems(in: row)
+    @discardableResult mutating func replaceEditorItem(_ item: TerminalBarItem, in rowID: UUID, with replacement: TerminalBarItem, placementID: String? = nil) -> Bool {
+        guard let row = resolvedRows.first(where: { $0.id == rowID }),
+              let placement = barPlacements(in: row).first(where: { placementID == nil ? $0.item == item : $0.id == placementID }) else { return false }
+        editRows { rows in
+            let index = rows.firstIndex { $0.id == rowID }!
+            var values = rows[index].placements
+            if let position = values.firstIndex(where: { $0.id == placement.id }) { values[position].item = replacement }
+            rows[index].placements = values
+        }
+        return true
+    }
+    @discardableResult mutating func replaceEditorFavorite(_ placementID: UUID, with key: TerminalPaletteKey) -> Bool {
+        var placements = resolvedMenuPlacements
+        guard let index = placements.firstIndex(where: { $0.id == placementID }) else { return false }
         var draft = self
-        draft.removeBarItem(item, in: rowID)
-        draft.placeBarItem(replacement, in: rowID, before: index + 1 < values.count ? values[index + 1] : nil)
+        let definitionID: UUID
+        if let existing = draft.actions.first(where: key.matches) { definitionID = existing.id }
+        else {
+            let replacement = key.definition
+            guard replacement.valid, draft.actions.count < 4096 else { return false }
+            draft.actions.append(replacement); definitionID = replacement.id
+        }
+        placements[index].actionID = definitionID
+        draft.menuPlacements = placements
+        let placed = Set(placements.map(\.actionID))
+        for index in draft.actions.indices { draft.actions[index].inMenu = placed.contains(draft.actions[index].id) }
         guard draft.valid else { return false }
         self = draft; return true
-    }
-    @discardableResult mutating func replaceEditorFavorite(_ id: UUID, with key: TerminalPaletteKey) -> Bool {
-        guard let index = actions.firstIndex(where: { $0.id == id }) else { return false }
-        var replacement = key.definition
-        replacement.id = id; replacement.inRow = actions[index].inRow; replacement.inMenu = actions[index].inMenu
-        replacement.presetID = actions[index].presetID
-        guard replacement.valid else { return false }
-        actions[index] = replacement
-        return true
     }
     mutating func removeEditorRow(_ id: UUID) {
         guard let row = resolvedRows.first(where: { $0.id == id }) else { return }
@@ -381,30 +425,19 @@ struct TerminalControlsProfile: Codable, Equatable {
             if let existing = actions.firstIndex(where: { $0.sameDefinition(as: action) }) { actions[existing].inMenu = true }
             else { actions.append(action) }
         }
-        menuOrder = nil
+        menuOrder = nil; menuPlacements = nil
     }
     /// The row library shows these exact additions. Existing placements, including
     /// deliberately duplicated legacy keys, are never stolen by a preset.
-    func availableItems(for preset: TerminalRowPreset, excluding rowID: UUID? = nil) -> [TerminalBarItem] {
-        let used = Set(resolvedRows.filter { $0.id != rowID }.flatMap { barItems(in: $0) })
-        let savedIDs = Set(used.compactMap(\.savedID))
-        let saved = actions.filter { savedIDs.contains($0.id) }
-        return preset.items.filter { item in
-            !used.contains(item) && !(item.palette.map { palette in saved.contains(where: palette.matches) } ?? false)
-        }
-    }
+    func availableItems(for preset: TerminalRowPreset, excluding rowID: UUID? = nil) -> [TerminalBarItem] { preset.items }
     @discardableResult mutating func addPreset(_ preset: TerminalRowPreset, before target: UUID? = TerminalKeyboardRow.mainID) -> UUID? {
-        let additions = availableItems(for: preset)
-        guard preset == .blank || !additions.isEmpty else { return nil }
-        guard let id = addRow(title: preset == .blank ? "Custom Row" : preset.rawValue) else { return nil }
+        guard let id = addRow() else { return nil }
         editRows { rows in
             let index = rows.firstIndex { $0.id == id }!
-            rows[index].preset = preset
-            rows[index].expandedOnly = false
+            rows[index].preset = preset; rows[index].expandedOnly = false
+            rows[index].placements = preset.items.map { .init(item: $0) }
         }
-        for item in additions { placeBarItem(item, in: id) }
-        moveRow(id, before: target)
-        return id
+        moveRow(id, before: target); return id
     }
     func placed(in row: TerminalKeyboardRow) -> [TerminalControlAction] {
         row.actionIDs.compactMap { id in actions.first { $0.id == id && $0.inRow } }
@@ -444,8 +477,33 @@ struct TerminalControlsProfile: Codable, Equatable {
         rows.insert(row, at: rows.firstIndex(where: { $0.kind == .main }) ?? rows.endIndex)
         keyboardRows = rows; rowsExpanded = true; return row.id
     }
+    var resolvedMenuPlacements: [TerminalMenuPlacement] {
+        if let menuPlacements { return menuPlacements }
+        let order = menuOrder ?? []
+        let ranks = Dictionary(uniqueKeysWithValues: order.enumerated().map { ($1, $0) })
+        return actions.enumerated().filter { $0.element.inMenu }.sorted {
+            (ranks[$0.element.id] ?? (actions.count + $0.offset)) < (ranks[$1.element.id] ?? (actions.count + $1.offset))
+        }.map { .init(id: $0.element.id, actionID: $0.element.id) }
+    }
+    var menuPreviewActions: [TerminalControlAction] {
+        resolvedMenuPlacements.compactMap { placement in
+            guard var action = actions.first(where: { $0.id == placement.actionID }) else { return nil }
+            action.id = placement.id; return action
+        }
+    }
+    mutating func removeMenuPlacement(_ id: UUID) {
+        menuPlacements = resolvedMenuPlacements.filter { $0.id != id }
+        let placed = Set(menuPlacements!.map(\.actionID))
+        for index in actions.indices { actions[index].inMenu = placed.contains(actions[index].id) }
+    }
+    mutating func moveMenuPlacement(_ id: UUID, to target: UUID) {
+        var values = resolvedMenuPlacements
+        guard let from = values.firstIndex(where: { $0.id == id }), let to = values.firstIndex(where: { $0.id == target }), from != to else { return }
+        values.insert(values.remove(at: from), at: to); menuPlacements = values
+    }
     func placed(_ destination: TerminalControlsDestination) -> [TerminalControlAction] {
-        let items = actions.filter { destination == .keyboard ? $0.inRow : $0.inMenu }
+        if destination == .menu { return resolvedMenuPlacements.compactMap { entry in actions.first { $0.id == entry.actionID } } }
+        let items = actions.filter { $0.inRow }
         let order = destination == .keyboard ? rowOrder : menuOrder
         let ranks = Dictionary(uniqueKeysWithValues: (order ?? []).enumerated().map { ($1, $0) })
         return items.enumerated().sorted {
@@ -453,6 +511,7 @@ struct TerminalControlsProfile: Codable, Equatable {
         }.map(\.element)
     }
     mutating func move(_ id: UUID, to target: UUID, in destination: TerminalControlsDestination) {
+        if destination == .menu { moveMenuPlacement(id, to: target); return }
         if destination == .keyboard, let rows = keyboardRows,
            let row = rows.first(where: { $0.items != nil && $0.actionIDs.contains(id) && $0.actionIDs.contains(target) }) {
             placeBarItem(.saved(id), in: row.id, before: .saved(target)); return
@@ -468,23 +527,36 @@ struct TerminalControlsProfile: Codable, Equatable {
         if destination == .keyboard { rowOrder = order } else { menuOrder = order }
     }
     mutating func delete(_ id: UUID) {
+        menuPlacements = resolvedMenuPlacements.filter { $0.actionID != id }
         actions.removeAll { $0.id == id }; rowOrder?.removeAll { $0 == id }; menuOrder?.removeAll { $0 == id }; shortcutOrder?.removeAll { $0 == id }; textOrder?.removeAll { $0 == id }
-        if keyboardRows != nil { for index in keyboardRows!.indices { keyboardRows![index].actionIDs.removeAll { $0 == id }; keyboardRows![index].items?.removeAll { $0.savedID == id } } }
+        if keyboardRows != nil {
+            for index in keyboardRows!.indices {
+                keyboardRows![index].actionIDs.removeAll { $0 == id }
+                // Nil items mean “use this row's preset,” not an empty row.
+                if keyboardRows![index].items != nil {
+                    keyboardRows![index].placements.removeAll { $0.item.savedID == id }
+                }
+            }
+        }
     }
     mutating func pin(_ id: UUID, in destination: TerminalControlsDestination, enabled: Bool) {
         guard let index = actions.firstIndex(where: { $0.id == id }) else { return }
-        if destination == .keyboard { actions[index].inRow = enabled } else { actions[index].inMenu = enabled }
-        if destination == .keyboard, !enabled, keyboardRows != nil {
-            for row in keyboardRows!.indices { keyboardRows![row].actionIDs.removeAll { $0 == id }; keyboardRows![row].items?.removeAll { $0.savedID == id } }
-        }
+        if destination == .menu {
+            var values = resolvedMenuPlacements
+            if enabled { values.append(.init(actionID: id)) } else { values.removeAll { $0.actionID == id } }
+            menuPlacements = values; actions[index].inMenu = values.contains { $0.actionID == id }
+        } else if enabled, let row = resolvedRows.first(where: { $0.kind == .main }) {
+            place(id, in: row.id)
+        } else if !enabled { removeBarItem(.saved(id)) }
     }
     var valid: Bool {
-        version == 1 && actions.count <= 4096 && importedMacs.count <= 4096
+        version == Self.currentVersion && (rowsSchema.map { (1...Self.currentRowsSchema).contains($0) } ?? true) && actions.count <= 4096 && importedMacs.count <= 4096
             && Set(actions.map(\.id)).count == actions.count && actions.allSatisfy(\.valid)
             && [rowOrder, menuOrder, shortcutOrder, textOrder].allSatisfy { order in
                 guard let order else { return true }
                 return order.count <= 4096 && Set(order).count == order.count && Set(order).isSubset(of: Set(actions.map(\.id)))
             }
+            && (menuPlacements.map { $0.count <= 4096 && Set($0.map(\.id)).count == $0.count && $0.allSatisfy { entry in actions.contains { $0.id == entry.actionID && $0.inMenu } } } ?? true)
             && validRows
     }
     private var validRows: Bool {
@@ -494,14 +566,14 @@ struct TerminalControlsProfile: Codable, Equatable {
             && rows.filter { $0.kind == .main }.count == 1 && rows.filter { $0.kind == .numbers }.count <= 1
             && rows.filter { $0.kind == .navigation }.count <= 1
             && rows.allSatisfy { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.title.count <= 40 && ($0.kind != .numbers || $0.items != nil || $0.actionIDs.isEmpty) }
-            && ids.count <= 4096 && Set(ids).count == ids.count && Set(ids).isSubset(of: Set(actions.map(\.id)))
+            && ids.count <= 4096 && Set(ids).isSubset(of: Set(actions.map(\.id)))
             && validBarItems(rows)
     }
     private func validBarItems(_ rows: [TerminalKeyboardRow]) -> Bool {
         let items = rows.flatMap { $0.items ?? [] }
-        let singular = items.filter { $0.control != nil || $0.savedID != nil }
-        return items.count <= 4096 && Set(singular).count == singular.count && rows.allSatisfy { row in
-            guard row.items == nil || Set(row.items!).count == row.items!.count else { return false }
+        let placements = rows.flatMap { barPlacements(in: $0) }
+        return items.count <= 4096 && Set(placements.map(\.id)).count == placements.count && rows.allSatisfy { row in
+            guard row.placementIDs == nil || row.placementIDs?.count == row.items?.count else { return false }
             return row.items == nil || row.actionIDs == row.items!.compactMap(\.savedID)
         } && items.allSatisfy { item in
             switch item {
@@ -522,22 +594,11 @@ struct TerminalControlsProfile: Codable, Equatable {
     mutating func reorderLibrary(_ section: TerminalSavedItemsSection, ids: [UUID]) {
         if section == .shortcuts { shortcutOrder = ids } else { textOrder = ids }
     }
-    /// Convert only retired Numbers behavior; leave all other placements alone.
-    mutating func normalizeLegacyRows(legacyNumbersVisible: Bool = true) {
-        guard rowsSchema != 2 else { return }
+    /// Persist actual placements, not a template whose defaults may change.
+    mutating func freezeKeyboardLayout() {
         var rows = resolvedRows
-        for index in rows.indices {
-            var items = barItems(in: rows[index])
-            items.removeAll { $0.control == .retiredNumbers }
-            rows[index].items = items
-            rows[index].actionIDs = items.compactMap(\.savedID)
-            if rows[index].kind == .numbers || rows[index].id == TerminalKeyboardRow.numbersID {
-                rows[index].kind = .custom; rows[index].preset = .numbers
-                rows[index].expandedOnly = false
-                rows[index].hidden = !(numberRow ?? legacyNumbersVisible)
-            }
-        }
-        keyboardRows = rows; numberRow = nil; rowsSchema = 2
+        for index in rows.indices { rows[index].placements = barPlacements(in: rows[index]) }
+        keyboardRows = rows
     }
     static var defaults: Self { .init(actions: DirectControlMode.terminal.defaults.map(TerminalControlAction.init)) }
     mutating func importKeyboard(_ preferences: TerminalKeyboardPreferences, macID: UUID) {
@@ -568,7 +629,26 @@ struct TerminalControlsProfile: Codable, Equatable {
     static let account = DirectControlMode.terminal.profileID
     static let kind = "terminal-controls-v2"
     static let changed = Notification.Name("TerminalControlsChangedV2")
-    enum Failure: Error { case unreadable, staleDraft }
+    enum Failure: Error, Equatable { case unreadable, staleDraft, newerFormat }
+    static let newerFormatMessage = "These controls were saved by a newer version of Mac Companion. Update the app to edit them. Your saved controls have been kept."
+    private struct Format: Decodable {
+        let version: Int
+        let rowsSchema: Int?
+        private enum CodingKeys: String, CodingKey { case version, rowsSchema }
+        init(version: Int, rowsSchema: Int?) { self.version = version; self.rowsSchema = rowsSchema }
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            version = try values.decode(Int.self, forKey: .version)
+            // A future envelope may change every field except its version.
+            guard version <= TerminalControlsProfile.currentVersion else { throw Failure.newerFormat }
+            rowsSchema = try values.decodeIfPresent(Int.self, forKey: .rowsSchema)
+        }
+        func checkSupported() throws {
+            if version > TerminalControlsProfile.currentVersion || (rowsSchema ?? 0) > TerminalControlsProfile.currentRowsSchema { throw Failure.newerFormat }
+            guard version == TerminalControlsProfile.currentVersion, rowsSchema.map({ $0 > 0 }) ?? true else { throw Failure.unreadable }
+        }
+    }
+    private static let keyboardFields = ["keyboardRows", "rowOrder", "numberRow", "expandedBar", "navigationRow", "rowsExpanded", "commandInBar"]
     var read: () throws -> Data? = { try TerminalSecretStore.read(account, kind: kind) }
     var write: (Data) throws -> Void = { try TerminalSecretStore.write($0, id: account, kind: kind) }
     var legacyIDs: () throws -> [UUID] = { try TerminalSecretStore.accounts(kind: "terminal-keyboard-v1") }
@@ -580,21 +660,29 @@ struct TerminalControlsProfile: Codable, Equatable {
         guard DirectAppLockV1.shared.canAccess else { throw TerminalSecretStore.Failure.locked }
         let stored = try read()
         var profile: TerminalControlsProfile
+        let resetKeyboard: Bool
         if let stored {
             guard stored.count <= 20 * 1024 * 1024 else { throw Failure.unreadable }
-            profile = try JSONDecoder().decode(TerminalControlsProfile.self, from: stored)
+            let format = try JSONDecoder().decode(Format.self, from: stored)
+            try format.checkSupported()
+            resetKeyboard = format.rowsSchema != TerminalControlsProfile.currentRowsSchema
+            if resetKeyboard {
+                // Unreleased layouts are disposable; decode saved definitions
+                // and favorites independently of obsolete row representations.
+                guard var record = try JSONSerialization.jsonObject(with: stored) as? [String: Any] else { throw Failure.unreadable }
+                for key in Self.keyboardFields { record.removeValue(forKey: key) }
+                record["rowsSchema"] = TerminalControlsProfile.currentRowsSchema
+                profile = try JSONDecoder().decode(TerminalControlsProfile.self, from: JSONSerialization.data(withJSONObject: record))
+            } else { profile = try JSONDecoder().decode(TerminalControlsProfile.self, from: stored) }
         } else {
             let actions = try legacyActions()
             guard DirectQuickActionEditing.valid(actions, mode: .terminal) else { throw Failure.unreadable }
             profile = .init(actions: actions.map(TerminalControlAction.init))
+            resetKeyboard = true
         }
-        // Resolution builds ordering dictionaries. Reject malformed storage
-        // before migration can resolve rows; never rewrite a corrupt record.
+        // Corrupt definitions and favorites must never be replaced by defaults.
         guard profile.valid else { throw Failure.unreadable }
         let before = profile
-        let legacyPreference = "direct-terminal-number-row"
-        let legacyVisible = UserDefaults.standard.object(forKey: legacyPreference) == nil || UserDefaults.standard.bool(forKey: legacyPreference)
-        profile.normalizeLegacyRows(legacyNumbersVisible: legacyVisible)
         for index in profile.actions.indices { profile.actions[index].normalizeLegacyDefinition() }
         guard profile.valid else { throw Failure.unreadable }
         let excluded = excludedIDs()
@@ -603,6 +691,8 @@ struct TerminalControlsProfile: Codable, Equatable {
             try preferences.validate()
             profile.importKeyboard(preferences, macID: id)
         }
+        if resetKeyboard { profile.restoreKeyboardBar() }
+        else { profile.freezeKeyboardLayout() }
         guard profile.valid else { throw Failure.unreadable }
         if stored == nil || profile != before {
             profile.revision = UUID()
@@ -611,15 +701,19 @@ struct TerminalControlsProfile: Codable, Equatable {
         return profile
     }
     func save(_ draft: TerminalControlsProfile) throws -> TerminalControlsProfile {
+        try Format(version: draft.version, rowsSchema: draft.rowsSchema).checkSupported()
+        guard draft.rowsSchema == TerminalControlsProfile.currentRowsSchema else { throw Failure.unreadable }
         let current = try load()
         guard current.revision == draft.revision else { throw Failure.staleDraft }
         guard draft.valid, draft.importedMacs == current.importedMacs else { throw Failure.unreadable }
-        var result = draft; result.revision = UUID()
+        var result = draft; result.freezeKeyboardLayout(); result.revision = UUID()
         try persist(result)
         NotificationCenter.default.post(name: Self.changed, object: nil)
         return result
     }
     private func persist(_ profile: TerminalControlsProfile) throws {
+        try Format(version: profile.version, rowsSchema: profile.rowsSchema).checkSupported()
+        guard profile.rowsSchema == TerminalControlsProfile.currentRowsSchema, profile.valid else { throw Failure.unreadable }
         let data = try JSONEncoder().encode(profile)
         guard data.count <= 20 * 1024 * 1024 else { throw Failure.unreadable }
         try write(data)

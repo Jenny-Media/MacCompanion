@@ -168,6 +168,10 @@ import UIKit
         if name.contains("testFailedSave") { app.launchEnvironment["MACCOMPANION_CONTROLS_FAIL_WRITE"] = "1" }
         if failWriteOnce { app.launchEnvironment["MACCOMPANION_CONTROLS_FAIL_WRITE_ONCE"] = "1" }
         if name.contains("testDirectLibraryRecovery") { app.launchEnvironment["MACCOMPANION_CONTROLS_FAIL_READ_ONCE"] = "1" }
+        if name.contains("testOlderDevelopmentLayouts") { app.launchEnvironment["MACCOMPANION_CONTROLS_LEGACY_ROWS"] = "1" }
+        if name.contains("testNewerFormat") { app.launchEnvironment["MACCOMPANION_CONTROLS_FUTURE_FORMAT"] = "1" }
+        if name.contains("testRightEdgeRowRotation") { app.launchEnvironment["MACCOMPANION_CONTROLS_ROTATION"] = "1" }
+        if name.contains("testRepeatedUtilityControls") { app.launchEnvironment["MACCOMPANION_CONTROLS_REPEATED_UTILITIES"] = "1" }
         app.launch()
         XCTAssertTrue(app.staticTexts["controls-qa-pro"].waitForExistence(timeout: 10))
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "LifetimePro", withExtension: "storekit"))
@@ -218,9 +222,13 @@ import UIKit
         app.buttons["terminal-item-save"].tap()
         XCTAssertTrue(app.staticTexts["Tmux"].waitForExistence(timeout: 5))
         actions("Tmux", app: app); app.buttons["Add to Keyboard Bar"].tap()
-        let prefixKey = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "terminal-row-preview-", "Tmux")).firstMatch
+        addToRow(mainID, app: app)
+        let prefixCopies = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "terminal-row-preview-", "Tmux"))
+        XCTAssertEqual(prefixCopies.count, 2)
+        let prefixKey = prefixCopies.element(boundBy: 1)
         revealHorizontal(prefixKey, scroll: app.scrollViews["terminal-row-preview-scroll"]); prefixKey.tap()
         app.buttons["terminal-remove-placement"].tap()
+        XCTAssertEqual(prefixCopies.count, 1)
         capture("redesign-removed-keyboard-placement", app: app); closeLayout(app, save: true)
         XCTAssertTrue(app.staticTexts["Tmux"].exists)
         capture("redesign-still-saved-and-in-menu", app: app)
@@ -400,17 +408,22 @@ import UIKit
         ctrl.press(forDuration: 0.7); findKey("End", app: app); app.buttons["terminal-keypad-end"].tap()
         XCTAssertEqual(ctrl.value as? String, "On"); capture("redesign-modifier-held-on", app: app); ctrl.tap()
         findKey("F8", app: app)
-        app.buttons["terminal-keypad-f8"].press(forDuration: 1); app.buttons["Pin to Keyboard Bar"].tap()
+        for _ in 0..<2 { app.buttons["terminal-keypad-f8"].press(forDuration: 1); app.buttons["Pin to Keyboard Bar"].tap() }
         await assertInput("1b5b313b35481b5b313b3546", app: app)
         capture("redesign-all-keys-pin-without-send", app: app)
         app.buttons["terminal-keypad-f8"].tap()
         await assertInput("1b5b313b35481b5b313b35461b5b31397e", app: app)
+        app.navigationBars["All Keys"].buttons["Done"].tap()
+        let copies = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "terminal-row-action-", "F8"))
+        XCTAssertEqual(copies.count, 2)
+        revealHorizontal(copies.element(boundBy: 1), scroll: app.scrollViews["terminal-modifier-keys"])
+        capture("keypad-repeated-pins-create-independent-copies", app: app)
     }
 
     func testRowTemplateAdditionAndRemovalAreUndoable() async throws {
         let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
         openKeyboard(app); addRowPreset("Function Keys", app: app)
-        let menu = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "terminal-row-menu-", "Function Keys")).firstMatch
+        let menu = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "terminal-row-menu-", "Row 1")).firstMatch
         XCTAssertTrue(menu.waitForExistence(timeout: 5)); menu.tap()
         app.buttons["Remove Row"].tap()
         // iOS may expose both the SwiftUI action and its UIKit button.
@@ -451,7 +464,7 @@ import UIKit
         try await rename("Unsaved", app: app); app.buttons["terminal-item-save"].tap()
         app.buttons["terminal-controls-save"].tap()
         XCTAssertTrue(app.buttons["terminal-layout-cancel"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "Couldn’t save.")).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Couldn’t save.")).firstMatch.exists)
         capture("redesign-failed-save-draft-remains-open", app: app)
         closeLayout(app, save: false); closeSettings(app)
         XCTAssertEqual(app.staticTexts["controls-qa-title"].label, "Project")
@@ -491,7 +504,7 @@ import UIKit
         XCTAssertFalse(app.keyboards.firstMatch.exists)
         capture("focused-layout-without-standing-catalog", app: app)
         addRowPreset("Blank", app: app)
-        let custom = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "terminal-row-menu-", "Custom Row 1")).firstMatch
+        let custom = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "terminal-row-menu-", "Row 1")).firstMatch
         XCTAssertTrue(custom.exists)
         closeLayout(app, save: false); closeSettings(app)
         XCTAssertEqual(app.staticTexts["controls-qa-row-order"].label, "Rows: Numbers | Navigation | Main Row")
@@ -510,11 +523,12 @@ import UIKit
         XCTAssertTrue(f8.waitForExistence(timeout: 5)); capture("focused-key-added", app: app)
         addToRow(navID, app: app); searchCatalog("F8", app: app)
         app.buttons["terminal-add-key-f8"].tap()
-        XCTAssertTrue(app.staticTexts["terminal-add-error"].waitForExistence(timeout: 5))
-        // Compact search hides the sheet's bar; iPad keeps Close visible.
-        if !app.navigationBars["Add to Row"].exists { app.buttons["close"].tap() }
-        XCTAssertTrue(app.navigationBars["Add to Row"].waitForExistence(timeout: 5))
-        app.navigationBars["Add to Row"].buttons["Close"].tap()
+        XCTAssertTrue(app.buttons["terminal-add-row"].waitForExistence(timeout: 5))
+        let copies = navigation.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "terminal-preview-item-palette-key-f8"))
+        XCTAssertEqual(copies.count, 2)
+        let second = copies.element(boundBy: 1)
+        revealHorizontal(second, scroll: navigation); second.tap(); app.buttons["terminal-remove-placement"].tap()
+        XCTAssertEqual(copies.count, 1)
         revealHorizontal(f8, scroll: navigation); f8.tap(); app.buttons["terminal-replace-key"].tap()
         searchCatalog("F9", app: app); app.buttons["terminal-add-key-f9"].tap()
         let f9 = navigation.buttons["terminal-preview-item-palette-key-f9"]
@@ -524,9 +538,8 @@ import UIKit
         addToRow(navID, app: app)
         app.segmentedControls["terminal-add-page"].buttons["Text"].tap()
         app.buttons["terminal-reuse-" + itemID].tap()
-        XCTAssertTrue(app.buttons["terminal-confirm-move"].firstMatch.waitForExistence(timeout: 5))
-        capture("focused-existing-key-move-confirmation", app: app)
-        app.buttons["terminal-confirm-move"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["terminal-add-row"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.scrollViews["terminal-row-preview-scroll"].buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "terminal-row-preview-" + itemID)).firstMatch.exists)
         XCTAssertTrue(navigation.buttons["terminal-row-preview-" + itemID].waitForExistence(timeout: 5))
         capture("focused-saved-item-reused", app: app)
         closeLayout(app, save: true); closeSettings(app)
@@ -639,7 +652,9 @@ import UIKit
         XCTAssertEqual(app.staticTexts["controls-qa-writes"].label, "Writes: 2")
         openKeyboard(app)
         let saved = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "terminal-row-preview-", "Shared Prefix")).firstMatch
-        XCTAssertTrue(saved.waitForExistence(timeout: 5)); capture("focused-shared-edit-in-keyboard", app: app)
+        XCTAssertTrue(saved.waitForExistence(timeout: 5))
+        revealHorizontal(saved, scroll: app.scrollViews["terminal-row-preview-scroll"])
+        capture("focused-shared-edit-in-keyboard", app: app)
     }
 
     func testMenuFavoritesCancelAndRestoreRemainOneDraft() async throws {
@@ -746,13 +761,13 @@ import UIKit
         // A single key makes alignment observable; an overflowing row would
         // have identical geometry even if the menu action were a no-op.
         addRowPreset("Blank", app: app)
-        let menu = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "terminal-row-menu-", "Custom Row 1")).firstMatch
+        let menu = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "terminal-row-menu-", "Row 1")).firstMatch
         let rowID = String(menu.identifier.dropFirst("terminal-row-menu-".count))
         addToRow(rowID, app: app); searchCatalog("F8", app: app); app.buttons["terminal-add-key-f8"].tap()
         let row = app.scrollViews["terminal-row-preview-scroll-" + rowID]
         let key = row.buttons["terminal-preview-item-palette-key-f8"]
         XCTAssertTrue(key.waitForExistence(timeout: 5))
-        menu.tap(); app.buttons["Alignment"].tap(); app.buttons["Right"].tap()
+        menu.tap(); app.buttons["Alignment"].tap(); app.collectionViews.buttons["Right"].tap()
         XCTAssertEqual(key.frame.maxX, row.frame.maxX, accuracy: 1)
         capture("keyboard-row-aligned-right", app: app)
         let before = key.frame
@@ -770,13 +785,226 @@ import UIKit
         openKeyboard(app)
         XCTAssertEqual(key.frame.maxX, row.frame.maxX, accuracy: 1)
         capture("keyboard-row-alignment-persists", app: app)
-        menu.tap(); app.buttons["Alignment"].tap(); app.buttons["Left"].tap()
+        menu.tap(); app.buttons["Alignment"].tap(); app.collectionViews.buttons["Left"].tap()
         XCTAssertEqual(key.frame.minX, row.frame.minX, accuracy: 1)
         closeLayout(app, save: false); closeSettings(app)
         XCTAssertEqual(app.staticTexts["controls-qa-writes"].label, "Writes: 1")
         openKeyboard(app)
         XCTAssertEqual(key.frame.maxX, row.frame.maxX, accuracy: 1)
         capture("keyboard-row-cancel-preserves-right-alignment", app: app)
+    }
+
+    func testRepeatedUtilityControlsWorkInALiveSessionWithoutSendingInput() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        live(app)
+        let row = app.scrollViews["terminal-modifier-keys"]
+        let expand = row.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Expand Rows", "Collapse Rows")).firstMatch
+        revealHorizontal(expand, scroll: row)
+        if expand.label == "Expand Rows" { expand.tap() }
+        XCTAssertEqual(expand.label, "Collapse Rows")
+        let keyboards = app.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Show Keyboard", "Hide Keyboard"))
+        XCTAssertEqual(keyboards.count, 2)
+        capture("repeated-utilities-expanded-in-live-terminal", app: app)
+        let keyboard = row.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Show Keyboard", "Hide Keyboard")).firstMatch
+        revealHorizontal(keyboard, scroll: row); keyboard.tap()
+        try await waitForSoftwareKeyboard(app)
+        capture("repeated-keyboard-control-opens-native-keyboard", app: app)
+        keyboard.tap()
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in !app.keyboards.firstMatch.exists }, evaluatedWith: nil)], timeout: 5)
+        revealHorizontal(expand, scroll: row); expand.tap()
+        XCTAssertEqual(expand.label, "Expand Rows")
+        await assertInput("", app: app)
+        capture("repeated-expand-control-collapses-without-input", app: app)
+    }
+
+    func testOlderDevelopmentLayoutsResetOnceAndKeepSavedItems() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        openKeyboard(app)
+        XCTAssertFalse(app.buttons["terminal-preview-item-control-keypad"].exists)
+        XCTAssertTrue(app.scrollViews["terminal-row-preview-scroll"].buttons["Left"].exists)
+        XCTAssertFalse(app.buttons["terminal-row-preview-" + itemID].exists)
+        capture("older-layout-reset-to-current-defaults", app: app)
+        closeLayout(app, save: false); closeSettings(app)
+        XCTAssertEqual(app.staticTexts["controls-qa-count"].label, "Saved items: 1")
+        XCTAssertEqual(app.staticTexts["controls-qa-placements"].label, "Row: off; Menu: on")
+        XCTAssertEqual(app.staticTexts["controls-qa-writes"].label, "Writes: 1")
+        library(app, text: true)
+        XCTAssertTrue(app.staticTexts["Project"].exists)
+        capture("saved-text-kept-after-layout-reset", app: app)
+        closeSettings(app)
+        openSettings(app); app.buttons["terminal-edit-menu"].tap()
+        XCTAssertTrue(app.buttons["Project"].exists)
+        capture("menu-favorite-kept-after-layout-reset", app: app)
+        closeLayout(app, save: false); closeSettings(app)
+        openKeyboard(app)
+        let menu = app.buttons["terminal-row-menu-" + mainID]
+        menu.tap(); app.buttons["Alignment"].tap(); app.collectionViews.buttons["Right"].tap()
+        closeLayout(app, save: true); closeSettings(app)
+        openKeyboard(app); menu.tap(); app.buttons["Alignment"].tap()
+        XCTAssertTrue(app.collectionViews.buttons["Right"].isSelected)
+        capture("current-layout-options-survive-reopen", app: app)
+    }
+    func testNewerFormatShowsUpdateMessageWithoutOverwritingSavedData() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        openSettings(app)
+        let notice = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "newer version of Mac Companion")).firstMatch
+        XCTAssertTrue(notice.waitForExistence(timeout: 5))
+        capture("newer-format-update-required-data-kept", app: app)
+        closeSettings(app)
+        XCTAssertEqual(app.staticTexts["controls-qa-writes"].label, "Writes: 0")
+        openSettings(app); XCTAssertTrue(notice.waitForExistence(timeout: 5))
+        closeSettings(app)
+        XCTAssertEqual(app.staticTexts["controls-qa-writes"].label, "Writes: 0")
+    }
+
+    func testRightEdgeRowRotationKeepsLastKeysAndRespectsManualScroll() async throws {
+        let (app, store) = try await launchPro()
+        defer { XCUIDevice.shared.orientation = .portrait; app.terminate(); store.clearTransactions() }
+        openKeyboard(app)
+        let first = app.buttons["terminal-preview-item-palette-key-f1"]
+        let last = app.buttons["terminal-preview-item-palette-key-f12"]
+        let row = app.scrollViews["terminal-row-preview-scroll"]
+        func visible(_ key: XCUIElement) -> Bool { key.isHittable && key.frame.intersection(row.frame).width >= min(40, key.frame.width) }
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in visible(last) && !visible(first) }, evaluatedWith: nil)], timeout: 5)
+        capture("right-edge-before-rotation", app: app)
+        XCUIDevice.shared.orientation = .landscapeLeft
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in visible(first) && visible(last) }, evaluatedWith: nil)], timeout: 5)
+        capture("right-edge-row-fits-in-landscape", app: app)
+        XCUIDevice.shared.orientation = .portrait
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in visible(last) && !visible(first) }, evaluatedWith: nil)], timeout: 5)
+        capture("right-edge-retained-after-return-to-portrait", app: app)
+        revealHorizontal(first, scroll: row)
+        XCTAssertTrue(visible(first))
+        XCUIDevice.shared.orientation = .landscapeLeft
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in visible(first) && visible(last) }, evaluatedWith: nil)], timeout: 5)
+        XCUIDevice.shared.orientation = .portrait
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in visible(first) && !visible(last) }, evaluatedWith: nil)], timeout: 5)
+        capture("manual-left-scroll-retained-after-rotation", app: app)
+    }
+
+    func testRestoredRowsKeepTheirKeysAfterOptionsSaveAndSavedItemDeletion() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        openKeyboard(app)
+        app.buttons["terminal-row-options"].tap(); app.buttons["Restore Keyboard Bar…"].tap(); app.buttons["Restore Layout"].tap()
+        let rowMenu = app.buttons["terminal-row-menu-00000000-0000-0000-0000-000000000102"]
+        rowMenu.tap(); app.buttons["Alignment"].tap(); app.collectionViews.buttons["Right"].tap()
+        rowMenu.tap(); app.buttons["Scroll Start"].tap(); app.collectionViews.buttons["Right"].tap()
+        capture("restored-keyboard-options-before-deletion", app: app)
+        closeLayout(app, save: true); closeSettings(app)
+        library(app, text: true)
+        actions("Project", app: app); app.buttons["Delete…"].tap(); app.buttons["Delete Saved Item"].tap()
+        XCTAssertTrue(app.staticTexts["No Saved Text"].waitForExistence(timeout: 5))
+        capture("unused-saved-text-deleted", app: app)
+        closeSettings(app)
+        XCTAssertEqual(app.staticTexts["controls-qa-count"].label, "Saved items: 0")
+        openKeyboard(app)
+        XCTAssertTrue(app.buttons["terminal-preview-item-palette-key-escape"].exists)
+        XCTAssertTrue(app.buttons["terminal-preview-item-palette-key-home"].exists)
+        XCTAssertTrue(app.buttons["terminal-preview-item-palette-character-49-"].exists)
+        XCTAssertEqual(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "terminal-row-handle-")).count, 3)
+        capture("preset-rows-preserved-after-library-deletion", app: app)
+        rowMenu.tap(); app.buttons["Scroll Start"].tap()
+        XCTAssertTrue(app.collectionViews.buttons["Right"].isSelected)
+        capture("row-scroll-preference-preserved-after-deletion", app: app)
+    }
+
+    func testReplaceOneRepeatedFavoritePreservesOtherCopyUndoCancelAndSave() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        openSettings(app); app.buttons["terminal-edit-menu"].tap()
+        for _ in 0..<2 {
+            app.buttons["terminal-control-add"].tap(); searchCatalog("Home", app: app)
+            app.buttons["terminal-add-key-home"].tap()
+            XCTAssertTrue(app.buttons["terminal-control-add"].waitForExistence(timeout: 5))
+        }
+        let home = app.buttons.matching(NSPredicate(format: "label == %@", "Home"))
+        let f8 = app.buttons.matching(NSPredicate(format: "label == %@", "F8"))
+        XCTAssertEqual(home.count, 2)
+        capture("duplicate-home-favorites-before-replacement", app: app)
+        home.element(boundBy: 1).tap(); app.buttons["terminal-replace-key"].tap()
+        searchCatalog("F8", app: app); app.buttons["terminal-add-key-f8"].tap()
+        XCTAssertTrue(f8.firstMatch.waitForExistence(timeout: 5)); XCTAssertEqual(home.count, 1); XCTAssertEqual(f8.count, 1)
+        capture("only-selected-home-favorite-replaced", app: app)
+        app.buttons["terminal-editor-undo"].tap()
+        XCTAssertEqual(home.count, 2); XCTAssertEqual(f8.count, 0)
+        capture("favorite-replacement-undone", app: app)
+        home.element(boundBy: 1).tap(); app.buttons["terminal-replace-key"].tap()
+        searchCatalog("F8", app: app); app.buttons["terminal-add-key-f8"].tap()
+        XCTAssertTrue(f8.firstMatch.waitForExistence(timeout: 5))
+        closeLayout(app, save: true); closeSettings(app)
+        XCTAssertEqual(app.staticTexts["controls-qa-menu-order"].label, "Favorites: Project | Home | F8")
+        openSettings(app); app.buttons["terminal-edit-menu"].tap()
+        XCTAssertEqual(home.count, 1); XCTAssertEqual(f8.count, 1)
+        f8.firstMatch.tap(); app.buttons["terminal-replace-key"].tap()
+        searchCatalog("Home", app: app); app.buttons["terminal-add-key-home"].tap()
+        XCTAssertTrue(app.buttons["terminal-control-add"].waitForExistence(timeout: 5)); XCTAssertEqual(home.count, 2)
+        closeLayout(app, save: false); closeSettings(app)
+        XCTAssertEqual(app.staticTexts["controls-qa-menu-order"].label, "Favorites: Project | Home | F8")
+        openSettings(app); app.buttons["terminal-edit-menu"].tap()
+        XCTAssertEqual(home.count, 1); XCTAssertEqual(f8.count, 1)
+        capture("favorite-save-persists-and-cancel-keeps-other-copy", app: app)
+    }
+
+    func testIndependentCopiesAndOrdinalRowsWithScrollStartSaveAndCancel() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        openKeyboard(app)
+        capture("focused-keyboard-default", app: app)
+        for _ in 0..<2 {
+            addToRow(mainID, app: app); searchCatalog("F8", app: app); app.buttons["terminal-add-key-f8"].tap()
+            XCTAssertTrue(app.buttons["terminal-add-row"].waitForExistence(timeout: 5))
+        }
+        let row = app.scrollViews["terminal-row-preview-scroll"]
+        let copies = row.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "terminal-preview-item-palette-key-f8"))
+        XCTAssertEqual(copies.count, 2)
+        revealHorizontal(copies.element(boundBy: 1), scroll: row)
+        capture("independent-key-copies-before-removal", app: app)
+        copies.element(boundBy: 1).tap(); app.buttons["terminal-remove-placement"].tap()
+        XCTAssertTrue(app.buttons["terminal-add-row"].waitForExistence(timeout: 5)); XCTAssertEqual(copies.count, 1)
+        app.buttons["terminal-editor-undo"].tap(); XCTAssertEqual(copies.count, 2)
+        let menu = app.buttons["terminal-row-menu-" + mainID]
+        XCTAssertTrue(menu.label.contains("Row 3"))
+        menu.tap(); app.buttons["Scroll Start"].tap()
+        capture("row-scroll-start-options", app: app)
+        app.collectionViews.buttons["Right"].tap()
+        capture("row-options-scroll-start-right", app: app)
+        closeLayout(app, save: true); closeSettings(app)
+        openKeyboard(app)
+        XCTAssertTrue(copies.element(boundBy: 1).isHittable)
+        capture("rightmost-scroll-start-persists-after-save", app: app)
+        menu.tap(); app.buttons["Scroll Start"].tap(); app.collectionViews.buttons["Left"].tap()
+        closeLayout(app, save: false); closeSettings(app)
+        openKeyboard(app); XCTAssertTrue(copies.element(boundBy: 1).isHittable)
+        // Full preset additions keep all prior placements.
+        addRowPreset("Navigation", app: app)
+        XCTAssertEqual(app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "terminal-row-handle-")).count, 4)
+        capture("complete-navigation-preset-with-existing-rows", app: app)
+        closeLayout(app, save: true); closeSettings(app)
+        openKeyboard(app); addToRow(mainID, app: app)
+        app.segmentedControls["terminal-add-page"].buttons["Shortcuts"].tap()
+        app.buttons["terminal-tool-presets-tmux"].tap()
+        app.buttons["terminal-preset-tmux.prefix"].tap(); app.buttons["terminal-preset-tmux.window"].tap()
+        capture("direct-tool-shortcuts-with-after-prefix-group", app: app)
+        app.buttons["terminal-presets-add"].tap()
+        let command = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "terminal-row-preview-", "Tmux New Window")).firstMatch
+        XCTAssertTrue(command.waitForExistence(timeout: 5))
+        revealHorizontal(command, scroll: row)
+        capture("compact-prefix-and-command-keycaps", app: app)
+        closeLayout(app, save: true); closeSettings(app)
+        // Favorites also allow duplicate placements and remove only one copy.
+        openSettings(app); app.buttons["terminal-edit-menu"].tap()
+        for _ in 0..<2 {
+            app.buttons["terminal-control-add"].tap()
+            app.buttons["terminal-add-action-composeText"].tap()
+            XCTAssertTrue(app.buttons["terminal-control-add"].waitForExistence(timeout: 5))
+        }
+        capture("independent-favorite-copies", app: app)
+        // Select through the renderer's descriptive accessibility label.
+        let compose = app.buttons.matching(NSPredicate(format: "label == %@", "Compose Text")).allElementsBoundByIndex.filter(\.isHittable)
+        XCTAssertGreaterThanOrEqual(compose.count, 2)
+        compose.last!.tap(); app.buttons["terminal-remove-placement"].tap()
+        XCTAssertTrue(app.buttons["terminal-control-add"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label == %@", "Compose Text")).allElementsBoundByIndex.filter(\.isHittable).count, compose.count - 1)
+        capture("favorite-copy-removed-and-undo-available", app: app)
+        closeLayout(app, save: true)
     }
 
 }

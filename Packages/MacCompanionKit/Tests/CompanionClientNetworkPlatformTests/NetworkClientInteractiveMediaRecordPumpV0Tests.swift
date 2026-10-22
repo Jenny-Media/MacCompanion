@@ -194,12 +194,14 @@ private actor InitialDesktopSuspendingIOV0 {
     private var continuation:
         CheckedContinuation<ClientInteractiveRoleReadChunkV0, Never>?
     private var pendingMaximum = 0
+    private var cancelled = false
 
     init(bytes: Data) { self.bytes = bytes }
 
     func receive(maximumLength: Int) async
         -> ClientInteractiveRoleReadChunkV0
     {
+        guard !cancelled else { return ClientInteractiveRoleReadChunkV0(data: Data(), isComplete: true) }
         if !bytes.isEmpty {
             let count = min(maximumLength, bytes.count)
             let value = Data(bytes.prefix(count))
@@ -211,6 +213,7 @@ private actor InitialDesktopSuspendingIOV0 {
     }
 
     func append(_ value: Data) {
+        guard !cancelled else { return }
         bytes.append(value)
         if let pending = continuation {
             continuation = nil
@@ -221,11 +224,24 @@ private actor InitialDesktopSuspendingIOV0 {
     }
 
     func cancel() {
+        cancelled = true; bytes.removeAll()
         continuation?.resume(returning: ClientInteractiveRoleReadChunkV0(
             data: Data(),
             isComplete: true
         ))
         continuation = nil
+    }
+}
+
+@Test(.timeLimit(.minutes(1)))
+func initialDesktopTestIOKeepsEOFAfterCancellationBeforeReceive() async {
+    let io = InitialDesktopSuspendingIOV0(bytes: Data([1]))
+    await io.cancel()
+    await io.append(Data([2]))
+    for _ in 0..<2 {
+        let chunk = await io.receive(maximumLength: 1)
+        #expect(chunk.isComplete)
+        #expect(chunk.data.isEmpty)
     }
 }
 
