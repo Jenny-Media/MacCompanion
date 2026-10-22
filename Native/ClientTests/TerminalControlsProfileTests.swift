@@ -125,6 +125,7 @@ import Security
         let memory = Memory()
         let item = TerminalControlAction(title: "Legacy", kind: .text, text: "synthetic", inRow: true)
         var profile = TerminalControlsProfile(actions: [item])
+        profile.rowsSchema = nil
         profile.numberRow = false
         profile.keyboardRows = [
             .init(id: TerminalKeyboardRow.numbersID, kind: .numbers, title: "Numbers"),
@@ -132,7 +133,7 @@ import Security
                   items: [.control(.keyboard), .control(.retiredNumbers), .saved(item.id)])]
         memory.data = try JSONEncoder().encode(profile)
         let migrated = try memory.store.load()
-        XCTAssertEqual(migrated.rowsSchema, 2); XCTAssertNil(migrated.numberRow)
+        XCTAssertEqual(migrated.rowsSchema, TerminalControlsProfile.currentRowsSchema); XCTAssertNil(migrated.numberRow)
         XCTAssertEqual(migrated.resolvedRows.first?.preset, .numbers)
         XCTAssertEqual(migrated.resolvedRows.first?.hidden, true)
         XCTAssertEqual(migrated.actions.first?.id, item.id)
@@ -141,6 +142,75 @@ import Security
         XCTAssertTrue(migrated.valid)
         XCTAssertEqual(try memory.store.load(), migrated)
         XCTAssertEqual(memory.writes, 1)
+    }
+    func testSchemaTwoImplicitRowsKeepPreviousContentsOptionsAndIdentityOnUpgrade() throws {
+        for implicitLayout in [false, true] {
+            let memory = Memory()
+            let saved = TerminalControlAction(title: "Keep", kind: .text, text: "synthetic", inRow: true, inMenu: false)
+            var old = TerminalControlsProfile(actions: [saved])
+            old.rowsSchema = 2; old.commandInBar = true
+            if !implicitLayout {
+                old.keyboardRows = [
+                    .init(id: TerminalKeyboardRow.mainID, kind: .main, title: "Main Row", actionIDs: [saved.id], alignment: .right, scrollStart: .right),
+                    .init(id: TerminalKeyboardRow.numbersID, kind: .custom, title: "Numbers", preset: .numbers, expandedOnly: true, hidden: true),
+                    .init(id: TerminalKeyboardRow.navigationID, kind: .navigation, title: "Navigation", expandedOnly: false)]
+            }
+            memory.data = try JSONEncoder().encode(old)
+            let migrated = try memory.store.load()
+            let main = try XCTUnwrap(migrated.resolvedRows.first { $0.kind == .main })
+            XCTAssertEqual(migrated.barItems(in: main), [.control(.keyboard), .key("key-escape"), .key("key-tab"), .control(.ctrl), .control(.alt), .control(.shift), .control(.command), .control(.keypad), .control(.expand), .saved(saved.id)])
+            XCTAssertEqual(main.resolvedAlignment, implicitLayout ? .left : .right)
+            XCTAssertEqual(main.scrollStart, implicitLayout ? nil : .right)
+            XCTAssertEqual(migrated.resolvedRows.map(\.id), old.resolvedRows.map(\.id))
+            XCTAssertEqual(migrated.actions, old.actions)
+            XCTAssertEqual(migrated.rowsSchema, TerminalControlsProfile.currentRowsSchema)
+            if !implicitLayout {
+                let numbers = try XCTUnwrap(migrated.resolvedRows.first { $0.id == TerminalKeyboardRow.numbersID })
+                XCTAssertEqual(numbers.hidden, true); XCTAssertEqual(numbers.expandedOnly, true)
+            }
+            XCTAssertEqual(try memory.store.load(), migrated); XCTAssertEqual(memory.writes, 1)
+            var restored = migrated; restored.restoreKeyboardBar()
+            let restoredMain = try XCTUnwrap(restored.resolvedRows.first { $0.kind == .main })
+            XCTAssertEqual(restored.barItems(in: restoredMain), TerminalRowPreset.essentials.items)
+            XCTAssertEqual(restoredMain.resolvedAlignment, .fill)
+        }
+    }
+    func testUnversionedJSONUsesLegacyRowsAndExplicitPlacementsSurviveUpgrade() throws {
+        let memory = Memory()
+        var profile = TerminalControlsProfile()
+        profile.rowsSchema = nil; profile.numberRow = false
+        memory.data = try JSONEncoder().encode(profile)
+        XCTAssertNil(try JSONDecoder().decode(TerminalControlsProfile.self, from: XCTUnwrap(memory.data)).rowsSchema)
+        let migrated = try memory.store.load()
+        XCTAssertEqual(migrated.resolvedRows.first { $0.id == TerminalKeyboardRow.numbersID }?.hidden, true)
+        let main = try XCTUnwrap(migrated.resolvedRows.first { $0.kind == .main })
+        XCTAssertTrue(migrated.barItems(in: main).contains(.control(.keypad)))
+        XCTAssertFalse(migrated.barItems(in: main).contains(.key("key-left")))
+        XCTAssertEqual(main.resolvedAlignment, .left)
+
+        profile.rowsSchema = 2
+        var row = TerminalKeyboardRow(id: TerminalKeyboardRow.mainID, kind: .main, title: "Customized", alignment: .center)
+        row.placements = [.init(item: .key("key-f4")), .init(item: .key("key-f4"))]
+        profile.keyboardRows = [row]; memory.data = try JSONEncoder().encode(profile)
+        XCTAssertEqual(try memory.store.load().keyboardRows, [row])
+    }
+    func testNewProfilesUseCurrentDefaultsAndFailedUpgradeKeepsOriginalStorage() throws {
+        let memory = Memory()
+        let fresh = try memory.store.load()
+        let main = try XCTUnwrap(fresh.resolvedRows.first { $0.kind == .main })
+        XCTAssertEqual(fresh.barItems(in: main), TerminalRowPreset.essentials.items)
+        XCTAssertEqual(main.resolvedAlignment, .fill)
+
+        var old = TerminalControlsProfile(); old.rowsSchema = 2
+        memory.data = try JSONEncoder().encode(old)
+        let original = memory.data, writes = memory.writes
+        memory.failWrite = true
+        XCTAssertThrowsError(try memory.store.load())
+        XCTAssertEqual(memory.data, original); XCTAssertEqual(memory.writes, writes)
+        memory.failWrite = false
+        let retried = try memory.store.load()
+        XCTAssertTrue(retried.barItems(in: retried.resolvedRows.first { $0.kind == .main }!).contains(.control(.keypad)))
+        XCTAssertEqual(try memory.store.load(), retried); XCTAssertEqual(memory.writes, writes + 1)
     }
     func testEditingPlacementsAndOrderPreservesOnePayloadAndStableIdentity() throws {
         let memory = Memory()

@@ -145,6 +145,41 @@ private final class KeyboardMenuSession: CompanionVNCSession {
             XCTAssertEqual(feedback.events, ["selection", "selection", "selection", "key", "selection"])
         }
     }
+    func testEveryRepeatedKeyboardAndExpandPlacementEmitsSelectionFeedback() throws {
+        try withFeedback { defaults, feedback in
+            let controller = terminal(feedback), bar = controller.keyboardBar
+            let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+            let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+            window.rootViewController = controller; window.makeKeyAndVisible()
+            defer { window.endEditing(true); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+            var profile = TerminalControlsProfile.defaults
+            _ = profile.addPreset(.essentials, before: TerminalKeyboardRow.mainID)
+            profile.placeBarItem(.control(.keyboard), in: TerminalKeyboardRow.mainID)
+            profile.placeBarItem(.control(.expand), in: TerminalKeyboardRow.mainID)
+            // Exercise this synthetic layout without the controller replacing
+            // it with its separately persisted profile after an expansion.
+            bar.layoutChanged = {}
+            bar.configure(profile) { _ in XCTFail("Utilities never send input") }
+            let keyboards = descendants(bar).compactMap { $0 as? UIButton }.filter { ["Show Keyboard", "Hide Keyboard"].contains($0.accessibilityLabel ?? "") }
+            let expands = descendants(bar).compactMap { $0 as? UIButton }.filter { ["Expand Rows", "Collapse Rows"].contains($0.accessibilityLabel ?? "") }
+            XCTAssertEqual(keyboards.count, 3); XCTAssertEqual(expands.count, 3)
+            for key in keyboards {
+                let before = controller.terminal.isFirstResponder, count = feedback.events.count
+                key.sendActions(for: .touchUpInside)
+                XCTAssertNotEqual(controller.terminal.isFirstResponder, before)
+                XCTAssertEqual(feedback.events.count, count + 1); XCTAssertEqual(feedback.events.last, "selection")
+            }
+            for key in expands {
+                let before = bar.showsExtraRows, count = feedback.events.count
+                key.sendActions(for: .touchUpInside)
+                XCTAssertNotEqual(bar.showsExtraRows, before); XCTAssertEqual(feedback.events.count, count + 1)
+            }
+            defaults.set(false, forKey: CompanionVNCControlsHapticsPreference)
+            let count = feedback.events.count
+            (keyboards + expands).forEach { $0.sendActions(for: .touchUpInside) }
+            XCTAssertEqual(feedback.events.count, count); XCTAssertTrue(controller.output.isEmpty)
+        }
+    }
     func testTerminalReadsInterfacePreferenceLiveAndIgnoresTrackpadPreference() throws {
         try withFeedback { defaults, feedback in
             let controller = terminal(feedback), bar = controller.keyboardBar

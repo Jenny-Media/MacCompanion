@@ -793,6 +793,39 @@ import StoreKit
             }
         }
     }
+    func testRightEdgeSurvivesOverflowFitOverflowAndManualScrollingWithFrameAndConstraints() throws {
+        for preview in [false, true] {
+            for alignment in TerminalKeyboardRow.Alignment.allCases {
+                for autoLayout in [false, true] {
+                    var profile = TerminalControlsProfile()
+                    profile.keyboardRows = [.init(id: TerminalKeyboardRow.mainID, kind: .main, title: "Main", items: TerminalRowPreset.functions.items, alignment: alignment, scrollStart: .right)]
+                    let bar = TerminalKeyboardBar(terminal: nil, preferences: .init()); bar.editingPreview = preview
+                    bar.configure(profile) { _ in XCTFail("Geometry never sends input") }
+                    let host = UIView(frame: .init(x: 0, y: 0, width: 1100, height: 400))
+                    host.addSubview(bar); bar.translatesAutoresizingMaskIntoConstraints = !autoLayout
+                    let width = bar.widthAnchor.constraint(equalToConstant: 250)
+                    if autoLayout { NSLayoutConstraint.activate([bar.leadingAnchor.constraint(equalTo: host.leadingAnchor), bar.topAnchor.constraint(equalTo: host.topAnchor), width, bar.heightAnchor.constraint(equalToConstant: bar.height)]) }
+                    func resize(_ value: CGFloat) {
+                        if autoLayout { width.constant = value; host.setNeedsLayout(); host.layoutIfNeeded() }
+                        else { bar.frame = .init(x: 0, y: 0, width: value, height: bar.height) }
+                        bar.setNeedsLayout(); bar.layoutIfNeeded(); bar.layoutRows()
+                    }
+                    func maximum() -> CGFloat { max(0, bar.keyScroll.contentSize.width - bar.keyScroll.bounds.width) }
+                    resize(250); XCTAssertGreaterThan(maximum(), 100)
+                    XCTAssertEqual(bar.keyScroll.contentOffset.x, maximum(), accuracy: 1)
+                    resize(1000); XCTAssertEqual(maximum(), 0, accuracy: 1)
+                    bar.configure(profile) { _ in }; bar.setNeedsLayout(); bar.layoutIfNeeded(); bar.layoutRows()
+                    resize(250); XCTAssertGreaterThan(maximum(), 100)
+                    XCTAssertEqual(bar.keyScroll.contentOffset.x, maximum(), accuracy: 1, "\(preview) \(alignment) AutoLayout=\(autoLayout)")
+                    bar.keyScroll.setContentOffset(.init(x: 65, y: 0), animated: false)
+                    resize(290); XCTAssertEqual(bar.keyScroll.contentOffset.x, 65, accuracy: 1)
+                    resize(250); XCTAssertEqual(bar.keyScroll.contentOffset.x, 65, accuracy: 1)
+                    resize(1000); resize(250)
+                    XCTAssertEqual(bar.keyScroll.contentOffset.x, 0, accuracy: 1, "A manual non-edge position must not restore the original right-start preference")
+                }
+            }
+        }
+    }
     func testDuplicateKeysSelectAndRemoveTheirOwnOccurrenceAndKeepReadableShortcutLabels() throws {
         var profile = TerminalControlsProfile.defaults
         let main = TerminalKeyboardRow.mainID

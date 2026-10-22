@@ -41,6 +41,18 @@ final class TerminalControlsScene: UIResponder, UIWindowSceneDelegate {
         // Transaction journeys start after migration; migration has its own
         // hosted tests. A failed explicit Save must not fail the initial load.
         profile.normalizeLegacyRows()
+        if ProcessInfo.processInfo.environment["MACCOMPANION_CONTROLS_LEGACY_ROWS"] == "1" {
+            // Saved schema-2 layout from before the Essentials update. Keep its
+            // contents implicit to exercise the production upgrade path.
+            profile.rowsSchema = 2
+            profile.keyboardRows = profile.resolvedRows
+            let main = profile.keyboardRows!.firstIndex { $0.kind == .main }!
+            profile.keyboardRows![main].alignment = .right
+        }
+        if ProcessInfo.processInfo.environment["MACCOMPANION_CONTROLS_ROTATION"] == "1" {
+            profile.actions = []
+            profile.keyboardRows = [.init(id: TerminalKeyboardRow.mainID, kind: .main, title: "Main", items: TerminalRowPreset.functions.items, alignment: .right, scrollStart: .right)]
+        }
         return try! JSONEncoder().encode(profile)
     }()
     var profile: TerminalControlsProfile { try! JSONDecoder().decode(TerminalControlsProfile.self, from: data) }
@@ -144,6 +156,9 @@ struct TerminalControlsHarness: View {
             profile.actions.append(.init(id: UUID(uuidString: "00000000-0000-0000-0000-00000000C003")!, title: "Multiline", kind: .text, text: text, inMenu: false))
         }
         for index in 1...40 { profile.actions.append(.init(title: "Saved Path \(index)", kind: .text, text: "/synthetic/path/\(index)", inMenu: false)) }
+        if ProcessInfo.processInfo.environment["MACCOMPANION_CONTROLS_REPEATED_UTILITIES"] == "1" {
+            profile.addPreset(.essentials, before: TerminalKeyboardRow.mainID)
+        }
         try TerminalSecretStore.write(JSONEncoder().encode(profile), id: TerminalControlsStore.account, kind: TerminalControlsStore.kind)
         session = DirectTerminalSession(mac: mac); session?.saveMacRequested = false
     }

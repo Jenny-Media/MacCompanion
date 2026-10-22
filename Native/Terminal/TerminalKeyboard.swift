@@ -298,6 +298,7 @@ private final class TerminalKeyScrollView: UIScrollView {
     private var positioning: [NSLayoutConstraint] = []
     private weak var keyStack: UIStackView?
     private var pending: TerminalRowScrollPosition?
+    private var resizingPosition: TerminalRowScrollPosition?
     private var lastWidth: CGFloat = 0
     private var lastMaximum: CGFloat = 0
     private var pinnedRight = false
@@ -305,7 +306,19 @@ private final class TerminalKeyScrollView: UIScrollView {
     private var fillKeys: [ObjectIdentifier] = []
     private var fillConstraints: [NSLayoutConstraint] = []
     var position: TerminalRowScrollPosition {
-        pending ?? .init(offset: contentOffset.x, rightEdge: lastMaximum > 0 ? abs(contentOffset.x - lastMaximum) < 1 : pinnedRight)
+        pending ?? resizingPosition ?? .init(offset: contentOffset.x, rightEdge: lastMaximum > 0 ? abs(contentOffset.x - lastMaximum) < 1 : pinnedRight)
+    }
+    // UIScrollView can clamp its offset before layoutSubviews runs. Snapshot
+    // the visible edge before either manual frames or Auto Layout resize it.
+    override var frame: CGRect {
+        willSet { if abs(newValue.width - frame.width) > 0.5 { prepareResize() } }
+    }
+    override var bounds: CGRect {
+        willSet { if abs(newValue.width - bounds.width) > 0.5 { prepareResize() } }
+    }
+    private func prepareResize() {
+        guard lastWidth > 0, pending == nil, resizingPosition == nil, !isDragging, !isDecelerating else { return }
+        resizingPosition = position
     }
     func install(_ stack: UIStackView) {
         keyStack = stack
@@ -359,9 +372,9 @@ private final class TerminalKeyScrollView: UIScrollView {
         super.layoutSubviews()
         guard bounds.width > 0 else { return }
         let maximum = max(0, contentSize.width - bounds.width)
-        let restore = pending
+        let restore = pending ?? resizingPosition
         let resized = abs(lastWidth - bounds.width) > 0.5 || abs(lastMaximum - maximum) > 0.5
-        lastWidth = bounds.width; lastMaximum = maximum; pending = nil
+        lastWidth = bounds.width; lastMaximum = maximum; pending = nil; resizingPosition = nil
         if let restore {
             pinnedRight = restore.rightEdge
             setContentOffset(.init(x: restore.rightEdge ? maximum : min(maximum, max(0, restore.offset)), y: 0), animated: false)
@@ -485,14 +498,12 @@ private final class TerminalKeyScrollView: UIScrollView {
         configureButton(keyboardButton, title: "Show Keyboard", symbol: "keyboard")
         keyboardButton.accessibilityIdentifier = "terminal-keyboard-toggle"
         keyboardButton.addAction(UIAction { [weak self] _ in
-            guard let self, let terminal = self.terminal else { return }
-            let before = terminal.isFirstResponder; toggleKeyboard?()
-            if before != terminal.isFirstResponder { keyFeedback.feedback("selection") }
+            self?.performKeyboardToggle()
         }, for: .touchUpInside)
         configureButton(expandButton, title: "Expand Rows", symbol: "rectangle.expand.vertical")
         expandButton.accessibilityIdentifier = "terminal-row-expand"
         expandButton.addAction(UIAction { [weak self] _ in
-            guard let self else { return }; showsExtraRows.toggle(); keyFeedback.feedback("selection"); layoutChanged?()
+            self?.performExpandToggle()
         }, for: .touchUpInside)
         configureButton(keypadButton, title: "Open Keypad", symbol: "rectangle.grid.3x2")
         keypadButton.accessibilityIdentifier = "terminal-keypad-toggle"
@@ -559,14 +570,14 @@ private final class TerminalKeyScrollView: UIScrollView {
                     switch control {
                     case .keyboard:
                         if keyboardToggles.isEmpty { key = keyboardButton }
-                        else { key = button(title, symbol: "keyboard") { [weak self] in self?.toggleKeyboard?() } }
+                        else { key = button(title, symbol: "keyboard") { [weak self] in self?.performKeyboardToggle() } }
                         keyboardToggles.append(key)
                     case .retiredNumbers: continue
                     case .keypad:
                         key = button(title, symbol: item.symbol) { [weak self] in self?.openKeypad?(false) }; keypadToggles.append(key)
                     case .expand:
                         if expandToggles.isEmpty { key = expandButton }
-                        else { key = button(title, symbol: item.symbol) { [weak self] in guard let self else { return }; self.showsExtraRows.toggle(); self.layoutChanged?() } }
+                        else { key = button(title, symbol: item.symbol) { [weak self] in self?.performExpandToggle() } }
                         expandToggles.append(key)
                     default: key = button(title, symbol: item.symbol, modifier: item.modifier != nil) { [weak self] in if let modifier = item.modifier { self?.toggle(modifier) } }
                     }
@@ -990,6 +1001,14 @@ private final class TerminalKeyScrollView: UIScrollView {
         key.addAction(UIAction { [weak self] _ in guard self?.layoutGeneration == generation else { return }; action() }, for: .touchUpInside)
         key.addAction(UIAction { [weak self] _ in if self?.terminal?.customInputEpoch() != nil { self?.keyFeedback.prepareKeyFeedback() } }, for: .touchDown)
         return key
+    }
+    private func performKeyboardToggle() {
+        guard let terminal else { return }
+        let before = terminal.isFirstResponder; toggleKeyboard?()
+        if before != terminal.isFirstResponder { keyFeedback.feedback("selection") }
+    }
+    private func performExpandToggle() {
+        showsExtraRows.toggle(); keyFeedback.feedback("selection"); layoutChanged?()
     }
     func toggle(_ modifier: TerminalModifiers, lock: Bool = false) {
         guard let terminal, terminal.customInputEpoch() != nil, modifier != .command || terminal.keyEncoding.supportsCommand else { return }

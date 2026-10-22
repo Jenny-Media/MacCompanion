@@ -185,7 +185,7 @@ import XCTest
                 var data = try JSONEncoder().encode(profile)
                 let store = TerminalControlsStore(read: { data }, write: { data = $0 }, legacyIDs: { [] })
                 var loaded = try store.load()
-                XCTAssertEqual(loaded.rowsSchema, 2)
+                XCTAssertEqual(loaded.rowsSchema, TerminalControlsProfile.currentRowsSchema)
                 XCTAssertTrue(loaded.resolvedRows.allSatisfy { $0.items == nil })
                 let rows = loaded.resolvedRows
                 let keys = rows.map { loaded.barItems(in: $0) }

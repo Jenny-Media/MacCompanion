@@ -27,6 +27,9 @@ The initial preference applies when opening a session or preview, or changing
 the preference. Manual scrolling survives typing, modifiers, keyboard show/hide
 and ordinary updates. Resizing keeps a visible right edge at the right edge;
 otherwise it preserves the offset within the new bounds.
+The right-edge anchor survives a wider viewport in which every key fits, so
+rotating back reveals the same final keys. Manually scrolling away from the
+edge clears that anchor.
 
 Up to six rows are configurable. Add Row offers full previews of Numbers,
 Essentials, Navigation, Function Keys, Symbols, Shell Shortcuts and Blank. A
@@ -47,6 +50,10 @@ Replace Key changes only the selected placement, including repeated menu
 favorites; Edit Shortcut and Edit Text update the shared definition everywhere.
 Deleting a saved item removes its references while retaining every other key,
 including preset rows restored and then adjusted through row options.
+Upgrading older saved profiles freezes their previous implicit row contents
+and preserves their options. New default templates apply to new layouts or an
+explicit Restore Keyboard Bar action. Repeated Keyboard and Expand controls
+provide the same selection feedback as their first copy.
 
 ## Editors, keypad and saved items
 

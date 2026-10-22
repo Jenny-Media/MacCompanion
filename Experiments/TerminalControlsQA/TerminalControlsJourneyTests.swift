@@ -168,6 +168,9 @@ import UIKit
         if name.contains("testFailedSave") { app.launchEnvironment["MACCOMPANION_CONTROLS_FAIL_WRITE"] = "1" }
         if failWriteOnce { app.launchEnvironment["MACCOMPANION_CONTROLS_FAIL_WRITE_ONCE"] = "1" }
         if name.contains("testDirectLibraryRecovery") { app.launchEnvironment["MACCOMPANION_CONTROLS_FAIL_READ_ONCE"] = "1" }
+        if name.contains("testUpgradedImplicitRows") { app.launchEnvironment["MACCOMPANION_CONTROLS_LEGACY_ROWS"] = "1" }
+        if name.contains("testRightEdgeRowRotation") { app.launchEnvironment["MACCOMPANION_CONTROLS_ROTATION"] = "1" }
+        if name.contains("testRepeatedUtilityControls") { app.launchEnvironment["MACCOMPANION_CONTROLS_REPEATED_UTILITIES"] = "1" }
         app.launch()
         XCTAssertTrue(app.staticTexts["controls-qa-pro"].waitForExistence(timeout: 10))
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "LifetimePro", withExtension: "storekit"))
@@ -788,6 +791,74 @@ import UIKit
         openKeyboard(app)
         XCTAssertEqual(key.frame.maxX, row.frame.maxX, accuracy: 1)
         capture("keyboard-row-cancel-preserves-right-alignment", app: app)
+    }
+
+    func testRepeatedUtilityControlsWorkInALiveSessionWithoutSendingInput() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        live(app)
+        let row = app.scrollViews["terminal-modifier-keys"]
+        let expand = row.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Expand Rows", "Collapse Rows")).firstMatch
+        revealHorizontal(expand, scroll: row)
+        if expand.label == "Expand Rows" { expand.tap() }
+        XCTAssertEqual(expand.label, "Collapse Rows")
+        let keyboards = app.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Show Keyboard", "Hide Keyboard"))
+        XCTAssertEqual(keyboards.count, 2)
+        capture("repeated-utilities-expanded-in-live-terminal", app: app)
+        let keyboard = row.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Show Keyboard", "Hide Keyboard")).firstMatch
+        revealHorizontal(keyboard, scroll: row); keyboard.tap()
+        try await waitForSoftwareKeyboard(app)
+        capture("repeated-keyboard-control-opens-native-keyboard", app: app)
+        keyboard.tap()
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in !app.keyboards.firstMatch.exists }, evaluatedWith: nil)], timeout: 5)
+        revealHorizontal(expand, scroll: row); expand.tap()
+        XCTAssertEqual(expand.label, "Expand Rows")
+        await assertInput("", app: app)
+        capture("repeated-expand-control-collapses-without-input", app: app)
+    }
+
+    func testUpgradedImplicitRowsKeepOldKeysUntilExplicitRestore() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        openKeyboard(app)
+        let keypad = app.buttons["terminal-preview-item-control-keypad"]
+        XCTAssertTrue(keypad.exists)
+        XCTAssertFalse(app.scrollViews["terminal-row-preview-scroll"].buttons["Left"].exists)
+        revealHorizontal(keypad, scroll: app.scrollViews["terminal-row-preview-scroll"])
+        capture("upgrade-preserves-old-keypad-and-row-order", app: app)
+        closeLayout(app, save: true); closeSettings(app)
+        openKeyboard(app); XCTAssertTrue(keypad.exists)
+        app.buttons["terminal-row-options"].tap(); app.buttons["Restore Keyboard Bar…"].tap(); app.buttons["Restore Layout"].tap()
+        XCTAssertFalse(keypad.exists)
+        XCTAssertTrue(app.scrollViews["terminal-row-preview-scroll"].buttons["Left"].exists)
+        capture("explicit-restore-installs-new-default-controls", app: app)
+        closeLayout(app, save: true); closeSettings(app)
+        openKeyboard(app); XCTAssertFalse(keypad.exists)
+        XCTAssertTrue(app.scrollViews["terminal-row-preview-scroll"].buttons["Right"].exists)
+        capture("restored-current-defaults-persist-after-reopen", app: app)
+    }
+
+    func testRightEdgeRowRotationKeepsLastKeysAndRespectsManualScroll() async throws {
+        let (app, store) = try await launchPro()
+        defer { XCUIDevice.shared.orientation = .portrait; app.terminate(); store.clearTransactions() }
+        openKeyboard(app)
+        let first = app.buttons["terminal-preview-item-palette-key-f1"]
+        let last = app.buttons["terminal-preview-item-palette-key-f12"]
+        let row = app.scrollViews["terminal-row-preview-scroll"]
+        func visible(_ key: XCUIElement) -> Bool { key.isHittable && key.frame.intersection(row.frame).width >= min(40, key.frame.width) }
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in visible(last) && !visible(first) }, evaluatedWith: nil)], timeout: 5)
+        capture("right-edge-before-rotation", app: app)
+        XCUIDevice.shared.orientation = .landscapeLeft
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in visible(first) && visible(last) }, evaluatedWith: nil)], timeout: 5)
+        capture("right-edge-row-fits-in-landscape", app: app)
+        XCUIDevice.shared.orientation = .portrait
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in visible(last) && !visible(first) }, evaluatedWith: nil)], timeout: 5)
+        capture("right-edge-retained-after-return-to-portrait", app: app)
+        revealHorizontal(first, scroll: row)
+        XCTAssertTrue(visible(first))
+        XCUIDevice.shared.orientation = .landscapeLeft
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in visible(first) && visible(last) }, evaluatedWith: nil)], timeout: 5)
+        XCUIDevice.shared.orientation = .portrait
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in visible(first) && !visible(last) }, evaluatedWith: nil)], timeout: 5)
+        capture("manual-left-scroll-retained-after-rotation", app: app)
     }
 
     func testRestoredRowsKeepTheirKeysAfterOptionsSaveAndSavedItemDeletion() async throws {

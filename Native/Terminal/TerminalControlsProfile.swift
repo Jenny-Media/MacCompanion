@@ -278,7 +278,8 @@ struct TerminalControlsProfile: Codable, Equatable {
     var commandInBar: Bool?
     var shortcutOrder: [UUID]?
     var textOrder: [UUID]?
-    var rowsSchema: Int?
+    static let currentRowsSchema = 3
+    var rowsSchema: Int? = Self.currentRowsSchema
     /// Old flat placements remain on the main row. New rows reference the same
     /// saved definitions, and never copy or discard their content.
     var resolvedRows: [TerminalKeyboardRow] {
@@ -368,6 +369,7 @@ struct TerminalControlsProfile: Codable, Equatable {
     mutating func restoreKeyboardBar() {
         for index in actions.indices { actions[index].inRow = false }
         rowOrder = nil; keyboardRows = nil; numberRow = nil; navigationRow = true; rowsExpanded = false; commandInBar = false
+        rowsSchema = Self.currentRowsSchema
     }
     /// Adding a template creates independent placements and never moves existing keys.
     @discardableResult mutating func installEditorPreset(_ preset: TerminalRowPreset, before target: UUID?) -> UUID? {
@@ -590,19 +592,29 @@ struct TerminalControlsProfile: Codable, Equatable {
     mutating func reorderLibrary(_ section: TerminalSavedItemsSection, ids: [UUID]) {
         if section == .shortcuts { shortcutOrder = ids } else { textOrder = ids }
     }
-    /// Convert only retired Numbers behavior; leave all other placements alone.
-    mutating func normalizeLegacyRows(legacyNumbersVisible: Bool = true) {
-        guard rowsSchema != 2 else { return }
+    /// Freeze earlier implicit templates before applying newer defaults. Explicit
+    /// placements and row options remain authoritative throughout the upgrade.
+    mutating func normalizeLegacyRows(legacyNumbersVisible: Bool = true, preservingImplicitContents: Bool = true) {
+        guard rowsSchema != Self.currentRowsSchema else { return }
+        let retiredNumbers = rowsSchema != 2
         var rows = resolvedRows
+        if preservingImplicitContents, keyboardRows == nil,
+           let main = rows.firstIndex(where: { $0.kind == .main }) { rows[main].alignment = nil }
         for index in rows.indices {
-            rows[index].placements = barPlacements(in: rows[index]).filter { $0.item.control != .retiredNumbers }
-            if rows[index].kind == .numbers || rows[index].id == TerminalKeyboardRow.numbersID {
+            if preservingImplicitContents, rows[index].items == nil,
+               rows[index].kind == .main || rows[index].preset == .essentials {
+                var items: [TerminalBarItem] = [.control(.keyboard), .key("key-escape"), .key("key-tab"), .control(.ctrl), .control(.alt), .control(.shift), .control(.keypad), .control(.expand)]
+                if rows[index].kind == .main, commandInBar == true { items.insert(.control(.command), at: 6) }
+                rows[index].items = items + rows[index].actionIDs.map { .saved($0) }
+            }
+            rows[index].placements = barPlacements(in: rows[index]).filter { !retiredNumbers || $0.item.control != .retiredNumbers }
+            if retiredNumbers, rows[index].kind == .numbers || rows[index].id == TerminalKeyboardRow.numbersID {
                 rows[index].kind = .custom; rows[index].preset = .numbers
                 rows[index].expandedOnly = false
                 rows[index].hidden = !(numberRow ?? legacyNumbersVisible)
             }
         }
-        keyboardRows = rows; numberRow = nil; rowsSchema = 2
+        keyboardRows = rows; numberRow = nil; rowsSchema = Self.currentRowsSchema
     }
     static var defaults: Self { .init(actions: DirectControlMode.terminal.defaults.map(TerminalControlAction.init)) }
     mutating func importKeyboard(_ preferences: TerminalKeyboardPreferences, macID: UUID) {
@@ -652,6 +664,9 @@ struct TerminalControlsProfile: Codable, Equatable {
             let actions = try legacyActions()
             guard DirectQuickActionEditing.valid(actions, mode: .terminal) else { throw Failure.unreadable }
             profile = .init(actions: actions.map(TerminalControlAction.init))
+            // No saved row layout exists yet; retain the legacy Numbers
+            // preference while installing the current default templates.
+            profile.rowsSchema = nil
         }
         // Resolution builds ordering dictionaries. Reject malformed storage
         // before migration can resolve rows; never rewrite a corrupt record.
@@ -659,7 +674,7 @@ struct TerminalControlsProfile: Codable, Equatable {
         let before = profile
         let legacyPreference = "direct-terminal-number-row"
         let legacyVisible = UserDefaults.standard.object(forKey: legacyPreference) == nil || UserDefaults.standard.bool(forKey: legacyPreference)
-        profile.normalizeLegacyRows(legacyNumbersVisible: legacyVisible)
+        profile.normalizeLegacyRows(legacyNumbersVisible: legacyVisible, preservingImplicitContents: stored != nil)
         for index in profile.actions.indices { profile.actions[index].normalizeLegacyDefinition() }
         guard profile.valid else { throw Failure.unreadable }
         let excluded = excludedIDs()
