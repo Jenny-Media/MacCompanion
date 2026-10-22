@@ -1,174 +1,158 @@
-# Shared iOS Terminal controls
+# Terminal controls redesign
 
-The floating menu has six entries in two rows at standard text sizes:
-**Keypad · Shortcuts · Text**, then **Customize Controls · Appearance · Session**.
-Session remains at the bottom right. Accessibility text sizes use a readable
-vertical layout. Customize Controls opens the editor directly; there is no
-intermediate Keyboard & Input submenu or duplicate header entry. Shortcuts and
-Text open separate, searchable collections backed by the same preserved saved
-items. Text also exposes the free Compose Text action. Opening either collection
-or the editor sends nothing. Selecting a shortcut sends once; saved text opens the composer for review.
-Send Text adds no Return, and multiline text still requires confirmation.
+## Interaction contract
 
-Keypad uses a grid icon and starts in the standard half-height draggable sheet.
-It can expand to full height. Its searchable All Keys catalog groups Essentials,
-Navigation, Function Keys, Common Shortcuts, Symbols and Numbers. Every built-in
-key is available without Pro or pinning. Modifiers show Off, Next Key or On:
-tap for the next key, long-press to keep on, and tap again to turn off. Each is
-one compact button with explicit state; there are no separate lock icons. Hold a key to pin it without sending input. There is
-no Fn or All Actions entry; saved Shortcuts and Text have their own tabs.
+The controls overview is navigation, without a global Save transaction. Keyboard
+Bar and Floating Menu open separate full-screen destination editors. Each editor
+owns a value draft: Done commits once, Cancel discards all changes, and Undo
+reverts placement changes. Nested saved-item edits use Save and belong to that
+same draft. Edits opened directly from Shortcuts or Saved Text use Save independently.
+Persistence retains optimistic revision admission and reports failed saves without
+closing the draft.
 
-The keyboard bar keeps **the same configured rows** in portrait, landscape,
-and with the native keyboard shown or hidden. The entire Main strip scrolls,
-including the keyboard toggle and expansion control. Only the floating-menu
-button stays fixed at the right. Session provides keyboard show/hide recovery. Esc, Tab,
-Ctrl, Alt/Option and Shift use compact symbols. Arrows live in Navigation without duplicate Main placements; Command is optional. The real bar renderer also supplies the
-input-free editor preview. Built-ins and saved placements can be reordered,
-moved or removed, with draggable row handles, full visual row presets, layout-only restore and Undo. Numbers have a dedicated 1–0 row above Main by
-default. The visual editor can reorder whole rows and move shared placements
-between up to six total rows, including Main and Numbers. Expand Rows explicitly
-shows those extra rows; 123 independently toggles Numbers. No keyboard visibility
-change silently expands or collapses the layout. Legacy flat placements remain
-on Main and legacy expanded values are retained without rewriting content.
-Keypad hides the native keyboard while open and restores it on Done when it was
-previously visible. See [row behavior and regression coverage](terminal-keyboard-rows.md).
+Keyboard and Menu Favorites use the approved layout-first clickable prototype.
+Keyboard editing opens the continuous production bar, with drag-only row handles
+and a per-row menu in the former Add-button slot. Add Key is first, followed by
+Alignment, Visibility and Remove Row. The required main row stays visible and
+the last row offers Clear Row. Add Row opens complete templates; key taps open
+focused actions, replacement or creation. There is no standing catalog, selection toolbar,
+terminal backdrop or disabled Undo control. Options opens a separate read-only
+preview with the native keyboard. Its UIKit controller owns first-responder
+transitions. Customization never sends SSH input, and the runtime keyboard is restored
+only in the same session.
 
-Dragging across a key cancels button tracking so slow horizontal drags scroll
-without sending that key. Holding a stationary modifier retains its lock gesture.
-The Terminal composer presents over the full screen when entered from a SwiftUI
-session, keeping its editor and Close/Send controls in the accessibility tree.
-Typing into that local draft sends nothing until Send is explicitly requested.
+Row handles reorder on a direct pan. Whole-row lift, source dimming, an insertion
+line and edge autoscroll remain available. Keys use explicitly enabled UIKit drag
+interactions. Focused actions supply tap alternatives for every movement. Add Row
+explains transfer of existing keys before assembling a complete template without
+duplicates. Rows left empty by transfer are removed, except the required main row.
+Removing the main row promotes another; removing the last row clears it. The
+six-row limit is explained when an addition cannot proceed.
 
-Command is a remote Kitty Super modifier on iOS, enabled only when the remote
-terminal application negotiates disambiguation or report-all support. It never
-falls back to ordinary text, Ctrl or Alt. Saved Command shortcuts remain intact
-but unavailable in legacy shells. Ending negotiated support clears armed and
-locked Command. Native hardware Command copy/paste remains local, and the
-macOS client's shortcut availability is unchanged.
+Add pickers separate Keys, Shortcuts and Text, with app Actions available when
+adding a menu favorite. Custom definitions and tool presets
+can be created inside either editor. Both surfaces reference one saved identity.
+Removing a placement retains its definition. Save in a nested item editor changes
+only the local layout draft; Done commits once. Cancel confirms discarding a changed
+draft. Undo appears after a change and also reverses restores and removals.
+Unavailable customization shows a recovery/access explanation instead of a grayed
+out editor. Invalid content produces an explanation when Save is requested.
 
-Customization starts with two separate destinations: **Keyboard Bar** and
-**Floating Menu**. Each editor previews only its destination, supports selection,
-independent placement order and accessible Earlier/Later controls. Removing a
-placement preserves its definition. Searchable **Shortcuts & Text** owns reusable
-shortcuts/text; both editors can pin the same item without copying its payload.
-Editors use a page-sized presentation, and the presenting owner closes the
-sheet explicitly. Editors never send input. Cancel discards drafts; Save commits once. Changes
-apply to all Macs on this device, after the sheet has dismissed. Multiline saved
-text requires confirmation before input, and no saved text adds Return.
-Customization retains the existing Pro requirement; standard input stays free.
+Menu Favorites displays only editable favorites and Add Favorite. Its optional
+full-menu preview shows fixed destinations as passive labels in runtime order:
+Keypad / Shortcuts / Text, then Customize Controls / Appearance / Session. It
+contains no disabled navigation buttons or unrelated keyboard bar. The saved-text
+form shows its name, text, insertion behavior and shared-edit explanation without
+permanent placement lists or technical counters.
 
-## Shared settings and preservation
+Runtime All Keys contains keys, search, modifiers and explicit pin actions. It
+uses native medium/large detents. Shortcuts and Text have separate runtime entry
+points. A shortcut row sends once; a text row opens a temporary review draft.
+Runtime text review preserves existing no-extra-Return, multiline/tab confirmation,
+draft retention and lifecycle admission. Manage opens the canonical saved library.
 
-The new local Keychain profile applies to all Mac connections on this iPhone or
-iPad. It does not introduce synchronization or change credentials, server trust,
-SSH key selection, signing identities or Keychain groups.
+## Tool presets
 
-On first load, import the existing shared Terminal quick-action profile and
-every per-Mac keyboard record in the local Keychain, excluding identities owned
-by the temporary-identity discard journal. Preserve action order, hidden actions,
-IDs where unique, same-name entries with different contents, modifiers,
-whitespace and text through the existing 4096-byte UTF-8 snippet limit.
-Colliding IDs receive independent identities; neither source payload is lost.
-Legacy records are retained unchanged.
-Imported snippets stay in Shortcuts & Text; they are not automatically pinned into
-the main menu. Existing quick-action pins and custom-row keys are retained.
+Tool Presets is a multi-select catalog. Adding a preset twice reuses its saved
+identity, including after editing its name or chord. Presets are optional and
+can be edited and placed like custom items. No tool detection or remote config
+change occurs. Prefix commands remain separate taps; no sequence execution is
+introduced. The prerequisite is retained on the saved definition and displayed
+in the preset picker, editor, library and runtime browser.
 
-The imported actions and completed-source journal are written together in one
-Keychain update. Failed reads or writes leave existing records untouched.
-Retries cannot duplicate a completed import, and removing an imported action
-cannot resurrect it on the next load. Newly discovered legacy sources can still
-be imported. Oversized or invalid data is rejected without truncation.
+Sources checked on 2026-10-21:
 
-Save checks the stored revision to prevent one editor overwriting another or a
-new import. Runtime items carry both input-epoch and controls-revision admission.
-Reloading controls closes pending menus and rejects retained row buttons and
-menu items. Local settings navigation remains usable without remote input
-readiness. All input continues through the existing encoder and complete-action
-queue admission; there is no transport-timing change or input replay.
+- [tmux Getting Started](https://github.com/tmux/tmux/wiki/Getting-Started)
+- [Zellij preset guide](https://zellij.dev/documentation/keybinding-presets)
+- [Zellij default binding example](https://github.com/zellij-org/zellij/blob/main/example/config.kdl)
+- [Herdr current keymap](https://github.com/herdrdev/herdr/blob/master/docs/next/website/src/content/docs/keyboard.mdx)
+- [Herdr current default configuration](https://github.com/herdrdev/herdr/blob/master/src/main.rs)
 
-## Verification
+Herdr's current defaults differ from older indexed README copies. New workspace
+uses prefix then Shift+N; rename workspace uses Shift+W; zoom uses Z. The picker
+links to the current keymap and explains that custom remote bindings may differ.
 
-Coverage includes profile/migration tests, hosted UI/input tests and native
-UI journeys, plus an opt-in hands-on review. Tests exercise the real
-floating-menu renderer, canonical input fixtures and the production settings
-sheet. The isolated QA app purchases the local StoreKit test product and
-requires verified Pro access; no entitlement bypass enters the normal app.
-Its live terminal connects through the production SSH client to an experimental
-loopback server. Synthetic input is observed at that server, rather than inferred
-from button animations. The server requests a hidden cursor to keep cursor
-blinking from preventing XCTest quiescence; normal application code is unchanged.
-Native rename journeys use the system Select All menu instead of assuming a
-caret position, including UIKit's Next Page menu at accessibility text sizes.
-Rename and search journeys wait for the software keyboard before resolving
-selection presses or search-result coordinates on both phone and tablet.
-Focused fields and sheets move when that keyboard appears; an early press at
-accessibility text sizes can otherwise hit the keyboard prediction row.
-Protocol cases mount the production native Terminal controller in a UIKit
-window and observe the same session state projected by `TerminalSurface`.
-This avoids introducing another SwiftUI root during the host application's
-initial appearance. The native journeys retain the complete connected SwiftUI
-view and settings sheets; no input/transport settling delay is added.
+## Verification scope
 
-| Use case | Verification |
-| --- | --- |
-| Repeated history/cursor navigation | Native arrow taps and received SSH bytes |
-| Ctrl/Alt/Shift next-key and locks | Native Keypad journey, hosted state and wire checks |
-| Remote Command support | Native SSH negotiation and one-shot Command; golden vectors and clearing on mode exit |
-| Stable bar and compact sheet | Native keyboard show/hide, half-sheet drag to full height, grouped key sends and menu alignment |
-| Interrupt with keyboard hidden | Native Keypad Ctrl-C and received byte |
-| Occasional function/navigation keys | Native F1/Home/End, canonical key vectors |
-| Numbers and more terminal space | Independent number row, explicit expansion, scrolling keyboard controls, a fixed menu and All Keys |
-| Reusable Unicode/path/multiline text | Search, exact SSH bytes, cancel/confirm, no added Return |
-| Create a shortcut | Name/key editing and final chord preview; explicit deletion |
-| Many saved items and favorite placement | Search over 43 saved texts; reuse and unpin preserve one definition |
-| Independent keyboard/menu customization | Separate native destinations; independent order model tests |
-| Large text and accessible reordering | Native accessibility XXXL journeys and actual menu renderer move actions |
-| Hardware/moved keyboard geometry | Hosted keyboard-guide and composer layout checks |
-| Settings shared across Macs | One profile, multiple legacy Mac imports and revision checks |
-| Connected Save/background/reconnect | Native Save then real SSH input, suspend/retained-panel admission and loopback integration |
+Regression and QA sources accompany the redesign, including preset validity,
+identity, placement, cancellation, input admission and synthetic SSH coverage.
+They were not rerun for the final physical-device polish. Several existing QA
+cases still refer to retired number-toggle APIs, row renaming, the combined
+library and the previous keyboard-preview toggle. Updating those cases, adding
+alignment/docked-preview coverage and running the managed validation and
+Simulator journeys remain pre-merge work. Earlier PR test results do not certify
+this revision.
 
-A Save notification is deferred in the editing session until its settings sheet
-finishes dismissing. Other sessions reload immediately. The editor no longer
-invokes a second synchronous reload. Native navigation keeps Back separate from editable content; toolbar actions
-belong only to the active destination. The bar retains its configured rows across keyboard and composer transitions.
-Frame regressions check scrolling keyboard placement and a fixed floating anchor, symbol hit areas, reachable
-custom keys, explicit row heights and stable layout across keyboard focus changes at narrow phone and tablet widths.
-Each Keypad presentation has independent
-state; reopening it cannot revive a retained callback from an earlier panel.
-Saved-item search uses an inline field and full-width row hit areas, without an
-additional search-controller presentation between selecting an item and closing
-the panel.
+Simulator screenshots contain synthetic QA data and stay outside the repository.
+Simulator acceptance is distinct from physical-device or real-tool acceptance.
+No SSH/security protocol behavior changes are introduced.
 
-After the managed Simulator build, run the focused regressions with:
+## Physical-device polish pass
 
-```sh
-python3 scripts/verify_terminal_pro_simulator.py --build /path/to/simulator-build \
-  --simulator SIMULATOR_UUID --test-diagnostics never \
-  --only-testing DirectClientTests/TerminalControlsProfileTests \
-  --only-testing DirectClientTests/TerminalControlsUITests
-python3 scripts/verify_terminal_pro_simulator.py --build /path/to/simulator-build \
-  --simulator SIMULATOR_UUID --test-diagnostics never --terminal-controls-ui
-bash scripts/validate.sh
-```
+Favorites have balanced interior padding. Full Menu Preview uses the production
+popup renderer, header, two-column favorites and six navigation entries as a
+passive preview. Add Favorite includes standard Actions as well as keys,
+shortcuts and text, so individual actions can always be restored.
 
-The broader selection also covers keyboard feedback, real loopback SSH input,
-quick-action editing, Terminal layouts, text sizing and composer layout. The
-native runtime journey rotates with the software keyboard visible and requires
-usable terminal height and restoration on return to portrait. On iPad, hosted
-coverage uses `testComposerReservesTheShortcutBarAcrossKeyboardLayouts`, which checks
-docked, moved and hardware keyboards with tablet window sizes. An additional
-iPad attempt with the phone rotation check failed because a hosted scene
-geometry request left its window portrait; that failure is retained, and is not
-reported as tablet rotation acceptance.
+The app-action catalog contains Compose Text, Paste, Copy Selection, Show/Hide
+Keyboard and Expand/Collapse Rows. Escape, Tab and Return live under Keys;
+common Ctrl combinations live under Shortcuts in the placement picker. Existing
+favorites keep their IDs, titles and placements when older built-in aliases are
+converted to key/shortcut definitions. Restoring favorites reuses definitions by
+operation or chord. Runtime keyboard/row action labels reflect their current
+state, and state-change feedback is emitted once by the owning control.
 
-Simulator and repository-validation results are recorded in the PR. Synthetic
-screenshots, failed attempts, logs and xcresult bundles remain outside Git under
-`/private/tmp/maccompanion-terminal-redesign-20261020/` and
-`/private/tmp/maccompanion-terminal-ux-20261020/`.
+Keyboard editing hides the live session button's anchor and removes its width
+constraint. There is one trailing row menu per row, with no non-interactive
+floating-button stand-in. The real terminal overlay keeps its anchor and button.
 
-For hands-on review, add `--terminal-controls-review` and select
-`TerminalControlsJourneyTests/TerminalControlsJourneyTests/testInteractiveReview`.
-The QA-only Finish Review button ends the bounded review without changing Pro
-entitlement policy. Physical VoiceOver, hardware-keyboard behavior, dictation
-and the reported device-only Save symptom still require physical acceptance;
-Simulator results do not certify those.
+Numbers is an ordinary row preset with the same visibility, ordering and editing
+as other rows. The dedicated number toggle and session preference are retired;
+a one-time compatibility conversion preserves old row visibility and removes
+only retired toggle placements. Other saved placements remain unchanged.
+
+Shortcuts and Saved Text have separate search/create/manage screens. Native
+reorder handles affect library order only. Tap or swipe right to edit, swipe
+left to reveal Delete; deletion identifies affected layout placements. The
+named tmux, Zellij and Herdr entries also support direct placement without
+creating an item in the library first. Done/Save/Add use the prominent accent
+style, while Cancel/Close remain neutral. Key pickers use compact, rectangular
+keycaps with one-line labels and adaptive columns.
+
+Regression tests and Simulator walkthroughs are deferred for this pass at the
+user's request; the immediate acceptance lane is a physical iPhone install.
+
+Modifier controls use matching symbols in Add to Row, the keyboard bar and All
+Keys. The armed state uses an opaque deep-blue fill, white symbol and outline;
+the held state adds a short underline without changing key dimensions. State
+text remains available to VoiceOver without occupying the keycap. The palette
+adapts to light, dark and increased-contrast appearances. Row actions now live in
+the trailing native menu. Names are automatic: preset names or numbered Custom
+Rows identify menus, placement descriptions and accessibility labels. Visibility
+is selected directly in a submenu, and removal retains confirmation and Undo. The
+left handle only reorders, with accessible Move Row alternatives. Promoting a
+hidden row to the required main row makes it visible so controls remain reachable.
+
+Keycaps now share a 44-point minimum width and the same scaled text/symbol size
+in the live bar, row templates and editor. Digits are never compressed to fit a
+row; long rows scroll horizontally. Each row's menu offers Left, Center, Right
+and Fill alignment. Fill shares spare width equally without shrinking keycaps;
+the other choices position a fitting row within its available width. Existing
+Numbers presets default to Fill and other rows default to Left. Alignment is
+stored on the row and participates in the editor's draft, Cancel and Undo.
+
+Preview with Keyboard opens a separate read-only screen using the production
+bar as a UIKit input accessory directly above the system keyboard. It contains
+no editing handles, row menus, Add Row footer or Undo notice. Expanding rows is
+local to the preview; closing restores the unchanged editor draft. The preview
+has no terminal/session reference, discards keyboard input and cannot send to a
+Mac. The main row reserves the live session button's space without adding a
+second floating button to the editor.
+
+On 2026-10-22, the managed normal iPhone build completed and all 631 recorded
+production source input hashes matched the working tree. Development build 133
+was signed, installed and launched on the user's iPhone 18 Pro Max; its installed
+version and visible Keyboard Bar editor were verified. The user subsequently
+reported that it works well. This records physical acceptance feedback for that
+build, without claiming a completed automated suite or exhaustive device matrix.
+Signing material and screenshot evidence remain outside Git.

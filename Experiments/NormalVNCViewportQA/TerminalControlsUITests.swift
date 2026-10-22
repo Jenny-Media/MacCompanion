@@ -27,6 +27,18 @@ import StoreKit
 
 @MainActor final class TerminalControlsUITests: XCTestCase {
     @Observable final class Draft { var profile = TerminalControlsProfile.defaults }
+    @Observable final class MenuUpdate { var tick = 0 }
+    private struct MenuHost: View {
+        let state: MenuUpdate
+        let action: TerminalControlAction
+        var body: some View {
+            VStack {
+                Text("Layout update \(state.tick)")
+                TerminalMenuEditingPreview(actions: [action], selected: action.id, editable: true, select: { _ in }, move: { _, _ in })
+                    .environment(\.colorScheme, state.tick.isMultiple(of: 2) ? .light : .dark)
+            }
+        }
+    }
     private struct Fixtures: Decodable {
         struct Key: Decodable { let name: String; let flags: Int; let text: String?; let expectedHex: String }
         struct Paste: Decodable { let enable: String; let text: String; let expectedHex: String }
@@ -68,7 +80,7 @@ import StoreKit
         }
         return store
     }
-    func testVisualEditorSelectsReordersAndEditsOneDraftWithoutSendingOrSaving() async throws {
+    func testVisualEditorSelectsAndReordersOneDraftWithoutSendingOrSaving() async throws {
         let draft = Draft()
         let saved = TerminalControlAction(title: "Project", kind: .text, text: "  synthetic\n", inRow: true)
         draft.profile.actions.append(saved)
@@ -88,14 +100,11 @@ import StoreKit
         let item = try XCTUnwrap(choices.first { $0.accessibilityIdentifier == "preview-action-" + saved.id.uuidString })
         item.sendActions(for: .touchUpInside)
         try await settle()
-        XCTAssertEqual(preview.selectedPreviewID, saved.id.uuidString)
-        let field = try XCTUnwrap(descendants(host.view).compactMap { $0 as? UITextView }.first)
-        XCTAssertTrue(field.becomeFirstResponder())
-        field.selectedRange = NSRange(location: 0, length: 0)
-        field.insertText("中文😀\n")
+        XCTAssertNotNil(host.presentedViewController, "Tapping a favorite opens its focused actions")
+        XCTAssertTrue(choices.allSatisfy(\.isEnabled), "The editing canvas has no disabled navigation buttons")
+        host.dismiss(animated: false)
         try await settle()
-        XCTAssertEqual(draft.profile.actions.last?.text, "中文😀\n  synthetic\n")
-        window.endEditing(true)
+        XCTAssertEqual(draft.profile.actions.last?.text, "  synthetic\n", "Selecting a placement leaves its definition unchanged; the focused editor is covered by native journeys")
         preview.previewMoveHandler?(saved.id.uuidString, draft.profile.actions[0].id.uuidString)
         try await settle()
         XCTAssertEqual(draft.profile.placed(.menu).first?.id, saved.id)
@@ -108,8 +117,43 @@ import StoreKit
         try await settle()
         let largePreview = try XCTUnwrap(descendants(host.view).compactMap { $0 as? CompanionVNCControls }.first)
         XCTAssertGreaterThan(largePreview.bounds.height, normalHeight * 2, "Dynamic Type remeasures the native preview instead of clipping larger actions into its old height")
-        XCTAssertEqual(largePreview.selectedPreviewID, saved.id.uuidString)
+        XCTAssertNil(largePreview.selectedPreviewID, "Actions live in a focused sheet, not a permanent selection toolbar")
         capture("terminal-controls-editor-accessibility", window: window)
+    }
+    func testMenuEditingMeasurementIncludesAllFixedNavigationRows() throws {
+        let preview = CompanionVNCControls()
+        preview.editingPreview = true
+        preview.quickActions = TerminalControlsProfile.defaults.placed(.menu).map(\.native)
+        preview.categoryActions = TerminalControlNavigation.items
+        preview.refreshEditingPreview()
+        let measured = preview.sizeThatFits(CGSize(width: 360, height: 10000))
+        let panel = try XCTUnwrap(preview.value(forKey: "panel") as? UIView)
+        XCTAssertNotNil((panel as? UIVisualEffectView)?.effect, "The preview needs the runtime material to separate controls from terminal content")
+        XCTAssertGreaterThanOrEqual(measured.height, panel.bounds.height - 1)
+        XCTAssertGreaterThan(measured.height, 200)
+        let choices = try XCTUnwrap(preview.value(forKey: "choices") as? [UIButton])
+        for kind in ["moreKeys", "savedShortcuts", "savedText", "customize", "appearance", "session"] {
+            let key = try XCTUnwrap(choices.first { $0.accessibilityIdentifier == "session-action-" + kind })
+            XCTAssertFalse(key.isEnabled)
+            XCTAssertLessThanOrEqual(key.convert(key.bounds, to: panel).maxY, measured.height + 1)
+        }
+    }
+    func testMenuPreviewKeepsPanelAcrossUnrelatedSwiftUIUpdates() async throws {
+        let state = MenuUpdate()
+        let action = TerminalControlAction(title: "Project", kind: .text, text: "synthetic")
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        let host = UIHostingController(rootView: MenuHost(state: state, action: action))
+        window.rootViewController = host; window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        try await settle()
+        let preview = try XCTUnwrap(descendants(host.view).compactMap { $0 as? CompanionVNCControls }.first)
+        let panel = try XCTUnwrap(preview.value(forKey: "panel") as? UIView)
+        let choices = try XCTUnwrap(preview.value(forKey: "choices") as? [UIButton])
+        state.tick += 1
+        try await settle()
+        XCTAssertTrue(preview.value(forKey: "panel") as? UIView === panel, "Layout-only updates must keep the native material and active hit targets alive")
+        XCTAssertTrue((preview.value(forKey: "choices") as? [UIButton])?.first === choices.first)
     }
     func testFloatingMenuExposesKeysTextAndLibraryWithoutFnAndRetiresOldSelections() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
@@ -155,6 +199,10 @@ import StoreKit
         customize.sendActions(for: .touchUpInside)
         XCTAssertEqual(customizations, 1); XCTAssertFalse(controller.controls.menuOpen)
         XCTAssertNil(controller.presentedViewController, "Customization opens the owner editor directly, with no input submenu")
+        controller.output = []
+        controller.makeMoreKeysMenu().selectionHandler?(["kind": "terminalKey-f1"])
+        XCTAssertTrue(controller.output.isEmpty, "Runtime callbacks stay paused until the editor closes")
+        controller.finishCustomization()
         let menu = controller.makeMoreKeysMenu()
         let kinds = menu.sections.flatMap { ($0["items"] as? [[String: Any]] ?? []).compactMap { $0["kind"] as? String } }
         for key in TerminalAccessoryKey.allCases { XCTAssertTrue(kinds.contains("terminalKey-" + key.rawValue)) }
@@ -288,7 +336,11 @@ import StoreKit
 
     func testFreeAllKeysSendsWithoutPinningAndReconnectRetiresPanel() async throws {
         let entitlement = try await pro(); entitlement.clearTransactions()
-        await DirectProAccess.shared.refresh()
+        for _ in 0..<250 {
+            await DirectProAccess.shared.refresh()
+            if !DirectProAccess.shared.hasPro { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
         XCTAssertFalse(DirectProAccess.shared.hasPro)
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
@@ -480,6 +532,8 @@ import StoreKit
         bar.previewRemove = { item, _ in removed = item }
         XCTAssertTrue(action.actionHandler?(action) == true); XCTAssertEqual(removed, .control(.ctrl))
         XCTAssertNotNil(ctrl.configuration?.image, "Preview uses production symbols and button metrics")
+        XCTAssertTrue(try XCTUnwrap(ctrl.interactions.compactMap { $0 as? UIDragInteraction }.first).isEnabled,
+            "Key dragging must be explicitly enabled on every device")
     }
 
     func testCanvasShowsAllSixRowsAndRowHandlesWithoutChangingRuntimeVisibilityOrInput() throws {
@@ -494,6 +548,10 @@ import StoreKit
         XCTAssertTrue(handles.allSatisfy { !$0.isHidden })
         XCTAssertGreaterThan(bar.height, 320)
         let main = try XCTUnwrap(handles.first { $0.accessibilityIdentifier?.hasSuffix(TerminalKeyboardRow.mainID.uuidString) == true })
+        XCTAssertEqual(main.accessibilityLabel, "Select Main Row")
+        XCTAssertTrue(main.gestureRecognizers?.contains { $0 is UIPanGestureRecognizer } == true,
+            "The row handle must support a direct drag without a long press")
+        XCTAssertFalse(main.interactions.contains { $0 is UIDragInteraction }, "Row reordering is distinct from long-press key dragging")
         var selected: UUID?
         bar.previewSelectRow = { selected = $0 }; main.sendActions(for: .touchUpInside)
         XCTAssertEqual(selected, TerminalKeyboardRow.mainID)
@@ -504,6 +562,21 @@ import StoreKit
         bar.previewShowsAllRows = false; bar.previewShowsRowHandles = false; bar.configure(profile) { _ in }
         XCTAssertEqual(bar.height, 60)
         XCTAssertFalse(profile.rowsExpanded!); XCTAssertFalse(profile.numberRow!)
+    }
+
+    func testSelectedSavedKeyIsRevealedInItsScrollablePreviewRow() throws {
+        var profile = TerminalControlsProfile.defaults
+        for index in 0..<12 { profile.actions.append(.init(title: "Saved Text \(index)", kind: .text, text: "synthetic", inRow: true, inMenu: false)) }
+        let saved = try XCTUnwrap(profile.actions.last)
+        let bar = TerminalKeyboardBar(terminal: nil, preferences: .init())
+        bar.editingPreview = true; bar.previewShowsAllRows = true
+        bar.selectedPreviewItem = .saved(saved.id); bar.selectedPreviewRow = TerminalKeyboardRow.mainID
+        bar.configure(profile) { _ in XCTFail("Preview cannot send") }
+        bar.frame = CGRect(x: 0, y: 0, width: 360, height: bar.height)
+        bar.layoutRows()
+        let button = try XCTUnwrap(descendants(bar).compactMap { $0 as? UIButton }.first { $0.accessibilityIdentifier == "terminal-row-preview-" + saved.id.uuidString })
+        let visible = button.convert(button.bounds, to: bar.keyScroll).intersection(bar.keyScroll.bounds)
+        XCTAssertGreaterThanOrEqual(visible.width, 44)
     }
 
     func testAvailableRowTemplateRendersItsKeysAtUsableWidths() throws {
@@ -542,29 +615,65 @@ import StoreKit
         XCTAssertNil(canvas.terminal)
     }
 
-    func testAppearancePreviewDisablesAccessibilityEditingAndPresetCallbacks() async throws {
+    func testReadOnlyCanvasDisablesAccessibilityEditingAndPresetCallbacks() async throws {
         let draft = Draft(), original = draft.profile
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
-        let host = UIHostingController(rootView: TerminalControlsEditor(profile: Binding(get: { draft.profile }, set: { draft.profile = $0 }), destination: .keyboard).padding(16))
+        let host = UIHostingController(rootView: TerminalControlsEditor(profile: Binding(get: { draft.profile }, set: { draft.profile = $0 }), editable: false, destination: .keyboard))
         window.rootViewController = host; window.makeKeyAndVisible()
         defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
         try await settle()
-        let mode = try XCTUnwrap(descendants(host.view).compactMap { $0 as? UISegmentedControl }.first)
-        for index in [1, 2] {
-            mode.selectedSegmentIndex = index; mode.sendActions(for: .valueChanged)
-            try await settle()
-            for bar in descendants(host.view).compactMap({ $0 as? TerminalKeyboardBar }) {
-                XCTAssertFalse(bar.isUserInteractionEnabled)
-                XCTAssertNil(bar.previewSelect); XCTAssertNil(bar.previewMove); XCTAssertNil(bar.previewRemove)
-                XCTAssertNil(bar.previewSelectRow); XCTAssertNil(bar.previewMoveRow)
-                XCTAssertNil(bar.previewAddPreset); XCTAssertNil(bar.previewAddItem)
-                for button in descendants(bar).compactMap({ $0 as? UIButton }) {
-                    for action in button.accessibilityCustomActions ?? [] { _ = action.actionHandler?(action) }
-                }
+        let bars = descendants(host.view).compactMap { $0 as? TerminalKeyboardBar }
+        XCTAssertFalse(bars.isEmpty)
+        for bar in bars {
+            XCTAssertFalse(bar.isUserInteractionEnabled)
+            XCTAssertNil(bar.previewSelect); XCTAssertNil(bar.previewMove); XCTAssertNil(bar.previewRemove)
+            XCTAssertNil(bar.previewSelectRow); XCTAssertNil(bar.previewMoveRow)
+            XCTAssertNil(bar.previewAddPreset); XCTAssertNil(bar.previewAddItem)
+            for button in descendants(bar).compactMap({ $0 as? UIButton }) {
+                for action in button.accessibilityCustomActions ?? [] { _ = action.actionHandler?(action) }
             }
-            XCTAssertEqual(draft.profile, original, "Appearance previews cannot edit a draft through accessibility actions")
         }
+        XCTAssertEqual(draft.profile, original)
+    }
+
+    func testFocusedEditorKeepsAllTenDigitsVisibleAtNormalPhoneWidth() async throws {
+        let draft = Draft()
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        let host = UIHostingController(rootView: TerminalControlsEditor(profile: Binding(get: { draft.profile }, set: { draft.profile = $0 }), destination: .keyboard))
+        window.rootViewController = host; window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        try await settle()
+        let bar = try XCTUnwrap(descendants(host.view).compactMap { $0 as? TerminalKeyboardBar }.first)
+        let scroll = try XCTUnwrap(descendants(bar).compactMap { $0 as? UIScrollView }.first { $0.accessibilityIdentifier == "terminal-row-preview-scroll-" + TerminalKeyboardRow.numbersID.uuidString })
+        let digits = descendants(scroll).compactMap { $0 as? UIButton }
+        XCTAssertGreaterThan(scroll.bounds.width, 200)
+        XCTAssertEqual(digits.count, 10)
+        for digit in digits {
+            let frame = digit.convert(digit.bounds, to: scroll)
+            XCTAssertGreaterThanOrEqual(frame.minX, -1)
+            XCTAssertLessThanOrEqual(frame.maxX, scroll.bounds.width + 1, digit.accessibilityLabel ?? "Digit")
+        }
+    }
+
+    func testFavoriteAddTileDoesNotBecomeASavedOrDraggableAction() async throws {
+        let draft = Draft(), before = draft.profile
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        let host = UIHostingController(rootView: TerminalControlsEditor(profile: Binding(get: { draft.profile }, set: { draft.profile = $0 })))
+        window.rootViewController = host; window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        try await settle()
+        let preview = try XCTUnwrap(descendants(host.view).compactMap { $0 as? CompanionVNCControls }.first)
+        let choices = try XCTUnwrap(preview.value(forKey: "choices") as? [UIButton])
+        let add = try XCTUnwrap(choices.first { $0.accessibilityIdentifier == "terminal-control-add" })
+        XCTAssertFalse(add.interactions.contains { $0 is UIDragInteraction })
+        XCTAssertNil(preview.actionHandler)
+        add.sendActions(for: .touchUpInside); try await settle()
+        XCTAssertNotNil(host.presentedViewController)
+        XCTAssertEqual(draft.profile, before)
+        host.dismiss(animated: false); try await settle()
     }
 
     func testReconfiguringEditableBuiltinsRetiresOldKeyAndModifierCallbacks() throws {

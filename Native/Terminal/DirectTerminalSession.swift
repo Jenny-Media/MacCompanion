@@ -89,6 +89,7 @@ private enum TerminalPTY {
     // Native windows admit input independently of other active scenes.
     var inputAvailable: @MainActor () -> Bool = { true }
     var suspendInput: (@MainActor () -> Void)?
+    var finishControlsCustomization: (@MainActor () -> Void)?
     private(set) var suspended = false
     private(set) var activity: VNCSessionActivityController?
     private var pausedOutput: [UInt8] = []

@@ -312,6 +312,37 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
             XCTAssertEqual(record.passwordRequests, 1, "A return form cannot silently open a new shell")
         }
     }
+    func testCustomizationBlocksUserInputButKeepsTerminalRepliesAndRetiresOldActions() async throws {
+        let record = SSHTestRecord(echoInput: false), key = NIOSSHPrivateKey(ed25519Key: .init())
+        let server = try await server(record: record, key: key)
+        defer { _ = server.close() }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Controls", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+        try TerminalSecretStore.write(Data(String(openSSHPublicKey: key.publicKey).utf8), id: mac.id, kind: "host-key")
+        let session = DirectTerminalSession(mac: mac)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        let controller = TerminalController(session: session, customize: {})
+        window.rootViewController = controller; window.makeKeyAndVisible()
+        defer { session.stop(); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible(); try? TerminalSecretStore.remove(mac.id) }
+        session.connect(username: "synthetic", password: "synthetic-only", remember: false)
+        try await wait { session.connected && controller.terminal.customInputEpoch() != nil }
+        let before = try XCTUnwrap(controller.terminal.customInputEpoch())
+        record.clearReceived(); controller.beginCustomization()
+        XCTAssertNil(controller.terminal.customInputEpoch())
+        controller.terminal.insertText("must not send")
+        controller.send(source: controller.terminal, data: [0x78][...])
+        XCTAssertTrue(record.received.isEmpty)
+        try await record.emit("\u{1b}[6n")
+        try await wait("cursor-position reply while editing") { String(decoding: record.received, as: UTF8.self).hasSuffix("R") }
+        let reply = record.received
+        XCTAssertTrue(reply.starts(with: [0x1b, 0x5b]))
+        XCTAssertFalse(String(decoding: reply, as: UTF8.self).contains("must not send"))
+        controller.finishCustomization()
+        XCTAssertNotEqual(controller.terminal.customInputEpoch(), before)
+        controller.controls.actionHandler?(["kind": "tab", "inputEpoch": before.uuidString])
+        controller.terminal.insertText("q")
+        try await wait { record.received == reply + [0x71] }
+    }
     func testComposerUsesCurrentPTYBracketingAndNeverAddsReturnOrReplaysAfterStop() async throws {
         let record = SSHTestRecord(), key = NIOSSHPrivateKey(ed25519Key: .init())
         let server = try await server(record: record, key: key)

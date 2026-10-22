@@ -29,11 +29,12 @@ final class TerminalControlsScene: UIResponder, UIWindowSceneDelegate {
     static let itemID = UUID(uuidString: "00000000-0000-0000-0000-00000000C001")!
     var writes = 0
     var dismissals = 0
+    var failWrites = ProcessInfo.processInfo.environment["MACCOMPANION_CONTROLS_FAIL_WRITE"] == "1"
     var data = try! JSONEncoder().encode(TerminalControlsProfile(actions: [
         TerminalControlAction(id: TerminalControlsMemory.itemID, title: "Project", kind: .text, text: "original", inRow: true)]))
     var profile: TerminalControlsProfile { try! JSONDecoder().decode(TerminalControlsProfile.self, from: data) }
     var store: TerminalControlsStore {
-        .init(read: { self.data }, write: { self.data = $0; self.writes += 1 }, legacyIDs: { [] })
+        .init(read: { self.data }, write: { if self.failWrites { throw TerminalControlsStore.Failure.unreadable }; self.data = $0; self.writes += 1 }, legacyIDs: { [] })
     }
 }
 struct TerminalControlsHarness: View {
@@ -57,11 +58,13 @@ struct TerminalControlsHarness: View {
                 Text("Saved items: \(memory.profile.actions.count)").accessibilityIdentifier("controls-qa-count")
                 Text("Writes: \(memory.writes)").accessibilityIdentifier("controls-qa-writes")
                 Text("Closes: \(memory.dismissals)").accessibilityIdentifier("controls-qa-closes")
-                Text(memory.profile.actions[0].title).accessibilityIdentifier("controls-qa-title")
-                Text("Row: \(memory.profile.actions[0].inRow ? "on" : "off"); Menu: \(memory.profile.actions[0].inMenu ? "on" : "off")")
+                Text(memory.profile.actions.first?.title ?? "No saved items").accessibilityIdentifier("controls-qa-title")
+                Text("Row: \(memory.profile.actions.first?.inRow == true ? "on" : "off"); Menu: \(memory.profile.actions.first?.inMenu == true ? "on" : "off")")
                     .accessibilityIdentifier("controls-qa-placements")
                 Text("Rows: " + memory.profile.resolvedRows.map(\.title).joined(separator: " | "))
                     .accessibilityIdentifier("controls-qa-row-order")
+                Text("Favorites: " + memory.profile.placed(.menu).map(\.title).joined(separator: " | "))
+                    .accessibilityIdentifier("controls-qa-menu-order")
             }.frame(maxWidth: .infinity).padding(.vertical, 24) }.navigationTitle("Synthetic Controls QA")
                 .sheet(isPresented: $editing) { TerminalControlsSettings(store: memory.store, close: { memory.dismissals += 1; editing = false }) }
                 .fullScreenCover(isPresented: $showingTerminal) {
