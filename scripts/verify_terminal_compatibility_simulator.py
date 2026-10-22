@@ -50,7 +50,7 @@ def main():
                 'AppearanceTests/testTerminalPaletteIsIndependentAndFollowsAppWhenSelectedWithoutNewSession',
                 'TerminalDuoLayoutTests/testHostedTerminalDockFollowsKeyboardAcrossPaletteChanges',
                 'TerminalDuoLayoutTests/testPersistentBarTogglesKeyboardAndKeepsFixedControlsWithScrollableKeys',
-                'TerminalDuoLayoutTests/testNumberRowMenuAppliesImmediatelyAndRestoresAcrossSessions',
+                'TerminalDuoLayoutTests/testNumbersRowVisibilityAppliesImmediatelyAndRestoresAcrossSessions',
                 'KeyLibraryAndProTests/testIndexedTerminalKeysOneShotLockAndProtectedSettings',
             ]:
                 command += ['--only-testing', 'DirectClientTests/' + identifier]

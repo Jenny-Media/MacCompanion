@@ -3,6 +3,18 @@ import XCTest
 @testable import Mac_Companion
 
 @MainActor final class TerminalControlsRedesignTests: XCTestCase {
+    func testRowAlignmentRoundTripsAndDraftCancellationRetainsOriginal() throws {
+        let saved = TerminalControlsProfile.defaults
+        for alignment in TerminalKeyboardRow.Alignment.allCases {
+            var draft = saved, rows = saved.resolvedRows
+            rows[0].alignment = alignment; draft.keyboardRows = rows
+            XCTAssertTrue(draft.valid)
+            let decoded = try JSONDecoder().decode(TerminalControlsProfile.self, from: JSONEncoder().encode(draft))
+            XCTAssertEqual(decoded.resolvedRows[0].resolvedAlignment, alignment)
+            XCTAssertEqual(saved.resolvedRows[0].resolvedAlignment, .fill)
+            XCTAssertNil(saved.keyboardRows)
+        }
+    }
     func testFocusedTemplateMovesTheWholeRowWithoutDuplicatingKeysOrSavedDefinitions() throws {
         var profile = TerminalControlsProfile.defaults
         let source = try XCTUnwrap(profile.addRow(title: "Arrows"))
@@ -21,7 +33,8 @@ import XCTest
         let first = try XCTUnwrap(profile.resolvedRows.first?.id)
         XCTAssertEqual(profile.installEditorPreset(.numbers, before: first), first)
         XCTAssertEqual(profile.resolvedRows.first?.id, first)
-        XCTAssertEqual(profile.resolvedRows.filter { $0.kind == .numbers }.count, 1)
+        XCTAssertEqual(profile.resolvedRows.filter { $0.preset == .numbers }.count, 1)
+        XCTAssertEqual(profile.resolvedRows.first?.kind, .custom)
         XCTAssertEqual(profile.barItems(in: profile.resolvedRows[0]), TerminalRowPreset.numbers.items)
         XCTAssertTrue(profile.valid)
     }
@@ -66,9 +79,11 @@ import XCTest
         let id = try XCTUnwrap(profile.addRow(title: "My Keys"))
         profile.placeBarItem(.key("key-f12"), in: id)
         profile.removeEditorRow(TerminalKeyboardRow.mainID)
-        XCTAssertEqual(profile.resolvedRows.first { $0.kind == .main }?.id, id)
-        for row in profile.resolvedRows where row.id != id { profile.removeEditorRow(row.id) }
-        profile.removeEditorRow(id)
+        let promoted = try XCTUnwrap(profile.resolvedRows.first { $0.kind == .main })
+        XCTAssertEqual(promoted.visibility, .always)
+        XCTAssertTrue(profile.barItems(in: profile.resolvedRows.first { $0.id == id }!).contains(.key("key-f12")))
+        for row in profile.resolvedRows where row.id != promoted.id { profile.removeEditorRow(row.id) }
+        profile.removeEditorRow(promoted.id)
         XCTAssertEqual(profile.resolvedRows.count, 1)
         XCTAssertTrue(profile.barItems(in: profile.resolvedRows[0]).isEmpty)
         XCTAssertTrue(profile.valid)

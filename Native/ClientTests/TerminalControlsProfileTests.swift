@@ -105,6 +105,43 @@ import Security
         XCTAssertThrowsError(try memory.store.save(saved))
         XCTAssertEqual(try memory.store.load().actions.last?.text, "new")
     }
+    func testMalformedOrderingIsRejectedBeforeMigrationWithoutRewritingStorage() throws {
+        for key in ["rowOrder", "menuOrder", "shortcutOrder", "textOrder"] {
+            let memory = Memory()
+            let profile = TerminalControlsProfile.defaults
+            var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(profile)) as? [String: Any])
+            let id = try XCTUnwrap(profile.actions.first?.id).uuidString
+            for ordering in [[id, id], [UUID().uuidString]] {
+                json[key] = ordering
+                memory.data = try JSONSerialization.data(withJSONObject: json)
+                let original = memory.data
+                XCTAssertThrowsError(try memory.store.load(), key)
+                XCTAssertEqual(memory.data, original, "Invalid storage must remain recoverable")
+                XCTAssertEqual(memory.writes, 0)
+            }
+        }
+    }
+    func testValidLegacyRowsMigrateOnceAndPreservePlacementsAndHiddenNumbers() throws {
+        let memory = Memory()
+        let item = TerminalControlAction(title: "Legacy", kind: .text, text: "synthetic", inRow: true)
+        var profile = TerminalControlsProfile(actions: [item])
+        profile.numberRow = false
+        profile.keyboardRows = [
+            .init(id: TerminalKeyboardRow.numbersID, kind: .numbers, title: "Numbers"),
+            .init(id: TerminalKeyboardRow.mainID, kind: .main, title: "Main Row", actionIDs: [item.id],
+                  items: [.control(.keyboard), .control(.retiredNumbers), .saved(item.id)])]
+        memory.data = try JSONEncoder().encode(profile)
+        let migrated = try memory.store.load()
+        XCTAssertEqual(migrated.rowsSchema, 2); XCTAssertNil(migrated.numberRow)
+        XCTAssertEqual(migrated.resolvedRows.first?.preset, .numbers)
+        XCTAssertEqual(migrated.resolvedRows.first?.hidden, true)
+        XCTAssertEqual(migrated.actions.first?.id, item.id)
+        XCTAssertEqual(migrated.actions.first?.text, item.text)
+        XCTAssertFalse(migrated.resolvedRows.flatMap { migrated.barItems(in: $0) }.contains(.control(.retiredNumbers)))
+        XCTAssertTrue(migrated.valid)
+        XCTAssertEqual(try memory.store.load(), migrated)
+        XCTAssertEqual(memory.writes, 1)
+    }
     func testEditingPlacementsAndOrderPreservesOnePayloadAndStableIdentity() throws {
         let memory = Memory()
         var profile = try memory.store.load()
@@ -190,9 +227,9 @@ import Security
     }
     func testLayoutAndIndependentOrdersShareOptimisticSaveAndRejectInvalidIDs() throws {
         let memory = Memory(); var profile = try memory.store.load()
-        profile.numberRow = false; profile.expandedBar = false; profile.navigationRow = true
+        profile.rowsExpanded = false; profile.expandedBar = false; profile.navigationRow = true
         let saved = try memory.store.save(profile)
-        XCTAssertFalse(try XCTUnwrap(try memory.store.load().numberRow))
+        XCTAssertFalse(try XCTUnwrap(try memory.store.load().rowsExpanded))
         XCTAssertFalse(try XCTUnwrap(try memory.store.load().expandedBar))
         XCTAssertThrowsError(try memory.store.save(profile))
         var bad = saved; bad.rowOrder = [UUID()]; XCTAssertFalse(bad.valid)
@@ -202,14 +239,15 @@ import Security
     func testRowsUpgradeFlatPlacementsAndKeepNumbersIndependent() throws {
         let snippet = TerminalControlAction(title: "Deploy", kind: .text, text: "  exact 中文😀\n", inRow: true)
         var profile = TerminalControlsProfile(actions: [snippet])
-        XCTAssertEqual(profile.resolvedRows.map(\.kind), [.numbers, .navigation, .main])
+        XCTAssertEqual(profile.resolvedRows.map(\.kind), [.custom, .navigation, .main])
+        XCTAssertEqual(profile.resolvedRows.first?.preset, .numbers)
         XCTAssertEqual(profile.resolvedRows.last?.actionIDs, [snippet.id])
         XCTAssertNil(profile.rowsExpanded); XCTAssertNil(profile.commandInBar)
         let custom = try XCTUnwrap(profile.addRow(title: "Shortcuts"))
         profile.place(snippet.id, in: custom)
         XCTAssertEqual(profile.resolvedRows.filter { $0.actionIDs.contains(snippet.id) }.map(\.id), [custom])
         profile.moveRow(TerminalKeyboardRow.numbersID, offset: 1)
-        profile.numberRow = false
+        profile.rowsExpanded = false
         let decoded = try JSONDecoder().decode(TerminalControlsProfile.self, from: JSONEncoder().encode(profile))
         XCTAssertEqual(decoded, profile); XCTAssertTrue(decoded.valid)
         profile.removeRow(custom)
@@ -256,7 +294,8 @@ import Security
         XCTAssertTrue(profile.valid); XCTAssertEqual(profile.actions, original)
         profile.removeRow(TerminalKeyboardRow.numbersID)
         let numbers = try XCTUnwrap(profile.addPreset(.numbers))
-        XCTAssertEqual(profile.resolvedRows.first { $0.id == numbers }?.kind, .numbers)
+        XCTAssertEqual(profile.resolvedRows.first { $0.id == numbers }?.kind, .custom)
+        XCTAssertEqual(profile.resolvedRows.first { $0.id == numbers }?.preset, .numbers)
         XCTAssertTrue(profile.valid)
         XCTAssertEqual(try JSONDecoder().decode(TerminalControlsProfile.self, from: JSONEncoder().encode(profile)), profile)
     }
@@ -285,7 +324,7 @@ import Security
         XCTAssertTrue(profile.valid); XCTAssertEqual(profile.importedMacs, journal)
         XCTAssertEqual(profile.actions[0].id, saved.id); XCTAssertEqual(profile.actions[0].text, saved.text)
         XCTAssertTrue(profile.actions[0].inMenu); XCTAssertFalse(profile.actions[0].inRow)
-        XCTAssertNil(profile.keyboardRows); XCTAssertEqual(profile.numberRow, true)
+        XCTAssertNil(profile.keyboardRows); XCTAssertNil(profile.numberRow)
     }
     func testEachPresetIsEditableAndDoesNotPolluteSavedCollection() throws {
         for preset in TerminalRowPreset.allCases {

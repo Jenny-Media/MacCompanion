@@ -53,13 +53,34 @@ struct TerminalControlsSettings: View {
             .sheet(isPresented: $paywall) { DirectProView() }
     }
     private func library(_ section: TerminalSavedItemsSection) -> some View {
-        TerminalSavedLibrary(profile: $profile, section: section, editable: readable && pro.hasPro, persist: commit,
-            place: { id, destination in layout = .init(destination: destination, item: id) })
-            .navigationTitle(section.managementTitle).directInlineNavigationTitle()
+        Group {
+            if !readable {
+                List { recovery }
+            } else if !pro.hasPro {
+                ContentUnavailableView {
+                    Label("Customize with Pro", systemImage: "sparkles")
+                } description: {
+                    Text("Create and arrange shortcuts and saved text with Pro.")
+                } actions: {
+                    Button("View Pro Options") { paywall = true }.buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("terminal-library-pro")
+                }
+            } else {
+                VStack(spacing: 0) {
+                    if let issue {
+                        DirectRecoveryCard(notice: issue, primary: .init(title: "Reload Saved Controls", perform: reload))
+                            .padding(12).accessibilityIdentifier("terminal-controls-recovery")
+                    }
+                    TerminalSavedLibrary(profile: $profile, section: section, editable: true, persist: commit,
+                        place: { id, destination in layout = .init(destination: destination, item: id) })
+                }
+            }
+        }.navigationTitle(section.managementTitle).directInlineNavigationTitle()
     }
     @ViewBuilder private var recovery: some View {
         if !readable || issue != nil {
             Section { DirectRecoveryCard(notice: issue ?? .make(.controlsUnavailable), primary: .init(title: "Reload Saved Controls", perform: reload)) }
+                .accessibilityIdentifier("terminal-controls-recovery")
         }
         if !pro.hasPro { Section { Button("Customize with Pro", systemImage: "sparkles") { paywall = true } } }
     }

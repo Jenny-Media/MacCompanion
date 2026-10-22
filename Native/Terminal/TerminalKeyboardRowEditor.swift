@@ -81,9 +81,14 @@ private final class TerminalPreviewAccessory: UIInputView {
     }
 }
 
+private final class TerminalPreviewInputField: UITextField {
+    override func insertText(_ text: String) {}
+    override func setMarkedText(_ markedText: String?, selectedRange: NSRange) {}
+}
+
 private final class TerminalDockedKeyboardController: UIViewController, UITextFieldDelegate {
     private var profile: TerminalControlsProfile
-    private let field = UITextField()
+    private let field = TerminalPreviewInputField()
     private let accessory = TerminalPreviewAccessory(frame: .zero, inputViewStyle: .keyboard)
     init(profile: TerminalControlsProfile) { self.profile = profile; super.init(nibName: nil, bundle: nil) }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }

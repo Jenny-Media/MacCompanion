@@ -150,7 +150,7 @@ import StoreKitTest
         }
         let bar = controller.keyboardBar
         let preferences = TerminalKeyboardPreferences(keys: [.f1, .f2])
-        bar.configure(preferences); bar.showsNumberRow = true; bar.setKeyboardFocused(true)
+        bar.configure(preferences); bar.setKeyboardFocused(true)
         XCTAssertEqual(bar.height, 115, accuracy: 1, "Numbers have an independent row while optional Navigation starts collapsed")
         for landscape in [false, true] {
             scene.requestGeometryUpdate(.iOS(interfaceOrientations: landscape ? .landscapeRight : .portrait))
@@ -196,7 +196,7 @@ import StoreKitTest
                 XCTAssertFalse(bar.isHidden, "Restore the shortcut row after either close path")
                 XCTAssertFalse(controller.controls.isHidden, "Restore the anchored menu with the row")
                 XCTAssertEqual(bar.height, 115, accuracy: 1, "Restore both rows with number and custom keys intact")
-                XCTAssertTrue(bar.showsNumberRow)
+                XCTAssertTrue(bar.subviews.flatMap { $0.subviews }.contains { !$0.isHidden && $0.accessibilityIdentifier == "terminal-extra-row-" + TerminalKeyboardRow.numbersID.uuidString })
             }
         }
     }
@@ -416,7 +416,10 @@ import StoreKitTest
                     XCTAssertGreaterThan(editor.bounds.width, 80); XCTAssertGreaterThan(editor.bounds.height, 35)
                     XCTAssertTrue(descendants(panel.view).contains(where: { $0 === editor })); XCTAssertEqual(editor.selectedRange, selection)
                     XCTAssertFalse(descendants(panel.view).contains { ["compose-dock", "compose-more", "compose-discard", "compose-destination"].contains($0.accessibilityIdentifier ?? "") })
-                    if !large { XCTAssertLessThanOrEqual(card.width, 284); XCTAssertLessThanOrEqual(card.height, 156) }
+                    if !large {
+                        XCTAssertLessThanOrEqual(card.width, 284)
+                        XCTAssertLessThanOrEqual(card.height, 156, "size=\(size), category=\(panel.traitCollection.preferredContentSizeCategory.rawValue), font=\(editor.font?.pointSize ?? 0), issue=\(issue)")
+                    }
                 }
             }
         }

@@ -588,6 +588,9 @@ struct TerminalControlsProfile: Codable, Equatable {
             guard DirectQuickActionEditing.valid(actions, mode: .terminal) else { throw Failure.unreadable }
             profile = .init(actions: actions.map(TerminalControlAction.init))
         }
+        // Resolution builds ordering dictionaries. Reject malformed storage
+        // before migration can resolve rows; never rewrite a corrupt record.
+        guard profile.valid else { throw Failure.unreadable }
         let before = profile
         let legacyPreference = "direct-terminal-number-row"
         let legacyVisible = UserDefaults.standard.object(forKey: legacyPreference) == nil || UserDefaults.standard.bool(forKey: legacyPreference)
