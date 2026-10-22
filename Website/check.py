@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check built routes, metadata, assets, and internal links before publishing."""
 from html.parser import HTMLParser
+import json
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -17,6 +18,7 @@ class Page(HTMLParser):
         self.title = False
         self.description = False
         self.lang = False
+        self.robots = ""
         self.errors = []
         self.feed(path.read_text())
 
@@ -34,6 +36,8 @@ class Page(HTMLParser):
             self.lang = bool(attrs.get("lang"))
         if tag == "meta" and attrs.get("name") == "description":
             self.description = bool(attrs.get("content"))
+        if tag == "meta" and attrs.get("name", "").lower() == "robots":
+            self.robots = attrs.get("content", "").lower()
         if tag == "img" and "alt" not in attrs:
             self.errors.append("Image missing alt attribute")
         attribute = "href" if tag in {"a", "link"} else "src" if tag in {"img", "script"} else None
@@ -56,7 +60,7 @@ def resolve(path, reference):
 
 pages = {path.resolve(): Page(path) for path in ROOT.rglob("*.html")}
 errors = []
-for route in ("index.html", "privacy/index.html", "support/index.html"):
+for route in ("index.html", "privacy/index.html", "support/index.html", "beta/index.html"):
     if (ROOT / route).resolve() not in pages:
         errors.append(f"Missing route: {route}")
 for path, page in pages.items():
@@ -74,6 +78,35 @@ for path, page in pages.items():
             errors.append(f"{name}: missing local target {link}")
         elif fragment and target in pages and fragment not in pages[target].ids:
             errors.append(f"{name}: missing anchor {link}")
+beta = (ROOT / "beta/index.html").resolve()
+if beta in pages:
+    if not {"noindex", "nofollow"}.issubset({part.strip() for part in pages[beta].robots.split(",")}):
+        errors.append("beta/index.html: missing search-index exclusion")
+    if "https://testflight.apple.com/join/pFeKTuux" not in pages[beta].links:
+        errors.append("beta/index.html: missing verified TestFlight invitation")
+for path, page in pages.items():
+    if path == beta:
+        continue
+    for link in page.links:
+        target, _ = resolve(path, link)
+        if target == beta:
+            errors.append(f"{path.relative_to(ROOT)}: beta route must stay unlisted")
+config = json.loads((ROOT.parent / "vercel.json").read_text())
+beta_headers = [
+    header
+    for rule in config.get("headers", [])
+    if rule.get("source") == "/beta(.*)"
+    for header in rule.get("headers", [])
+]
+if not any(
+    header.get("key", "").lower() == "x-robots-tag"
+    and {"noindex", "nofollow", "noarchive"}.issubset(
+        {part.strip().lower() for part in header.get("value", "").split(",")}
+    )
+    for header in beta_headers
+):
+    errors.append("beta route: missing X-Robots-Tag deployment header")
+
 if errors:
     raise SystemExit("\n".join(errors))
 print(f"Website checks passed: {len(pages)} pages, metadata, local assets, and internal links")

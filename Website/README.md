@@ -1,9 +1,8 @@
 # Mac Companion website
 
-A static product site with dedicated `/privacy/` and `/support/` routes,
+A static product site with dedicated `/privacy/`, `/support/` and unlisted `/beta/` routes,
 responsive layouts, accessible navigation, light/dark/system appearance and
-source-backed product copy. Availability explicitly describes private TestFlight;
-there is no public beta or App Store download link. No forms or analytics scripts.
+source-backed product copy. The beta route links to the existing public TestFlight group; it stays out of public navigation and search indexing. There is no App Store download link. No forms or analytics scripts.
 
 `source/` is authoritative. Shared header/footer fragments are composed by
 `build.py`; generated `dist/` is not edited by hand. Build before preview:
