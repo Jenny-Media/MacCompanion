@@ -25,6 +25,31 @@ import StoreKitTest
 }
 
 @MainActor final class TextComposerTests: XCTestCase {
+    private func presentedPanel(for composer: DirectTextComposer, from root: UIViewController) async throws -> DirectTextComposerPanel {
+        try await waitForComposerUI("the owned composer's completed presentation") {
+            guard let panel = root.presentedViewController as? DirectTextComposerPanel else { return false }
+            return panel.draft === composer.draft && !panel.isBeingPresented && !panel.isBeingDismissed && panel.view.window != nil
+        }
+        return try XCTUnwrap(root.presentedViewController as? DirectTextComposerPanel)
+    }
+
+    func testSyntheticBackgroundRestoresForegroundAdmissionAfterThrowing() async throws {
+        enum SyntheticFailure: Error { case expected }
+        let lock = DirectAppLockV1.shared
+        let original = UserDefaults.standard.object(forKey: DirectAppLockV1.preferenceKey) as? NSNumber
+        do {
+            try await withSyntheticApplicationBackground {
+                XCTAssertFalse(lock.canResumeRemoteSession)
+                XCTAssertEqual(UIApplication.shared.applicationState, .active, "The notification must not change real UIKit state")
+                throw SyntheticFailure.expected
+            }
+            XCTFail("The synthetic failure must propagate")
+        } catch SyntheticFailure.expected { }
+        XCTAssertTrue(lock.foregroundActive)
+        XCTAssertTrue(lock.canResumeRemoteSession)
+        XCTAssertEqual(UserDefaults.standard.object(forKey: DirectAppLockV1.preferenceKey) as? NSNumber, original)
+    }
+
     func testComposerMatchesSessionAppearanceWithoutChangingTheAppPreference() async throws {
         let original = DirectAppearanceV1.shared.app
         DirectAppearanceV1.shared.app = .light
@@ -623,8 +648,7 @@ import StoreKitTest
         defer { root.dismiss(animated: false); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
         let composer = DirectTextComposer(macName: "Synthetic Mac", mode: "desktop")
         composer.present(from: root, available: { true }, send: { _, _ in XCTFail("Presentation must never send text") })
-        try await Task.sleep(for: .milliseconds(600))
-        let panel = try XCTUnwrap(root.presentedViewController as? DirectTextComposerPanel)
+        let panel = try await presentedPanel(for: composer, from: root)
         func descendants(_ v: UIView) -> [UIView] { [v] + v.subviews.flatMap(descendants) }
         let editor = try XCTUnwrap(descendants(panel.view).compactMap { $0 as? UITextView }.first)
         XCTAssertTrue(editor.becomeFirstResponder())
@@ -664,11 +688,13 @@ import StoreKitTest
         composer.draft.expanded = true
         let latePan = ComposerPanProbe(); latePan.simulatedState = .began
         panel.perform(NSSelectorFromString("resize:"), with: latePan)
-        NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
-        latePan.simulatedState = .cancelled
-        panel.perform(NSSelectorFromString("resize:"), with: latePan)
-        XCTAssertFalse(composer.draft.expanded, "Late canceled drag cannot restore retired presentation state")
-        XCTAssertFalse(composer.draft.active); XCTAssertEqual(composer.draft.text, "")
+        try await withSyntheticApplicationBackground {
+            latePan.simulatedState = .cancelled
+            panel.perform(NSSelectorFromString("resize:"), with: latePan)
+            XCTAssertFalse(composer.draft.expanded, "Late canceled drag cannot restore retired presentation state")
+            XCTAssertFalse(composer.draft.active); XCTAssertEqual(composer.draft.text, "")
+            try await waitForComposerUI("compact composer dismissal") { root.presentedViewController == nil }
+        }
     }
     func testLandscapeComposerKeepsActualSendAndEditorAboveKeyboard() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
@@ -687,8 +713,7 @@ import StoreKitTest
         XCTAssertTrue(scene.interfaceOrientation.isLandscape, "Coverage requires actual landscape geometry")
         let composer = DirectTextComposer(macName: "Synthetic Mac", mode: "desktop")
         composer.present(from: root, available: { true }, send: { _, _ in XCTFail("Layout must not send") })
-        try await Task.sleep(for: .milliseconds(600))
-        let panel = try XCTUnwrap(root.presentedViewController as? DirectTextComposerPanel)
+        let panel = try await presentedPanel(for: composer, from: root)
         func descendants(_ v: UIView) -> [UIView] { [v] + v.subviews.flatMap(descendants) }
         let editor = try XCTUnwrap(descendants(panel.view).compactMap { $0 as? UITextView }.first)
         XCTAssertTrue(editor.becomeFirstResponder())
@@ -719,21 +744,20 @@ import StoreKitTest
         XCTAssertLessThanOrEqual(panel.deliveryActionFrame.maxY, panel.view.keyboardLayoutGuide.layoutFrame.minY)
         let capture = XCTAttachment(image: UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) })
         capture.name = "compose-landscape-accessibility"; capture.lifetime = .keepAlways; add(capture)
-        NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
-        for _ in 0..<100 {
-            if root.presentedViewController == nil { break }
-            try await Task.sleep(for: .milliseconds(10))
+        try await withSyntheticApplicationBackground {
+            try await waitForComposerUI("landscape composer dismissal") { root.presentedViewController == nil }
+            XCTAssertNil(root.presentedViewController)
         }
-        XCTAssertNil(root.presentedViewController)
         scene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
         for _ in 0..<200 {
             if scene.interfaceOrientation.isPortrait && window.bounds.height > window.bounds.width { break }
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertTrue(scene.interfaceOrientation.isPortrait)
-        // Keep the owned window alive until rotation and dismissal settle, so
-        // its transition cannot compete with the next test's presentation.
-        try await Task.sleep(for: .milliseconds(400))
+        // Keep the owned window alive until its actual rotation transition settles.
+        try await waitForComposerUI("portrait rotation completion") {
+            root.transitionCoordinator == nil && root.view.window === window
+        }
     }
     func testBackgroundDuringPresentationRetiresPopupAndAllowsNextComposer() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
@@ -743,16 +767,17 @@ import StoreKitTest
         defer { root.dismiss(animated: false); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
         let first = DirectTextComposer(macName: "Synthetic Mac", mode: "desktop")
         first.present(from: root, available: { true }, send: { _, _ in XCTFail("Retired draft cannot send") })
-        NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
-        for _ in 0..<100 {
-            if root.presentedViewController == nil { break }
-            try await Task.sleep(for: .milliseconds(10))
+        try await withSyntheticApplicationBackground {
+            try await waitForComposerUI("interrupted composer dismissal") { root.presentedViewController == nil }
+            XCTAssertNil(root.presentedViewController); XCTAssertFalse(first.draft.active)
         }
-        XCTAssertNil(root.presentedViewController); XCTAssertFalse(first.draft.active)
         let next = DirectTextComposer(macName: "Synthetic Mac", mode: "terminal")
         next.present(from: root, available: { true }, send: { _, _ in XCTFail("Reopening must not send") })
-        try await Task.sleep(for: .milliseconds(400))
+        let panel = try await presentedPanel(for: next, from: root)
         XCTAssertNotNil(root.presentedViewController); XCTAssertTrue(next.draft.active)
+        XCTAssertTrue(panel.draft === next.draft)
+        next.invalidate()
+        try await waitForComposerUI("replacement composer dismissal") { root.presentedViewController == nil }
     }
     func testCapturedComposerAvailabilityAndFinalDeliveryRejectLaterRestoration() throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-screen-sharing-v1", withExtension: "json"))
@@ -934,6 +959,8 @@ import StoreKitTest
         defer {
             DirectAppLockV1.shared.setEnabled(false)
             if let original { defaults.set(original, forKey: key) } else { defaults.removeObject(forKey: key) }
+            XCTAssertEqual(DirectAppLockV1.shared.foregroundActive, UIApplication.shared.applicationState == .active)
+            XCTAssertTrue(DirectAppLockV1.shared.canAccess)
         }
         let composer = DirectTextComposer(macName: "Synthetic Mac", mode: "desktop")
         defaults.set(true, forKey: key)
@@ -942,7 +969,7 @@ import StoreKitTest
         composer.draft.configure(available: { true }, send: { _, _ in XCTFail("Lock must not send input") })
         composer.draft.edit("hidden unsent draft")
         DirectAppLockV1.shared.background()
-        try await Task.sleep(for: .milliseconds(50))
+        try await waitForComposerUI("app-lock draft retirement") { !composer.draft.active && composer.draft.text.isEmpty }
         XCTAssertEqual(composer.draft.text, ""); XCTAssertFalse(composer.draft.active)
     }
     func testNativeEditorAndBackgroundPrivacyWithSyntheticCaptures() async throws {
@@ -951,20 +978,12 @@ import StoreKitTest
         let window = UIWindow(windowScene: scene), root = UIViewController()
         window.rootViewController = root; window.makeKeyAndVisible()
         defer { root.dismiss(animated: false); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
-        func waitForPresentation(_ condition: () -> Bool) async throws {
-            let end = Date().addingTimeInterval(5)
-            while !condition() {
-                guard Date() < end else { throw POSIXError(.ETIMEDOUT) }
-                try await Task.sleep(for: .milliseconds(10))
-            }
-        }
         for mode in DirectControlMode.allCases {
-            try await waitForPresentation { root.presentedViewController == nil && root.view.window === window }
+            try await waitForComposerUI("an available composer owner") { root.presentedViewController == nil && root.view.window === window }
             XCTAssertTrue(DirectAppLockV1.shared.canAccess)
             let composer = DirectTextComposer(macName: "Synthetic Mac", mode: mode.rawValue)
             composer.present(from: root, available: { true }, send: { _, _ in XCTFail("Editing must not send input") })
-            try await waitForPresentation { root.presentedViewController != nil && root.presentedViewController?.isBeingPresented == false }
-            let host = try XCTUnwrap(root.presentedViewController)
+            let host = try await presentedPanel(for: composer, from: root)
             func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
             let editor = try XCTUnwrap(descendants(host.view).compactMap { $0 as? UITextView }.first)
             XCTAssertTrue(editor.becomeFirstResponder())
@@ -983,13 +1002,14 @@ import StoreKitTest
             XCTAssertEqual(composer.draft.text, retained)
             XCTAssertEqual(editor.text, retained, "The editor must not display a rejected paste as though it can be sent")
             await withCheckedContinuation { continuation in root.dismiss(animated: false) { continuation.resume() } }
-            try await waitForPresentation { root.presentedViewController == nil }
+            try await waitForComposerUI("composer dismissal before reopening") { root.presentedViewController == nil }
             composer.present(from: root, available: { true }, send: { _, _ in XCTFail("Returning to session must not send input") })
             XCTAssertEqual(composer.draft.text, retained)
-            try await waitForPresentation { root.presentedViewController != nil && root.presentedViewController?.isBeingPresented == false }
-            NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
-            XCTAssertEqual(composer.draft.text, ""); XCTAssertFalse(composer.draft.active)
-            try await waitForPresentation { root.presentedViewController == nil }
+            _ = try await presentedPanel(for: composer, from: root)
+            try await withSyntheticApplicationBackground {
+                XCTAssertEqual(composer.draft.text, ""); XCTAssertFalse(composer.draft.active)
+                try await waitForComposerUI("privacy composer dismissal") { root.presentedViewController == nil }
+            }
         }
     }
     func testDesktopAndTrackpadEntryUseOnlyTheirCurrentViewerAndClearAtEnd() async throws {
