@@ -129,16 +129,116 @@ import XCTest
             }
         }
     }
-    func testFavoriteReplacementKeepsOneIdentityAndItsKeyEditingBehavior() throws {
+    func testFavoriteReplacementPreservesPlacementAndLeavesKeyboardDefinitionUnchanged() throws {
         var profile = TerminalControlsProfile.defaults
         let id = profile.pin(TerminalPaletteKey(.home), in: .menu)
         profile.place(id, in: TerminalKeyboardRow.mainID)
-        XCTAssertTrue(profile.replaceEditorFavorite(id, with: TerminalPaletteKey(.f8)))
+        let favorite = try XCTUnwrap(profile.resolvedMenuPlacements.first { $0.actionID == id })
+        XCTAssertTrue(profile.replaceEditorFavorite(favorite.id, with: TerminalPaletteKey(.f8)))
         let action = try XCTUnwrap(profile.actions.first { $0.id == id })
         XCTAssertEqual(action.kind, .key)
-        XCTAssertEqual(action.key, .f8)
-        XCTAssertEqual(action.placements(in: profile).count, 2)
+        XCTAssertEqual(action.key, .home)
+        XCTAssertTrue(action.inRow); XCTAssertFalse(action.inMenu)
+        let replaced = try XCTUnwrap(profile.resolvedMenuPlacements.first { $0.id == favorite.id })
+        XCTAssertNotEqual(replaced.actionID, id)
+        XCTAssertEqual(profile.actions.first { $0.id == replaced.actionID }?.key, .f8)
         XCTAssertEqual(profile.actions.filter { $0.id == id }.count, 1)
+        XCTAssertTrue(profile.valid)
+        XCTAssertEqual(try JSONDecoder().decode(TerminalControlsProfile.self, from: JSONEncoder().encode(profile)), profile)
+    }
+    func testReplacingSecondFavoriteReusesKeyDefinitionAndUndoRestoresOnlyThatDraft() throws {
+        var saved = TerminalControlsProfile.defaults
+        let home = saved.pin(TerminalPaletteKey(.home), in: .menu)
+        saved.pin(home, in: .menu, enabled: true); saved.place(home, in: TerminalKeyboardRow.mainID)
+        let f8 = saved.pin(TerminalPaletteKey(.f8), in: .menu)
+        let originals = saved.resolvedMenuPlacements
+        let second = try XCTUnwrap(originals.filter { $0.actionID == home }.last)
+        var draft = saved
+        XCTAssertTrue(draft.replaceEditorFavorite(second.id, with: TerminalPaletteKey(.f8)))
+        XCTAssertEqual(draft.resolvedMenuPlacements.map(\.id), originals.map(\.id))
+        XCTAssertEqual(draft.resolvedMenuPlacements.filter { $0.actionID == home }.count, 1)
+        XCTAssertEqual(draft.resolvedMenuPlacements.filter { $0.actionID == f8 }.count, 2)
+        XCTAssertEqual(draft.actions, saved.actions, "Existing definitions and pin flags need no changes when both keys remain placed")
+        XCTAssertEqual(draft.keyboardRows, saved.keyboardRows)
+        XCTAssertTrue(draft.valid)
+        var history = TerminalLayoutHistory(); history.changed(from: saved, to: draft)
+        XCTAssertEqual(history.undo(), saved)
+        XCTAssertEqual(saved.resolvedMenuPlacements, originals, "Cancel leaves saved favorites unchanged")
+        let before = draft
+        XCTAssertFalse(draft.replaceEditorFavorite(UUID(), with: TerminalPaletteKey(.f9)))
+        XCTAssertEqual(draft, before, "A stale occurrence must not replace another favorite or create a definition")
+    }
+    func testDeletingSavedItemsAfterRestoringAndEditingRowsPreservesPresetKeys() throws {
+        for kind in [TerminalControlAction.Kind.text, .shortcut] {
+            for setting in ["Alignment", "Scroll Start", "Order"] {
+                var target = TerminalControlAction(title: "Unused", kind: kind, text: "synthetic", inMenu: false)
+                if kind == .shortcut { target.character = 0x62; target.modifiers = [0xffe3] }
+                let retained = TerminalControlAction(title: "Keep", kind: .text, text: "keep this", inMenu: false)
+                var profile = TerminalControlsProfile.defaults
+                profile.actions += [target, retained]; profile.normalizeLegacyRows(); profile.restoreKeyboardBar()
+                if setting == "Order" { profile.moveRow(TerminalKeyboardRow.numbersID, offset: 1) }
+                else {
+                    var rows = profile.resolvedRows
+                    if setting == "Alignment" { rows[0].alignment = .right } else { rows[0].scrollStart = .right }
+                    profile.keyboardRows = rows
+                }
+                var data = try JSONEncoder().encode(profile)
+                let store = TerminalControlsStore(read: { data }, write: { data = $0 }, legacyIDs: { [] })
+                var loaded = try store.load()
+                XCTAssertEqual(loaded.rowsSchema, 2)
+                XCTAssertTrue(loaded.resolvedRows.allSatisfy { $0.items == nil })
+                let rows = loaded.resolvedRows
+                let keys = rows.map { loaded.barItems(in: $0) }
+                loaded.delete(target.id)
+                _ = try store.save(loaded)
+                let reopened = try store.load()
+                XCTAssertEqual(reopened.resolvedRows, rows, "Deleting unused \(kind) after \(setting) must retain rows and their settings")
+                XCTAssertEqual(reopened.resolvedRows.map { reopened.barItems(in: $0) }, keys)
+                XCTAssertFalse(reopened.actions.contains { $0.id == target.id })
+                XCTAssertEqual(reopened.actions.first { $0.id == retained.id }, retained)
+                XCTAssertTrue(reopened.valid)
+            }
+        }
+    }
+    func testLegacyFavoriteReplacementAndSharedDefinitionEditingRemainDistinct() throws {
+        var legacy = TerminalControlsProfile.defaults
+        let home = TerminalControlAction(title: "Home", kind: .key, key: .home)
+        legacy.actions.append(home)
+        XCTAssertNil(legacy.menuPlacements)
+        XCTAssertTrue(legacy.replaceEditorFavorite(home.id, with: TerminalPaletteKey(.f8)))
+        XCTAssertEqual(legacy.resolvedMenuPlacements.first { $0.id == home.id }.flatMap { p in legacy.actions.first { $0.id == p.actionID } }?.key, .f8)
+        XCTAssertEqual(legacy.actions.first { $0.id == home.id }?.key, .home)
+        XCTAssertTrue(legacy.valid)
+
+        for kind in [TerminalControlAction.Kind.shortcut, .text] {
+            var profile = TerminalControlsProfile.defaults
+            var action = TerminalControlAction(title: "Shared", kind: kind, text: "before", inMenu: false)
+            action.character = 0x61
+            profile.actions.append(action)
+            profile.pin(action.id, in: .menu, enabled: true); profile.pin(action.id, in: .menu, enabled: true)
+            profile.place(action.id, in: TerminalKeyboardRow.mainID)
+            let index = try XCTUnwrap(profile.actions.firstIndex { $0.id == action.id })
+            profile.actions[index].title = "Edited"; profile.actions[index].text = "after"; profile.actions[index].character = 0x62
+            let copies = profile.placed(.menu).filter { $0.id == action.id }
+            XCTAssertEqual(copies.count, 2)
+            XCTAssertTrue(copies.allSatisfy { $0.title == "Edited" && $0.text == "after" && $0.character == 0x62 })
+            XCTAssertTrue(profile.barItems(in: profile.resolvedRows.first { $0.kind == .main }!).contains(.saved(action.id)))
+            XCTAssertTrue(profile.valid)
+        }
+    }
+    func testDeletingPlacedSavedItemKeepsImplicitKeysAndOtherSavedPlacements() throws {
+        var profile = TerminalControlsProfile.defaults
+        profile.normalizeLegacyRows(); profile.restoreKeyboardBar()
+        let removed = TerminalControlAction(title: "Remove", kind: .text, text: "remove", inRow: true, inMenu: false)
+        let kept = TerminalControlAction(title: "Keep", kind: .text, text: "keep", inRow: true, inMenu: false)
+        profile.actions += [removed, kept]
+        var rows = profile.resolvedRows
+        let main = try XCTUnwrap(rows.firstIndex { $0.kind == .main })
+        rows[main].actionIDs = [removed.id, kept.id]; profile.keyboardRows = rows
+        let before = profile.resolvedRows.map { profile.barItems(in: $0) }
+        profile.delete(removed.id)
+        XCTAssertEqual(profile.resolvedRows.map { profile.barItems(in: $0) }, before.map { $0.filter { $0.savedID != removed.id } })
+        XCTAssertTrue(profile.actions.first { $0.id == kept.id }!.inRow)
         XCTAssertTrue(profile.valid)
     }
     func testRemovingMainRowPromotesAnotherAndLastRowRemainsEditable() throws {

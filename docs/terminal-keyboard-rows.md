@@ -43,6 +43,10 @@ key or chord each; they do not automatically send the prefix or a sequence.
 Prefix-dependent commands remain optional in the picker’s After Prefix section.
 Saved text retains its name. Repeated saved placements share one editable
 shortcut/text definition and have independent ordering/removal identities.
+Replace Key changes only the selected placement, including repeated menu
+favorites; Edit Shortcut and Edit Text update the shared definition everywhere.
+Deleting a saved item removes its references while retaining every other key,
+including preset rows restored and then adjusted through row options.
 
 ## Editors, keypad and saved items
 

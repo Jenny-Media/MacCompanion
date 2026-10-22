@@ -384,14 +384,23 @@ struct TerminalControlsProfile: Codable, Equatable {
         }
         return true
     }
-    @discardableResult mutating func replaceEditorFavorite(_ id: UUID, with key: TerminalPaletteKey) -> Bool {
-        guard let index = actions.firstIndex(where: { $0.id == id }) else { return false }
-        var replacement = key.definition
-        replacement.id = id; replacement.inRow = actions[index].inRow; replacement.inMenu = actions[index].inMenu
-        replacement.presetID = actions[index].presetID
-        guard replacement.valid else { return false }
-        actions[index] = replacement
-        return true
+    @discardableResult mutating func replaceEditorFavorite(_ placementID: UUID, with key: TerminalPaletteKey) -> Bool {
+        var placements = resolvedMenuPlacements
+        guard let index = placements.firstIndex(where: { $0.id == placementID }) else { return false }
+        var draft = self
+        let definitionID: UUID
+        if let existing = draft.actions.first(where: key.matches) { definitionID = existing.id }
+        else {
+            let replacement = key.definition
+            guard replacement.valid, draft.actions.count < 4096 else { return false }
+            draft.actions.append(replacement); definitionID = replacement.id
+        }
+        placements[index].actionID = definitionID
+        draft.menuPlacements = placements
+        let placed = Set(placements.map(\.actionID))
+        for index in draft.actions.indices { draft.actions[index].inMenu = placed.contains(draft.actions[index].id) }
+        guard draft.valid else { return false }
+        self = draft; return true
     }
     mutating func removeEditorRow(_ id: UUID) {
         guard let row = resolvedRows.first(where: { $0.id == id }) else { return }
@@ -516,7 +525,15 @@ struct TerminalControlsProfile: Codable, Equatable {
     mutating func delete(_ id: UUID) {
         menuPlacements = resolvedMenuPlacements.filter { $0.actionID != id }
         actions.removeAll { $0.id == id }; rowOrder?.removeAll { $0 == id }; menuOrder?.removeAll { $0 == id }; shortcutOrder?.removeAll { $0 == id }; textOrder?.removeAll { $0 == id }
-        if keyboardRows != nil { for index in keyboardRows!.indices { keyboardRows![index].actionIDs.removeAll { $0 == id }; keyboardRows![index].placements.removeAll { $0.item.savedID == id } } }
+        if keyboardRows != nil {
+            for index in keyboardRows!.indices {
+                keyboardRows![index].actionIDs.removeAll { $0 == id }
+                // Nil items mean “use this row's preset,” not an empty row.
+                if keyboardRows![index].items != nil {
+                    keyboardRows![index].placements.removeAll { $0.item.savedID == id }
+                }
+            }
+        }
     }
     mutating func pin(_ id: UUID, in destination: TerminalControlsDestination, enabled: Bool) {
         guard let index = actions.firstIndex(where: { $0.id == id }) else { return }

@@ -440,7 +440,12 @@ private struct TerminalEditorItemPicker: View {
                 profile.placeBarItem(item, in: rowID)
             }
         } else if let replacing, let id = replacing.savedID, let key = item.palette {
-            guard profile.replaceEditorFavorite(id, with: key) else { return }
+            let favoriteID: UUID?
+            if let placementID { favoriteID = UUID(uuidString: placementID) }
+            else { favoriteID = profile.resolvedMenuPlacements.first { $0.actionID == id }?.id }
+            guard let favoriteID, profile.replaceEditorFavorite(favoriteID, with: key) else {
+                error = "This favorite couldn’t be replaced. Close and try again."; return
+            }
         } else if let id = item.savedID { profile.pin(id, in: .menu, enabled: true) }
         else if let key = item.palette { profile.pin(key, in: .menu) }
         finished()
