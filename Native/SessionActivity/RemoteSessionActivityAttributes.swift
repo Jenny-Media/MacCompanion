@@ -23,8 +23,9 @@ struct RemoteSessionActivityAttributes: ActivityAttributes, Sendable {
     struct ResumeRoute: Equatable {
         let macID: UUID
         let kind: Kind
-        // A cold Terminal return cannot recover the previous process-owned PTY.
-        var automaticallyConnect: Bool { kind != .terminal }
+        // With no mounted owner, this link describes a retired connection.
+        // Opening it must not silently replace that connection or shell.
+        var automaticallyConnect: Bool { false }
     }
     static func resumeRoute(from url: URL) -> ResumeRoute? {
         guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),

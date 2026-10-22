@@ -571,12 +571,17 @@ no address, account login, pixels or input content. The resume URL accepts only
 maccompanion-session://resume/<UUID> or maccompanion-session://resume-terminal/<UUID>
 for an existing saved record, with no query,
 fragment or credentials. It opens the existing viewer when already selected;
-it cannot create an endpoint or start a parallel session. A Terminal route after its
-owner view/process is gone opens sign-in without auto-connect and explains that Connect
+it cannot create an endpoint or start a parallel session. A Desktop or Terminal route after its
+owner view/process is gone opens sign-in without auto-connect. Terminal explains that Connect
 opens a new shell; ordinary Mac-list entry retains saved-login convenience. An already presented
 Desktop or Terminal is kept; a Terminal link cannot accidentally open Desktop.
 Old activities without a kind retain Desktop semantics. Activities left by a
-previous process are ended before starting a new one. Startup retirement remains
+previous process are ended on app entry and foreground return, including when no
+session connects or a connection attempt is canceled. Cleanup snapshots only
+unowned activity IDs; a live or paused owner's activity is preserved, and delayed
+cleanup cannot end an activity created by a newer session. Creating another
+controller also retires only unowned activities before starting its own activity.
+Startup retirement remains
 tracked independently of replaceable status publication: an early session end or
 opt-out/opt-in cannot discard it or permit new creation before it completes.
 Waiting for pending activity work includes this startup retirement, while ending

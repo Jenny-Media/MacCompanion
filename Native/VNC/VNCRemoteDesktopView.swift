@@ -8,6 +8,7 @@ import UIKit
 struct DirectDesktopSessionView: View {
     let mac: DirectMacRecordV1
     var inputOnly = false
+    var autoConnect = true
     var connectionMacNames: [String] = []
     let showMacs: @MainActor () -> Void
     var connectionPanel: DirectConnectionPanelHost?
@@ -16,16 +17,16 @@ struct DirectDesktopSessionView: View {
     @State private var immersive = false
     @State private var appearance = DirectAppearanceV1.shared
     @State private var files: DirectFilesSession
-    init(mac: DirectMacRecordV1, inputOnly: Bool = false, connectionMacNames: [String] = [], files: DirectFilesSession? = nil, libraryURL: URL = DirectMacLibraryV1.defaultURL, connectionPanel: DirectConnectionPanelHost? = nil, loginRetentionAllowed: Bool = true, connectionEstablished: @escaping @MainActor () -> Bool = { true }, showMacs: @escaping @MainActor () -> Void) {
+    init(mac: DirectMacRecordV1, inputOnly: Bool = false, autoConnect: Bool = true, connectionMacNames: [String] = [], files: DirectFilesSession? = nil, libraryURL: URL = DirectMacLibraryV1.defaultURL, connectionPanel: DirectConnectionPanelHost? = nil, loginRetentionAllowed: Bool = true, connectionEstablished: @escaping @MainActor () -> Bool = { true }, showMacs: @escaping @MainActor () -> Void) {
         self.connectionPanel = connectionPanel; self.loginRetentionAllowed = loginRetentionAllowed; self.connectionEstablished = connectionEstablished
-        self.mac = mac; self.inputOnly = inputOnly; self.connectionMacNames = connectionMacNames; self.showMacs = showMacs
+        self.mac = mac; self.inputOnly = inputOnly; self.autoConnect = autoConnect; self.connectionMacNames = connectionMacNames; self.showMacs = showMacs
         _files = State(initialValue: files ?? DirectFilesWorkspace.session(mac, libraryURL: libraryURL))
     }
     var body: some View {
         ZStack {
             (immersive ? Color.black : connectionPanel == nil ? Color(uiColor: .systemBackground) : Color.clear).ignoresSafeArea()
             if !files.macRemoved {
-                VNCRemoteDesktopView(mac: mac, inputOnly: inputOnly, connectionMacNames: connectionMacNames, files: files,
+                VNCRemoteDesktopView(mac: mac, inputOnly: inputOnly, autoConnect: autoConnect, connectionMacNames: connectionMacNames, files: files,
                                      showMacs: showMacs, connectionPanel: connectionPanel, loginRetentionAllowed: loginRetentionAllowed, connectionEstablished: connectionEstablished, chromeChanged: { immersive = $0 })
                     .ignoresSafeArea(.container, edges: .top)
             }
@@ -41,6 +42,7 @@ struct DirectDesktopSessionView: View {
 struct VNCRemoteDesktopView: UIViewControllerRepresentable {
     let mac: DirectMacRecordV1
     var inputOnly = false
+    var autoConnect = true
     var connectionMacNames: [String] = []
     let files: DirectFilesSession
     let showMacs: @MainActor () -> Void
@@ -55,6 +57,7 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
     }
     func makeUIViewController(context: Context) -> CompanionVNCTextNavigation {
         let viewer = CompanionVNCViewer()
+        viewer.preventsAutomaticConnection = !autoConnect
         viewer.connectionPanelHost = connectionPanel; viewer.preventsLoginRetention = !loginRetentionAllowed
         viewer.macName = mac.name
         viewer.connectionMacNames = connectionMacNames.isEmpty ? [mac.name] : connectionMacNames
