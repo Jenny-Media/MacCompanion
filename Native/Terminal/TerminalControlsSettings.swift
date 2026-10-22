@@ -1,296 +1,365 @@
 #if os(iOS) && MACCOMPANION_VNC_DEVELOPMENT
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct TerminalControlsSettings: View {
-    private enum Page: Hashable {
-        case destination(TerminalControlsDestination), library
-        var title: String { switch self { case .destination(let place): place.title; case .library: "Shortcuts & Text" } }
-    }
     var store = TerminalControlsStore()
+    var initialLibrary: TerminalSavedItemsSection?
+    var contextImage: UIImage?
     let close: () -> Void
-    @State private var draft = TerminalControlsProfile.defaults
+    @State private var profile = TerminalControlsProfile.defaults
     @State private var readable = false
     @State private var issue: DirectRecoveryNotice?
     @State private var pro = DirectProAccess.shared
     @State private var paywall = false
-    @State private var path: [Page] = []
+    @State private var layout: LayoutRequest?
+    private struct LayoutRequest: Identifiable {
+        var id = UUID()
+        let destination: TerminalControlsDestination
+        var item: UUID?
+    }
     var body: some View {
-        NavigationStack(path: $path) {
-            scrollContent {
-                ForEach(TerminalControlsDestination.allCases) { place in
-                    Button { path.append(.destination(place)) } label: {
-                        editorEntry(place.title, detail: place == .keyboard ? "Keys above the native keyboard" : "Favorites in the floating button", symbol: place.symbol)
-                    }.buttonStyle(.plain).accessibilityIdentifier("terminal-edit-" + place.rawValue)
-                }
-                Button { path.append(.library) } label: {
-                    editorEntry("Shortcuts & Text", detail: "Create and edit reusable saved items", symbol: "text.quote")
-                }.buttonStyle(.plain).accessibilityIdentifier("terminal-edit-library")
-            }.navigationTitle("Terminal Controls").directInlineNavigationTitle()
-                .toolbar { if path.isEmpty { editorToolbar(overview: true) } }
-                .navigationDestination(for: Page.self) { page in
-                    Group {
-                        if page == .destination(.keyboard) {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Applies to every Mac on this device.").font(.caption).foregroundStyle(.secondary)
-                                if let issue { DirectRecoveryCard(notice: issue, primary: .init(title: "Reload Saved Controls", perform: reload)) }
-                                TerminalControlsEditor(profile: $draft, editable: readable && pro.hasPro, destination: .keyboard)
-                            }.padding(16).background(Color(uiColor: .systemGroupedBackground))
-                        } else {
-                            scrollContent {
-                                switch page {
-                                case .destination(let place): TerminalControlsEditor(profile: $draft, editable: readable && pro.hasPro, destination: place)
-                                case .library: TerminalControlsEditor(profile: $draft, editable: readable && pro.hasPro, libraryOnly: true)
-                                }
+        NavigationStack {
+            Group {
+                if let initialLibrary { library(initialLibrary) }
+                else {
+                    List {
+                        Section {
+                            Button { layout = .init(destination: .keyboard) } label: {
+                                entry("Keyboard Bar", summary: "\(profile.resolvedRows.count) customizable rows", symbol: "keyboard")
+                            }.accessibilityIdentifier("terminal-edit-keyboard")
+                            Button { layout = .init(destination: .menu) } label: {
+                                entry("Floating Menu", summary: "\(profile.placed(.menu).count) favorites", symbol: "ellipsis.circle")
+                            }.accessibilityIdentifier("terminal-edit-menu")
+                        } header: { Text("Layout") }
+                        Section {
+                            ForEach([TerminalSavedItemsSection.shortcuts, .text], id: \.self) { section in
+                                NavigationLink { library(section) } label: {
+                                    entry(section.managementTitle, summary: "\(profile.savedItems(section).count) saved items", symbol: section == .shortcuts ? "keyboard" : "text.quote")
+                                }.accessibilityIdentifier("terminal-edit-" + (section == .shortcuts ? "shortcuts" : "text"))
                             }
-                        }
-                    }.navigationTitle(page.title).directInlineNavigationTitle()
-                        .toolbar { editorToolbar(overview: false) }
+                        } footer: { Text("Applies to every Mac on this device.") }
+                        recovery
+                    }.navigationTitle("Terminal Controls").directInlineNavigationTitle()
                 }
+            }.toolbar { ToolbarItem(placement: .confirmationAction) {
+                Button("Done", action: close).buttonStyle(.borderedProminent).accessibilityIdentifier("terminal-controls-cancel")
+            } }
         }.interactiveDismissDisabled().presentationSizing(.page).directAppearance()
-            .onAppear { path = []; reload() }
+            .onAppear(perform: reload)
+            .fullScreenCover(item: $layout) { request in
+                TerminalLayoutSheet(profile: profile, destination: request.destination, item: request.item,
+                    editable: readable && pro.hasPro, contextImage: contextImage, apply: commit)
+            }
             .sheet(isPresented: $paywall) { DirectProView() }
     }
-    private func scrollContent<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                Text("Applies to every Mac on this device.").font(.subheadline).foregroundStyle(.secondary)
-                if !readable || issue != nil {
-                    DirectRecoveryCard(notice: issue ?? .make(.controlsUnavailable), primary: .init(title: "Reload Saved Controls", perform: reload))
+    private func library(_ section: TerminalSavedItemsSection) -> some View {
+        Group {
+            if !readable {
+                List { recovery }
+            } else if !pro.hasPro {
+                ContentUnavailableView {
+                    Label("Customize with Pro", systemImage: "sparkles")
+                } description: {
+                    Text("Create and arrange shortcuts and saved text with Pro.")
+                } actions: {
+                    Button("View Pro Options") { paywall = true }.buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("terminal-library-pro")
                 }
-                content()
-                if !pro.hasPro { Button("Customize with Pro", systemImage: "sparkles") { paywall = true } }
-            }.padding(16)
-        }.scrollDismissesKeyboard(.interactively).background(Color(uiColor: .systemGroupedBackground))
+            } else {
+                VStack(spacing: 0) {
+                    if let issue {
+                        DirectRecoveryCard(notice: issue, primary: .init(title: "Reload Saved Controls", perform: reload))
+                            .padding(12).accessibilityIdentifier("terminal-controls-recovery")
+                    }
+                    TerminalSavedLibrary(profile: $profile, section: section, editable: true, persist: commit,
+                        place: { id, destination in layout = .init(destination: destination, item: id) })
+                }
+            }
+        }.navigationTitle(section.managementTitle).directInlineNavigationTitle()
     }
-    @ToolbarContentBuilder private func editorToolbar(overview: Bool) -> some ToolbarContent {
-        ToolbarItem(placement: overview ? .cancellationAction : .topBarTrailing) {
-            Button("Cancel", action: close).accessibilityIdentifier("terminal-controls-cancel")
+    @ViewBuilder private var recovery: some View {
+        if !readable || issue != nil {
+            Section { DirectRecoveryCard(notice: issue ?? .make(.controlsUnavailable), primary: .init(title: "Reload Saved Controls", perform: reload)) }
+                .accessibilityIdentifier("terminal-controls-recovery")
         }
-        ToolbarItem(placement: .confirmationAction) {
-            Button("Save", action: save).disabled(!readable || !pro.hasPro || !draft.valid).accessibilityIdentifier("terminal-controls-save")
-        }
+        if !pro.hasPro { Section { Button("Customize with Pro", systemImage: "sparkles") { paywall = true } } }
     }
-    private func editorEntry(_ title: String, detail: String, symbol: String) -> some View {
-        HStack(spacing: 14) {
-            Image(systemName: symbol).font(.title2).frame(width: 36)
-            VStack(alignment: .leading, spacing: 5) { Text(title).font(.headline); Text(detail).font(.subheadline).foregroundStyle(.secondary) }
-            Spacer(); Image(systemName: "chevron.right").foregroundStyle(.secondary)
-        }.padding(18).frame(maxWidth: .infinity, alignment: .leading).background(.background, in: RoundedRectangle(cornerRadius: 16))
+    private func entry(_ title: String, summary: String, symbol: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: symbol).frame(width: 24)
+            VStack(alignment: .leading, spacing: 3) { Text(title); Text(summary).font(.caption).foregroundStyle(.secondary) }
+            Spacer()
+        }.foregroundStyle(.primary).padding(.vertical, 5)
     }
     private func reload() {
         do {
-            draft = try store.load()
-            if draft.numberRow == nil {
-                let defaults = UserDefaults.standard
-                draft.numberRow = defaults.object(forKey: TerminalController.numberRowPreference) == nil || defaults.bool(forKey: TerminalController.numberRowPreference)
-            }
+            profile = try store.load()
             readable = true; issue = nil
-        }
-        catch { readable = false; issue = .make(.controlsUnavailable, message: "Terminal controls couldn’t be read. Existing controls and snippets are kept. Retry when device storage is available.") }
+        } catch { readable = false; issue = .make(.controlsUnavailable) }
     }
-    private func save() {
-        guard readable, pro.hasPro, DirectAppLockV1.shared.canAccess else { return }
-        do { draft = try store.save(draft); close() }
+    private func commit(_ draft: TerminalControlsProfile) -> Bool {
+        guard readable, pro.hasPro, DirectAppLockV1.shared.canAccess else { return false }
+        do { profile = try store.save(draft); issue = nil; return true }
         catch TerminalControlsStore.Failure.staleDraft {
-            issue = .make(.saveFailed, message: "Controls changed in another window. Reload the saved controls before editing again.")
+            issue = .make(.saveFailed, message: "Controls changed in another window. Close this editor and reload before trying again.")
         } catch { issue = .make(.saveFailed) }
+        return false
     }
 }
 
-/// Editors own value drafts. Preview selection never acquires session input.
+private struct TerminalLayoutSheet: View {
+    @State var profile: TerminalControlsProfile
+    let destination: TerminalControlsDestination
+    var item: UUID?
+    let editable: Bool
+    var contextImage: UIImage?
+    let apply: (TerminalControlsProfile) -> Bool
+    @Environment(\.dismiss) private var dismiss
+    @State private var failed = false
+    @State private var initial: TerminalControlsProfile?
+    @State private var discarding = false
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                if failed { Text("Couldn’t save. Your draft is still open. Close and reload if controls changed in another window.").font(.caption).foregroundStyle(.red).padding(12) }
+                if editable {
+                    TerminalControlsEditor(profile: $profile, destination: destination, contextImage: contextImage, insertion: item)
+                } else {
+                    ContentUnavailableView("Customization Unavailable", systemImage: "slider.horizontal.3", description: Text("Close this editor to check Pro access or reload your saved controls."))
+                }
+            }.navigationTitle(destination == .keyboard ? "Keyboard Bar" : "Menu Favorites").directInlineNavigationTitle()
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") {
+                        if let initial, initial != profile { discarding = true } else { dismiss() }
+                    }.accessibilityIdentifier("terminal-layout-cancel") }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { if !editable || apply(profile) { dismiss() } else { failed = true } }
+                            .buttonStyle(.borderedProminent).accessibilityIdentifier("terminal-controls-save")
+                    }
+                }
+        }.interactiveDismissDisabled().directAppearance().onAppear { if initial == nil { initial = profile } }
+            .confirmationDialog("Discard changes?", isPresented: $discarding, titleVisibility: .visible) {
+                Button("Discard Changes", role: .destructive) { dismiss() }
+                Button("Keep Editing", role: .cancel) {}
+            } message: { Text("Your layout changes have not been saved.") }
+    }
+}
+
+/// A destination editor owns only a value draft, never a terminal input owner.
 struct TerminalControlsEditor: View {
     @Binding var profile: TerminalControlsProfile
     var editable = true
     var destination: TerminalControlsDestination = .menu
     var libraryOnly = false
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @State private var selected: UUID?
+    var contextImage: UIImage?
+    var insertion: UUID?
     @State private var selectedRow = TerminalKeyboardRow.mainID
-    @State private var adding = false
-    @State private var search = ""
-    @State private var confirmingDelete = false
-    @State private var history: [TerminalControlsProfile] = []
-    @State private var undoTarget: TerminalControlsProfile?
-    private var placed: [TerminalControlAction] {
-        if destination == .keyboard, let selected, let row = profile.resolvedRows.first(where: { $0.actionIDs.contains(selected) }) { return profile.placed(in: row) }
-        return profile.placed(destination)
+    var body: some View {
+        Group {
+            if libraryOnly {
+                TerminalSavedLibrary(profile: $profile, section: .shortcuts, editable: editable, persist: { profile = $0; return true }, place: { _, _ in })
+            } else if destination == .keyboard {
+                TerminalKeyboardEditingPreview(profile: $profile, selected: nil, selectedRow: $selectedRow, select: { _ in }, contextImage: contextImage, insertion: insertion)
+            } else {
+                TerminalFloatingMenuEditor(profile: $profile, contextImage: contextImage, insertion: insertion)
+            }
+        }.disabled(!editable).privacySensitive()
     }
-    private var saved: [TerminalControlAction] {
-        profile.actions.filter { ($0.kind == .text || $0.kind == .shortcut) && (search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) || $0.detail.localizedCaseInsensitiveContains(search)) }
-    }
-    private var selection: Binding<TerminalControlAction>? {
-        guard let id = selected, let current = profile.actions.first(where: { $0.id == id }) else { return nil }
-        return Binding(get: { profile.actions.first { $0.id == id } ?? current }, set: { value in
-            guard editable, let index = profile.actions.firstIndex(where: { $0.id == id }) else { return }
-            profile.actions[index] = value
-        })
+}
+
+struct TerminalSavedLibrary: View {
+    @Binding var profile: TerminalControlsProfile
+    let section: TerminalSavedItemsSection
+    var editable: Bool
+    let persist: (TerminalControlsProfile) -> Bool
+    let place: (UUID, TerminalControlsDestination) -> Void
+    @State private var query = ""
+    @State private var editing: TerminalControlAction?
+    @State private var presetPack: TerminalShortcutPack?
+    @State private var deleting: TerminalControlAction?
+    @State private var editMode = EditMode.inactive
+    private var items: [TerminalControlAction] {
+        profile.savedItems(section).filter { query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) || $0.detail.localizedCaseInsensitiveContains(query) }
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: destination == .keyboard && !libraryOnly ? 12 : 20) {
-            if !libraryOnly {
-                if destination != .keyboard { HStack { Spacer(); undoButton } }
-                VStack(alignment: .leading, spacing: destination == .keyboard ? 8 : 12) {
-                    HStack {
-                        if destination == .keyboard && dynamicTypeSize.isAccessibilitySize {
-                            Image(systemName: destination.symbol).font(.headline).accessibilityLabel("Layout")
-                        } else {
-                            Label(destination == .keyboard ? "Layout" : destination.title + " Preview", systemImage: destination.symbol).font(.headline)
+        List {
+            Section {
+                ForEach(items) { item in
+                    HStack(spacing: 8) {
+                        Button { editing = item } label: { itemLabel(item) }.buttonStyle(.plain)
+                            .accessibilityIdentifier("terminal-library-" + item.id.uuidString)
+                        if editMode != .active {
+                            Menu {
+                                Button("Edit", systemImage: "pencil") { editing = item }
+                                ForEach(TerminalControlsDestination.allCases) { destination in
+                                    Button("Add to " + destination.title, systemImage: destination.symbol) { place(item.id, destination) }
+                                }
+                                Button("Delete…", systemImage: "trash", role: .destructive) { deleting = item }
+                            } label: { Image(systemName: "ellipsis.circle").frame(minWidth: 44, minHeight: 44) }
+                            .accessibilityLabel("Actions for " + item.title)
                         }
-                        if destination == .keyboard {
-                            Spacer()
-                            Text("\(profile.resolvedRows.count) of \(TerminalControlsProfile.maximumKeyboardRows)").font(.caption).foregroundStyle(.secondary)
-                                .accessibilityIdentifier("terminal-row-count")
-                            undoButton.labelStyle(.iconOnly).frame(minWidth: 44, minHeight: 44)
-                        }
                     }
-                    if destination == .keyboard {
-                        TerminalKeyboardEditingPreview(profile: $profile, selected: selected, selectedRow: $selectedRow, select: { selected = $0 })
-                    } else {
-                        TerminalMenuEditingPreview(actions: placed, selected: selected, editable: editable, select: { selected = $0 }, move: move).id(dynamicTypeSize)
+                    .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                        Button("Edit", systemImage: "pencil") { editing = item }.tint(.accentColor)
                     }
-                    if destination != .keyboard { Text("Tap an action to edit. This preview sends nothing.").font(.caption).foregroundStyle(.secondary) }
-                }.padding(destination == .keyboard ? 0 : 12).background(.background, in: RoundedRectangle(cornerRadius: 16))
-                if destination == .keyboard {
-                    Text("Command requires remote application support.").font(.caption).foregroundStyle(.secondary)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button("Delete", systemImage: "trash", role: .destructive) { deleting = item }
+                    }
+                }.onMove { source, destination in
+                    var order = profile.savedItems(section).map(\.id)
+                    order.move(fromOffsets: source, toOffset: destination)
+                    var draft = profile; draft.reorderLibrary(section, ids: order); _ = commit(draft)
+                }.moveDisabled(!query.isEmpty)
+                if items.isEmpty {
+                    ContentUnavailableView(section == .shortcuts ? "No Shortcuts" : "No Saved Text", systemImage: section == .shortcuts ? "keyboard" : "text.quote", description: Text(query.isEmpty ? "Tap + to create your first item." : "Try another search."))
+                }
+            } footer: { Text("Shared by every Mac on this device. Tap or swipe right to edit; swipe left to delete.") }
+            if section == .shortcuts && editMode != .active {
+                Section("Tool Shortcuts") { TerminalPresetEntries { presetPack = $0 } }
+            }
+        }.searchable(text: $query, prompt: section == .shortcuts ? "Search shortcuts" : "Search saved text")
+            .environment(\.editMode, $editMode)
+            .onChange(of: query) { _, query in if !query.isEmpty { editMode = .inactive } }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    if profile.savedItems(section).count > 1 && query.isEmpty {
+                        Button(editMode == .active ? "Finish Reordering" : "Reorder", systemImage: editMode == .active ? "checkmark" : "arrow.up.arrow.down") {
+                            withAnimation { editMode = editMode == .active ? .inactive : .active }
+                        }.accessibilityIdentifier("terminal-library-reorder")
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(section == .shortcuts ? "New Shortcut" : "New Saved Text", systemImage: "plus") {
+                        editing = .init(title: "", kind: section.kind, inMenu: false)
+                    }.accessibilityIdentifier("terminal-library-create").disabled(!editable)
                 }
             }
-            if let selection, libraryOnly || destination != .keyboard {
-                TerminalControlInspector(action: selection).id(selection.wrappedValue.id)
-                    .padding(12).background(.background, in: RoundedRectangle(cornerRadius: 16)).disabled(!editable)
-                Text("Content edits apply everywhere this item is used.").font(.caption).foregroundStyle(.secondary)
-                if !libraryOnly && destination != .keyboard {
-                    HStack {
-                        Button("Earlier", systemImage: "arrow.left") { moveSelected(-1) }.disabled(placed.first?.id == selected)
-                        Button("Later", systemImage: "arrow.right") { moveSelected(1) }.disabled(placed.last?.id == selected)
-                    }
-                    if destination == .keyboard, let selected {
-                        Picker("Place in Row", selection: Binding(get: { profile.resolvedRows.first(where: { $0.actionIDs.contains(selected) })?.id ?? TerminalKeyboardRow.mainID }, set: { profile.place(selected, in: $0); selectedRow = $0 })) {
-                            ForEach(profile.resolvedRows.filter { $0.kind != .numbers }) { Text($0.title).tag($0.id) }
-                        }.accessibilityIdentifier("terminal-item-row")
-                    }
-                    Button("Remove from " + destination.title, systemImage: "minus.circle") {
-                        if let selected { profile.pin(selected, in: destination, enabled: false) }; selected = nil
-                    }.accessibilityIdentifier("terminal-remove-placement")
-                    Text("Saved shortcuts and text remain in Shortcuts & Text.").font(.caption).foregroundStyle(.secondary)
+            .sheet(item: $editing) { item in
+                TerminalSavedControlEditor(action: item, profile: profile, creating: !profile.actions.contains { $0.id == item.id }, apply: { action in
+                    var draft = profile
+                    if let index = draft.actions.firstIndex(where: { $0.id == action.id }) { draft.actions[index] = action }
+                    else { draft.actions.append(action) }
+                    let saved = commit(draft); if saved { editing = nil }; return saved
+                }, delete: profile.actions.contains { $0.id == item.id } ? {
+                    var draft = profile; draft.delete(item.id)
+                    let saved = commit(draft); if saved { editing = nil }; return saved
+                } : nil)
+            }
+            .sheet(item: $presetPack) { pack in
+                TerminalShortcutPresetPicker(profile: profile, initialPack: pack) { chosen in
+                    var draft = profile
+                    for preset in chosen { guard draft.add(preset) != nil else { return false } }
+                    return commit(draft)
                 }
             }
-            if selection != nil && (libraryOnly || destination != .keyboard) {
-                Button("Delete Saved Item…", systemImage: "trash", role: .destructive) { confirmingDelete = true }
-                    .accessibilityIdentifier("terminal-delete-item")
-            }
-            if libraryOnly {
-                TextField("Search shortcuts and text", text: $search).textFieldStyle(.roundedBorder)
-                ForEach(saved) { item in
-                    Button { selected = item.id } label: {
-                        HStack { Image(systemName: item.symbol); VStack(alignment: .leading) { Text(item.title); Text(item.detail).font(.caption).foregroundStyle(.secondary).lineLimit(2) }; Spacer(); Image(systemName: "pencil") }.padding(12)
-                    }.buttonStyle(.bordered).accessibilityIdentifier("terminal-library-" + item.id.uuidString)
+            .confirmationDialog("Delete this saved item?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
+                Button("Delete Saved Item", role: .destructive) {
+                    if let deleting { var draft = profile; draft.delete(deleting.id); _ = commit(draft) }; deleting = nil
                 }
-                if saved.isEmpty { Text("No matching saved items. Create a shortcut or text below.").foregroundStyle(.secondary) }
-            }
-            Button(libraryOnly ? "Create Shortcut or Text" : destination == .keyboard ? "Add Key" : "Add to " + destination.title, systemImage: "plus") { adding = true }
-                .buttonStyle(.borderedProminent).disabled(!editable || profile.actions.count >= 4096).accessibilityIdentifier("terminal-control-add")
-        }.disabled(!editable).privacySensitive()
-            .onChange(of: profile) { old, new in
-                if new == undoTarget { undoTarget = nil; return }
-                history.append(old); if history.count > 20 { history.removeFirst() }
-            }
-            .sheet(isPresented: $adding) { addPicker }
-            .confirmationDialog("Delete this item from the keyboard bar, floating menu and saved collection?", isPresented: $confirmingDelete, titleVisibility: .visible) {
-                Button("Delete Item", role: .destructive) { if let selected { profile.delete(selected) }; selected = nil }
-            }
+            } message: {
+                if let deleting {
+                    let placements = deleting.placements(in: profile)
+                    Text(placements.isEmpty ? "This item has no placements." : "Also removes it from: " + placements.joined(separator: ", ") + ".")
+                }
+            }.disabled(!editable)
     }
-    private var undoButton: some View {
-        Button("Undo", systemImage: "arrow.uturn.backward") {
-            guard let previous = history.popLast() else { return }; undoTarget = previous; profile = previous; selected = nil
-        }.disabled(history.isEmpty).accessibilityIdentifier("terminal-editor-undo")
+    private func itemLabel(_ item: TerminalControlAction) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(item.title).foregroundStyle(.primary)
+            Text(item.detail).font(item.kind == .text ? .system(.caption, design: .monospaced) : .caption).foregroundStyle(.secondary).lineLimit(2)
+            if let usage = item.usage { Text(usage).font(.caption).foregroundStyle(.secondary) }
+            let placements = item.placements(in: profile)
+            Text(placements.isEmpty ? "Not placed yet" : placements.joined(separator: " · ")).font(.caption2).foregroundStyle(.secondary)
+        }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
     }
-    private func previewSymbol(_ symbol: String, title: String) -> some View {
-        Image(systemName: symbol).frame(minWidth: 44, minHeight: 44).background(.quaternary, in: RoundedRectangle(cornerRadius: 8)).accessibilityLabel(title)
+    private func commit(_ draft: TerminalControlsProfile) -> Bool {
+        guard editable else { return false }
+        return persist(draft)
     }
-    private var addPicker: some View {
-        NavigationStack {
-            List {
-                Section("Create New") {
-                    Button("Shortcut") { var item = TerminalControlAction(title: "Shortcut", kind: .shortcut); item.character = 0x63; item.modifiers = [0xffe3]; add(item) }
-                    Button("Saved Text") { add(.init(title: "Saved Text", kind: .text)) }
-                }
-                if !libraryOnly {
-                    Section("Reuse Saved Item") {
-                        TextField("Search", text: $search)
-                        ForEach(saved) { item in
-                            Button { profile.pin(item.id, in: destination, enabled: true); if destination == .keyboard { profile.place(item.id, in: selectedRow) }; selected = item.id; adding = false } label: {
-                                VStack(alignment: .leading, spacing: 4) { Text(item.title); Text(item.detail).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
-                            }.accessibilityLabel(item.title).accessibilityValue(item.detail)
-                        }
-                    }
-                    if destination == .keyboard {
-                        Section("Bar Controls & Modifiers") {
-                            ForEach(TerminalBarItem.Control.allCases, id: \.self) { control in
-                                Button(TerminalBarItem.control(control).title(in: profile)) { profile.placeBarItem(.control(control), in: selectedRow); adding = false }
-                            }
-                        }
-                    }
-                    ForEach(TerminalKeyCatalog.groups) { group in
-                        Section(group.title) { ForEach(TerminalKeyCatalog.matching(search, in: group)) { key in
-                            Button(key.name) {
-                                if destination == .keyboard { profile.placeBarItem(.key(key.id), in: selectedRow); selected = nil }
-                                else { selected = profile.pin(key, in: destination) }
-                                adding = false
-                            }
-                        } }
-                    }
-                    Section("Session Actions") { ForEach(DirectQuickActionEditing.standards(.terminal)) { item in Button(item.title) { add(.init(item)) } } }
-                }
-            }.navigationTitle(libraryOnly ? "Create Saved Item" : "Add to " + destination.title).directInlineNavigationTitle()
-                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { adding = false } } }
+}
+
+/// The same named entry points are used by libraries and direct placement.
+struct TerminalPresetEntries: View {
+    let select: (TerminalShortcutPack) -> Void
+    var body: some View {
+        ForEach([TerminalShortcutPack.tmux, .zellij, .herdr]) { pack in
+            Button(pack == .zellij ? "Zellij" : pack.title, systemImage: "square.stack.3d.up") { select(pack) }
+                .accessibilityIdentifier("terminal-tool-presets-" + pack.id)
         }
     }
-    private func actionButton(_ item: TerminalControlAction) -> some View {
-        Button(item.title) { selected = item.id }.buttonStyle(.bordered)
-            .tint(selected == item.id ? .accentColor : .secondary).frame(minHeight: 44)
-            .draggable(item.id.uuidString).dropDestination(for: String.self) { values, _ in
-                guard editable, let source = values.first.flatMap(UUID.init(uuidString:)) else { return false }; move(source, item.id); return true
-            }.accessibilityIdentifier("terminal-row-preview-" + item.id.uuidString)
-    }
-    private func add(_ source: TerminalControlAction) {
-        guard editable else { return }
-        var item = source; item.inRow = !libraryOnly && destination == .keyboard; item.inMenu = !libraryOnly && destination == .menu
-        profile.actions.append(item); if item.inRow { profile.place(item.id, in: selectedRow) }; selected = item.id; adding = false
-    }
-    private func move(_ source: UUID, _ target: UUID) { guard editable else { return }; profile.move(source, to: target, in: destination) }
-    private func moveSelected(_ offset: Int) {
-        guard let selected, let index = placed.firstIndex(where: { $0.id == selected }), placed.indices.contains(index + offset) else { return }
-        move(selected, placed[index + offset].id)
-    }
 }
 
-struct TerminalControlInspector: View {
-    @Binding var action: TerminalControlAction
+struct TerminalShortcutPresetPicker: View {
+    let profile: TerminalControlsProfile
+    var initialPack: TerminalShortcutPack = .tmux
+    var placement = false
+    let add: ([TerminalShortcutPreset]) -> Bool
+    @State private var pack = TerminalShortcutPack.tmux
+    @State private var selected: Set<String> = []
+    @State private var failed = false
+    @Environment(\.dismiss) private var dismiss
+    private var all: [TerminalShortcutPreset] { TerminalShortcutPack.allCases.flatMap(\.shortcuts) }
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            if action.kind == .shortcut {
-                DirectQuickActionInspector(action: Binding(get: { action.shortcut }, set: { action.title = $0.title; action.character = $0.key; action.modifiers = $0.modifiers }), mode: .terminal)
-                Label(action.shortcut.shortcutTitle, systemImage: "keyboard").font(.headline).accessibilityIdentifier("terminal-shortcut-preview")
-            } else {
-                Label(action.kind == .text ? "Saved Text" : action.kind == .builtIn ? "Session Action" : "Terminal Key", systemImage: action.symbol).font(.headline)
-                TextField("Name", text: $action.title).textFieldStyle(.roundedBorder).accessibilityIdentifier("terminal-control-name")
-                if action.kind == .text { DirectSavedTextEditor(text: $action.text, mode: .terminal, maximumBytes: 4096) }
-                if action.kind == .key { Picker("Key", selection: $action.key) { ForEach(TerminalAccessoryKey.allCases) { key in Text(key.title).tag(Optional(key)) } } }
-            }
-            if !action.valid { Text("Enter a name up to 40 characters and valid content. Text supports up to 4096 UTF-8 bytes.").font(.caption).foregroundStyle(.red) }
-        }.privacySensitive()
+        NavigationStack {
+            List {
+                if initialPack == .zellij || initialPack == .zellijUnlock {
+                    Section { Picker("Keybindings", selection: $pack) {
+                        Text("Default").tag(TerminalShortcutPack.zellij)
+                        Text("Unlock First").tag(TerminalShortcutPack.zellijUnlock)
+                    }.pickerStyle(.segmented).accessibilityIdentifier("terminal-preset-tool") }
+                }
+                Section {
+                    Text(pack.guidance)
+                    Text("Each button sends one key or chord. Custom tool bindings may differ.").font(.caption).foregroundStyle(.secondary)
+                }
+                Section {
+                    ForEach(pack.shortcuts) { preset in
+                        let added = profile.actions.contains { $0.presetID == preset.id }
+                        Button {
+                            if selected.contains(preset.id) { selected.remove(preset.id) } else { selected.insert(preset.id) }
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(preset.action.title)
+                                    Text(preset.action.detail).font(.caption).foregroundStyle(.secondary)
+                                    if let usage = preset.action.usage { Text(usage).font(.caption).foregroundStyle(.secondary) }
+                                }
+                                Spacer(); Image(systemName: (!placement && added) || selected.contains(preset.id) ? "checkmark.circle.fill" : "circle")
+                            }.foregroundStyle(.primary).frame(minHeight: 44)
+                        }.disabled(added && !placement).accessibilityValue(added && !placement ? "Already added" : selected.contains(preset.id) ? "Selected" : "Not selected")
+                            .accessibilityIdentifier("terminal-preset-" + preset.id)
+                    }
+                } footer: { Link("Default bindings reference", destination: pack.source) }
+                if failed { Text("Couldn’t add presets. Your selection is kept.").foregroundStyle(.red) }
+            }.navigationTitle(initialPack == .zellij || initialPack == .zellijUnlock ? "Zellij Shortcuts" : initialPack.title + " Shortcuts").directInlineNavigationTitle()
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                    ToolbarItem(placement: .confirmationAction) { Button("Add \(selected.count)") {
+                        if add(all.filter { selected.contains($0.id) }) { dismiss() } else { failed = true }
+                    }.buttonStyle(.borderedProminent).disabled(selected.isEmpty).accessibilityIdentifier("terminal-presets-add") }
+                }
+        }.directAppearance().onAppear { pack = initialPack }
     }
 }
-
 /// The production floating-menu renderer supplies layout, selection, drag and
 /// accessible move actions. It never receives an input execution handler here.
 struct TerminalMenuEditingPreview: UIViewRepresentable {
+    struct Configuration: Equatable {
+        let actions: [TerminalControlAction]
+        let selected: UUID?
+        let enabled: Bool
+        let adding: Bool
+        let category: UIContentSizeCategory
+        let fullMenu: Bool
+    }
+    final class Coordinator { var configuration: Configuration? }
     let actions: [TerminalControlAction]
     let selected: UUID?
     var editable: Bool
     let select: (UUID) -> Void
     let move: (UUID, UUID) -> Void
+    var add: (() -> Void)? = nil
+    var fullMenu = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private var category: UIContentSizeCategory {
         switch dynamicTypeSize {
@@ -305,12 +374,30 @@ struct TerminalMenuEditingPreview: UIViewRepresentable {
     func makeUIView(context: Context) -> CompanionVNCControls {
         let view = CompanionVNCControls(); view.editingPreview = true; view.bottomInset = 0; return view
     }
+    func makeCoordinator() -> Coordinator { Coordinator() }
     func updateUIView(_ view: CompanionVNCControls, context: Context) {
+        let allowed = editable && context.environment.isEnabled
+        view.isUserInteractionEnabled = allowed || fullMenu
+        view.fullMenuPreview = fullMenu
+        let addIdentifier = "terminal-editor-add-favorite"
+        view.previewSelectionHandler = allowed ? { value in
+            if value == addIdentifier { add?() }
+            else if let id = UUID(uuidString: value) { select(id) }
+        } : nil
+        view.previewMoveHandler = allowed ? { source, target in
+            let destination = target == addIdentifier ? actions.last?.id : UUID(uuidString: target)
+            if let source = UUID(uuidString: source), let destination { move(source, destination) }
+        } : nil
+        let configuration = Configuration(actions: actions, selected: selected, enabled: allowed, adding: add != nil, category: category, fullMenu: fullMenu)
+        guard context.coordinator.configuration != configuration else { return }
+        // Layout can re-enter updateUIView. Recreating the material panel on
+        // every pass prevents the event loop from settling and replaces hit
+        // targets while a selection or drag is still being delivered.
+        context.coordinator.configuration = configuration
         view.traitOverrides.preferredContentSizeCategory = category
-        view.macName = "Terminal"; view.categoryActions = []; view.quickActions = actions.map(\.native)
+        view.macName = "Terminal"; view.categoryActions = fullMenu ? TerminalControlNavigation.items : []; view.quickActions = actions.map(\.native)
+        if add != nil { view.quickActions.append(["id": addIdentifier, "kind": "previewAdd", "title": "Add Favorite", "symbol": "plus", "enabled": true, "inputAction": false]) }
         view.selectedPreviewID = selected?.uuidString
-        view.previewSelectionHandler = editable ? { if let id = UUID(uuidString: $0) { select(id) } } : nil
-        view.previewMoveHandler = editable ? { if let source = UUID(uuidString: $0), let target = UUID(uuidString: $1) { move(source, target) } } : nil
         view.refreshEditingPreview()
         view.invalidateIntrinsicContentSize()
     }

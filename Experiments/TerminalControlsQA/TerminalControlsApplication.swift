@@ -20,8 +20,11 @@ final class TerminalControlsScene: UIResponder, UIWindowSceneDelegate {
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options: UIScene.ConnectionOptions) {
         guard let scene = scene as? UIWindowScene else { return }
         DirectAppearanceV1.shared.app = .light
+        let functionalTest = ProcessInfo.processInfo.environment["MACCOMPANION_CONTROLS_FUNCTIONAL_TEST"] == "1"
+        if functionalTest { UIView.setAnimationsEnabled(false) }
         let window = UIWindow(windowScene: scene)
-        window.rootViewController = UIHostingController(rootView: TerminalControlsHarness().environment(DirectAppearanceV1.shared))
+        window.rootViewController = UIHostingController(rootView: TerminalControlsHarness().environment(DirectAppearanceV1.shared)
+            .transaction { if functionalTest { $0.disablesAnimations = true; $0.animation = nil } })
         self.window = window; window.makeKeyAndVisible()
     }
 }
@@ -29,16 +32,39 @@ final class TerminalControlsScene: UIResponder, UIWindowSceneDelegate {
     static let itemID = UUID(uuidString: "00000000-0000-0000-0000-00000000C001")!
     var writes = 0
     var dismissals = 0
-    var data = try! JSONEncoder().encode(TerminalControlsProfile(actions: [
-        TerminalControlAction(id: TerminalControlsMemory.itemID, title: "Project", kind: .text, text: "original", inRow: true)]))
+    var failWrites = ProcessInfo.processInfo.environment["MACCOMPANION_CONTROLS_FAIL_WRITE"] == "1"
+    var remainingWriteFailures = ProcessInfo.processInfo.environment["MACCOMPANION_CONTROLS_FAIL_WRITE_ONCE"] == "1" ? 1 : 0
+    var remainingReadFailures = ProcessInfo.processInfo.environment["MACCOMPANION_CONTROLS_FAIL_READ_ONCE"] == "1" ? 1 : 0
+    var data: Data = {
+        var profile = TerminalControlsProfile(actions: [
+            TerminalControlAction(id: TerminalControlsMemory.itemID, title: "Project", kind: .text, text: "original", inRow: true)])
+        // Transaction journeys start after migration; migration has its own
+        // hosted tests. A failed explicit Save must not fail the initial load.
+        profile.normalizeLegacyRows()
+        return try! JSONEncoder().encode(profile)
+    }()
     var profile: TerminalControlsProfile { try! JSONDecoder().decode(TerminalControlsProfile.self, from: data) }
     var store: TerminalControlsStore {
-        .init(read: { self.data }, write: { self.data = $0; self.writes += 1 }, legacyIDs: { [] })
+        .init(read: {
+            if self.remainingReadFailures > 0 { self.remainingReadFailures -= 1; throw TerminalControlsStore.Failure.unreadable }
+            return self.data
+        }, write: {
+            if self.remainingWriteFailures > 0 { self.remainingWriteFailures -= 1; throw TerminalControlsStore.Failure.unreadable }
+            if self.failWrites { throw TerminalControlsStore.Failure.unreadable }
+            self.data = $0; self.writes += 1
+        }, legacyIDs: { [] })
     }
 }
 struct TerminalControlsHarness: View {
+    private enum ControlsEntry: String, Identifiable {
+        case settings, shortcuts, text
+        var id: String { rawValue }
+        var library: TerminalSavedItemsSection? {
+            switch self { case .settings: nil; case .shortcuts: .shortcuts; case .text: .text }
+        }
+    }
     @State private var memory = TerminalControlsMemory()
-    @State private var editing = false
+    @State private var controlsEntry: ControlsEntry?
     @State private var pro = DirectProAccess.shared
     @State private var live = TerminalControlsLiveHost()
     @State private var showingTerminal = false
@@ -49,7 +75,9 @@ struct TerminalControlsHarness: View {
             ScrollView { VStack(spacing: 20) {
                 Text(pro.hasPro ? "Pro ready" : "Checking Pro").accessibilityIdentifier("controls-qa-pro")
                 Button("Refresh Pro") { Task { await pro.refresh() } }.accessibilityIdentifier("controls-qa-refresh-pro")
-                Button("Customize Controls") { editing = true }.accessibilityIdentifier("controls-qa-open")
+                Button("Customize Controls") { controlsEntry = .settings }.accessibilityIdentifier("controls-qa-open")
+                Button("Manage Shortcuts") { controlsEntry = .shortcuts }.accessibilityIdentifier("controls-qa-shortcuts")
+                Button("Manage Saved Text") { controlsEntry = .text }.accessibilityIdentifier("controls-qa-text")
                 Button("Open Live Terminal") {
                     Task { do { try await live.prepare(); showingTerminal = true } catch { failure = String(describing: error) } }
                 }.accessibilityIdentifier("controls-qa-live")
@@ -57,13 +85,18 @@ struct TerminalControlsHarness: View {
                 Text("Saved items: \(memory.profile.actions.count)").accessibilityIdentifier("controls-qa-count")
                 Text("Writes: \(memory.writes)").accessibilityIdentifier("controls-qa-writes")
                 Text("Closes: \(memory.dismissals)").accessibilityIdentifier("controls-qa-closes")
-                Text(memory.profile.actions[0].title).accessibilityIdentifier("controls-qa-title")
-                Text("Row: \(memory.profile.actions[0].inRow ? "on" : "off"); Menu: \(memory.profile.actions[0].inMenu ? "on" : "off")")
+                Text(memory.profile.actions.first?.title ?? "No saved items").accessibilityIdentifier("controls-qa-title")
+                Text("Row: \(memory.profile.actions.first?.inRow == true ? "on" : "off"); Menu: \(memory.profile.actions.first?.inMenu == true ? "on" : "off")")
                     .accessibilityIdentifier("controls-qa-placements")
                 Text("Rows: " + memory.profile.resolvedRows.map(\.title).joined(separator: " | "))
                     .accessibilityIdentifier("controls-qa-row-order")
+                Text("Favorites: " + memory.profile.placed(.menu).map(\.title).joined(separator: " | "))
+                    .accessibilityIdentifier("controls-qa-menu-order")
             }.frame(maxWidth: .infinity).padding(.vertical, 24) }.navigationTitle("Synthetic Controls QA")
-                .sheet(isPresented: $editing) { TerminalControlsSettings(store: memory.store, close: { memory.dismissals += 1; editing = false }) }
+                .sheet(item: $controlsEntry) { entry in
+                    TerminalControlsSettings(store: memory.store, initialLibrary: entry.library,
+                        close: { memory.dismissals += 1; controlsEntry = nil })
+                }
                 .fullScreenCover(isPresented: $showingTerminal) {
                     if let session = live.session {
                         DirectTerminalView(mac: session.mac, session: session, autoConnect: false, exit: { showingTerminal = false })

@@ -94,12 +94,17 @@ import SwiftUI
         let ctrl = try XCTUnwrap(descendants(bar).compactMap { $0 as? UIButton }.first { $0.accessibilityLabel == "Ctrl" })
         let escape = try XCTUnwrap(descendants(bar).compactMap { $0 as? UIButton }.first { $0.accessibilityLabel == "Esc" })
         XCTAssertFalse(descendants(bar).compactMap { $0 as? UIButton }.contains { $0.configuration?.title == "Fn" })
-        let normal = try XCTUnwrap(ctrl.imageView?.image?.size.height)
+        let normal = try XCTUnwrap(ctrl.imageView?.image?.size.height), normalBarHeight = bar.height
         bar.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
         holder.view.layoutIfNeeded(); bar.layoutIfNeeded()
         XCTAssertGreaterThan(try XCTUnwrap(ctrl.imageView?.image?.size.height), normal)
         XCTAssertGreaterThan(try XCTUnwrap(escape.imageView?.image?.size.height), normal)
-        for button in descendants(bar).compactMap({ $0 as? UIButton }).filter({ $0.configuration?.title != nil }) {
+        func visible(_ view: UIView) -> Bool {
+            var current: UIView? = view
+            while let item = current { if item.isHidden { return false }; current = item.superview }
+            return true
+        }
+        for button in descendants(bar).compactMap({ $0 as? UIButton }).filter({ $0.configuration?.title != nil && visible($0) }) {
             button.layoutIfNeeded()
             XCTAssertGreaterThanOrEqual(button.bounds.height + 1, button.titleLabel?.font.lineHeight ?? 0)
             XCTAssertGreaterThanOrEqual(button.bounds.width + 1, button.titleLabel?.intrinsicContentSize.width ?? 0)
@@ -107,7 +112,7 @@ import SwiftUI
         XCTAssertGreaterThan(bar.keyScroll.contentSize.width, bar.keyScroll.bounds.width)
         bar.traitOverrides.preferredContentSizeCategory = .large
         holder.view.layoutIfNeeded(); bar.layoutIfNeeded()
-        XCTAssertEqual(bar.height, 60, accuracy: 1, "Default-size toolbar keeps its compact layout")
+        XCTAssertEqual(bar.height, normalBarHeight, accuracy: 1, "Returning to default text size restores the configured rows")
     }
     func testSelectedDisplayNameWrapsOnSmallPhoneAtAccessibilitySize() throws {
         let picker = CompanionVNCDisplayPicker()

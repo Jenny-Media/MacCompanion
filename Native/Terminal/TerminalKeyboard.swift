@@ -12,6 +12,7 @@ struct TerminalModifiers: OptionSet, Equatable {
     static let ctrl = Self(rawValue: 4)
     static let command = Self(rawValue: 8)
     var title: String { self == .ctrl ? "Ctrl" : self == .alt ? "Alt" : self == .command ? "Cmd" : "Shift" }
+    var symbol: String { self == .ctrl ? "control" : self == .alt ? "option" : self == .command ? "command" : "shift" }
 }
 struct TerminalKeyboardState {
     var armed: TerminalModifiers = []
@@ -149,19 +150,23 @@ struct TerminalKeyEncoding {
 }
 
 extension VNCQuickAction {
+    var terminalShortcutValid: Bool {
+        if valid { return true }
+        var check = self; check.key = 0x61
+        return kind == .shortcut && check.valid && TerminalAccessoryKey.allCases.contains { $0.shortcutCode == key }
+    }
     func terminalBytes(applicationCursor: Bool = false) -> [UInt8] {
         terminalBytes(encoding: .init(applicationCursor: applicationCursor))
     }
     func terminalBytes(encoding: TerminalKeyEncoding) -> [UInt8] {
-        guard kind == .shortcut, valid, compatible(with: .terminal) else { return [] }
+        guard kind == .shortcut, terminalShortcutValid, compatible(with: .terminal) else { return [] }
         var flags: TerminalModifiers = []
         if modifiers.contains(0xffe1) { flags.insert(.shift) }
         if modifiers.contains(0xffe3) { flags.insert(.ctrl) }
         if modifiers.contains(0xffe9) { flags.insert(.alt) }
         if modifiers.contains(0xffeb) { flags.insert(.command) }
-        let special: [UInt32: TerminalAccessoryKey] = [0xff1b: .escape, 0xff09: .tab, 0xffff: .delete, 0xff51: .left, 0xff52: .up, 0xff53: .right, 0xff54: .down]
         if key == 0xff08 { return encoding.bytes(.backspace, modifiers: flags) }
-        if let special = special[key] { return encoding.bytes(.accessory(special), modifiers: flags) }
+        if let special = TerminalAccessoryKey.allCases.first(where: { $0.shortcutCode == key }) { return encoding.bytes(.accessory(special), modifiers: flags) }
         if key == 0xff0d { return encoding.bytes(.enter, modifiers: flags) }
         guard let scalar = UnicodeScalar(key) else { return [] }
         return encoding.bytes(.text(String(scalar)), modifiers: flags)
@@ -171,6 +176,15 @@ extension VNCQuickAction {
 enum TerminalAccessoryKey: String, Codable, CaseIterable, Identifiable {
     case escape, tab, up, down, left, right, home, end, pageUp, pageDown, insert, delete, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12
     var id: String { rawValue }
+    var shortcutCode: UInt32 {
+        switch self {
+        case .escape: return 0xff1b; case .tab: return 0xff09
+        case .left: return 0xff51; case .up: return 0xff52; case .right: return 0xff53; case .down: return 0xff54
+        case .home: return 0xff50; case .end: return 0xff57; case .pageUp: return 0xff55; case .pageDown: return 0xff56
+        case .insert: return 0xff63; case .delete: return 0xffff
+        default: return 0xffbe + UInt32(Self.allCases.filter { $0.rawValue.hasPrefix("f") }.firstIndex(of: self)!)
+        }
+    }
     var title: String {
         switch self {
         case .escape: "Esc"; case .tab: "Tab"; case .up: "↑"; case .down: "↓"; case .left: "←"; case .right: "→"
@@ -220,7 +234,99 @@ struct TerminalKeyboardPreferences: Codable {
 }
 
 #if os(iOS)
+/// Use the same opaque selection color in the bar and All Keys. A gray button
+/// configuration transforms its base color into a pale tint, obscuring state.
+enum TerminalModifierAppearance {
+    static let fill = UIColor { traits in
+        if traits.accessibilityContrast == .high { return UIColor(red: 0, green: 0.27, blue: 0.68, alpha: 1) }
+        return traits.userInterfaceStyle == .dark
+            ? UIColor(red: 0.12, green: 0.39, blue: 0.88, alpha: 1)
+            : UIColor(red: 0, green: 0.34, blue: 0.80, alpha: 1)
+    }
+}
+
+private final class TerminalModifierKeyButton: UIButton {
+    private let heldMark = UIView()
+    private var active = false
+    private var modifierHeld = false
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        heldMark.isUserInteractionEnabled = false
+        heldMark.isAccessibilityElement = false
+        heldMark.layer.cornerRadius = 1.5
+        addSubview(heldMark)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func showState(active: Bool, held: Bool) {
+        self.active = active; modifierHeld = held
+        isSelected = active
+        setNeedsUpdateConfiguration()
+    }
+    override func updateConfiguration() {
+        super.updateConfiguration()
+        guard var value = configuration else { return }
+        value.subtitle = nil; value.attributedSubtitle = nil
+        value.automaticallyUpdateForSelection = false
+        value.baseForegroundColor = active ? .white : .label
+        value.imageColorTransformer = UIConfigurationColorTransformer { [active] _ in active ? .white : .label }
+        value.background.backgroundColor = active ? TerminalModifierAppearance.fill : .secondarySystemFill
+        value.background.backgroundColorTransformer = UIConfigurationColorTransformer { $0 }
+        value.background.strokeColor = active ? .label : .clear
+        value.background.strokeWidth = active ? 1.5 : 0
+        value.background.cornerRadius = 8; value.cornerStyle = .fixed
+        configuration = value
+        heldMark.backgroundColor = .white
+        heldMark.isHidden = !modifierHeld
+        bringSubviewToFront(heldMark)
+    }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        heldMark.frame = CGRect(x: (bounds.width - 14) / 2, y: bounds.height - 7, width: 14, height: 3)
+        bringSubviewToFront(heldMark)
+    }
+}
+
 private final class TerminalKeyScrollView: UIScrollView {
+    private let canvas = UIView()
+    private var positioning: [NSLayoutConstraint] = []
+    private weak var keyStack: UIStackView?
+
+    func install(_ stack: UIStackView) {
+        keyStack = stack
+        showsHorizontalScrollIndicator = true; alwaysBounceHorizontal = true
+        canvas.translatesAutoresizingMaskIntoConstraints = false; addSubview(canvas)
+        stack.translatesAutoresizingMaskIntoConstraints = false; canvas.addSubview(stack)
+        let fit = canvas.widthAnchor.constraint(equalTo: frameLayoutGuide.widthAnchor)
+        fit.priority = .defaultHigh
+        NSLayoutConstraint.activate([
+            canvas.leadingAnchor.constraint(equalTo: contentLayoutGuide.leadingAnchor),
+            canvas.trailingAnchor.constraint(equalTo: contentLayoutGuide.trailingAnchor),
+            canvas.topAnchor.constraint(equalTo: contentLayoutGuide.topAnchor),
+            canvas.bottomAnchor.constraint(equalTo: contentLayoutGuide.bottomAnchor),
+            canvas.widthAnchor.constraint(greaterThanOrEqualTo: frameLayoutGuide.widthAnchor), fit,
+            canvas.heightAnchor.constraint(equalTo: frameLayoutGuide.heightAnchor),
+            stack.topAnchor.constraint(equalTo: canvas.topAnchor), stack.bottomAnchor.constraint(equalTo: canvas.bottomAnchor),
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: canvas.leadingAnchor),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: canvas.trailingAnchor)])
+        align(.left)
+    }
+
+    func align(_ alignment: TerminalKeyboardRow.Alignment) {
+        guard let stack = keyStack else { return }
+        NSLayoutConstraint.deactivate(positioning)
+        stack.distribution = alignment == .fill ? .fillEqually : .fill
+        switch alignment {
+        case .left: positioning = [stack.leadingAnchor.constraint(equalTo: canvas.leadingAnchor)]
+        case .center: positioning = [stack.centerXAnchor.constraint(equalTo: canvas.centerXAnchor)]
+        case .right: positioning = [stack.trailingAnchor.constraint(equalTo: canvas.trailingAnchor)]
+        case .fill: positioning = [stack.leadingAnchor.constraint(equalTo: canvas.leadingAnchor), stack.trailingAnchor.constraint(equalTo: canvas.trailingAnchor)]
+        }
+        NSLayoutConstraint.activate(positioning)
+        // Each rebuilt row opens at its first key, including overflowing rows.
+        setContentOffset(.zero, animated: false)
+    }
     override func touchesShouldCancel(in view: UIView) -> Bool {
         view is UIButton || super.touchesShouldCancel(in: view)
     }
@@ -232,11 +338,8 @@ private final class TerminalKeyScrollView: UIScrollView {
     private let rows = UIStackView()
     private let row = UIStackView()
     private let keys = UIStackView()
-    private let numbers = UIStackView()
-    private let numberScroll: UIScrollView = TerminalKeyScrollView()
     private var extraViews: [UIView] = []
     private var generated: [UIButton] = []
-    private var numeric: [UIButton] = []
     private var modifierButtons: [(UIButton, TerminalModifiers)] = []
     private var commandShortcuts: [UIButton] = []
     private var keyWidths: [ObjectIdentifier: NSLayoutConstraint] = [:]
@@ -246,11 +349,12 @@ private final class TerminalKeyScrollView: UIScrollView {
     private var keyHeight: CGFloat = 52
     private var keyboardFocused: Bool?
     let keyboardButton = UIButton(type: .system)
-    let numberButton = UIButton(type: .system)
     let keypadButton = UIButton(type: .system)
     let expandButton = UIButton(type: .system)
     let menuAnchor = UIView()
-    let keyScroll: UIScrollView = TerminalKeyScrollView()
+    private var menuAnchorWidth: NSLayoutConstraint?
+    private let keyViewport = TerminalKeyScrollView()
+    var keyScroll: UIScrollView { keyViewport }
     var editingPreview = false {
         didSet {
             guard oldValue != editingPreview else { return }
@@ -269,11 +373,16 @@ private final class TerminalKeyScrollView: UIScrollView {
     var previewMove: ((TerminalBarItem, UUID, UUID, TerminalBarItem?) -> Void)?
     var previewRemove: ((TerminalBarItem, UUID) -> Void)?
     var previewSelectRow: ((UUID) -> Void)?
+    var previewAddToRow: ((UUID) -> Void)?
+    var previewRowAction: ((UUID, TerminalKeyboardRow.MenuAction) -> Void)?
     var previewMoveRow: ((UUID, UUID?) -> Void)?
     var previewAddPreset: ((TerminalRowPreset, UUID?) -> Void)?
     var previewAddItem: ((TerminalBarItem, UUID, TerminalBarItem?) -> Void)?
+    var previewCatalogDragBegan: (() -> Void)?
     var previewShowsAllRows = false
     var previewShowsRowHandles = false
+    /// Docked preview shares live geometry, but cannot edit or send input.
+    var presentationPreview = false
     var previewPreset: TerminalRowPreset?
     var previewUnavailableItems: Set<TerminalBarItem> = []
     var previewCanAddPreset = true
@@ -283,14 +392,25 @@ private final class TerminalKeyScrollView: UIScrollView {
     private var previewHandles: Set<ObjectIdentifier> = []
     private var rowContainers: [UUID: UIView] = [:]
     private let dropIndicator = UIView()
+    private struct RowReorder {
+        let source: UUID
+        let lifted: UIView
+        let touchOffset: CGFloat
+        var before: UUID?
+    }
+    private var rowReorder: RowReorder?
+    private var rowPans: [UIPanGestureRecognizer] = []
+    private weak var activeRowPan: UIPanGestureRecognizer?
+    private var rowScrollLink: CADisplayLink?
     private var profileRows: [TerminalKeyboardRow] = []
     private var layoutGeneration = UUID()
+    private var revealedPreviewSelection: String?
+    private var revealPreviewSelection = false
     var layoutChanged: (() -> Void)?
     var toggleKeyboard: (() -> Void)?
     var openKeypad: ((Bool) -> Void)?
     var showsNavigation = true
     var showsExtraRows = false { didSet { updateVisibility() } }
-    var showsNumberRow = true { didSet { updateVisibility() } }
     var height: CGFloat {
         let count = max(1, rows.arrangedSubviews.filter { !$0.isHidden }.count)
         return 8 + CGFloat(count) * keyHeight + CGFloat(count - 1) * 3
@@ -310,7 +430,8 @@ private final class TerminalKeyScrollView: UIScrollView {
         row.axis = .horizontal; row.spacing = 4
         for item in [keyScroll, menuAnchor] { row.addArrangedSubview(item) }
         menuAnchor.isUserInteractionEnabled = false
-        menuAnchor.widthAnchor.constraint(equalToConstant: 52).isActive = true
+        menuAnchorWidth = menuAnchor.widthAnchor.constraint(equalToConstant: 52)
+        menuAnchorWidth?.isActive = true
         configureButton(keyboardButton, title: "Show Keyboard", symbol: "keyboard")
         keyboardButton.accessibilityIdentifier = "terminal-keyboard-toggle"
         keyboardButton.addAction(UIAction { [weak self] _ in
@@ -323,39 +444,14 @@ private final class TerminalKeyScrollView: UIScrollView {
         expandButton.addAction(UIAction { [weak self] _ in
             guard let self else { return }; showsExtraRows.toggle(); keyFeedback.feedback("selection"); layoutChanged?()
         }, for: .touchUpInside)
-        configureButton(numberButton, title: "Hide Numbers", symbol: "textformat.123")
-        numberButton.accessibilityIdentifier = "terminal-number-toggle"
-        numberButton.addAction(UIAction { [weak self] _ in
-            guard let self else { return }; showsNumberRow.toggle(); keyFeedback.feedback("selection"); layoutChanged?()
-        }, for: .touchUpInside)
         configureButton(keypadButton, title: "Open Keypad", symbol: "rectangle.grid.3x2")
         keypadButton.accessibilityIdentifier = "terminal-keypad-toggle"
         keypadButton.addAction(UIAction { [weak self] _ in self?.openKeypad?(false) }, for: .touchUpInside)
         keys.axis = .horizontal; keys.spacing = 3
-        install(keys, in: keyScroll)
+        keyViewport.install(keys)
         keyScroll.accessibilityIdentifier = "terminal-modifier-keys"; keyScroll.accessibilityLabel = "Terminal keys"
-        numbers.axis = .horizontal; numbers.spacing = 3; numbers.distribution = .fillEqually
-        numbers.accessibilityIdentifier = "terminal-number-row"
-        install(numbers, in: numberScroll, fitting: true)
-        numberScroll.accessibilityIdentifier = "terminal-number-scroll"
-        for value in ["1","2","3","4","5","6","7","8","9","0"] {
-            let key = UIButton(type: .system); configureButton(key, title: value, number: true)
-            key.addAction(UIAction { [weak self] _ in self?.sendNumber(value) }, for: .touchUpInside)
-            numeric.append(key); numbers.addArrangedSubview(key)
-        }
         registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (bar: TerminalKeyboardBar, _: UITraitCollection) in bar.updateKeyMetrics() }
         configure(preferences)
-    }
-    private func install(_ stack: UIStackView, in scroll: UIScrollView, fitting: Bool = false) {
-        scroll.showsHorizontalScrollIndicator = true; scroll.alwaysBounceHorizontal = true
-        stack.translatesAutoresizingMaskIntoConstraints = false; scroll.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor), stack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor), stack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
-            stack.heightAnchor.constraint(equalTo: scroll.frameLayoutGuide.heightAnchor)])
-        if fitting {
-            let width = stack.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor); width.priority = .defaultHigh; width.isActive = true
-        }
     }
     func configure(_ preferences: TerminalKeyboardPreferences) {
         var profile = TerminalControlsProfile.defaults
@@ -363,31 +459,38 @@ private final class TerminalKeyScrollView: UIScrollView {
         configure(profile) { _ in }
     }
     func configure(_ profile: TerminalControlsProfile, perform: @escaping (UUID) -> Void) {
+        let selection = editingPreview ? selectedPreviewItem.map { (selectedPreviewRow?.uuidString ?? "") + $0.id + $0.title(in: profile) } : nil
+        revealPreviewSelection = selection != nil && selection != revealedPreviewSelection
+        revealedPreviewSelection = selection
         layoutGeneration = UUID()
         for key in generated { keyWidths.removeValue(forKey: ObjectIdentifier(key)); keySymbols.removeValue(forKey: ObjectIdentifier(key)) }
-        generated = []; numeric = []; modifierButtons = []; commandShortcuts = []
+        generated = []; modifierButtons = []; commandShortcuts = []
+        for view in row.arrangedSubviews where view !== keyScroll && view !== menuAnchor { row.removeArrangedSubview(view); view.removeFromSuperview() }
         previewItems = [:]; previewRows = [:]; previewHandles = []; rowContainers = [:]; profileRows = profile.resolvedRows.map { source in var row = source; row.items = profile.barItems(in: source); return row }
+        finishRowReorder(commit: false)
+        rowPans = []
         dropIndicator.removeFromSuperview()
-        for stack in [keys, numbers] { for view in stack.arrangedSubviews { stack.removeArrangedSubview(view); view.removeFromSuperview() } }
+        for stack in [keys] { for view in stack.arrangedSubviews { stack.removeArrangedSubview(view); view.removeFromSuperview() } }
         for view in rows.arrangedSubviews { rows.removeArrangedSubview(view); view.removeFromSuperview() }
         heights.forEach { $0.isActive = false }; heights = []; extraViews = []
         for definition in profileRows {
-            let stack: UIStackView, scroll: UIScrollView, container: UIView
-            if definition.kind == .main { stack = keys; scroll = keyScroll; container = row }
-            else if definition.kind == .numbers { stack = numbers; scroll = numberScroll; container = scroll }
+            let stack: UIStackView, scroll: TerminalKeyScrollView, container: UIView
+            if definition.kind == .main { stack = keys; scroll = keyViewport; container = row }
             else {
                 scroll = TerminalKeyScrollView(); stack = UIStackView()
-                stack.axis = .horizontal; stack.spacing = 3; install(stack, in: scroll)
+                stack.axis = .horizontal; stack.spacing = 3
+                scroll.install(stack)
                 scroll.accessibilityIdentifier = "terminal-extra-row-" + definition.id.uuidString
                 if definition.kind == .navigation { stack.accessibilityIdentifier = "terminal-navigation-row" }
                 container = scroll
             }
+            scroll.align(definition.resolvedAlignment)
             if definition.extra { extraViews.append(container) }
-            if editingPreview {
+            if editingPreview && !presentationPreview {
                 scroll.accessibilityIdentifier = definition.kind == .main ? "terminal-row-preview-scroll" : "terminal-row-preview-scroll-" + definition.id.uuidString
                 previewRows[ObjectIdentifier(scroll)] = definition.id
                 if scroll.interactions.allSatisfy({ !($0 is UIDropInteraction) }) { scroll.addInteraction(UIDropInteraction(delegate: self)) }
-                scroll.layer.borderWidth = previewPreset == nil && selectedPreviewRow == definition.id ? 1 : 0
+                scroll.layer.borderWidth = 0
                 scroll.layer.borderColor = UIColor.tintColor.cgColor; scroll.layer.cornerRadius = 8
             }
             for item in profile.barItems(in: definition) {
@@ -397,13 +500,13 @@ private final class TerminalKeyScrollView: UIScrollView {
                 if !editingPreview, let control = item.control {
                     switch control {
                     case .keyboard: key = keyboardButton
-                    case .numbers: key = numberButton
+                    case .retiredNumbers: continue
                     case .keypad: key = keypadButton
                     case .expand: key = expandButton
-                    default: key = button(title, symbol: item.symbol) { [weak self] in if let modifier = item.modifier { self?.toggle(modifier) } }
+                    default: key = button(title, symbol: item.symbol, modifier: item.modifier != nil) { [weak self] in if let modifier = item.modifier { self?.toggle(modifier) } }
                     }
                 } else {
-                    key = button(item.palette?.title ?? title, symbol: item.symbol, number: (48...57).contains(item.palette?.character ?? 0)) { [weak self] in
+                    key = button(item.palette?.title ?? title, symbol: item.symbol, modifier: item.modifier != nil) { [weak self] in
                         guard let self else { return }
                         if editingPreview { previewSelect?(item, definition.id) }
                         else if let id = item.savedID { guard terminal?.customInputEpoch() != nil, DirectProAccess.shared.hasPro else { return }; perform(id) }
@@ -417,19 +520,20 @@ private final class TerminalKeyScrollView: UIScrollView {
                         key.accessibilityCustomActions = [UIAccessibilityCustomAction(name: "Keep " + title + " On", actionHandler: { [weak self] _ in self?.toggle(modifier, lock: true); return true })]
                     }
                 }
-                if case .key(let id) = item, id.hasPrefix("character-"), let value = item.palette?.character, (48...57).contains(value) { numeric.append(key) }
                 if let id = item.savedID {
                     key.accessibilityIdentifier = (editingPreview ? "terminal-row-preview-" : "terminal-row-action-") + id.uuidString
                     if profile.actions.first(where: { $0.id == id })?.requiresCommand == true { commandShortcuts.append(key) }
                 }
-                if editingPreview {
+                if editingPreview && !presentationPreview {
                     if item.savedID == nil { key.accessibilityIdentifier = previewPreset.map { "terminal-template-item-" + $0.id + "-" + item.id } ?? "terminal-preview-item-" + item.id }
                     key.accessibilityValue = previewUnavailableItems.contains(item) ? "Already placed" : selectedPreviewItem == item && selectedPreviewRow == definition.id ? "Selected" : nil
                     key.alpha = previewUnavailableItems.contains(item) ? 0.3 : 1
-                    key.configuration?.baseBackgroundColor = selectedPreviewItem == item && selectedPreviewRow == definition.id ? .systemBlue : .secondarySystemFill
-                    if selectedPreviewItem == item && selectedPreviewRow == definition.id { key.configuration?.baseForegroundColor = .white }
+                    key.configuration?.baseBackgroundColor = .secondarySystemFill
+                    key.layer.borderWidth = selectedPreviewItem == item && selectedPreviewRow == definition.id ? 1.5 : 0
+                    key.layer.borderColor = UIColor.systemBlue.cgColor; key.layer.cornerRadius = 8
                     previewItems[ObjectIdentifier(key)] = item; previewRows[ObjectIdentifier(key)] = definition.id
-                    key.addInteraction(UIDragInteraction(delegate: self)); key.addInteraction(UIDropInteraction(delegate: self))
+                    let drag = UIDragInteraction(delegate: self); drag.isEnabled = true
+                    key.addInteraction(drag); key.addInteraction(UIDropInteraction(delegate: self))
                     let items = profile.barItems(in: definition)
                     key.accessibilityCustomActions = [UIAccessibilityCustomAction(name: "Remove from Keyboard Bar", actionHandler: { [weak self] _ in self?.previewRemove?(item, definition.id); return true })] + [-1, 1].map { offset in
                         UIAccessibilityCustomAction(name: offset < 0 ? "Move Earlier" : "Move Later", actionHandler: { [weak self] _ in
@@ -447,34 +551,44 @@ private final class TerminalKeyScrollView: UIScrollView {
                 }
                 stack.addArrangedSubview(key)
             }
-            if stack.arrangedSubviews.isEmpty && editingPreview {
-                let label = UILabel(); label.text = editingPreview ? "Empty row · add keys below" : definition.title
+            if stack.arrangedSubviews.isEmpty && editingPreview && !presentationPreview {
+                let label = UILabel(); label.text = editingPreview ? "Empty row · use Add" : definition.title
                 label.font = .preferredFont(forTextStyle: .caption1); stack.addArrangedSubview(label)
             }
             let displayed: UIView
             if editingPreview && previewShowsRowHandles {
                 let handle = UIButton(type: .system)
                 var configuration = UIButton.Configuration.plain()
-                configuration.title = previewPreset == nil ? definition.title : "Add"
-                configuration.subtitle = previewPreset == nil ? (definition.extra ? "Expanded" : definition.kind == .numbers && profile.numberRow == false ? "Hidden" : "Always") : "Drag row"
-                configuration.image = UIImage(systemName: previewPreset == nil ? "line.3.horizontal" : "plus")
+                configuration.title = nil
+                configuration.subtitle = nil
+                configuration.image = UIImage(systemName: previewPreset == nil ? "line.3.horizontal" : "plus.circle")
+                configuration.baseForegroundColor = previewPreset == nil ? .secondaryLabel : .systemBlue
+                configuration.preferredSymbolConfigurationForImage = .init(pointSize: 14, weight: .medium)
                 configuration.imagePadding = 3; configuration.contentInsets = .init(top: 0, leading: 2, bottom: 0, trailing: 2)
                 configuration.titleTextAttributesTransformer = .init { attributes in var result = attributes; result.font = .preferredFont(forTextStyle: .caption2); return result }
                 configuration.subtitleTextAttributesTransformer = .init { attributes in var result = attributes; result.font = .preferredFont(forTextStyle: .caption2); result.foregroundColor = .secondaryLabel; return result }
                 handle.configuration = configuration
                 handle.accessibilityIdentifier = previewPreset.map { "terminal-preset-add-" + $0.id } ?? "terminal-row-handle-" + definition.id.uuidString
-                handle.accessibilityLabel = previewPreset.map { "Add " + $0.rawValue + " Row" } ?? "Edit " + definition.title + " Row"
-                handle.accessibilityValue = configuration.subtitle
-                handle.widthAnchor.constraint(equalToConstant: traitCollection.preferredContentSizeCategory.isAccessibilityCategory ? 132 : 96).isActive = true
+                handle.accessibilityLabel = previewPreset.map { "Add " + $0.rawValue + " Row" } ?? "Reorder " + definition.title + (definition.title.hasSuffix("Row") ? "" : " Row")
+                handle.accessibilityHint = previewPreset == nil ? "Drag to reorder the whole row, or use the Move Row accessibility actions." : "Drag this row into your keyboard, or tap to add."
+                handle.accessibilityValue = selectedPreviewItem == nil && selectedPreviewRow == definition.id ? "Selected" : nil
+                handle.widthAnchor.constraint(equalToConstant: previewAddToRow == nil ? 44 : 32).isActive = true
                 let generation = layoutGeneration
-                handle.addAction(UIAction { [weak self] _ in
-                    guard let self, self.layoutGeneration == generation else { return }
-                    if let preset = self.previewPreset { if self.previewCanAddPreset { self.previewAddPreset?(preset, nil) } }
-                    else { self.previewSelectRow?(definition.id) }
-                }, for: .touchUpInside)
+                if previewPreset != nil {
+                    handle.addAction(UIAction { [weak self] _ in
+                        guard let self, self.layoutGeneration == generation, let preset = self.previewPreset, self.previewCanAddPreset else { return }
+                        self.previewAddPreset?(preset, nil)
+                    }, for: .touchUpInside)
+                } else { handle.accessibilityTraits = [] }
                 handle.isEnabled = previewPreset == nil || previewCanAddPreset
                 previewRows[ObjectIdentifier(handle)] = definition.id; previewHandles.insert(ObjectIdentifier(handle))
-                handle.addInteraction(UIDragInteraction(delegate: self)); handle.addInteraction(UIDropInteraction(delegate: self))
+                if previewPreset != nil {
+                    let drag = UIDragInteraction(delegate: self); drag.isEnabled = true; handle.addInteraction(drag)
+                } else {
+                    let pan = UIPanGestureRecognizer(target: self, action: #selector(reorderRow(_:)))
+                    pan.maximumNumberOfTouches = 1; handle.addGestureRecognizer(pan); rowPans.append(pan)
+                }
+                handle.addInteraction(UIDropInteraction(delegate: self))
                 handle.accessibilityCustomActions = [-1, 1].map { offset in
                     UIAccessibilityCustomAction(name: offset < 0 ? "Move Row Up" : "Move Row Down", actionHandler: { [weak self] _ in
                         guard let self, let index = self.profileRows.firstIndex(where: { $0.id == definition.id }), self.profileRows.indices.contains(index + offset) else { return false }
@@ -483,14 +597,140 @@ private final class TerminalKeyScrollView: UIScrollView {
                     })
                 }
                 let wrapper = UIStackView(arrangedSubviews: [handle, container]); wrapper.axis = .horizontal; wrapper.spacing = 3
+                if previewPreset == nil, previewAddToRow != nil {
+                    let add = UIButton(type: .system)
+                    let hasMenu = previewRowAction != nil
+                    var configuration = UIButton.Configuration.plain(); configuration.image = UIImage(systemName: hasMenu ? "ellipsis" : "plus")
+                    configuration.preferredSymbolConfigurationForImage = .init(pointSize: 20, weight: .regular)
+                    add.configuration = configuration; add.widthAnchor.constraint(equalToConstant: 32).isActive = true
+                    add.accessibilityLabel = hasMenu ? "Row Options for " + definition.title : "Add to " + definition.title + " Row"
+                    add.accessibilityIdentifier = (hasMenu ? "terminal-row-menu-" : "terminal-add-to-row-") + definition.id.uuidString
+                    if hasMenu {
+                        add.menu = editorRowMenu(definition)
+                        add.showsMenuAsPrimaryAction = true
+                    } else {
+                        add.addAction(UIAction { [weak self] _ in
+                            guard let self, self.layoutGeneration == generation else { return }
+                            self.previewAddToRow?(definition.id)
+                        }, for: .touchUpInside)
+                    }
+                    if definition.kind == .main { row.insertArrangedSubview(add, at: 1) }
+                    else { wrapper.addArrangedSubview(add) }
+                }
+                wrapper.layer.cornerRadius = 8
+                wrapper.layer.borderColor = UIColor.systemBlue.cgColor
+                wrapper.layer.borderWidth = selectedPreviewItem == nil && selectedPreviewRow == definition.id ? 1.5 : 0
                 displayed = wrapper
             } else { displayed = container }
             rowContainers[definition.id] = displayed
             rows.addArrangedSubview(displayed)
             let constraint = displayed.heightAnchor.constraint(equalToConstant: keyHeight); constraint.priority = UILayoutPriority(999); constraint.isActive = true; heights.append(constraint)
         }
-        showsNumberRow = profile.numberRow ?? true; showsExtraRows = profile.rowsExpanded ?? false
+        showsExtraRows = profile.rowsExpanded ?? false
         updateVisibility(); updateKeyMetrics(); refresh()
+        prioritizeRowPans()
+    }
+    private func editorRowMenu(_ definition: TerminalKeyboardRow) -> UIMenu {
+        let generation = layoutGeneration
+        let add = UIAction(title: "Add Key", image: UIImage(systemName: "plus")) { [weak self] _ in
+            guard let self, self.layoutGeneration == generation else { return }
+            self.previewAddToRow?(definition.id)
+        }
+        var settings: [UIMenuElement] = []
+        let alignmentChoices = TerminalKeyboardRow.Alignment.allCases.map { alignment in
+            UIAction(title: alignment.rawValue, image: UIImage(systemName: alignment.symbol), state: definition.resolvedAlignment == alignment ? .on : .off) { [weak self] _ in
+                guard let self, self.layoutGeneration == generation else { return }
+                self.previewRowAction?(definition.id, .alignment(alignment))
+            }
+        }
+        settings.append(UIMenu(title: "Alignment", image: UIImage(systemName: definition.resolvedAlignment.symbol), options: .singleSelection, children: alignmentChoices))
+        if definition.kind != .main {
+            let choices = TerminalKeyboardRow.Visibility.allCases.map { visibility in
+                UIAction(title: visibility.rawValue, state: definition.visibility == visibility ? .on : .off) { [weak self] _ in
+                    guard let self, self.layoutGeneration == generation else { return }
+                    self.previewRowAction?(definition.id, .visibility(visibility))
+                }
+            }
+            settings.append(UIMenu(title: "Visibility", image: UIImage(systemName: "eye"), options: .singleSelection, children: choices))
+        }
+        let remove = UIAction(title: profileRows.count == 1 ? "Clear Row" : "Remove Row", image: UIImage(systemName: "minus.circle"), attributes: .destructive) { [weak self] _ in
+            guard let self, self.layoutGeneration == generation else { return }
+            self.previewRowAction?(definition.id, .remove)
+        }
+        let sections = [
+            UIMenu(options: .displayInline, children: [add]),
+            UIMenu(options: .displayInline, children: settings),
+            UIMenu(options: .displayInline, children: [remove])].filter { !$0.children.isEmpty }
+        return UIMenu(title: definition.title, children: sections)
+    }
+    private func prioritizeRowPans() {
+        // The dedicated handle owns vertical reordering; scrolling still starts
+        // normally everywhere else in the keyboard or catalog.
+        var ancestor = superview
+        while let view = ancestor {
+            if let scroll = view as? UIScrollView { for pan in rowPans { scroll.panGestureRecognizer.require(toFail: pan) } }
+            ancestor = view.superview
+        }
+    }
+    @objc private func reorderRow(_ pan: UIPanGestureRecognizer) {
+        guard editingPreview, previewPreset == nil, let handle = pan.view,
+              let source = previewRows[ObjectIdentifier(handle)], let container = rowContainers[source] else { return }
+        switch pan.state {
+        case .began:
+            guard let lifted = container.snapshotView(afterScreenUpdates: false) else { return }
+            lifted.frame = container.convert(container.bounds, to: self)
+            lifted.layer.shadowOpacity = 0.18; lifted.layer.shadowRadius = 8; lifted.layer.cornerRadius = 8
+            lifted.isUserInteractionEnabled = false; addSubview(lifted); container.alpha = 0.25
+            rowReorder = .init(source: source, lifted: lifted, touchOffset: pan.location(in: self).y - lifted.center.y,
+                before: profileRows.drop(while: { $0.id != source }).dropFirst().first?.id)
+            activeRowPan = pan
+            let link = CADisplayLink(target: self, selector: #selector(scrollReorderingRow(_:)))
+            link.add(to: .main, forMode: .common); rowScrollLink = link
+            UISelectionFeedbackGenerator().selectionChanged()
+            fallthrough
+        case .changed:
+            guard var reorder = rowReorder else { return }
+            reorder.lifted.center.y = pan.location(in: self).y - reorder.touchOffset
+            let remaining = profileRows.filter { $0.id != source }
+            let before = remaining.first { row in
+                guard let view = rowContainers[row.id] else { return false }
+                return reorder.lifted.center.y < view.convert(view.bounds, to: self).midY
+            }?.id
+            if before != reorder.before { UISelectionFeedbackGenerator().selectionChanged() }
+            reorder.before = before; rowReorder = reorder
+            let target = before.flatMap { rowContainers[$0] }
+            let y = target.map { $0.convert($0.bounds, to: self).minY } ?? rows.frame.maxY
+            dropIndicator.backgroundColor = .systemBlue; dropIndicator.isUserInteractionEnabled = false
+            dropIndicator.frame = .init(x: 0, y: y - 2, width: bounds.width, height: 3)
+            addSubview(dropIndicator); bringSubviewToFront(reorder.lifted)
+        case .ended: finishRowReorder(commit: true)
+        case .cancelled, .failed: finishRowReorder(commit: false)
+        default: break
+        }
+    }
+    private func finishRowReorder(commit: Bool) {
+        rowScrollLink?.invalidate(); rowScrollLink = nil; activeRowPan = nil
+        guard let reorder = rowReorder else { return }
+        rowReorder = nil; reorder.lifted.removeFromSuperview(); rowContainers[reorder.source]?.alpha = 1
+        dropIndicator.removeFromSuperview()
+        if commit { previewMoveRow?(reorder.source, reorder.before) }
+    }
+    @objc private func scrollReorderingRow(_ link: CADisplayLink) {
+        guard let pan = activeRowPan, pan.state == .changed else { return }
+        var ancestor = superview
+        while let view = ancestor {
+            if let scroll = view as? UIScrollView, scroll.contentSize.height > scroll.bounds.height {
+                let point = pan.location(in: scroll)
+                let edge: CGFloat = 30
+                let delta: CGFloat = point.y < scroll.bounds.minY + edge ? -4 : point.y > scroll.bounds.maxY - edge ? 4 : 0
+                let minimum = -scroll.adjustedContentInset.top
+                let maximum = max(minimum, scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
+                let y = min(maximum, max(minimum, scroll.contentOffset.y + delta))
+                if y != scroll.contentOffset.y { scroll.setContentOffset(.init(x: scroll.contentOffset.x, y: y), animated: false); reorderRow(pan) }
+                return
+            }
+            ancestor = view.superview
+        }
     }
     func dragInteraction(_ interaction: UIDragInteraction, itemsForBeginning session: UIDragSession) -> [UIDragItem] {
         guard editingPreview, let view = interaction.view, let row = previewRows[ObjectIdentifier(view)] else { return [] }
@@ -512,6 +752,12 @@ private final class TerminalKeyScrollView: UIScrollView {
         }
     }
     func dragInteraction(_ interaction: UIDragInteraction, sessionIsRestrictedToDraggingApplication session: UIDragSession) -> Bool { true }
+    func dragInteraction(_ interaction: UIDragInteraction, sessionWillBegin session: UIDragSession) {
+        // The catalog lives in a popover. Once UIKit owns the lifted preview,
+        // dismiss that presentation so its modal hit testing cannot cover the
+        // real keyboard rows. The local drag item carries its value with it.
+        if previewPreset != nil { previewCatalogDragBegan?() }
+    }
     func dropInteraction(_ interaction: UIDropInteraction, canHandle session: UIDropSession) -> Bool {
         guard editingPreview, previewPreset == nil, let content = session.items.first?.localObject as? DragContent else { return false }
         if case .preset = content { return profileRows.count < TerminalControlsProfile.maximumKeyboardRows }
@@ -587,20 +833,17 @@ private final class TerminalKeyScrollView: UIScrollView {
     }
     private func updateVisibility() {
         let all = editingPreview && previewShowsAllRows
-        let numbersHidden = !all && !showsNumberRow
-        if numberScroll.isHidden != numbersHidden { numberScroll.isHidden = numbersHidden }
         for definition in profileRows {
-            let hidden = !all && (definition.kind == .numbers ? !showsNumberRow : definition.extra && !showsExtraRows)
+            let hidden = !all && (definition.hidden == true || definition.extra && !showsExtraRows)
             if let container = rowContainers[definition.id], container.isHidden != hidden { container.isHidden = hidden }
         }
-        numberButton.accessibilityLabel = showsNumberRow ? "Hide Numbers" : "Show Numbers"
-        numberButton.accessibilityValue = showsNumberRow ? "On" : "Off"; numberButton.isSelected = showsNumberRow
         expandButton.accessibilityLabel = showsExtraRows ? "Collapse Rows" : "Expand Rows"
         expandButton.accessibilityValue = showsExtraRows ? "Expanded" : "Collapsed"
         expandButton.isHidden = extraViews.isEmpty
-        if editingPreview { menuAnchor.backgroundColor = .secondarySystemFill; menuAnchor.layer.cornerRadius = 24
-            if menuAnchor.subviews.isEmpty { let icon = UIImageView(image: UIImage(systemName: "ellipsis")); icon.tintColor = .label; icon.contentMode = .center; icon.frame = CGRect(x: 0, y: 0, width: 52, height: 52); menuAnchor.addSubview(icon) }
-        }
+        // The session button belongs to the live overlay. Editors have their own
+        // trailing row menu and must not show a second, non-interactive button.
+        menuAnchorWidth?.isActive = !editingPreview || presentationPreview
+        menuAnchor.isHidden = editingPreview && !presentationPreview
         invalidateIntrinsicContentSize(); setNeedsLayout(); superview?.setNeedsLayout()
     }
     // The menu lives in a sibling overlay. Finish both nested stacks before
@@ -613,47 +856,50 @@ private final class TerminalKeyScrollView: UIScrollView {
         rows.setNeedsLayout(); rows.layoutIfNeeded()
         row.setNeedsLayout(); row.layoutIfNeeded()
         keyScroll.layoutIfNeeded()
+        if revealPreviewSelection, let selectedPreviewItem, let selectedPreviewRow,
+           let key = generated.first(where: { previewItems[ObjectIdentifier($0)] == selectedPreviewItem && previewRows[ObjectIdentifier($0)] == selectedPreviewRow }),
+           let scroll = key.superview?.superview?.superview as? UIScrollView, scroll.bounds.width > 0 {
+            revealPreviewSelection = false
+            scroll.scrollRectToVisible(key.convert(key.bounds, to: scroll), animated: false)
+        }
     }
     override func layoutSubviews() { super.layoutSubviews(); layoutRows() }
-    override func didMoveToWindow() { super.didMoveToWindow(); updateKeyMetrics() }
-    private var keyFont: UIFont { UIFontMetrics(forTextStyle: .caption1).scaledFont(for: .systemFont(ofSize: 13, weight: .medium), compatibleWith: traitCollection) }
-    private var allKeys: [UIButton] { generated + numeric + [keyboardButton, numberButton, keypadButton, expandButton] }
+    override func didMoveToWindow() { super.didMoveToWindow(); updateKeyMetrics(); prioritizeRowPans(); if window == nil { finishRowReorder(commit: false) } }
+    private var keyFont: UIFont { UIFontMetrics(forTextStyle: .body).scaledFont(for: .systemFont(ofSize: 17, weight: .medium), compatibleWith: traitCollection) }
+    private var allKeys: [UIButton] { generated + [keyboardButton, keypadButton, expandButton] }
     private func updateKeyMetrics() {
-        let font = keyFont, symbolFont = UIFont.preferredFont(forTextStyle: .body, compatibleWith: traitCollection)
-        let numericIDs = Set(numeric.map(ObjectIdentifier.init))
+        let font = keyFont
         for key in allKeys {
-            if let symbol = keySymbols[ObjectIdentifier(key)] { key.configuration?.image = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(font: symbolFont)) }
+            if let symbol = keySymbols[ObjectIdentifier(key)] { key.configuration?.image = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(font: font)) }
             key.setNeedsUpdateConfiguration(); key.updateConfiguration()
             let text = (key.configuration?.title ?? "") as NSString
             let width = max(text.size(withAttributes: [.font: font]).width, key.configuration?.image?.size.width ?? 0)
-            keyWidths[ObjectIdentifier(key)]?.constant = max(numericIDs.contains(ObjectIdentifier(key)) ? 32 : 44, ceil(width) + 12)
+            keyWidths[ObjectIdentifier(key)]?.constant = max(44, ceil(width) + 12)
         }
-        keyHeight = max(52, ceil(max(font.lineHeight, symbolFont.lineHeight)) + 8)
+        keyHeight = max(52, ceil(font.lineHeight) + 8)
         heights.forEach { $0.constant = keyHeight }
         invalidateIntrinsicContentSize(); setNeedsLayout(); superview?.setNeedsLayout()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override var intrinsicContentSize: CGSize { CGSize(width: UIView.noIntrinsicMetric, height: height) }
-    private func configureButton(_ key: UIButton, title: String, symbol: String? = nil, number: Bool = false) {
+    private func configureButton(_ key: UIButton, title: String, symbol: String? = nil) {
         var configuration = UIButton.Configuration.gray(); configuration.cornerStyle = .medium
         configuration.contentInsets = .init(top: 2, leading: 0, bottom: 2, trailing: 0)
         if let symbol { keySymbols[ObjectIdentifier(key)] = symbol; configuration.image = UIImage(systemName: symbol) } else { configuration.title = title }
         configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { [weak self] value in
-            var value = value; value.font = self?.keyFont ?? .systemFont(ofSize: 13, weight: .medium); return value
+            var value = value; value.font = self?.keyFont ?? .systemFont(ofSize: 17, weight: .medium); return value
         }
         key.configuration = configuration; key.accessibilityLabel = title
-        let width = number ? key.widthAnchor.constraint(greaterThanOrEqualToConstant: 32) : key.widthAnchor.constraint(equalToConstant: 44)
+        let width = key.widthAnchor.constraint(greaterThanOrEqualToConstant: 44)
         width.isActive = true; keyWidths[ObjectIdentifier(key)] = width
     }
-    private func button(_ title: String, symbol: String? = nil, number: Bool = false, action: @escaping () -> Void) -> UIButton {
-        let key = UIButton(type: .system); configureButton(key, title: title, symbol: symbol, number: number); generated.append(key)
+    private func button(_ title: String, symbol: String? = nil, modifier: Bool = false, action: @escaping () -> Void) -> UIButton {
+        let key: UIButton = modifier ? TerminalModifierKeyButton(type: .system) : UIButton(type: .system)
+        configureButton(key, title: title, symbol: symbol); generated.append(key)
         let generation = layoutGeneration
         key.addAction(UIAction { [weak self] _ in guard self?.layoutGeneration == generation else { return }; action() }, for: .touchUpInside)
         key.addAction(UIAction { [weak self] _ in if self?.terminal?.customInputEpoch() != nil { self?.keyFeedback.prepareKeyFeedback() } }, for: .touchDown)
         return key
-    }
-    private func sendNumber(_ value: String) {
-        guard let terminal else { return }; terminal.performCustomInput { terminal.insertText(value) }; refresh()
     }
     func toggle(_ modifier: TerminalModifiers, lock: Bool = false) {
         guard let terminal, terminal.customInputEpoch() != nil, modifier != .command || terminal.keyEncoding.supportsCommand else { return }
@@ -674,16 +920,11 @@ private final class TerminalKeyScrollView: UIScrollView {
             let locked = terminal.keyboardState.locked.contains(modifier)
             key.accessibilityHint = "Tap for the next key; long-press to keep on. Tap again to turn off."
             key.accessibilityCustomActions = [UIAccessibilityCustomAction(name: locked ? "Turn " + modifier.title + " Off" : "Keep " + modifier.title + " On", actionHandler: { [weak self] _ in self?.toggle(modifier, lock: true); return true })]
-            key.isSelected = terminal.keyboardState.active.contains(modifier)
-            key.configuration?.baseBackgroundColor = key.isSelected ? .systemBlue : .secondarySystemFill
-            key.configuration?.baseForegroundColor = key.isSelected ? .white : .label
-            key.configuration?.subtitle = locked ? "On" : key.isSelected ? "Next" : nil
-            key.configuration?.titleAlignment = .center
-            key.layer.borderWidth = locked ? 2 : 0; key.layer.borderColor = UIColor.label.cgColor; key.layer.cornerRadius = 10
+            (key as? TerminalModifierKeyButton)?.showState(active: terminal.keyboardState.active.contains(modifier), held: locked)
             key.accessibilityValue = modifier == .command && !terminal.keyEncoding.supportsCommand ? "Unavailable in this application" : locked ? "On" : key.isSelected ? "Next key" : "Off"
         }
         for key in commandShortcuts { key.isEnabled = ready && terminal.keyEncoding.supportsCommand; key.alpha = key.isEnabled ? 1 : 0.4; key.accessibilityValue = terminal.keyEncoding.supportsCommand ? nil : "Unavailable in this application" }
-        for key in [keyboardButton, numberButton, keypadButton, expandButton] { key.isEnabled = true; key.alpha = 1 }
+        for key in [keyboardButton, keypadButton, expandButton] { key.isEnabled = true; key.alpha = 1 }
     }
     private func send(_ key: TerminalAccessoryKey) {
         guard let terminal else { return }; terminal.performCustomInput { terminal.sendKey(.accessory(key), modifiers: terminal.keyboardState.consume()) }; refresh()

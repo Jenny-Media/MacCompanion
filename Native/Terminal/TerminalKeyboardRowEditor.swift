@@ -1,170 +1,126 @@
 #if os(iOS) && MACCOMPANION_VNC_DEVELOPMENT
 import SwiftUI
 
-/// This editor has no terminal/input owner. Both its canvas and row library use
-/// the production bar renderer, including real key metrics and scrolling.
-struct TerminalKeyboardEditingPreview: View {
-    @Binding var profile: TerminalControlsProfile
-    let selected: UUID?
-    @Binding var selectedRow: UUID
-    let select: (UUID?) -> Void
-    private enum Mode: String, CaseIterable { case arrange = "Arrange", collapsed = "Collapsed", expanded = "Expanded" }
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @State private var keyboardVisible = false
-    @State private var mode = Mode.arrange
-    @State private var selectedItem: TerminalBarItem?
-    @State private var inspectedRow: TerminalKeyboardRow?
-    @State private var restoring = false
-    @State private var deleting = false
-    private var currentRow: TerminalKeyboardRow? { profile.resolvedRows.first { $0.id == selectedRow } }
-    private var previewProfile: TerminalControlsProfile {
-        var result = profile
-        if mode != .arrange { result.rowsExpanded = mode == .expanded }
-        return result
+/// Compact editor chrome remains usable at large accessibility sizes. Labels
+/// remain available to VoiceOver; the editable keycaps retain their own scaling.
+struct TerminalEditorToolbarStyle: ViewModifier {
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @ViewBuilder func body(content: Content) -> some View {
+        if typeSize > .xLarge {
+            content.labelStyle(.iconOnly).font(.system(size: 22)).dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+        } else { content.font(.subheadline) }
     }
-    private var visibleRows: Int {
-        previewProfile.resolvedRows.filter { mode == .arrange || ($0.kind == .numbers ? profile.numberRow != false : !$0.extra || previewProfile.rowsExpanded == true) }.count
-    }
-    private var savedSelection: Binding<TerminalControlAction>? {
-        guard let selected, let action = profile.actions.first(where: { $0.id == selected }) else { return nil }
-        return Binding(get: { profile.actions.first { $0.id == selected } ?? action }, set: { value in
-            if let index = profile.actions.firstIndex(where: { $0.id == selected }) { profile.actions[index] = value }
-        })
-    }
-    private var hideCanvasForTyping: Bool { keyboardVisible && selected != nil && !dynamicTypeSize.isAccessibilitySize }
+}
+
+struct TerminalEditingBackdrop: View {
+    var image: UIImage?
+    var title = "Keyboard Preview"
+    var showsGuidance = true
     var body: some View {
-        Group {
-            if dynamicTypeSize.isAccessibilitySize {
-                // Large text needs a single scroll surface so the canvas never
-                // pushes the selected key or its text fields offscreen.
-                ScrollViewReader { proxy in
-                    ScrollView { VStack(alignment: .leading, spacing: 14) { canvas; details } }
-                        .scrollDismissesKeyboard(.interactively).accessibilityIdentifier("terminal-row-library")
-                        .onChange(of: selected) { _, value in if value != nil { proxy.scrollTo("selected-control", anchor: .top) } }
-                        .onChange(of: selectedItem) { _, value in if value != nil { proxy.scrollTo("selected-control", anchor: .top) } }
-                }
-            } else {
-                VStack(alignment: .leading, spacing: hideCanvasForTyping ? 0 : 14) {
-                    canvas.frame(height: hideCanvasForTyping ? 0 : nil).clipped()
-                        .accessibilityHidden(hideCanvasForTyping).allowsHitTesting(!hideCanvasForTyping)
-                    ScrollViewReader { proxy in
-                        ScrollView { details }.scrollIndicators(.visible).accessibilityIdentifier("terminal-row-library")
-                            .scrollDismissesKeyboard(.interactively)
-                            .onChange(of: selected) { _, value in if value != nil { proxy.scrollTo("selected-control", anchor: .top) } }
-                            .onChange(of: selectedItem) { _, value in if value != nil { proxy.scrollTo("selected-control", anchor: .top) } }
-                    }
+        GeometryReader { geometry in
+            if let image {
+                Image(uiImage: image).resizable().scaledToFit().frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading).clipped().accessibilityHidden(true)
+            } else if showsGuidance {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label(title, systemImage: "terminal").font(.headline)
+                        Text("Arrange your controls below. Changes apply to every Mac on this device.").font(.subheadline).foregroundStyle(.secondary)
+                    }.fixedSize(horizontal: false, vertical: true).padding(20).frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardVisible = true }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardVisible = false }
-        .sheet(item: $inspectedRow) { row in TerminalKeyboardRowOptions(profile: $profile, rowID: row.id) }
-        .onChange(of: profile.resolvedRows.map(\.id)) { _, ids in if !ids.contains(selectedRow) { selectedRow = TerminalKeyboardRow.mainID } }
-        .confirmationDialog("Delete this item from the keyboard bar, floating menu and saved collection?", isPresented: $deleting, titleVisibility: .visible) {
-            Button("Delete Item", role: .destructive) { if let selected { profile.delete(selected) }; selectedItem = nil; select(nil) }
-        }
-        .confirmationDialog("Restore the default keyboard bar?", isPresented: $restoring, titleVisibility: .visible) {
-            Button("Restore Layout") { profile.restoreKeyboardBar(); selectedItem = nil; selectedRow = TerminalKeyboardRow.mainID; select(nil) }
-        } message: { Text("Saved shortcuts, text and floating-menu favorites are kept. You can Undo before saving.") }
+        }.background(Color(uiColor: .systemBackground))
     }
-    private var canvas: some View {
-        VStack(alignment: .leading, spacing: 14) {
-        Picker("Keyboard preview", selection: $mode) {
-            ForEach(Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-        }.pickerStyle(.segmented).accessibilityIdentifier("terminal-preview-mode")
-        VStack(alignment: .leading, spacing: 0) {
-            if mode != .arrange {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Approximate terminal space").font(.caption).foregroundStyle(.secondary)
-                    Text("$ ssh mac.local\n▏").font(.system(.caption, design: .monospaced))
-                    Spacer(minLength: 0)
-                }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                    .frame(height: max(62, 210 - CGFloat(visibleRows) * 24))
-            }
-            TerminalKeyboardBarPreview(profile: previewProfile, selected: selectedItem, row: selectedRow,
-                allRows: mode == .arrange, handles: mode == .arrange,
-                select: { item, row in selectedItem = item; selectedRow = row; select(item?.savedID) },
-                move: move, remove: remove,
-                selectRow: { row in selectedItem = nil; select(nil); inspectedRow = profile.resolvedRows.first { $0.id == row }; selectedRow = row },
-                moveRow: { row, target in withAnimation(.snappy) { profile.moveRow(row, before: target) } },
-                addPreset: addPreset, addItem: { item, row, target in
-                    guard !profile.resolvedRows.contains(where: { profile.barItems(in: $0).contains(item) }) else { return }
-                    profile.placeBarItem(item, in: row, before: target)
-                })
-                .disabled(mode != .arrange)
-                .allowsHitTesting(mode == .arrange)
-                .accessibilityIdentifier("terminal-live-bar-preview")
-        }.background(Color(uiColor: .secondarySystemGroupedBackground), in: .rect(cornerRadius: 12))
-        if mode != .arrange {
-            Text("Appearance preview. Choose Arrange to edit every row, including hidden rows.").font(.caption).foregroundStyle(.secondary)
-        }
-        if profile.resolvedRows.count > 4 {
-            Label("Extra rows reduce terminal space.", systemImage: "rectangle.compress.vertical")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("terminal-row-space-warning")
-        }
-        }
-    }
-    private var details: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Color.clear.frame(height: 0).id("selected-control")
-            if let selectedItem, let row = currentRow, mode == .arrange {
-                HStack {
-                    Text(selectedItem.title(in: profile)).font(.subheadline.weight(.semibold))
-                    Spacer()
-                    Menu("Move Key", systemImage: "arrow.left.arrow.right") {
-                        Button("Earlier") { moveSelected(-1) }
-                        Button("Later") { moveSelected(1) }
-                        ForEach(profile.resolvedRows) { target in
-                            Button("To " + target.title) { move(selectedItem, row.id, target.id, nil) }
-                        }
-                    }.accessibilityIdentifier("terminal-item-row")
-                    Button { remove(selectedItem, row.id) } label: { Image(systemName: "minus.circle").frame(minWidth: 44, minHeight: 44) }
-                        .accessibilityLabel("Remove from Keyboard Bar").accessibilityIdentifier("terminal-remove-placement")
-                }
-            }
-            if let savedSelection, mode == .arrange {
-                TerminalControlInspector(action: savedSelection).id(savedSelection.wrappedValue.id)
-                Text("Content edits apply everywhere this item is used.").font(.caption).foregroundStyle(.secondary)
-                Button("Delete Saved Item…", systemImage: "trash", role: .destructive) { deleting = true }.accessibilityIdentifier("terminal-delete-item")
-            }
-            Text("Available Rows").font(.headline)
-            Text("Drag a row into the bar, or tap Add. Dimmed keys are already placed and stay where they are. You can also drag individual available keys.")
-                .font(.caption).foregroundStyle(.secondary)
-            ForEach(TerminalRowPreset.allCases) { preset in
-                TerminalRowTemplate(profile: profile, preset: preset, arranging: mode == .arrange, add: { addPreset(preset, TerminalKeyboardRow.mainID) })
-            }
-            if profile.resolvedRows.count >= TerminalControlsProfile.maximumKeyboardRows {
-                Text("Six rows are configured. Remove a row to add another; keys can still move between rows.").font(.caption).foregroundStyle(.secondary)
-            }
-            Button("Restore Keyboard Bar…", systemImage: "arrow.counterclockwise") { restoring = true }.accessibilityIdentifier("terminal-restore-bar")
-        }
-    }
-    private func move(_ item: TerminalBarItem, _ source: UUID, _ row: UUID, _ target: TerminalBarItem?) {
-        guard let existing = profile.resolvedRows.first(where: { $0.id == source }), profile.barItems(in: existing).contains(item) else { return }
-        withAnimation(.snappy) { profile.placeBarItem(item, in: row, from: source, before: target) }
-        selectedRow = row; selectedItem = item; select(item.savedID)
-    }
-    private func remove(_ item: TerminalBarItem, _ row: UUID) {
-        profile.removeBarItem(item, in: row); selectedItem = nil; select(nil)
-    }
-    private func moveSelected(_ offset: Int) {
-        guard let selectedItem, let row = currentRow else { return }
-        let items = profile.barItems(in: row)
-        guard let index = items.firstIndex(of: selectedItem), items.indices.contains(index + offset) else { return }
-        let target = offset < 0 ? items[index - 1] : (items.indices.contains(index + 2) ? items[index + 2] : nil)
-        move(selectedItem, row.id, row.id, target)
-    }
-    private func addPreset(_ preset: TerminalRowPreset, _ target: UUID?) {
-        withAnimation(.snappy) {
-            if let id = profile.addPreset(preset, before: target) { selectedRow = id; selectedItem = nil; select(nil) }
+}
+
+/// A separate, disposable preview never receives a session or a profile binding.
+/// UIKit owns the keyboard/accessory join, so editor chrome cannot separate them.
+struct TerminalDockedKeyboardPreview: View {
+    let profile: TerminalControlsProfile
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        NavigationStack {
+            ZStack(alignment: .top) {
+                TerminalDockedKeyboardHost(profile: profile)
+                Text("Preview only. Nothing is sent to your Mac.")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center).padding(24).allowsHitTesting(false)
+            }.navigationTitle("Keyboard Preview").directInlineNavigationTitle()
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Close") { dismiss() } } }
         }
     }
 }
 
-private struct TerminalRowTemplate: View {
+private struct TerminalDockedKeyboardHost: UIViewControllerRepresentable {
+    let profile: TerminalControlsProfile
+    func makeUIViewController(context: Context) -> TerminalDockedKeyboardController { .init(profile: profile) }
+    func updateUIViewController(_ controller: TerminalDockedKeyboardController, context: Context) {}
+    static func dismantleUIViewController(_ controller: TerminalDockedKeyboardController, coordinator: ()) { controller.stop() }
+}
+
+private final class TerminalPreviewAccessory: UIInputView {
+    let bar = TerminalKeyboardBar(terminal: nil, preferences: .init())
+    override init(frame: CGRect, inputViewStyle: UIInputView.Style) {
+        super.init(frame: frame, inputViewStyle: inputViewStyle)
+        allowsSelfSizing = true
+        backgroundColor = .secondarySystemBackground
+        bar.editingPreview = true; bar.presentationPreview = true
+        bar.translatesAutoresizingMaskIntoConstraints = true
+        bar.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        addSubview(bar)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override var intrinsicContentSize: CGSize { .init(width: UIView.noIntrinsicMetric, height: bar.height) }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        bar.frame = bounds; bar.layoutRows()
+    }
+    func configure(_ profile: TerminalControlsProfile) {
+        bar.configure(profile) { _ in }
+        frame.size.height = bar.height
+        invalidateIntrinsicContentSize(); setNeedsLayout()
+    }
+}
+
+private final class TerminalPreviewInputField: UITextField {
+    override func insertText(_ text: String) {}
+    override func setMarkedText(_ markedText: String?, selectedRange: NSRange) {}
+}
+
+private final class TerminalDockedKeyboardController: UIViewController, UITextFieldDelegate {
+    private var profile: TerminalControlsProfile
+    private let field = TerminalPreviewInputField()
+    private let accessory = TerminalPreviewAccessory(frame: .zero, inputViewStyle: .keyboard)
+    init(profile: TerminalControlsProfile) { self.profile = profile; super.init(nibName: nil, bundle: nil) }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .systemBackground
+        field.frame = .init(x: 0, y: 0, width: 1, height: 1)
+        field.isAccessibilityElement = false; field.tintColor = .clear; field.textColor = .clear
+        field.autocorrectionType = .no; field.autocapitalizationType = .none
+        field.spellCheckingType = .no; field.delegate = self
+        field.inputAssistantItem.leadingBarButtonGroups = []; field.inputAssistantItem.trailingBarButtonGroups = []
+        field.inputAccessoryView = accessory; view.addSubview(field)
+        accessory.bar.previewSelect = { [weak self] item, _ in
+            guard let self, item == .control(.expand) else { return }
+            profile.rowsExpanded = !(profile.rowsExpanded ?? false)
+            accessory.configure(profile); field.reloadInputViews()
+        }
+        accessory.configure(profile)
+    }
+    override func viewDidAppear(_ animated: Bool) { super.viewDidAppear(animated); field.becomeFirstResponder() }
+    override func viewWillDisappear(_ animated: Bool) { stop(); super.viewWillDisappear(animated) }
+    func stop() { field.resignFirstResponder(); field.text = nil }
+    // Neither software keyboard input, dictation nor hardware keys are stored.
+    func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool { false }
+    func textFieldShouldReturn(_ textField: UITextField) -> Bool { false }
+}
+
+struct TerminalRowTemplate: View {
     let profile: TerminalControlsProfile
     let preset: TerminalRowPreset
     let arranging: Bool
+    var dragBegan: (() -> Void)? = nil
     let add: () -> Void
     private var available: [TerminalBarItem] { profile.availableItems(for: preset) }
     private var canAdd: Bool { profile.resolvedRows.count < TerminalControlsProfile.maximumKeyboardRows && (preset == .blank || !available.isEmpty) }
@@ -172,7 +128,7 @@ private struct TerminalRowTemplate: View {
         var result = TerminalControlsProfile()
         // A template is a render value, not a newly saved profile on each pass.
         result.revision = TerminalKeyboardRow.mainID
-        result.keyboardRows = [.init(id: TerminalKeyboardRow.mainID, kind: .custom, title: preset.rawValue, items: preset.items, expandedOnly: false)]
+        result.keyboardRows = [.init(id: TerminalKeyboardRow.mainID, kind: .custom, title: preset.rawValue, items: preset.items, preset: preset, expandedOnly: false)]
         return result
     }
     var body: some View {
@@ -182,10 +138,10 @@ private struct TerminalRowTemplate: View {
                 Spacer()
                 Text(preset == .blank ? "Start empty" : available.isEmpty ? "All keys placed" : "\(available.count) new keys")
                     .font(.caption).foregroundStyle(.secondary)
-            }
+            }.dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             TerminalKeyboardBarPreview(profile: template, allRows: true, handles: true, preset: preset,
                 unavailable: Set(preset.items).subtracting(available), canAddPreset: canAdd,
-                addPreset: { _, _ in add() })
+                addPreset: { _, _ in add() }, catalogDragBegan: dragBegan)
                 .accessibilityIdentifier("terminal-row-template-" + preset.id)
                 .disabled(!arranging)
                 .allowsHitTesting(arranging)
@@ -195,7 +151,7 @@ private struct TerminalRowTemplate: View {
 
 /// Row controls belong to the row's own handle; they are also tap alternatives
 /// to every row drag. Changes remain in the parent draft until Save.
-private struct TerminalKeyboardRowOptions: View {
+struct TerminalKeyboardRowOptions: View {
     @Binding var profile: TerminalControlsProfile
     let rowID: UUID
     @Environment(\.dismiss) private var dismiss
@@ -210,12 +166,14 @@ private struct TerminalKeyboardRowOptions: View {
             Form {
                 if let row {
                     Section {
-                        TextField("Row Name", text: Binding(get: { self.row?.title ?? row.title }, set: { name in edit { $0.title = name } }))
-                            .accessibilityIdentifier("terminal-row-name-" + rowID.uuidString)
-                        if row.kind == .numbers {
-                            Toggle("Show Numbers", isOn: Binding(get: { profile.numberRow ?? true }, set: { profile.numberRow = $0 })).accessibilityIdentifier("terminal-setting-numbers")
-                        } else if row.kind != .main {
-                            Toggle("Always Visible", isOn: Binding(get: { self.row?.extra == false }, set: { visible in edit { $0.expandedOnly = !visible } }))
+                        Text(row.title).font(.headline)
+                        Picker("Alignment", selection: Binding(get: { self.row?.resolvedAlignment ?? .left }, set: { value in edit { $0.alignment = value } })) {
+                            ForEach(TerminalKeyboardRow.Alignment.allCases, id: \.self) { Label($0.rawValue, systemImage: $0.symbol).tag($0) }
+                        }
+                        if row.kind != .main {
+                            Picker("Visibility", selection: Binding(get: { self.row?.visibility ?? .always }, set: { value in edit { $0.visibility = value } })) {
+                                ForEach(TerminalKeyboardRow.Visibility.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                            }
                         } else { Text("This row is always visible.").foregroundStyle(.secondary) }
                     }
                     Section("Position") {
@@ -240,13 +198,15 @@ private struct TerminalKeyboardRowOptions: View {
     }
 }
 
-private struct TerminalKeyboardBarPreview: UIViewRepresentable {
+struct TerminalKeyboardBarPreview: UIViewRepresentable {
     struct Configuration: Equatable {
         let profile: TerminalControlsProfile
         let selected: TerminalBarItem?
-        let row: UUID
+        let row: UUID?
         let allRows: Bool
         let handles: Bool
+        let rowAdditions: Bool
+        let rowMenu: Bool
         let preset: TerminalRowPreset?
         let unavailable: Set<TerminalBarItem>
         let canAdd: Bool
@@ -256,7 +216,7 @@ private struct TerminalKeyboardBarPreview: UIViewRepresentable {
     final class Coordinator { var configuration: Configuration? }
     let profile: TerminalControlsProfile
     var selected: TerminalBarItem? = nil
-    var row: UUID = TerminalKeyboardRow.mainID
+    var row: UUID? = nil
     var allRows = false
     var handles = false
     var preset: TerminalRowPreset? = nil
@@ -269,6 +229,9 @@ private struct TerminalKeyboardBarPreview: UIViewRepresentable {
     var moveRow: ((UUID, UUID?) -> Void)? = nil
     var addPreset: ((TerminalRowPreset, UUID?) -> Void)? = nil
     var addItem: ((TerminalBarItem, UUID, TerminalBarItem?) -> Void)? = nil
+    var catalogDragBegan: (() -> Void)? = nil
+    var addToRow: ((UUID) -> Void)? = nil
+    var rowAction: ((UUID, TerminalKeyboardRow.MenuAction) -> Void)? = nil
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeUIView(context: Context) -> TerminalKeyboardBar {
         let bar = TerminalKeyboardBar(terminal: nil, preferences: .init()); bar.editingPreview = true; return bar
@@ -281,8 +244,11 @@ private struct TerminalKeyboardBarPreview: UIViewRepresentable {
         bar.previewUnavailableItems = unavailable; bar.previewCanAddPreset = canAddPreset
         bar.previewSelect = enabled ? select : nil; bar.previewMove = enabled ? move : nil; bar.previewRemove = enabled ? remove : nil
         bar.previewSelectRow = enabled ? selectRow : nil; bar.previewMoveRow = enabled ? moveRow : nil
+        bar.previewAddToRow = enabled ? addToRow : nil
+        bar.previewRowAction = enabled ? rowAction : nil
         bar.previewAddPreset = enabled ? addPreset : nil; bar.previewAddItem = enabled ? addItem : nil
-        let configuration = Configuration(profile: profile, selected: selected, row: row, allRows: allRows, handles: handles,
+        bar.previewCatalogDragBegan = enabled ? catalogDragBegan : nil
+        let configuration = Configuration(profile: profile, selected: selected, row: row, allRows: allRows, handles: handles, rowAdditions: addToRow != nil, rowMenu: rowAction != nil,
             preset: preset, unavailable: unavailable, canAdd: canAddPreset, enabled: enabled, textSize: context.environment.dynamicTypeSize)
         guard context.coordinator.configuration != configuration else { return }
         // UIKit invalidates intrinsic size during configuration. Rebuilding on

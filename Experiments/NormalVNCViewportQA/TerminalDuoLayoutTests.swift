@@ -18,13 +18,14 @@ import UIKit
 }
 
 @MainActor final class TerminalDuoLayoutTests: XCTestCase {
-    // The host uses the real default store; lease only this known QA setting.
-    // Preference-mutating tests elsewhere use private suites.
-    private func numberRowFixture() -> () -> Void {
-        let defaults = UserDefaults.standard, key = TerminalController.numberRowPreference
-        let previous = defaults.object(forKey: key)
-        defaults.set(true, forKey: key)
-        return { defaults.set(previous, forKey: key) }
+    // Lease the QA app's current profile; normal rows no longer use a separate preference.
+    private func visibleNumbersFixture() throws -> () -> Void {
+        let store = TerminalControlsStore(), previous = try store.load()
+        var profile = previous, rows = previous.resolvedRows
+        if let index = rows.firstIndex(where: { $0.preset == .numbers }) { rows[index].hidden = false; rows[index].expandedOnly = false }
+        profile.keyboardRows = rows; profile.rowsExpanded = false
+        try store.write(JSONEncoder().encode(profile))
+        return { try? store.write(JSONEncoder().encode(previous)) }
     }
     func testImmersiveTerminalProtectsEntryAndLiveGridButAllowsHistoryBehindStatus() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
@@ -80,7 +81,7 @@ import UIKit
     }
 
     func testHostedTerminalDockFollowsKeyboardAcrossPaletteChanges() async throws {
-        let restoreNumberRow = numberRowFixture(); defer { restoreNumberRow() }
+        let restoreNumberRow = try visibleNumbersFixture(); defer { restoreNumberRow() }
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         let appearance = DirectAppearanceV1.shared
@@ -128,7 +129,7 @@ import UIKit
     }
 
     func testDockAndSessionMenuStayClearOfTerminalAndSoftwareKeyboard() async throws {
-        let restoreNumberRow = numberRowFixture(); defer { restoreNumberRow() }
+        let restoreNumberRow = try visibleNumbersFixture(); defer { restoreNumberRow() }
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene); window.overrideUserInterfaceStyle = .light
         let mac = try DirectMacRecordV1.normalized(name: "Synthetic Terminal", addresses: ["studio.local"])
@@ -213,11 +214,9 @@ import UIKit
         let anchorFrame = narrow.menuAnchor.convert(narrow.menuAnchor.bounds, to: narrow)
         XCTAssertTrue(narrow.bounds.contains(keyboardFrame)); XCTAssertTrue(narrow.bounds.contains(anchorFrame))
         XCTAssertGreaterThanOrEqual(narrow.keyScroll.contentSize.width, narrow.keyScroll.bounds.width)
-        narrow.keyScroll.scrollRectToVisible(narrow.numberButton.convert(narrow.numberButton.bounds, to: narrow.keyScroll), animated: false)
-        XCTAssertTrue(narrow.keyScroll.bounds.intersects(narrow.numberButton.convert(narrow.numberButton.bounds, to: narrow.keyScroll)))
         narrow.keyScroll.scrollRectToVisible(narrow.keypadButton.convert(narrow.keypadButton.bounds, to: narrow.keyScroll), animated: false)
         XCTAssertTrue(narrow.keyScroll.bounds.intersects(narrow.keypadButton.convert(narrow.keypadButton.bounds, to: narrow.keyScroll)))
-        let keys = try XCTUnwrap(narrow.keyScroll.subviews.compactMap { $0 as? UIStackView }.first)
+        let keys = try XCTUnwrap(narrow.keyScroll.subviews.flatMap(\.subviews).compactMap { $0 as? UIStackView }.first)
         for case let key as UIButton in keys.arrangedSubviews {
             XCTAssertGreaterThanOrEqual(key.bounds.width, 44)
 
@@ -227,41 +226,44 @@ import UIKit
         narrow.removeFromSuperview()
     }
 
-    func testDedicatedNumberToggleAppliesImmediatelyAndRestoresAcrossSessions() async throws {
-        let suite = "TerminalNumberRowQA-" + UUID().uuidString
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+    func testNumbersRowVisibilityAppliesImmediatelyAndRestoresAcrossSessions() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         let session = DirectTerminalSession(mac: .init(id: UUID(), name: "Synthetic", addresses: ["127.0.0.1"]))
         session.connected = true
-        var data = try JSONEncoder().encode(TerminalControlsProfile.defaults)
+        var profile = TerminalControlsProfile.defaults
+        profile.normalizeLegacyRows()
+        var data = try JSONEncoder().encode(profile)
         let store = TerminalControlsStore(read: { data }, write: { data = $0 }, legacyIDs: { [] })
-        let controller = TerminalController(session: session, customize: { XCTFail("Number toggles do not open customization") }, defaults: defaults, controlsStore: store)
+        let controller = TerminalController(session: session, customize: {}, controlsStore: store)
         window.rootViewController = controller; window.makeKeyAndVisible()
-        defer { window.endEditing(true); window.isHidden = true; window.rootViewController = nil; session.stop(); defaults.removePersistentDomain(forName: suite) }
-        controller.terminal.feed(text: "Synthetic output preserved across number toggles\r\n")
+        defer { window.endEditing(true); window.isHidden = true; window.rootViewController = nil; session.stop() }
+        controller.terminal.feed(text: "Synthetic output preserved across row settings\r\n")
         try await Task.sleep(for: .milliseconds(350)); window.layoutIfNeeded()
         XCTAssertTrue(controller.terminal.becomeFirstResponder())
         try await Task.sleep(for: .milliseconds(550)); window.layoutIfNeeded()
-        let rows = controller.terminal.getTerminal().rows
-        let bar = controller.keyboardBar
-        XCTAssertTrue(bar.showsNumberRow)
-        bar.numberButton.sendActions(for: .touchUpInside); window.layoutIfNeeded()
-        XCTAssertFalse(bar.showsNumberRow)
-        XCTAssertEqual(bar.height, 60, accuracy: 1)
-        XCTAssertGreaterThan(controller.terminal.getTerminal().rows, rows, "Hiding the dedicated number row gives its space back to the PTY")
+        let gridRows = controller.terminal.getTerminal().rows
+        func visibility(_ value: TerminalKeyboardRow.Visibility) throws {
+            var draft = try store.load(), rows = draft.resolvedRows
+            let index = try XCTUnwrap(rows.firstIndex { $0.preset == .numbers })
+            rows[index].visibility = value; draft.keyboardRows = rows
+            _ = try store.save(draft); session.reloadKeyboard?(); window.layoutIfNeeded()
+        }
+        XCTAssertEqual(controller.keyboardBar.height, 115, accuracy: 1)
+        try visibility(.hidden)
+        XCTAssertEqual(controller.keyboardBar.height, 60, accuracy: 1)
+        XCTAssertGreaterThan(controller.terminal.getTerminal().rows, gridRows)
         XCTAssertTrue(controller.terminal.isFirstResponder)
-        XCTAssertFalse(defaults.bool(forKey: TerminalController.numberRowPreference))
-        XCTAssertFalse(try XCTUnwrap(JSONDecoder().decode(TerminalControlsProfile.self, from: data).numberRow))
-        let restored = TerminalController(session: session, customize: {}, defaults: defaults, controlsStore: store)
+        XCTAssertNil(try store.load().numberRow)
+        XCTAssertEqual(try store.load().resolvedRows.first { $0.preset == .numbers }?.visibility, .hidden)
+        let restored = TerminalController(session: session, customize: {}, controlsStore: store)
         window.rootViewController = restored
         try await Task.sleep(for: .milliseconds(350)); window.layoutIfNeeded()
-        XCTAssertFalse(restored.keyboardBar.showsNumberRow)
         XCTAssertEqual(restored.keyboardBar.height, 60, accuracy: 1)
-        restored.keyboardBar.numberButton.sendActions(for: .touchUpInside); window.layoutIfNeeded()
-        XCTAssertTrue(restored.keyboardBar.showsNumberRow)
-        XCTAssertTrue(defaults.bool(forKey: TerminalController.numberRowPreference))
+        try visibility(.always)
         XCTAssertEqual(restored.keyboardBar.height, 115, accuracy: 1)
+        XCTAssertEqual(try store.load().resolvedRows.first { $0.preset == .numbers }?.kind, .custom)
+        XCTAssertEqual(try store.load().resolvedRows.first { $0.preset == .numbers }?.visibility, .always)
     }
 
     func testSessionMenuContainsOnlyActiveSessionActionsAndPreservesTerminal() async throws {
@@ -282,7 +284,7 @@ import UIKit
         for _ in 0..<100 where navigation.transitionCoordinator != nil { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertEqual(navigation.traitCollection.userInterfaceStyle, .dark, "Menus must follow the terminal palette even when the app is light")
         let items = menu.sections.flatMap { $0["items"] as? [[String: Any]] ?? [] }
-        XCTAssertEqual(items.compactMap { $0["kind"] as? String }, ["keyboard", "numberRow", "expandRows", "files", "connectionInfo", "appSettings", "exit"])
+        XCTAssertEqual(items.compactMap { $0["kind"] as? String }, ["keyboard", "expandRows", "files", "connectionInfo", "appSettings", "exit"])
         XCTAssertTrue(items.contains { $0["title"] as? String == "Disconnect" && $0["destructive"] as? Bool == true })
         XCTAssertEqual(navigation.viewControllers.count, 1)
         XCTAssertLessThan(navigation.preferredContentSize.height, 600, "Session and keyboard-recovery actions should fit a compact menu")

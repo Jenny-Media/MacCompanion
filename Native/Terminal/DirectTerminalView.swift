@@ -53,11 +53,11 @@ struct DirectTerminalView: View {
     private let loginRetentionAllowed: Bool
     private let connectionEstablished: @MainActor () -> Bool
     private enum Sheet: Identifiable {
-        case keys, install, manual, macSettings, appSettings, pro, quickActions, keyboard, verifyGuide, connectionInfo, files, access
+        case keys, install, manual, macSettings, appSettings, pro, quickActions, savedTextLibrary, keyboard, verifyGuide, connectionInfo, files, access
         var id: String {
             switch self {
             case .keys: "keys"; case .install: "install"; case .manual: "manual"; case .macSettings: "macSettings"
-            case .appSettings: "appSettings"; case .pro: "pro"; case .quickActions: "quickActions"; case .keyboard: "keyboard"
+            case .appSettings: "appSettings"; case .pro: "pro"; case .quickActions: "quickActions"; case .savedTextLibrary: "savedTextLibrary"; case .keyboard: "keyboard"
             case .access: "access"; case .files: "files"; case .verifyGuide: "verifyGuide"; case .connectionInfo: "connectionInfo"
             }
         }
@@ -65,6 +65,7 @@ struct DirectTerminalView: View {
     @State private var sheet: Sheet?
     @State private var confirmingExit = false
     @State private var controlsReloadPending = false
+    @State private var controlsContextImage: UIImage?
     @Environment(DirectAppearanceV1.self) private var appearance
     @Environment(\.dynamicTypeSize) private var dynamicType
     @Environment(\.colorScheme) private var colorScheme
@@ -141,6 +142,7 @@ struct DirectTerminalView: View {
         sheet = nil; loginAttempt = nil
     }
     private func refreshControlsAfterDismissal() {
+        session.finishControlsCustomization?(); controlsContextImage = nil
         guard controlsReloadPending else { return }
         controlsReloadPending = false; session.reloadKeyboard?()
     }
@@ -179,7 +181,7 @@ struct DirectTerminalView: View {
         NavigationStack {
             ZStack {
                 (session.connected ? terminalBackground : connectionPanel == nil ? Color(uiColor: .systemGroupedBackground) : Color.clear).ignoresSafeArea()
-                TerminalSurface(session: session, style: appearance.terminal.style(app: appearance.app), customize: { sheet = .keyboard }, filesStatus: files.transferActive ? files.activityTitle : "", action: handleControls)
+                TerminalSurface(session: session, style: appearance.terminal.style(app: appearance.app), customize: { sheet = .keyboard }, contextImage: { controlsContextImage = $0 }, filesStatus: files.transferActive ? files.activityTitle : "", action: handleControls)
                     .ignoresSafeArea(.container, edges: session.connected ? .top : [])
                     .opacity(session.connected ? 1 : 0).allowsHitTesting(session.connected).accessibilityHidden(!session.connected)
                 if !isClosing && !session.macRemoved && !session.connected && !session.completedNormally {
@@ -252,7 +254,7 @@ struct DirectTerminalView: View {
         .onReceive(NotificationCenter.default.publisher(for: DirectAppLockV1.unlocked)) { _ in draft.resume(); returnAfterNormalExit(); session.foreground(); loadLogin() }
         .onReceive(NotificationCenter.default.publisher(for: VNCSessionPreferences.actionsChanged)) { _ in session.reloadKeyboard?() }
         .onReceive(NotificationCenter.default.publisher(for: TerminalControlsStore.changed)) { _ in
-            if sheet == .keyboard || sheet == .quickActions { controlsReloadPending = true } else { session.reloadKeyboard?() }
+            if sheet == .keyboard || sheet == .quickActions || sheet == .savedTextLibrary { controlsReloadPending = true } else { session.reloadKeyboard?() }
         }
         .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in session.activity?.preferenceChanged() }
         .onReceive(NotificationCenter.default.publisher(for: RemoteSessionActivityActions.endRequested)) { notification in
@@ -280,7 +282,9 @@ struct DirectTerminalView: View {
                     else { TerminalConnectionInfo(mac: mac) }
                 case .appSettings: DirectSessionSettingsV1()
                 case .pro: DirectProView()
-                case .quickActions, .keyboard: TerminalControlsSettings(close: { sheet = nil })
+                case .quickActions: TerminalControlsSettings(initialLibrary: .shortcuts, contextImage: controlsContextImage, close: { sheet = nil })
+                case .savedTextLibrary: TerminalControlsSettings(initialLibrary: .text, contextImage: controlsContextImage, close: { sheet = nil })
+                case .keyboard: TerminalControlsSettings(contextImage: controlsContextImage, close: { sheet = nil })
                 case .verifyGuide: TerminalIdentityGuide(macName: mac.name)
                 case .connectionInfo: TerminalConnectionInfo(mac: mac)
                 }
@@ -322,6 +326,7 @@ struct DirectTerminalView: View {
         case "install": setupKey()
         case "manual": sheet = .manual
         case "quickActions": sheet = .quickActions
+        case "savedTextLibrary": sheet = .savedTextLibrary
         case "customize": sheet = .keyboard
         case "pro": sheet = .pro
         case "exit":
@@ -478,9 +483,14 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     let session: DirectTerminalSession
     let style: UIUserInterfaceStyle
     let customize: @MainActor () -> Void
+    let contextImage: @MainActor (UIImage) -> Void
     var filesStatus = ""
     let action: @MainActor (String) -> Void
-    func makeUIViewController(context: Context) -> TerminalController { TerminalController(session: session, customize: customize, action: action) }
+    func makeUIViewController(context: Context) -> TerminalController {
+        let controller = TerminalController(session: session, customize: customize, action: action)
+        controller.customizationContext = contextImage
+        return controller
+    }
     func updateUIViewController(_ controller: TerminalController, context: Context) {
         controller.filesStatus = filesStatus
         controller.terminal.isUserInteractionEnabled = session.connected
@@ -488,7 +498,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         controller.updateControls()
         controller.applyAppearance(style)
     }
-    static func dismantleUIViewController(_ controller: TerminalController, coordinator: ()) { controller.textComposer.invalidate(); controller.session.received = nil; controller.session.prepareTerminal = nil; controller.session.toggleKeyboard = nil; controller.session.reloadKeyboard = nil; controller.session.suspendInput = nil }
+    static func dismantleUIViewController(_ controller: TerminalController, coordinator: ()) { controller.textComposer.invalidate(); controller.session.received = nil; controller.session.prepareTerminal = nil; controller.session.toggleKeyboard = nil; controller.session.reloadKeyboard = nil; controller.session.suspendInput = nil; controller.session.finishControlsCustomization = nil }
 }
 
 @MainActor final class SessionTerminalView: TerminalView {
@@ -621,7 +631,6 @@ private struct TerminalSurface: UIViewControllerRepresentable {
 }
 
 @MainActor class TerminalController: UIViewController, @preconcurrency TerminalViewDelegate {
-    static let numberRowPreference = "direct-terminal-number-row"
     var filesStatus = ""
     let session: DirectTerminalSession
     private(set) var terminal = SessionTerminalView(frame: .zero)
@@ -653,6 +662,13 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     private let action: @MainActor (String) -> Void
     private let defaults: UserDefaults
     private let controlsStore: TerminalControlsStore
+    var customizationContext: ((UIImage) -> Void)?
+    private var customizingControls = false
+    private var customizationEpoch: UUID?
+    private var customizationKeyboard = false
+    private var controlsInputEpoch = UUID()
+    private var observedSessionInputEpoch: UUID?
+    private var feedingRemoteOutput = false
     init(session: DirectTerminalSession, customize: @escaping @MainActor () -> Void, action: @escaping @MainActor (String) -> Void = { _ in }, defaults: UserDefaults = .standard, controlsStore: TerminalControlsStore = .init()) {
         self.session = session; self.customize = customize; self.action = action; self.defaults = defaults
         self.controlsStore = controlsStore
@@ -668,13 +684,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         controls.buttonAnchorView = keyboardBar.menuAnchor
         controls.button.accessibilityLabel = "Terminal Controls"
         controls.button.accessibilityIdentifier = "terminal-controls"
-        controls.categoryActions = [
-            ["kind": "moreKeys", "title": "Keypad", "symbol": "rectangle.grid.3x2"],
-            ["kind": "savedShortcuts", "title": "Shortcuts", "symbol": "command"],
-            ["kind": "savedText", "title": "Text", "symbol": "text.quote"],
-            ["kind": "customize", "title": "Customize Controls", "symbol": "slider.horizontal.3"],
-            ["kind": "appearance", "title": "Appearance", "symbol": "circle.lefthalf.filled"],
-            ["kind": "session", "title": "Session", "symbol": "link"]]
+        controls.categoryActions = TerminalControlNavigation.items
         controls.actionHandler = { [weak self] item in self?.performQuickAction(item) }
         controls.openingHandler = { [weak self] in self?.updateControls() }
         CompanionVNCObserveDivision(view)
@@ -683,7 +693,9 @@ private struct TerminalSurface: UIViewControllerRepresentable {
             guard let self, session.connected else { return }
             prepareForPTY(session.outputGeneration)
             let supportedCommand = terminal.keyEncoding.supportsCommand
+            feedingRemoteOutput = true
             terminal.feed(byteArray: bytes[...])
+            feedingRemoteOutput = false
             if supportedCommand != terminal.keyEncoding.supportsCommand {
                 keyboardBar.refresh()
                 keypadState?.supportsCommand = terminal.keyEncoding.supportsCommand
@@ -695,6 +707,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         if session.connected { prepareForPTY(session.outputGeneration) }
         configureKeyboard()
         session.reloadKeyboard = { [weak self] in self?.configureKeyboard(); self?.updateControls() }
+        session.finishControlsCustomization = { [weak self] in self?.finishCustomization() }
         session.suspendInput = { [weak self] in
             guard let self else { return }
             if textComposer.sending { session.interruptComposedText() }
@@ -712,13 +725,12 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         updateControls()
     }
     private func installTerminalSurface() {
-        terminal.customInputEpoch = { [weak session] in session?.customInputEpoch }
-        terminal.admitCustomInput = { [weak session] bytes in session?.trySend(bytes) == true }
+        terminal.customInputEpoch = { [weak self] in self?.currentControlsInputEpoch() }
+        terminal.admitCustomInput = { [weak self] bytes in guard let self, !customizingControls else { return false }; return session.trySend(bytes) }
         terminal.accessibilityIdentifier = "terminal-surface"
         terminal.terminalDelegate = self; terminal.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(terminal)
         // The persistent toolbar owns the only bottom control space. No
         // additional row is reserved for the shared menu button.
-        keyboardBar.showsNumberRow = defaults.object(forKey: Self.numberRowPreference) == nil || defaults.bool(forKey: Self.numberRowPreference)
         view.addSubview(keyboardBar)
         terminal.keyboardBar = keyboardBar
         terminal.inputAccessoryView = nil
@@ -749,7 +761,12 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         if !session.connected { controls.close() }
         controls.macName = session.mac.name
         controls.quickActions = DirectProAccess.shared.hasPro
-            ? controlProfile.placed(.menu).map { inputItem($0.native) }
+            ? controlProfile.placed(.menu).map { item in
+                var native = item.native
+                if item.operation == .keyboard { native["title"] = terminal.isFirstResponder ? "Hide Keyboard" : "Show Keyboard" }
+                if item.operation == .expandRows { native["title"] = keyboardBar.showsExtraRows ? "Collapse Rows" : "Expand Rows" }
+                return inputItem(native)
+            }
             : DirectControlMode.terminal.defaults.map { inputItem($0.native) }
     }
     private func inputItem(_ item: [String: Any]) -> [String: Any] {
@@ -761,12 +778,12 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         if item["kind"] as? String == "terminalAction" { item["controlsRevision"] = controlProfile.revision.uuidString }
         return item
     }
-    func performControlAction(_ id: UUID, feedback: String? = nil) {
+    func performControlAction(_ id: UUID, feedback: String? = nil, feedbackHandled: Bool = false) {
         guard DirectProAccess.shared.hasPro, DirectAppLockV1.shared.canAccess,
               let item = controlProfile.actions.first(where: { $0.id == id }), item.valid else { return }
         guard !item.requiresCommand || terminal.keyEncoding.supportsCommand else { return }
         switch item.kind {
-        case .builtIn: performControl(item.builtIn?.rawValue ?? "", inputFeedback: feedback)
+        case .builtIn: performControl(item.operation?.rawValue ?? item.builtIn?.rawValue ?? "", feedbackHandled: feedbackHandled, inputFeedback: feedback)
         case .key:
             terminal.performCustomInput(feedbackKind: feedback) {
                 if let key = item.key { terminal.sendKey(.accessory(key), modifiers: terminal.keyboardState.consume()) }
@@ -794,13 +811,13 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         if presentedViewController != nil { dismiss(animated: true, completion: confirm) } else { confirm() }
     }
     private func performQuickAction(_ item: [AnyHashable: Any]) {
-        guard session.connected, DirectAppLockV1.shared.canAccess else { return }
+        guard !customizingControls, session.connected, DirectAppLockV1.shared.canAccess else { return }
         if let epoch = item["inputEpoch"] as? String, epoch != terminal.customInputEpoch()?.uuidString { return }
         let kind = item["kind"] as? String ?? ""
         let inputFeedback: String? = item["inputFeedback"] as? Bool == true && item["interfaceFeedbackHandled"] as? Bool != true ? "commit" : nil
         if kind == "terminalAction", let value = item["id"] as? String, let id = UUID(uuidString: value) {
             guard item["controlsRevision"] as? String == controlProfile.revision.uuidString else { return }
-            performControlAction(id, feedback: inputFeedback)
+            performControlAction(id, feedback: inputFeedback, feedbackHandled: item["interfaceFeedbackHandled"] as? Bool == true)
         } else if kind == "shortcut" || kind == "text" {
             guard DirectProAccess.shared.hasPro,
                   let id = item["id"] as? String,
@@ -827,7 +844,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
             showSavedItems(.text)
         case "savedShortcuts":
             showSavedItems(.shortcuts)
-        case "customize": customize()
+        case "customize": beginCustomization()
         case "shiftNext": keyboardBar.toggle(.shift)
         case "shiftLock": keyboardBar.toggle(.shift, lock: true)
         case "ctrlLock": keyboardBar.toggle(.ctrl, lock: true)
@@ -848,7 +865,6 @@ private struct TerminalSurface: UIViewControllerRepresentable {
             presentControlsMenu(session.mac.name, sections: [
                 ["title": "Keyboard Bar", "items": [
                     ["kind": "keyboard", "title": terminal.isFirstResponder ? "Hide Keyboard" : "Show Keyboard", "symbol": "keyboard"],
-                    ["kind": "numberRow", "title": keyboardBar.showsNumberRow ? "Hide Numbers" : "Show Numbers", "symbol": "textformat.123"],
                     ["kind": "expandRows", "title": keyboardBar.showsExtraRows ? "Collapse Rows" : "Expand Rows", "symbol": "rectangle.expand.vertical"]]],
                 ["title": "Session", "items": [
                     ["kind": "files", "title": filesStatus.isEmpty ? "Files" : "Files · " + filesStatus, "symbol": "folder", "submenu": true],
@@ -866,12 +882,9 @@ private struct TerminalSurface: UIViewControllerRepresentable {
             session.toggleKeyboard?()
             if wasVisible != terminal.isFirstResponder && !feedbackHandled { keyboardBar.keyFeedback.feedback("selection") }
         case "expandRows":
-            keyboardBar.showsExtraRows.toggle(); persistBarLayout(); view.setNeedsLayout()
-        case "numberRow":
-            keyboardBar.showsNumberRow.toggle()
+            keyboardBar.showsExtraRows.toggle()
             if !feedbackHandled { keyboardBar.keyFeedback.feedback("selection") }
-            persistBarLayout()
-            view.setNeedsLayout()
+            persistBarLayout(); view.setNeedsLayout()
         case "paste": terminal.pasteWithFeedback(feedbackKind: inputFeedback)
         case "composeText": showTextComposer()
         case "escape", "tab", "returnKey":
@@ -1060,7 +1073,6 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     }
     private func applyBarProfile() {
         appliedInputEpoch = terminal.customInputEpoch()
-        keyboardBar.showsNumberRow = controlProfile.numberRow ?? (defaults.object(forKey: Self.numberRowPreference) == nil || defaults.bool(forKey: Self.numberRowPreference))
         let revision = controlProfile.revision
         keyboardBar.configure(controlProfile) { [weak self] id in
             guard let self, controlProfile.revision == revision else { return }
@@ -1070,19 +1082,43 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     }
     private func persistBarLayout() {
         var draft = controlProfile
-        draft.numberRow = keyboardBar.showsNumberRow
         draft.rowsExpanded = keyboardBar.showsExtraRows
         savingControls = true
         defer { savingControls = false }
         do {
             // Reuse the optimistic revision check; never overwrite newer editor content.
             controlProfile = try controlsStore.save(draft)
-            defaults.set(keyboardBar.showsNumberRow, forKey: Self.numberRowPreference)
             applyBarProfile(); updateControls()
         } catch {
             savingControls = false; configureKeyboard()
             session.controlsRecovery = .make(.saveFailed, message: "The keyboard layout couldn’t be saved. Existing controls are kept.")
         }
+    }
+    func beginCustomization(library: Bool = false, section: TerminalSavedItemsSection = .shortcuts) {
+        guard !customizingControls else { return }
+        customizationEpoch = session.customInputEpoch
+        customizationKeyboard = terminal.isFirstResponder
+        let snapshot = UIGraphicsImageRenderer(bounds: terminal.bounds).image { _ in
+            terminal.drawHierarchy(in: terminal.bounds, afterScreenUpdates: false)
+        }
+        customizationContext?(snapshot)
+        customizingControls = true
+        controlsInputEpoch = UUID()
+        terminal.resetModifiers(); controls.close(); _ = terminal.resignFirstResponder()
+        keyboardBar.refresh()
+        if library { action(section == .text ? "savedTextLibrary" : "quickActions") } else { customize() }
+    }
+    func finishCustomization() {
+        guard customizingControls else { return }
+        let restore = customizationKeyboard && customizationEpoch != nil && customizationEpoch == session.customInputEpoch
+        customizingControls = false; customizationKeyboard = false; customizationEpoch = nil
+        configureKeyboard(); updateControls()
+        if restore { _ = terminal.becomeFirstResponder() }
+    }
+    private func currentControlsInputEpoch() -> UUID? {
+        guard !customizingControls, let epoch = session.customInputEpoch else { return nil }
+        if observedSessionInputEpoch != epoch { observedSessionInputEpoch = epoch; controlsInputEpoch = UUID() }
+        return controlsInputEpoch
     }
     private func showKeypad(numbersFirst: Bool = false) {
         guard presentedViewController == nil else { return }
@@ -1162,13 +1198,13 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     private func showSavedItems(_ section: TerminalSavedItemsSection) {
         guard presentedViewController == nil else { return }
         let epoch = terminal.customInputEpoch(), revision = controlProfile.revision
-        let panel = UIHostingController(rootView: TerminalSavedItems(section: section, items: DirectProAccess.shared.hasPro ? controlProfile.actions : [], macName: session.mac.name, supportsCommand: terminal.keyEncoding.supportsCommand, select: { [weak self] id in
+        let panel = UIHostingController(rootView: TerminalSavedItems(section: section, items: DirectProAccess.shared.hasPro ? controlProfile.savedItems(section) : [], macName: session.mac.name, supportsCommand: terminal.keyEncoding.supportsCommand, select: { [weak self] id in
             guard let self, let epoch, terminal.customInputEpoch() == epoch, controlProfile.revision == revision else { return }
             dismiss(animated: true) { [weak self] in
                 guard let self, terminal.customInputEpoch() == epoch, controlProfile.revision == revision else { return }
                 performControlAction(id)
             }
-        }, customize: { [weak self] in self?.dismiss(animated: true) { [weak self] in self?.customize() } }, compose: { [weak self] in
+        }, customize: { [weak self] in self?.dismiss(animated: true) { [weak self] in self?.beginCustomization(library: true, section: section) } }, compose: { [weak self] in
             self?.showTextComposer()
         }))
         panel.sheetPresentationController?.detents = [.large()]
@@ -1235,7 +1271,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         view.setNeedsLayout(); view.layoutIfNeeded()
     }
     func send(source: TerminalView, data: ArraySlice<UInt8>) {
-        guard source === terminal, !resettingPTY, preparedGeneration == session.outputGeneration else { return }
+        guard source === terminal, (!customizingControls || feedingRemoteOutput), !resettingPTY, preparedGeneration == session.outputGeneration else { return }
         session.send(terminal.encodeOutput(data))
     }
     func setTerminalTitle(source: TerminalView, title: String) {}

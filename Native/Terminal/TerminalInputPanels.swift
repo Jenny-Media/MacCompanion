@@ -24,11 +24,6 @@ struct TerminalKeypad: View {
     let state: TerminalKeypadState
     let macName: String
     var onClose: (() -> Void)?
-    private enum Page: String, CaseIterable, Identifiable {
-        case keys = "All Keys", shortcuts = "Shortcuts", text = "Text"
-        var id: String { rawValue }
-    }
-    @State private var page = Page.keys
     @State private var advancedExpanded = false
     @State private var query: String
     @FocusState private var searching: Bool
@@ -44,24 +39,16 @@ struct TerminalKeypad: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 6) {
-                    if textSize.isAccessibilitySize {
-                        pagePicker.pickerStyle(.menu)
-                    } else { pagePicker.pickerStyle(.segmented) }
-                    TextField(page == .keys ? "Find a key or group" : "Search saved items", text: $query)
+                    TextField("Find a key or group", text: $query)
                         .textFieldStyle(.roundedBorder).textInputAutocapitalization(.never).autocorrectionDisabled().focused($searching).submitLabel(.search).onSubmit { searching = false }
                         .accessibilityIdentifier("terminal-keypad-search")
                     if let notice = state.notice { Text(notice).font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("terminal-keypad-notice") }
-                    if page == .keys { allKeys } else { savedItems }
+                    allKeys
                 }.padding(8).disabled(!state.ready)
-            }.scrollDismissesKeyboard(.interactively).navigationTitle("Keypad").directInlineNavigationTitle()
+            }.scrollDismissesKeyboard(.interactively).navigationTitle("All Keys").directInlineNavigationTitle()
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { if let onClose { onClose() } else { dismiss() } } } }
-                .onChange(of: page) { _, _ in query = "" }
                 .onChange(of: searching) { _, active in if active { state.beginSearch() } }
         }.privacySensitive().directAppearance().onDisappear { state.ready = false }
-    }
-    private var pagePicker: some View {
-        Picker("Keys", selection: $page) { ForEach(Page.allCases) { Text($0.rawValue).tag($0) } }
-            .accessibilityIdentifier("terminal-keypad-page")
     }
     private var allKeys: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -113,37 +100,17 @@ struct TerminalKeypad: View {
             .accessibilityAction(named: "Pin to Keyboard Bar") { if state.canPin { state.pin(key.id, .keyboard) } }
             .accessibilityAction(named: "Pin to Floating Menu") { if state.canPin { state.pin(key.id, .menu) } }
     }
-    private var savedItems: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if page == .text {
-                Button("Compose Text", systemImage: "square.and.pencil", action: state.compose).buttonStyle(.bordered)
-                Text("Choose text to review and edit. Nothing is sent until Send Text.").font(.caption).foregroundStyle(.secondary)
-            } else { Text("Tap a shortcut to send once.").font(.caption).foregroundStyle(.secondary) }
-            let items = state.items.filter { $0.kind == (page == .text ? .text : .shortcut) && (query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) || $0.detail.localizedCaseInsensitiveContains(query)) }
-            ForEach(items) { item in
-                Button { searching = false; state.useSaved(item.id) } label: {
-                    HStack {
-                        Image(systemName: item.symbol)
-                        VStack(alignment: .leading) {
-                            Text(item.title)
-                            Text(item.requiresCommand && !state.supportsCommand ? "Requires remote Command support" : item.detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                        }
-                        Spacer(); Image(systemName: item.kind == .text ? "square.and.pencil" : "arrow.up.forward")
-                    }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                }.buttonStyle(.bordered).disabled(item.requiresCommand && !state.supportsCommand).accessibilityIdentifier("terminal-keypad-saved-" + item.id.uuidString)
-            }
-            if items.isEmpty { Text("No matching saved items. Create them in Customize Controls → Shortcuts & Text.").foregroundStyle(.secondary) }
-        }
-    }
     private func modifierButtons(_ modifier: TerminalModifiers) -> some View {
         let locked = state.locked.contains(modifier), active = locked || state.armed.contains(modifier)
         let title = modifier.title
-        return VStack(spacing: 0) {
-            Text(title).font(.subheadline.weight(.medium))
-            Text(locked ? "On" : active ? "Next" : "Off").font(.caption2)
-        }.frame(maxWidth: .infinity, minHeight: 44)
+        return Image(systemName: modifier.symbol).font(.body)
+            .frame(maxWidth: .infinity, minHeight: 44)
             .foregroundStyle(active ? Color.white : Color.primary)
-            .background(active ? Color.accentColor : Color(uiColor: .secondarySystemFill), in: .rect(cornerRadius: 8))
+            .background(active ? Color(uiColor: TerminalModifierAppearance.fill) : Color(uiColor: .secondarySystemFill), in: .rect(cornerRadius: 8))
+            .overlay { RoundedRectangle(cornerRadius: 8).strokeBorder(active ? Color.primary : .clear, lineWidth: 1.5) }
+            .overlay(alignment: .bottom) {
+                if locked { Capsule().fill(.white).frame(width: 14, height: 3).padding(.bottom, 4).accessibilityHidden(true) }
+            }
             .contentShape(Rectangle())
             .gesture(LongPressGesture(minimumDuration: 0.5).exclusively(before: TapGesture()).onEnded { value in
                 switch value { case .first: state.toggle(modifier, true); case .second: state.toggle(modifier, false) }
@@ -168,9 +135,23 @@ private struct TerminalKeypadButtonStyle: ButtonStyle {
     }
 }
 
-enum TerminalSavedItemsSection {
+/// Compact keycaps share the runtime bar's rectangular shape and neutral fill.
+/// The visible cap stays compact while retaining a full touch target.
+struct TerminalKeycapStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var enabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.font(.callout.weight(.medium)).lineLimit(1).minimumScaleFactor(0.8)
+            .padding(.horizontal, 6).frame(maxWidth: .infinity, minHeight: 44)
+            .foregroundStyle(.primary)
+            .background(Color(uiColor: .secondarySystemFill), in: .rect(cornerRadius: 8))
+            .contentShape(.rect).opacity(!enabled ? 0.4 : configuration.isPressed ? 0.65 : 1)
+    }
+}
+
+enum TerminalSavedItemsSection: Hashable {
     case shortcuts, text
     var title: String { self == .shortcuts ? "Shortcuts" : "Text" }
+    var managementTitle: String { self == .shortcuts ? "Shortcuts" : "Saved Text" }
     var kind: TerminalControlAction.Kind { self == .shortcuts ? .shortcut : .text }
 }
 
@@ -200,6 +181,7 @@ struct TerminalSavedItems: View {
                         Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                         TextField(section == .shortcuts ? "Search shortcuts" : "Search saved text", text: $search).focused($searching)
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
+                            .submitLabel(.search).onSubmit { searching = false }
                             .accessibilityIdentifier("terminal-saved-search")
                         if !search.isEmpty {
                             Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }
@@ -213,18 +195,23 @@ struct TerminalSavedItems: View {
                             HStack {
                                 Image(systemName: item.symbol)
                                 VStack(alignment: .leading, spacing: 4) {
-                                    Text(item.title); Text(item.requiresCommand && !supportsCommand ? "Requires Command support from the remote app" : item.kind == .text ? "Review text before sending" : item.detail).font(.caption).foregroundStyle(.secondary)
+                                    Text(item.title)
+                                    if let usage = item.usage { Text(usage).font(.caption).foregroundStyle(.secondary) }
+                                    Text(item.requiresCommand && !supportsCommand ? "Requires Command support from the remote app" : item.detail).font(.caption).foregroundStyle(.secondary)
                                 }
-                                Spacer(); Image(systemName: item.kind == .text ? "square.and.pencil" : "arrow.up.forward")
+                                Spacer(); Text(item.kind == .text ? "Review" : "Send").font(.subheadline)
                             }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
                         }.disabled(item.requiresCommand && !supportsCommand).accessibilityIdentifier("terminal-saved-" + item.id.uuidString)
                     }
                     if filtered.isEmpty { Text(section == .shortcuts ? "No matching shortcuts." : "No matching saved text.").foregroundStyle(.secondary) }
                 } header: { Text(macName) } footer: { Text(section == .shortcuts ? "Tap a shortcut to send it once." : "Choose saved text to review and edit. Nothing is sent until Send Text. No Return is added.") }
-                Button("Customize Controls", systemImage: "slider.horizontal.3") { customize() }.accessibilityIdentifier("terminal-manage-saved")
+                Button("Manage Saved Items", systemImage: "slider.horizontal.3") { customize() }.accessibilityIdentifier("terminal-manage-saved")
             }
                 .navigationTitle(section.title).directInlineNavigationTitle()
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) { Button("Manage", action: customize).accessibilityIdentifier("terminal-saved-manage") }
+                    ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+                }
         }.privacySensitive().directAppearance()
     }
 }
