@@ -16,7 +16,10 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
+import urllib.error
 import urllib.request
+import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 CLOUD = ROOT / 'Native/iOSCloud'
@@ -34,6 +37,24 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def download_source(artifact, archive, download=None):
+    download = download or urllib.request.urlretrieve
+    for attempt in range(3):
+        temporary = archive.with_name(archive.name + '.download-' + uuid.uuid4().hex)
+        try:
+            download(artifact['url'], temporary)
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            if attempt == 2:
+                raise
+            print('Incomplete source download; retrying with a fresh file', flush=True)
+            time.sleep(2 ** attempt)
+            continue
+        if digest(temporary) != artifact['sha256']:
+            raise ValueError('OpenSSL download does not match the production source lock')
+        temporary.replace(archive)
+        return
+
+
 def openssl(root):
     lock = json.loads((ROOT / 'Native/VNC/source-lock.json').read_text())
     version = lock['opensslVersion']
@@ -42,11 +63,7 @@ def openssl(root):
     root.mkdir(parents=True, exist_ok=True)
     archive = root / ('openssl-' + version + '.tar.gz')
     if not archive.exists():
-        temporary = archive.with_suffix('.download')
-        urllib.request.urlretrieve(artifact['url'], temporary)
-        if digest(temporary) != artifact['sha256']:
-            raise ValueError('OpenSSL download does not match the production source lock')
-        temporary.replace(archive)
+        download_source(artifact, archive)
     if digest(archive) != artifact['sha256']:
         raise ValueError('OpenSSL archive differs from the production source lock')
     sdk = capture('xcrun', '--sdk', 'iphoneos', '--show-sdk-path')
