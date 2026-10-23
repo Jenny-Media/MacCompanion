@@ -2,6 +2,7 @@
 """Run the legacy feature/pairing checks under the existing compiler lease."""
 import hashlib
 import codecs
+from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
@@ -119,7 +120,17 @@ def run_command(command, env, log):
 
 
 def snapshot_apps(session):
-    candidates = list(session.workspace.rglob('Build/Products/*/*.app')) + list(session.workspace.glob('*.app'))
+    if session.identity['kind'] == 'legacy-simulator-features':
+        relatives = ['DerivedData/Build/Products/Debug-iphonesimulator/ClientUIHarness.app',
+                     'DerivedData/Build/Products/Debug-iphonesimulator/ClientUIHarnessUITests-Runner.app']
+        if session.identity.get('hostSigningIdentity'):
+            relatives.append('Mac Companion Real Mac Lab.app')
+    elif session.identity['signing']['mode'] == 'development':
+        relatives = ['DerivedData/mac/Build/Products/Debug/Mac Companion.app',
+                     'DerivedData/ios/Build/Products/Debug-iphoneos/Mac Companion.app']
+    else:
+        relatives = []
+    candidates = [session.workspace / name for name in relatives if (session.workspace / name).exists()]
     snapshots = []
     for app in sorted(set(candidates)):
         if app.is_symlink() or not app.resolve().is_relative_to(session.workspace):
@@ -135,6 +146,11 @@ def snapshot_apps(session):
     return snapshots
 
 
+def evidence_root(identity):
+    key = hashlib.sha256(json.dumps(dict(identity, checkout=str(ROOT)), sort_keys=True).encode()).hexdigest()[:24]
+    return DEFAULT_EVIDENCE / ('legacy-' + key)
+
+
 def run(caller, arguments):
     for old in ('MACCOMPANION_LAB_DERIVED_DATA', 'MACCOMPANION_PAIRING_DERIVED_DATA'):
         if os.environ.get(old):
@@ -144,16 +160,23 @@ def run(caller, arguments):
         developer /= 'Contents/Developer'
     os.environ['DEVELOPER_DIR'] = os.environ['MACCOMPANION_DEVELOPER_DIR'] = str(developer)
     identity = build_identity(caller, arguments)
-    key = hashlib.sha256(json.dumps(dict(identity, checkout=str(ROOT)), sort_keys=True).encode()).hexdigest()[:24]
-    evidence = os.environ.get('MACCOMPANION_LEGACY_EVIDENCE_ROOT') or DEFAULT_EVIDENCE / ('legacy-' + key)
-    with BuildSession(ROOT, evidence, identity, cold=os.environ.get('MACCOMPANION_LEGACY_COLD') == '1', aliases=False) as session:
+    evidence = os.environ.get('MACCOMPANION_LEGACY_EVIDENCE_ROOT') or evidence_root(identity)
+    cold = os.environ.get('MACCOMPANION_LEGACY_COLD') == '1'
+    with ExitStack() as stack:
+        session = stack.enter_context(BuildSession(ROOT, evidence, identity, cold=cold, aliases=False))
         for relative in ('DerivedData', 'DerivedData/mac', 'DerivedData/ios', 'host-build', 'package-build'):
             safe_directory(session.workspace / relative)
         env = dict(os.environ, MACCOMPANION_LEGACY_MANAGED=caller,
                    MACCOMPANION_LEGACY_WORKSPACE=str(session.workspace),
                    MACCOMPANION_LEGACY_RUN=str(session.run))
-        # A feature run invokes pairing checks at the end. Give that distinct
-        # profile its own evidence root rather than adopting the parent's owner.
+        pairing = None
+        if caller == 'simulator-features':
+            # One supervisor owns both leases and one worker process group.
+            # Killing a nested supervisor must never unlock a surviving compiler.
+            pairing_identity = build_identity('pairing-reliability', [])
+            pairing = stack.enter_context(BuildSession(ROOT, evidence_root(pairing_identity), pairing_identity, cold=cold, aliases=False))
+            safe_directory(pairing.workspace / 'package-build')
+            env.update(MACCOMPANION_PAIRING_WORKSPACE=str(pairing.workspace), MACCOMPANION_PAIRING_RUN=str(pairing.run))
         env.pop('MACCOMPANION_LEGACY_EVIDENCE_ROOT', None)
         print('Legacy build evidence:', session.run, flush=True)
         if caller == 'simulator-features':
@@ -162,6 +185,12 @@ def run(caller, arguments):
         shell, script = CALLERS[caller]
         with (session.run / 'workflow.log').open('w') as log:
             code = run_command([shell, str(ROOT / 'scripts' / script), *arguments], env, log)
+        if pairing:
+            pairing.metadata.update(parentEvidence=str(session.run),
+                                    checkpointAttempted=(pairing.run / 'checkpoint-started').exists(),
+                                    checkpointPassed=(pairing.run / 'checkpoint-passed').exists())
+            if (session.run / 'pairing.log').is_file():
+                shutil.copy2(session.run / 'pairing.log', pairing.run / 'workflow.log')
         if caller == 'pairing-reliability' and re.search(r'Some test targets (reported failures|did not run successfully)|✘ Test|Test run with .* failed after', (session.run / 'workflow.log').read_text()):
             code = code or 1
         snapshots = snapshot_apps(session) if not code else []

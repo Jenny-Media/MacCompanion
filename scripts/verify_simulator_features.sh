@@ -179,9 +179,14 @@ xcodebuild test-without-building -project Experiments/ClientUIHarness/ClientUIHa
     -test-timeouts-enabled YES -maximum-test-execution-time-allowance 360 \
     "${lab_test_selection[@]}" CODE_SIGNING_ALLOWED=NO > "$lab_run/features.log" 2>&1
 echo "SIMULATOR_FEATURES_PASSED"
+touch "$MACCOMPANION_PAIRING_RUN/checkpoint-started"
+MACCOMPANION_LEGACY_MANAGED=pairing-reliability \
+MACCOMPANION_LEGACY_WORKSPACE="$MACCOMPANION_PAIRING_WORKSPACE" \
+MACCOMPANION_LEGACY_RUN="$MACCOMPANION_PAIRING_RUN" \
 zsh scripts/verify_pairing_reliability.sh > "$lab_run/pairing.log" 2>&1
 if rg -q 'Some test targets (reported failures|did not run successfully)|✘ Test|Test run with .* failed after' "$lab_run/pairing.log"; then
     echo "Pairing tests reported a failure despite the process exit status." >&2
     exit 1
 fi
+touch "$MACCOMPANION_PAIRING_RUN/checkpoint-passed"
 echo "PAIRING_REGRESSIONS_PASSED"

@@ -31,6 +31,8 @@ def source_fingerprint() -> str:
         "Packages/MacCompanionKit", "Experiments/ClientUIHarness",
         "Experiments/LiveControlLab", "scripts/verify_simulator_features.sh",
         "scripts/report_simulator_run.py", "scripts/validate_live_control_lab.py",
+        "scripts/legacy_build_cache.py", "scripts/build_cache.py",
+        "scripts/verify_pairing_reliability.sh",
     ]
     result = subprocess.run(
         command, cwd=ROOT, check=True, capture_output=True, text=True,

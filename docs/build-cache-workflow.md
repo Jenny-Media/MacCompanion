@@ -164,8 +164,11 @@ retains a new evidence generation, including workflow logs and successful app
 snapshots under `products/`. Feature reports, screenshots/result bundles and the
 test-host binary remain in that generation. The lease lasts through compilation,
 installation, testing, verification, child-process cleanup and app snapshotting.
-The feature runner's final pairing checkpoint uses a distinct managed profile;
-its evidence location is retained in `pairing.log`.
+The feature runner's final pairing checkpoint uses a distinct managed profile.
+The same supervisor holds both compiler leases, including during cancellation;
+pairing workers remain in its owned process group. `run.json` in the pairing
+generation records its parent evidence and whether the checkpoint started and
+passed; its workflow log is also retained there.
 
 `MACCOMPANION_LEGACY_EVIDENCE_ROOT` optionally selects a dedicated evidence root
 for one profile. Its ownership rules match other managed workflows: use a new
