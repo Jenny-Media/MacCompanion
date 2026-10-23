@@ -43,3 +43,7 @@ AuthKey_*.p8
 # Local diagnostics
 *.log
 LocalData/
+
+# Xcode Cloud's verified, source-built native dependencies (never committed)
+Native/iOSCloud/.cloud
+Native/iOSCloud/CloudSigning.xcconfig

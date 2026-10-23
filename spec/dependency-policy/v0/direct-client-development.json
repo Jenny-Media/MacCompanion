@@ -1,5 +1,5 @@
 {
-  "profile": "maccompanion.direct-client-development-dependencies.v1",
+  "profile": "maccompanion.direct-client-development-dependencies.v2",
   "releaseAdmitted": false,
   "vendorPackage": "Native/Dependencies/Citadel",
   "sourceLockPath": "Native/Terminal/source-lock.json",
@@ -13,5 +13,15 @@
     "originalDeclaration": "public override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?)",
     "adaptedDeclaration": "open override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?)",
     "purpose": "Allow the native visionOS wrapper to retire cancelled hardware keys and reject old completion endpoints. No frontend implementation or package pin change. All other source modifications remain rejected."
+  },
+  "xcodeCloud": {
+    "projectFiles": {
+      "Native/iOSCloud/project.json": "8fbc0aea8f0c20ba2dca8bcb5d198e0094457ede59ca609736576d12b2f2e907",
+      "Native/iOSCloud/MacCompanionCloud.xcodeproj/project.pbxproj": "5c72532a6d846a3e96ad286134656b9c5b2394917033b9fd5c7dd8208635b236"
+    },
+    "resolvedLockfilePath": "Native/iOSCloud/MacCompanionCloud.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved",
+    "unusedPinsAllowedToBeOmitted": [
+      "colorizeswift"
+    ]
   }
 }

@@ -1,0 +1,9 @@
+{
+  "id" : "079c006f-413a-4ac5-b12f-45e3382471a5",
+  "targets" : [
+    {
+      "id" : "d0c3444f-f18b-45e7-ab9f-898ee76a597c",
+      "name" : "MacCompanionIOS"
+    }
+  ]
+}

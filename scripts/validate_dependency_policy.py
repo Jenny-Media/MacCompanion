@@ -531,7 +531,7 @@ def live_xcode_state() -> dict[str, Any]:
         for path in REPOSITORY.rglob("Package.resolved")
         if not any(part in IGNORED_PARTS for part in path.relative_to(REPOSITORY).parts)
     )
-    from verify_direct_client_dependencies import validate
+    from verify_direct_client_dependencies import validate, CLOUD_PROJECT
     _, development_lockfiles = validate()
     lockfiles = [p for p in lockfiles if p.relative_to(REPOSITORY).as_posix() not in development_lockfiles]
     lockfile_paths = [path.relative_to(REPOSITORY).as_posix() for path in lockfiles]
@@ -539,6 +539,10 @@ def live_xcode_state() -> dict[str, Any]:
 
     remote_references: list[dict[str, Any]] = []
     for project in sorted(REPOSITORY.rglob("project.pbxproj")):
+        # Its complete project/spec hashes and normal-client package pins were
+        # admitted above. Every other project retains the legacy closed graph.
+        if project.relative_to(REPOSITORY).as_posix() == CLOUD_PROJECT:
+            continue
         if any(part in IGNORED_PARTS for part in project.relative_to(REPOSITORY).parts):
             continue
         content = project.read_text(encoding="utf-8", errors="replace")

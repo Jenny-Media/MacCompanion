@@ -1,0 +1,745 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		449D479C4EACA1035CDEEF9B /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 84F991F3486DABE707853C3E /* PrivacyInfo.xcprivacy */; };
+		61E28789613BB33B3E4C1A08 /* OpenSSL.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 37F896E129FE774AC51B736C /* OpenSSL.framework */; };
+		67A634D5C16D906742CAB2E3 /* OpenSSL.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 37F896E129FE774AC51B736C /* OpenSSL.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		7841D6B1537BBC64BB062545 /* libvncclient.a in Frameworks */ = {isa = PBXBuildFile; fileRef = D0D28E1346E6D72833B0EBFC /* libvncclient.a */; };
+		9887690D3F7791B15FC6AE96 /* MacCompanionSessionActivity.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = AFF0EEFDEAC3997FD7A99764 /* MacCompanionSessionActivity.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		9C23329ED57775B4DAF684F2 /* Citadel in Frameworks */ = {isa = PBXBuildFile; productRef = 5B4CA65B01C4D6E6E7A0B12D /* Citadel */; };
+		9F4C7BB972B153DDCB499B52 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 84F991F3486DABE707853C3E /* PrivacyInfo.xcprivacy */; };
+		B67FDBDF70E6482969445029 /* VisionKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C4EF42C13A822B33461C3062 /* VisionKit.framework */; };
+		B8DA0ADC639F1DA151149630 /* LibVNCClient-COPYING.txt in Resources */ = {isa = PBXBuildFile; fileRef = 4B0B7353435FB4FC8C7BA334 /* LibVNCClient-COPYING.txt */; };
+		D850C48B54F8D34904CE7230 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 4B2765218988052053DD1463 /* SwiftTerm */; };
+		F967FCD62C4ED8D11F0BC4AE /* Vision.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B54EF9915E255DDDADCB50C1 /* Vision.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		59725646F9CA9F12075E9022 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 25ACF0FAEE01FD5D4A1D90EC /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 8EDAA697BD98419378F37412;
+			remoteInfo = MacCompanionSessionActivity;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		581FB5392D99264C0586F0D0 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				9887690D3F7791B15FC6AE96 /* MacCompanionSessionActivity.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B87743E59E020E2C91C01C40 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				67A634D5C16D906742CAB2E3 /* OpenSSL.framework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		209F0D6585AEE37253C970CD /* Citadel */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Citadel; path = ../Dependencies/Citadel; sourceTree = SOURCE_ROOT; };
+		37F896E129FE774AC51B736C /* OpenSSL.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = OpenSSL.framework; path = .cloud/dependencies/OpenSSL.framework; sourceTree = "<group>"; };
+		4B0B7353435FB4FC8C7BA334 /* LibVNCClient-COPYING.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "LibVNCClient-COPYING.txt"; sourceTree = "<group>"; };
+		84F991F3486DABE707853C3E /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		8C893BFDE8D26AA5EDEE81CB /* MacCompanionIOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = MacCompanionIOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AFF0EEFDEAC3997FD7A99764 /* MacCompanionSessionActivity.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = MacCompanionSessionActivity.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		B54EF9915E255DDDADCB50C1 /* Vision.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Vision.framework; path = System/Library/Frameworks/Vision.framework; sourceTree = SDKROOT; };
+		C4EF42C13A822B33461C3062 /* VisionKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = VisionKit.framework; path = System/Library/Frameworks/VisionKit.framework; sourceTree = SDKROOT; };
+		C80EE3C9B9F2D2DB47E8525C /* CloudSigning.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = CloudSigning.xcconfig; sourceTree = "<group>"; };
+		D0D28E1346E6D72833B0EBFC /* libvncclient.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libvncclient.a; path = .cloud/libvncclient/libvncclient.a; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		8FB4372AE0A7CEFDEE2D853C /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Package.resolved,
+				"source-lock.json",
+			);
+			target = 46DCC3C4217DF90DE2C6CF35 /* MacCompanionIOS */;
+		};
+		D4E5D2EF39939A467DA3E242 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				CompanionVNCTransport.h,
+				CompanionVNCTransport.m,
+				"source-lock.json",
+			);
+			target = 46DCC3C4217DF90DE2C6CF35 /* MacCompanionIOS */;
+		};
+		FFDA5A9ECA7B95F7458B0D7C /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 46DCC3C4217DF90DE2C6CF35 /* MacCompanionIOS */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		2E7097B9697E8489045AA042 /* ../Terminal */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				8FB4372AE0A7CEFDEE2D853C /* PBXFileSystemSynchronizedBuildFileExceptionSet */,
+			);
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = ../Terminal;
+			sourceTree = "<group>";
+		};
+		3A920EF8AE2846AB4C6A9695 /* ../VNC */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				D4E5D2EF39939A467DA3E242 /* PBXFileSystemSynchronizedBuildFileExceptionSet */,
+			);
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = ../VNC;
+			sourceTree = "<group>";
+		};
+		63ACDC175523E204A749334C /* ../../Apps/MacCompanionIOS */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				FFDA5A9ECA7B95F7458B0D7C /* PBXFileSystemSynchronizedBuildFileExceptionSet */,
+			);
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = ../../Apps/MacCompanionIOS;
+			sourceTree = "<group>";
+		};
+		7A1C201537870911F17D4A36 /* ../SessionActivity */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = ../SessionActivity;
+			sourceTree = "<group>";
+		};
+		E2331F9DA79A1A6D7BB18233 /* ../../Apps/MacCompanionSessionActivity */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = ../../Apps/MacCompanionSessionActivity;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		99E8D7B70FD126C3B20475FA /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F967FCD62C4ED8D11F0BC4AE /* Vision.framework in Frameworks */,
+				B67FDBDF70E6482969445029 /* VisionKit.framework in Frameworks */,
+				9C23329ED57775B4DAF684F2 /* Citadel in Frameworks */,
+				D850C48B54F8D34904CE7230 /* SwiftTerm in Frameworks */,
+				7841D6B1537BBC64BB062545 /* libvncclient.a in Frameworks */,
+				61E28789613BB33B3E4C1A08 /* OpenSSL.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		346DAC7F53809137541C4D7A /* ios-app */ = {
+			isa = PBXGroup;
+			children = (
+				84F991F3486DABE707853C3E /* PrivacyInfo.xcprivacy */,
+			);
+			name = "ios-app";
+			path = "../../spec/privacy-manifest/v0/targets/ios-app";
+			sourceTree = "<group>";
+		};
+		5FA23C77E01D3B1D6773D782 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				209F0D6585AEE37253C970CD /* Citadel */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+		7A557757B6B59B0D4BC7CB9C /* .cloud */ = {
+			isa = PBXGroup;
+			children = (
+				4B0B7353435FB4FC8C7BA334 /* LibVNCClient-COPYING.txt */,
+			);
+			path = .cloud;
+			sourceTree = "<group>";
+		};
+		8334B1DD820E508679E95CCE /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				D0D28E1346E6D72833B0EBFC /* libvncclient.a */,
+				37F896E129FE774AC51B736C /* OpenSSL.framework */,
+				B54EF9915E255DDDADCB50C1 /* Vision.framework */,
+				C4EF42C13A822B33461C3062 /* VisionKit.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		866F7B9DF7C326C32FFA9582 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				8C893BFDE8D26AA5EDEE81CB /* MacCompanionIOS.app */,
+				AFF0EEFDEAC3997FD7A99764 /* MacCompanionSessionActivity.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		EDB6A1B3D6CEFA08DC26E14F = {
+			isa = PBXGroup;
+			children = (
+				63ACDC175523E204A749334C /* ../../Apps/MacCompanionIOS */,
+				E2331F9DA79A1A6D7BB18233 /* ../../Apps/MacCompanionSessionActivity */,
+				7A1C201537870911F17D4A36 /* ../SessionActivity */,
+				2E7097B9697E8489045AA042 /* ../Terminal */,
+				3A920EF8AE2846AB4C6A9695 /* ../VNC */,
+				7A557757B6B59B0D4BC7CB9C /* .cloud */,
+				346DAC7F53809137541C4D7A /* ios-app */,
+				FC5C379CE28ABF520F0CDBCF /* iOSCloud */,
+				5FA23C77E01D3B1D6773D782 /* Packages */,
+				8334B1DD820E508679E95CCE /* Frameworks */,
+				866F7B9DF7C326C32FFA9582 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		FC5C379CE28ABF520F0CDBCF /* iOSCloud */ = {
+			isa = PBXGroup;
+			children = (
+				C80EE3C9B9F2D2DB47E8525C /* CloudSigning.xcconfig */,
+			);
+			name = iOSCloud;
+			path = .;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		46DCC3C4217DF90DE2C6CF35 /* MacCompanionIOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4F2B24169E34815DBE78CBFE /* Build configuration list for PBXNativeTarget "MacCompanionIOS" */;
+			buildPhases = (
+				45BE79CDC3491EA9E90355F2 /* Sources */,
+				9ACEF7EFB86EB8C6D1DB14B2 /* Resources */,
+				99E8D7B70FD126C3B20475FA /* Frameworks */,
+				581FB5392D99264C0586F0D0 /* Embed Foundation Extensions */,
+				B87743E59E020E2C91C01C40 /* Embed Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				280C0267D4D50A37F54D99D6 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				63ACDC175523E204A749334C /* ../../Apps/MacCompanionIOS */,
+				7A1C201537870911F17D4A36 /* ../SessionActivity */,
+				2E7097B9697E8489045AA042 /* ../Terminal */,
+				3A920EF8AE2846AB4C6A9695 /* ../VNC */,
+			);
+			name = MacCompanionIOS;
+			packageProductDependencies = (
+				5B4CA65B01C4D6E6E7A0B12D /* Citadel */,
+				4B2765218988052053DD1463 /* SwiftTerm */,
+			);
+			productName = MacCompanionIOS;
+			productReference = 8C893BFDE8D26AA5EDEE81CB /* MacCompanionIOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+		8EDAA697BD98419378F37412 /* MacCompanionSessionActivity */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D5D263F23A3AC0ED818899F4 /* Build configuration list for PBXNativeTarget "MacCompanionSessionActivity" */;
+			buildPhases = (
+				96E843C7085D5C8A0D8B2FB0 /* Sources */,
+				2E7AE1C64FAA2D8E4195040C /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				E2331F9DA79A1A6D7BB18233 /* ../../Apps/MacCompanionSessionActivity */,
+				7A1C201537870911F17D4A36 /* ../SessionActivity */,
+			);
+			name = MacCompanionSessionActivity;
+			packageProductDependencies = (
+			);
+			productName = MacCompanionSessionActivity;
+			productReference = AFF0EEFDEAC3997FD7A99764 /* MacCompanionSessionActivity.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		25ACF0FAEE01FD5D4A1D90EC /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 2710;
+				TargetAttributes = {
+					46DCC3C4217DF90DE2C6CF35 = {
+						DevelopmentTeam = "$(MACCOMPANION_DEVELOPMENT_TEAM)";
+						ProvisioningStyle = Automatic;
+					};
+					8EDAA697BD98419378F37412 = {
+						DevelopmentTeam = "$(MACCOMPANION_DEVELOPMENT_TEAM)";
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 4530E9C625DE474CD0DFA5A8 /* Build configuration list for PBXProject "MacCompanionCloud" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = EDB6A1B3D6CEFA08DC26E14F;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				75F375852C136941A1D87127 /* XCRemoteSwiftPackageReference "SwiftTerm" */,
+				F5729B9FF2B7C46A104DCF56 /* XCLocalSwiftPackageReference "../../Native/Dependencies/Citadel" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 866F7B9DF7C326C32FFA9582 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				46DCC3C4217DF90DE2C6CF35 /* MacCompanionIOS */,
+				8EDAA697BD98419378F37412 /* MacCompanionSessionActivity */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		2E7AE1C64FAA2D8E4195040C /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9F4C7BB972B153DDCB499B52 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9ACEF7EFB86EB8C6D1DB14B2 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B8DA0ADC639F1DA151149630 /* LibVNCClient-COPYING.txt in Resources */,
+				449D479C4EACA1035CDEEF9B /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		45BE79CDC3491EA9E90355F2 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		96E843C7085D5C8A0D8B2FB0 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		280C0267D4D50A37F54D99D6 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 8EDAA697BD98419378F37412 /* MacCompanionSessionActivity */;
+			targetProxy = 59725646F9CA9F12075E9022 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		17ABFEB85012CDD575283D6B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGNING_ALLOWED = YES;
+				CODE_SIGN_ENTITLEMENTS = MacCompanionSessionActivity.entitlements;
+				CODE_SIGN_IDENTITY = "$(inherited)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 142;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "$(MACCOMPANION_DEVELOPMENT_TEAM)";
+				ENABLE_DEBUG_DYLIB = NO;
+				INFOPLIST_FILE = "SessionActivity-Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "media.jenny.maccompanion.ios.session-status";
+				PRODUCT_NAME = MacCompanionSessionActivity;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		1F8A54214B3BCB5D79027675 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = C80EE3C9B9F2D2DB47E8525C /* CloudSigning.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		301E6E6F115628A3686F9F71 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGNING_ALLOWED = YES;
+				CODE_SIGN_ENTITLEMENTS = MacCompanionSessionActivity.entitlements;
+				CODE_SIGN_IDENTITY = "$(inherited)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 142;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "$(MACCOMPANION_DEVELOPMENT_TEAM)";
+				ENABLE_DEBUG_DYLIB = NO;
+				INFOPLIST_FILE = "SessionActivity-Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "media.jenny.maccompanion.ios.session-status";
+				PRODUCT_NAME = MacCompanionSessionActivity;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		80C919BE4446AD439429D97A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGNING_ALLOWED = YES;
+				CODE_SIGN_ENTITLEMENTS = MacCompanionIOS.entitlements;
+				CODE_SIGN_IDENTITY = "$(inherited)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 142;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "$(MACCOMPANION_DEVELOPMENT_TEAM)";
+				ENABLE_DEBUG_DYLIB = NO;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".cloud/dependencies\"",
+					"\".cloud/libvncclient\"",
+				);
+				GENERATE_INFOPLIST_FILE = NO;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/.cloud/source-include",
+					"$(SRCROOT)/.cloud/libvncclient/include",
+				);
+				INFOPLIST_FILE = "DirectScreenSharing-Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/.cloud/libvncclient",
+				);
+				MARKETING_VERSION = 1.0;
+				ONLY_ACTIVE_ARCH = YES;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lz",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = media.jenny.maccompanion.ios;
+				PRODUCT_NAME = "Mac Companion";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = NO;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) DEBUG MACCOMPANION_VNC_DEVELOPMENT";
+				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/../../Native/VNC/MacCompanionVNC-Bridging-Header.h";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		81F1A789F15AB28004F3F923 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGNING_ALLOWED = YES;
+				CODE_SIGN_ENTITLEMENTS = MacCompanionIOS.entitlements;
+				CODE_SIGN_IDENTITY = "$(inherited)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 142;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "$(MACCOMPANION_DEVELOPMENT_TEAM)";
+				ENABLE_DEBUG_DYLIB = NO;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".cloud/dependencies\"",
+					"\".cloud/libvncclient\"",
+				);
+				GENERATE_INFOPLIST_FILE = NO;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/.cloud/source-include",
+					"$(SRCROOT)/.cloud/libvncclient/include",
+				);
+				INFOPLIST_FILE = "DirectScreenSharing-Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/.cloud/libvncclient",
+				);
+				MARKETING_VERSION = 1.0;
+				ONLY_ACTIVE_ARCH = YES;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lz",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = media.jenny.maccompanion.ios;
+				PRODUCT_NAME = "Mac Companion";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = NO;
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) MACCOMPANION_VNC_DEVELOPMENT";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OBJC_BRIDGING_HEADER = "$(SRCROOT)/../../Native/VNC/MacCompanionVNC-Bridging-Header.h";
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		C78779EB3B519C95CB042619 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = C80EE3C9B9F2D2DB47E8525C /* CloudSigning.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		4530E9C625DE474CD0DFA5A8 /* Build configuration list for PBXProject "MacCompanionCloud" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C78779EB3B519C95CB042619 /* Debug */,
+				1F8A54214B3BCB5D79027675 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		4F2B24169E34815DBE78CBFE /* Build configuration list for PBXNativeTarget "MacCompanionIOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				80C919BE4446AD439429D97A /* Debug */,
+				81F1A789F15AB28004F3F923 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		D5D263F23A3AC0ED818899F4 /* Build configuration list for PBXNativeTarget "MacCompanionSessionActivity" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				17ABFEB85012CDD575283D6B /* Debug */,
+				301E6E6F115628A3686F9F71 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		F5729B9FF2B7C46A104DCF56 /* XCLocalSwiftPackageReference "../../Native/Dependencies/Citadel" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../Native/Dependencies/Citadel;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		75F375852C136941A1D87127 /* XCRemoteSwiftPackageReference "SwiftTerm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/migueldeicaza/SwiftTerm.git";
+			requirement = {
+				kind = revision;
+				revision = 5d14406844143538cd8f8851d2d8a67c1fe443e5;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		4B2765218988052053DD1463 /* SwiftTerm */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 75F375852C136941A1D87127 /* XCRemoteSwiftPackageReference "SwiftTerm" */;
+			productName = SwiftTerm;
+		};
+		5B4CA65B01C4D6E6E7A0B12D /* Citadel */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = Citadel;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 25ACF0FAEE01FD5D4A1D90EC /* Project object */;
+}
