@@ -39,8 +39,11 @@ def main():
     parser.add_argument('--cache-root', type=Path, help='Override MACCOMPANION_BUILD_CACHE_ROOT')
     parser.add_argument('--cold', action='store_true', help='Use a fresh compiler workspace without deleting existing caches')
     parser.add_argument('--sdk', choices=['iphoneos', 'iphonesimulator'], required=True)
+    parser.add_argument('--prepare-only', action='store_true', help='Verify/build native dependencies and prepare the project without compiling the app or publishing an app report')
     args = parser.parse_args()
     identity = {'kind': 'native-ios', 'sdk': args.sdk, 'arch': 'arm64', 'toolchain': toolchain_identity((args.sdk,))}
+    if args.prepare_only:
+        identity['prepareOnly'] = True
     with BuildSession(ROOT, args.output, identity, cache_root=args.cache_root, cold=args.cold) as session:
         args.output = session.workspace
         build(args, parser, session)
@@ -106,11 +109,11 @@ def build(args, parser, session):
         'WITH_EXAMPLES': 'OFF', 'WITH_TESTS': 'OFF',
         'WITH_WEBSOCKETS': 'OFF', 'WITH_TIGHTVNC_FILETRANSFER': 'OFF'
     }
-    run('/opt/homebrew/bin/cmake', *cmake_source_options(build, cursor_source), '-S', cursor_source, '-B', build,
+    run(shutil.which('cmake') or '/opt/homebrew/bin/cmake', *cmake_source_options(build, cursor_source), '-S', cursor_source, '-B', build,
         *['-D' + k + '=' + str(v) for k, v in definitions.items()])
-    run('/opt/homebrew/bin/cmake', '--build', build, '--target', 'vncclient', '-j', '6')
+    run(shutil.which('cmake') or '/opt/homebrew/bin/cmake', '--build', build, '--target', 'vncclient', '-j', '6')
     resolved = args.output / 'normal-project.json'
-    run('/opt/homebrew/bin/xcodegen', 'dump', '--spec', ROOT / 'project.yml', '--type', 'json', '--file', resolved, '--quiet')
+    run(shutil.which('xcodegen') or '/opt/homebrew/bin/xcodegen', 'dump', '--spec', ROOT / 'project.yml', '--type', 'json', '--file', resolved, '--quiet')
     original = json.loads(resolved.read_text())
     target = original['targets']['MacCompanionIOS']
     for source in target['sources']:
@@ -178,10 +181,16 @@ def build(args, parser, session):
         'targets': {'MacCompanionIOS': target, 'MacCompanionSessionActivity': widget},
         'schemes': {'MacCompanionIOS': {'build': {'targets': {'MacCompanionIOS': 'all'}}, **{action: {'config': 'Debug'} for action in ['run', 'test', 'profile', 'analyze', 'archive']}}}}
     write_if_changed(args.output / 'project.json', json.dumps(spec, indent=2))
-    run('/opt/homebrew/bin/xcodegen', 'generate', '--use-cache', '--cache-path', args.output / '.xcodegen-cache', '--spec', args.output / 'project.json', '--project', args.output)
+    run(shutil.which('xcodegen') or '/opt/homebrew/bin/xcodegen', 'generate', '--use-cache', '--cache-path', args.output / '.xcodegen-cache', '--spec', args.output / 'project.json', '--project', args.output)
     package_lock = args.output / 'NormalVNCDevelopment.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
     package_lock.parent.mkdir(parents=True, exist_ok=True)
     write_if_changed(package_lock, (ROOT / 'Native/Terminal/Package.resolved').read_bytes())
+    if args.prepare_only:
+        verify_cursor(cursor_source, cursor_tree)
+        if inputs != source_inputs():
+            raise SystemExit('Application sources changed during preparation.')
+        session.prepared(args.output / 'NormalVNCDevelopment.xcodeproj')
+        return
     with (args.output / 'resolve.log').open('w') as log:
         run('xcodebuild', '-project', args.output / 'NormalVNCDevelopment.xcodeproj', '-scheme', 'MacCompanionIOS',
             '-derivedDataPath', args.output / 'DerivedData', '-onlyUsePackageVersionsFromResolvedFile',

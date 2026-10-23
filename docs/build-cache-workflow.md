@@ -11,6 +11,10 @@ Run workflow. Automatic pull-request and `main` push triggers are disabled.
 Its full validation steps remain available; `bash scripts/validate.sh` remains
 the local validation command required before handing off changes.
 
+The separate [iOS Xcode Cloud workflow](xcode-cloud.md) archives the direct iOS
+client for internal TestFlight delivery on `main` changes. It does not replace
+the local validation requirement or automatically publish to Public Beta.
+
 ## Encryption submission metadata
 
 The normal direct iOS, macOS and visionOS builders include the Boolean
