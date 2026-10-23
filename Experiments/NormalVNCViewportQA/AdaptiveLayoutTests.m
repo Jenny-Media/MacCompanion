@@ -447,6 +447,9 @@
     XCTAssertGreaterThanOrEqual(login.frame.origin.x,485); XCTAssertLessThanOrEqual(CGRectGetMaxX(login.frame),951);
     XCTAssertEqual([viewer valueForKey:@"username"],account); XCTAssertEqual([viewer valueForKey:@"password"],password);
     XCTAssertEqualObjects(account.text,oldAccount); XCTAssertEqualObjects(password.text,oldPassword); XCTAssertEqual(viewer.session,owner);
+    [viewer setValue:@460 forKey:@"keyboardOverlap"]; [viewer.view setNeedsLayout]; [viewer.view layoutIfNeeded];
+    XCTAssertGreaterThanOrEqual(login.frame.origin.x,485, @"A tall keyboard must not move the Book form onto the content page");
+    XCTAssertEqual([viewer valueForKey:@"username"],account); XCTAssertEqual(viewer.session,owner);
     [viewer stopViewer];
 }
 - (void)testBookMenuStaysOnInputPageWithKeyboardAndLargeText {

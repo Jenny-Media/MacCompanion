@@ -1208,7 +1208,7 @@
     self.statusCenter.constant = book ? CGRectGetMidX(content) - CGRectGetMidX(self.view.bounds) : 0;
     CGRect loginRegion = self.connectionPanelHost ? self.loginPanelContent.view.bounds : safe;
     if (!self.connectionPanelHost) loginRegion.size.height = MAX(0, loginRegion.size.height - self.keyboardOverlap);
-    BOOL lowerLogin = !self.connectionPanelHost && divided && CGRectGetMaxY(loginRegion) - input.origin.y >= 240;
+    BOOL lowerLogin = !self.connectionPanelHost && divided && (book || CGRectGetMaxY(loginRegion) - input.origin.y >= 240);
     if (divided && !self.connectionPanelHost) {
         loginRegion = lowerLogin ? CGRectIntersection(loginRegion, input) : CGRectIntersection(loginRegion, content);
     }
