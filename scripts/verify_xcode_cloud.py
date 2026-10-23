@@ -5,6 +5,7 @@ import hashlib
 from pathlib import Path
 import plistlib
 import shutil
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -103,7 +104,7 @@ class CloudProjectTests(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 validate_cloud(policy, root)
 
-    def test_incomplete_download_retries_without_promoting_partial_content(self):
+    def test_incomplete_download_resumes_without_promoting_partial_content(self):
         payload = b'complete source archive'
         artifact = {'url': 'https://example.invalid/pinned-source', 'sha256': hashlib.sha256(payload).hexdigest()}
         with tempfile.TemporaryDirectory() as folder:
@@ -112,14 +113,58 @@ class CloudProjectTests(unittest.TestCase):
             def download(url, destination):
                 self.assertFalse(archive.exists())
                 attempts.append(destination)
-                destination.write_bytes(payload[:3] if len(attempts) < 3 else payload)
+                offset = destination.stat().st_size if destination.exists() else 0
+                self.assertEqual(offset, 3 * (len(attempts) - 1))
+                with destination.open('ab') as stream:
+                    stream.write(payload[offset:offset + 3] if len(attempts) < 3 else payload[offset:])
                 if len(attempts) < 3:
                     raise urllib.error.ContentTooShortError('incomplete response', None)
             with patch('build_cloud_ios_dependencies.time.sleep'):
                 download_source(artifact, archive, download)
             self.assertEqual(archive.read_bytes(), payload)
-            self.assertEqual(len(set(attempts)), 3)
-            self.assertTrue(all(p.read_bytes() == payload[:3] for p in attempts[:2]))
+            self.assertEqual(len(attempts), 3)
+            self.assertEqual(len(set(attempts)), 1)
+
+    def test_unsupported_resume_preserves_partial_and_restarts_in_new_file(self):
+        payload = b'complete pinned source'
+        with tempfile.TemporaryDirectory() as folder:
+            archive = Path(folder) / 'source.tar.gz'
+            attempts = []
+            def download(url, destination):
+                attempts.append(destination)
+                destination.write_bytes(b'partial' if len(attempts) == 1 else payload)
+                if len(attempts) == 1:
+                    raise subprocess.CalledProcessError(33, ['curl'])
+            with patch('build_cloud_ios_dependencies.time.sleep'):
+                download_source({'url': 'https://example.invalid/source', 'sha256': hashlib.sha256(payload).hexdigest()}, archive, download)
+            self.assertNotEqual(attempts[0], attempts[1])
+            self.assertEqual(attempts[0].read_bytes(), b'partial')
+            self.assertEqual(archive.read_bytes(), payload)
+
+    def test_failed_transfers_stop_after_bounded_attempts_without_promoting(self):
+        with tempfile.TemporaryDirectory() as folder:
+            archive = Path(folder) / 'source.tar.gz'
+            attempts = []
+            def download(url, destination):
+                attempts.append(destination)
+                destination.write_bytes(b'incomplete')
+                raise subprocess.CalledProcessError(18, ['curl'])
+            with patch('build_cloud_ios_dependencies.time.sleep'):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    download_source({'url': 'https://example.invalid/source', 'sha256': '0' * 64}, archive, download)
+            self.assertEqual(len(attempts), 5)
+            self.assertFalse(archive.exists())
+            self.assertEqual(attempts[-1].read_bytes(), b'incomplete')
+
+    def test_complete_pinned_content_can_survive_a_transport_length_error(self):
+        payload = b'complete pinned source'
+        with tempfile.TemporaryDirectory() as folder:
+            archive = Path(folder) / 'source.tar.gz'
+            def download(url, destination):
+                destination.write_bytes(payload)
+                raise subprocess.CalledProcessError(18, ['curl'])
+            download_source({'url': 'https://example.invalid/source', 'sha256': hashlib.sha256(payload).hexdigest()}, archive, download)
+            self.assertEqual(archive.read_bytes(), payload)
 
     def test_complete_download_with_wrong_hash_is_not_promoted(self):
         with tempfile.TemporaryDirectory() as folder:

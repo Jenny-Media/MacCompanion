@@ -29,6 +29,11 @@ outside the repository; `.cloud` only links to those outputs. This preparation
 does not sign an app, upload it, publish a successful app-build report, or modify
 the checked-in Xcode project.
 
+Source downloads use HTTPS-only curl transfers with bounded retries and resume
+partial transfers when the server supports ranges. A rejected range starts a
+new file without deleting prior evidence. Only complete SHA-256-matching source
+archives are promoted for compilation.
+
 Before `xcodebuild`, the pre-build hook verifies the actual resolved source
 trees against every admitted package pin. It compiles the unmodified SwiftTerm
 host generator and records approval for only `SwiftTermBuildInfoPlugin` at the
