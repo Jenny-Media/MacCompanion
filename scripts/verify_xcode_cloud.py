@@ -12,6 +12,7 @@ import urllib.error
 
 from build_cloud_ios_dependencies import download_source, openssl
 from verify_direct_client_dependencies import validate_cloud
+from prepare_cloud_ios_packages import approve_swiftterm, configure
 
 ROOT = Path(__file__).resolve().parents[1]
 CLOUD = ROOT / 'Native/iOSCloud'
@@ -128,6 +129,39 @@ class CloudProjectTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'does not match'):
                 download_source({'url': 'https://example.invalid/source', 'sha256': '0' * 64}, archive, download)
             self.assertFalse(archive.exists())
+
+    def test_plugin_approval_is_revision_scoped_and_preserves_other_approvals(self):
+        with tempfile.TemporaryDirectory() as folder:
+            security = Path(folder)
+            unrelated = {'fingerprint': 'a' * 40, 'packageIdentity': 'other', 'targetName': 'OtherPlugin'}
+            path = security / 'plugins.json'
+            path.write_text(json.dumps([unrelated]))
+            revision = json.loads((ROOT / 'Native/Terminal/source-lock.json').read_text())['SwiftTerm']['revision']
+            approve_swiftterm(security, revision)
+            approve_swiftterm(security, revision)
+            self.assertEqual(json.loads(path.read_text()), [unrelated, {
+                'fingerprint': revision, 'packageIdentity': 'swiftterm', 'targetName': 'SwiftTermBuildInfoPlugin'}])
+
+    def test_unverified_packages_do_not_receive_plugin_approval(self):
+        with tempfile.TemporaryDirectory() as folder:
+            derived = Path(folder) / 'DerivedData'
+            security = Path(folder) / 'security'
+            with patch('prepare_cloud_ios_packages.verify_checkouts', side_effect=ValueError('tampered source')):
+                with patch('prepare_cloud_ios_packages.prepare') as host_tool:
+                    with self.assertRaisesRegex(ValueError, 'tampered source'):
+                        configure(derived, security)
+                    host_tool.assert_not_called()
+            self.assertFalse(security.exists())
+
+    def test_changed_packages_after_build_reject_provenance(self):
+        with tempfile.TemporaryDirectory() as folder:
+            derived = Path(folder)
+            snapshot = {'swiftterm': {'sourceTreeSHA256': 'expected'}}
+            (derived / 'maccompanion-cloud-packages.json').write_text(json.dumps(snapshot))
+            with patch('prepare_cloud_ios_packages.verify_checkouts', side_effect=ValueError('changed source')) as verify:
+                with self.assertRaisesRegex(ValueError, 'changed source'):
+                    configure(derived, derived / 'security', verify_only=True)
+                self.assertEqual(verify.call_args.kwargs['previous'], snapshot)
 
 
 if __name__ == '__main__':

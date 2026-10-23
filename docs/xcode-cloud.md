@@ -29,6 +29,13 @@ outside the repository; `.cloud` only links to those outputs. This preparation
 does not sign an app, upload it, publish a successful app-build report, or modify
 the checked-in Xcode project.
 
+Before `xcodebuild`, the pre-build hook verifies the actual resolved source
+trees against every admitted package pin. It compiles the unmodified SwiftTerm
+host generator and records approval for only `SwiftTermBuildInfoPlugin` at the
+locked revision, using Xcode's per-plugin approval file on the disposable cloud
+worker. It does not disable plugin or macro validation globally. The post-build
+hook verifies that the resolved package sources remained unchanged.
+
 For a local archive check, create ignored `CloudSigning.xcconfig` containing
 `MACCOMPANION_DEVELOPMENT_TEAM = <your existing team>` and prepare dependencies:
 
