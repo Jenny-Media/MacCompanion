@@ -23,6 +23,7 @@
 - (void)setTrackpadModeEnabled:(BOOL)enabled;
 - (void)updateConnectionChrome;
 - (void)keyboardFrame:(NSNotification *)notification;
+- (void)keyboardFrame:(NSNotification *)notification;
 - (void)keyboard;
 - (CGPoint)viewportCenter;
 - (void)applyViewportRatio:(CGFloat)ratio center:(CGPoint)center;
@@ -496,10 +497,16 @@
     UIImage *snapshot = [[[UIGraphicsImageRenderer alloc] initWithSize:window.bounds.size] imageWithActions:^(UIGraphicsImageRendererContext *ctx) { [window drawViewHierarchyInRect:window.bounds afterScreenUpdates:YES]; }];
     XCTAttachment *attachment = [XCTAttachment attachmentWithImage:snapshot]; attachment.name = @"Synthetic floating controls"; attachment.lifetime = XCTAttachmentLifetimeKeepAlways; [self addAttachment:attachment];
     for (NSValue *size in @[[NSValue valueWithCGSize:CGSizeMake(440,956)],[NSValue valueWithCGSize:CGSizeMake(956,440)]]) {
-        controls.frame = (CGRect){CGPointZero,size.CGSizeValue}; controls.bottomInset = 8; [controls setNeedsLayout]; [controls layoutIfNeeded];
+        // The overlay and its keyboard-row anchor share the viewer's geometry.
+        // Resizing only the overlay leaves a deliberately stale anchor frame.
+        viewer.view.frame = (CGRect){CGPointZero,size.CGSizeValue}; [viewer.view setNeedsLayout]; [viewer.view layoutIfNeeded];
         UIView *panel = [controls valueForKey:@"panel"]; XCTAssertTrue(CGRectContainsRect(controls.bounds,panel.frame));
     }
-    controls.frame = CGRectMake(0,0,440,956); controls.bottomInset = 350; [controls setNeedsLayout]; [controls layoutIfNeeded];
+    viewer.view.frame = CGRectMake(0,0,440,956); [viewer.view setNeedsLayout]; [viewer.view layoutIfNeeded];
+    CGRect keyboard = [viewer.view convertRect:CGRectMake(0,606,440,350) toView:nil];
+    [viewer keyboardFrame:[NSNotification notificationWithName:UIKeyboardWillChangeFrameNotification object:nil userInfo:@{
+        UIKeyboardFrameEndUserInfoKey:[NSValue valueWithCGRect:keyboard], UIKeyboardAnimationDurationUserInfoKey:@0, UIKeyboardAnimationCurveUserInfoKey:@0}]];
+    [viewer.view setNeedsLayout]; [viewer.view layoutIfNeeded];
     XCTAssertTrue(CGRectContainsRect(controls.bounds, ((UIView *)[controls valueForKey:@"panel"]).frame));
     [viewer stopViewer]; window.hidden = YES; window.rootViewController = nil; [previous makeKeyAndVisible];
 }
