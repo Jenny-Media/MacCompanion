@@ -163,6 +163,14 @@ class CheckoutProvenanceTests(unittest.TestCase):
         with self.assertRaisesRegex(CheckoutProvenanceError, 'outside its resolved repository cache'):
             verify_checkouts(self.packages, self.pins, allow_cloud_transport=True)
 
+    def test_cloud_compares_origin_before_local_scm_proxy_url_rewriting(self):
+        git(self.cache, 'config', 'url.http://127.0.0.1:8123/source/.insteadOf', 'https://github.com/')
+        self.assertTrue(git(self.cache, 'remote', 'get-url', 'origin').startswith('http://127.0.0.1:8123/'))
+        with self.assertRaises(CheckoutProvenanceError):
+            self.verify()
+        result = verify_checkouts(self.packages, self.pins, allow_cloud_transport=True)
+        self.assertEqual(result['probe']['originURL'], self.url)
+
     def test_cloud_transport_still_rejects_other_sources_and_modified_bytes(self):
         for origin in ['ssh://git@github.com/example/other-source.git',
                        'ssh://git@github.example/example/provenance-probe.git',

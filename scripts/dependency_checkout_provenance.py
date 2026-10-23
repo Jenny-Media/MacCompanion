@@ -44,12 +44,17 @@ def _cloud_origin(origin):
             or (url.scheme == 'https' and url.port not in {None, 443})
             or (url.scheme == 'ssh' and (url.username != 'git' or url.password is not None
                                         or url.port not in {None, 22}))):
-        raise CheckoutProvenanceError('Unsupported cloud dependency transport; expected the pinned GitHub source.')
+        raise CheckoutProvenanceError('Unsupported cloud dependency transport '
+                                      f'(scheme={url.scheme!r}, host={url.hostname!r}); expected the pinned GitHub source.')
     return 'https://github.com' + url.path
 
 
 def _verify_origin(checkout, packages, location, allow_cloud_transport=False):
-    origin = _git(checkout, 'remote', 'get-url', 'origin').decode().strip()
+    # get-url expands insteadOf rules, which cloud workers can use to route
+    # fetches through their local SCM proxy. Match the configured repository
+    # identity there; the pinned tree/content checks still verify fetched bytes.
+    command = ('config', '--local', '--get', 'remote.origin.url') if allow_cloud_transport else ('remote', 'get-url', 'origin')
+    origin = _git(checkout, *command).decode().strip()
     if allow_cloud_transport and origin.startswith('file:'):
         url = urlsplit(origin)
         if url.netloc not in {'', 'localhost'} or url.query or url.fragment or not url.path.startswith('/'):
@@ -61,7 +66,7 @@ def _verify_origin(checkout, packages, location, allow_cloud_transport=False):
         cache = Path(origin).resolve(strict=True)
         if not cache.is_relative_to((packages / 'repositories').resolve()):
             raise CheckoutProvenanceError('Dependency origin is outside its resolved repository cache.')
-        origin = _git(cache, 'remote', 'get-url', 'origin').decode().strip()
+        origin = _git(cache, *command).decode().strip()
     if allow_cloud_transport:
         origin = _cloud_origin(origin)
     if _source_url(origin) != _source_url(location):

@@ -40,6 +40,9 @@ and cache-local file URLs for the same locked repository. Credentials are
 stripped from provenance; every source file, revision, URL identity and cache
 boundary is still verified. Ordinary local builds retain strict HTTPS origin
 matching.
+Cloud checks compare the configured repository URL before Git's `insteadOf`
+transport rewrites, so a worker's local SCM proxy is not mistaken for a different
+source repository. Revision and source-content checks remain unchanged.
 
 For a local archive check, create ignored `CloudSigning.xcconfig` containing
 `MACCOMPANION_DEVELOPMENT_TEAM = <your existing team>` and prepare dependencies:
