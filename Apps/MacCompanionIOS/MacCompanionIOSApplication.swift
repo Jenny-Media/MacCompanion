@@ -39,7 +39,15 @@ struct MacCompanionIOSApplication: App {
     var body: some Scene {
         WindowGroup {
             #if MACCOMPANION_VNC_DEVELOPMENT
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--duo-workspace-sample") {
+                DuoWorkspaceSample().ignoresSafeArea(.container, edges: .top)
+            } else {
+                DirectMacLibraryRootV1().directAppearance()
+            }
+            #else
             DirectMacLibraryRootV1().directAppearance()
+            #endif
             #else
             MacCompanionIOSRootView(application: application)
             #endif

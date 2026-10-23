@@ -22,6 +22,12 @@
 - (CGRect)activeDivision { return CGRectMake(0,465,669,20); }
 @end
 
+@interface BookAdaptiveControls : CompanionVNCControls
+@end
+@implementation BookAdaptiveControls
+- (CGRect)activeDivision { return CGRectMake(465,0,20,669); }
+@end
+
 @interface CompanionVNCViewer (AdaptiveTesting)
 - (void)frame:(UIImage *)frame;
 - (void)applyViewportRatio:(CGFloat)ratio center:(CGPoint)center;
@@ -393,5 +399,68 @@
     [controls cancelSlideForLayoutChange];
     XCTAssertNil([controls valueForKey:@"panel"]); XCTAssertEqual(actions,0);
     [viewer stopViewer];
+}
+- (void)testBookRegionsUseReservedFrameOnceAndRequireUsablePages {
+    CGRect safe = CGRectMake(20,40,911,600), content = CGRectNull, input = CGRectNull;
+    XCTAssertTrue(CompanionVNCBookRegions(safe,CGRectMake(465,0,20,669),&content,&input));
+    XCTAssertTrue(CGRectEqualToRect(content,CGRectMake(20,40,445,600)));
+    XCTAssertTrue(CGRectEqualToRect(input,CGRectMake(485,40,446,600)));
+    XCTAssertFalse(CompanionVNCBookRegions(safe,CGRectNull,&content,&input));
+    XCTAssertFalse(CompanionVNCBookRegions(safe,CGRectMake(0,320,951,20),&content,&input));
+    XCTAssertFalse(CompanionVNCBookRegions(safe,CGRectMake(200,0,20,669),&content,&input));
+    XCTAssertFalse(CompanionVNCBookRegions(safe,CGRectMake(465,0,20,100),&content,&input));
+}
+- (void)testBookKeepsVideoAndInputOnTheirPagesAndRestoresZoomWithoutReplacingSession {
+    AdaptiveViewer *viewer = [AdaptiveViewer new]; viewer.division = CGRectNull; viewer.preventsAutomaticConnection = YES;
+    [viewer loadViewIfNeeded]; viewer.view.frame = CGRectMake(0,0,951,669); [viewer.view layoutIfNeeded];
+    AdaptiveSession *session = [AdaptiveSession new]; session.events = [NSMutableArray new]; viewer.session = session;
+    [viewer frame:[self frame]]; [[viewer valueForKey:@"login"] setHidden:YES]; [viewer updateConnectionChrome]; [viewer.view layoutIfNeeded];
+    [viewer applyViewportRatio:3 center:CGPointMake(.55,.5)]; CGPoint focus = [viewer viewportCenter];
+    UIScrollView *canvas = [viewer valueForKey:@"canvas"]; UIView *toolbar = [viewer valueForKey:@"toolbar"], *pad = [viewer valueForKey:@"tabletopPad"];
+    AdaptiveHold *hold = [AdaptiveHold new]; [viewer holdAt:hold]; XCTAssertEqualObjects(session.events.lastObject[2],@1);
+    for (NSValue *division in @[[NSValue valueWithCGRect:CGRectMake(465,0,20,669)], [NSValue valueWithCGRect:CGRectNull], [NSValue valueWithCGRect:CGRectMake(465,0,20,669)]]) {
+        viewer.division = division.CGRectValue; [viewer.view setNeedsLayout]; [viewer.view layoutIfNeeded];
+        XCTAssertEqual(viewer.session,session); XCTAssertEqual(session.stops,0); XCTAssertEqualObjects(session.events.lastObject[2],@0);
+        XCTAssertEqualWithAccuracy(canvas.zoomScale/canvas.minimumZoomScale,3,.01);
+        CGPoint center = [viewer viewportCenter]; XCTAssertEqualWithAccuracy(center.x,focus.x,.01); XCTAssertEqualWithAccuracy(center.y,focus.y,.01);
+        if (!CGRectIsNull(viewer.division)) {
+            XCTAssertLessThanOrEqual(CGRectGetMaxX(canvas.frame),465);
+            XCTAssertGreaterThanOrEqual(CGRectGetMinX(toolbar.frame),485); XCTAssertGreaterThanOrEqual(CGRectGetMinX(pad.frame),485);
+            XCTAssertFalse(pad.hidden); XCTAssertGreaterThanOrEqual(pad.bounds.size.height,44);
+        } else { XCTAssertTrue(pad.hidden); XCTAssertGreaterThan(canvas.frame.size.width,900); }
+    }
+    [viewer receivedCursor:nil hotspot:CGPointZero position:CGPointMake(800,500) known:YES];
+    UITapGestureRecognizer *tap = [UITapGestureRecognizer new]; [pad addGestureRecognizer:tap]; [viewer clickAt:tap];
+    XCTAssertEqualObjects(session.events[session.events.count-2][2],@1); XCTAssertEqualObjects(session.events.lastObject[2],@0);
+    [viewer setValue:@280 forKey:@"keyboardOverlap"]; ((NSLayoutConstraint *)[viewer valueForKey:@"toolbarBottom"]).constant = -284;
+    [viewer.view setNeedsLayout]; [viewer.view layoutIfNeeded];
+    XCTAssertLessThanOrEqual(CGRectGetMaxY(canvas.frame),389); XCTAssertLessThanOrEqual(CGRectGetMaxY(pad.frame),389);
+    XCTAssertEqual(viewer.session,session); XCTAssertEqual(session.stops,0); [viewer stopViewer];
+}
+- (void)testBookLoginKeepsSameDraftFieldsOnInputPage {
+    AdaptiveViewer *viewer = [AdaptiveViewer new]; viewer.division = CGRectNull; viewer.preventsAutomaticConnection = YES;
+    [viewer loadViewIfNeeded]; viewer.view.frame = CGRectMake(0,0,951,669); [viewer.view layoutIfNeeded];
+    UITextField *account = [viewer valueForKey:@"username"], *password = [viewer valueForKey:@"password"];
+    NSString *oldAccount = account.text, *oldPassword = password.text; CompanionVNCSession *owner = viewer.session;
+    viewer.division = CGRectMake(465,0,20,669); [viewer.view setNeedsLayout]; [viewer.view layoutIfNeeded];
+    UIScrollView *login = [viewer valueForKey:@"loginScroll"];
+    XCTAssertGreaterThanOrEqual(login.frame.origin.x,485); XCTAssertLessThanOrEqual(CGRectGetMaxX(login.frame),951);
+    XCTAssertEqual([viewer valueForKey:@"username"],account); XCTAssertEqual([viewer valueForKey:@"password"],password);
+    XCTAssertEqualObjects(account.text,oldAccount); XCTAssertEqualObjects(password.text,oldPassword); XCTAssertEqual(viewer.session,owner);
+    [viewer stopViewer];
+}
+- (void)testBookMenuStaysOnInputPageWithKeyboardAndLargeText {
+    BookAdaptiveControls *controls = [[BookAdaptiveControls alloc] initWithFrame:CGRectMake(0,0,951,669)];
+    controls.quickActions = @[@{@"kind":@"fit",@"title":@"Fit Display",@"enabled":@YES}];
+    controls.traitOverrides.preferredContentSizeCategory = UIContentSizeCategoryAccessibilityExtraLarge;
+    [controls open];
+    for (NSNumber *bottom in @[@0,@280,@0]) {
+        controls.bottomInset = bottom.doubleValue; [controls setNeedsLayout]; [controls layoutIfNeeded];
+        UIView *panel = [controls valueForKey:@"panel"];
+        XCTAssertGreaterThanOrEqual(controls.button.frame.origin.x,485); XCTAssertGreaterThanOrEqual(panel.frame.origin.x,485);
+        XCTAssertLessThanOrEqual(CGRectGetMaxX(panel.frame),951); XCTAssertLessThanOrEqual(CGRectGetMaxY(panel.frame),669-bottom.doubleValue);
+        XCTAssertGreaterThan(panel.bounds.size.height,0);
+    }
+    [controls close];
 }
 @end

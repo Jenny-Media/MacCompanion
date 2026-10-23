@@ -120,6 +120,7 @@
 @property CompanionRemoteTextInput *input;
 @property NSLayoutConstraint *toolbarBottom, *canvasToolbarBottom, *canvasFullscreenBottom;
 @property NSLayoutConstraint *canvasTop;
+@property NSLayoutConstraint *canvasLeading, *canvasTrailing, *toolbarLeading, *toolbarTrailing, *loginLeading, *loginTrailing, *statusCenter;
 @property UIEdgeInsets previousCanvasInset;
 @property UILabel *trackpadHelp;
 @property CompanionVNCTrackpadFeedback *trackpadFeedback, *tabletopFeedback;
@@ -470,17 +471,22 @@
     self.canvasFullscreenBottom = [self.canvas.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor];
     self.tabletopCanvasBottom = [self.canvas.bottomAnchor constraintEqualToAnchor:self.view.topAnchor];
     self.canvasTop = [self.canvas.topAnchor constraintEqualToAnchor:self.view.topAnchor constant:8];
+    self.canvasLeading = [self.canvas.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor];
+    self.canvasTrailing = [self.canvas.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor];
+    self.toolbarLeading = [toolbar.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor constant:6];
+    self.toolbarTrailing = [toolbar.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-6];
+    self.loginLeading = [self.loginScroll.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor];
+    self.loginTrailing = [self.loginScroll.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor];
+    self.statusCenter = [self.statusBackdrop.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor];
     [NSLayoutConstraint activateConstraints:@[
         [self.statusBackdrop.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:8],
-        [self.statusBackdrop.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
+        self.statusCenter,
         [self.statusBackdrop.leadingAnchor constraintGreaterThanOrEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor constant:16],
         [self.statusBackdrop.trailingAnchor constraintLessThanOrEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-16],
-        [toolbar.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor constant:6],
-        [toolbar.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-6], self.toolbarBottom,
+        self.toolbarLeading, self.toolbarTrailing, self.toolbarBottom,
         self.canvasTop,
         self.canvasToolbarBottom,
-        [self.canvas.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor],
-        [self.canvas.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor],
+        self.canvasLeading, self.canvasTrailing,
         [self.cursorOverlay.leadingAnchor constraintEqualToAnchor:self.canvas.leadingAnchor],
         [self.cursorOverlay.trailingAnchor constraintEqualToAnchor:self.canvas.trailingAnchor],
         [self.cursorOverlay.topAnchor constraintEqualToAnchor:self.canvas.topAnchor],
@@ -488,7 +494,7 @@
         [self.controls.topAnchor constraintEqualToAnchor:self.view.topAnchor], [self.controls.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
         [self.controls.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor], [self.controls.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
         self.loginTop, self.loginBottom,
-        [self.loginScroll.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor], [self.loginScroll.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor],
+        self.loginLeading, self.loginTrailing,
         self.loginContentTop,
         [self.login.bottomAnchor constraintEqualToAnchor:self.loginScroll.contentLayoutGuide.bottomAnchor constant:self.connectionPanelHost ? -4 : -12],
         [self.login.centerXAnchor constraintEqualToAnchor:self.loginScroll.centerXAnchor],
@@ -1189,15 +1195,25 @@
         self.adaptingViewport = NO;
     }
     // Both Screen Sharing modes use the same login layout. Only the connected
-    // desktop needs a separate tabletop video region and input surface.
-    BOOL divided = CompanionVNCTabletopRegions(safe, [self activeDivision], &content, &input);
+    // desktop needs separate video and input regions.
+    CGRect division = [self activeDivision];
+    BOOL horizontal = CompanionVNCTabletopRegions(safe, division, &content, &input);
+    BOOL book = !horizontal && CompanionVNCBookRegions(safe, division, &content, &input);
+    BOOL divided = horizontal || book;
     BOOL tabletop = !self.inputOnly && divided;
+    self.canvasLeading.constant = book && !self.inputOnly ? content.origin.x - safe.origin.x : 0;
+    self.canvasTrailing.constant = book && !self.inputOnly ? CGRectGetMaxX(content) - CGRectGetMaxX(safe) : 0;
+    self.toolbarLeading.constant = book ? input.origin.x - safe.origin.x + 6 : 6;
+    self.toolbarTrailing.constant = book ? CGRectGetMaxX(input) - CGRectGetMaxX(safe) - 6 : -6;
+    self.statusCenter.constant = book ? CGRectGetMidX(content) - CGRectGetMidX(self.view.bounds) : 0;
     CGRect loginRegion = self.connectionPanelHost ? self.loginPanelContent.view.bounds : safe;
     if (!self.connectionPanelHost) loginRegion.size.height = MAX(0, loginRegion.size.height - self.keyboardOverlap);
     BOOL lowerLogin = !self.connectionPanelHost && divided && CGRectGetMaxY(loginRegion) - input.origin.y >= 240;
     if (divided && !self.connectionPanelHost) {
         loginRegion = lowerLogin ? CGRectIntersection(loginRegion, input) : CGRectIntersection(loginRegion, content);
     }
+    self.loginLeading.constant = book && !self.connectionPanelHost ? loginRegion.origin.x - safe.origin.x : 0;
+    self.loginTrailing.constant = book && !self.connectionPanelHost ? CGRectGetMaxX(loginRegion) - CGRectGetMaxX(safe) : 0;
     self.loginTop.constant = CGRectGetMinY(loginRegion);
     self.loginBottom.constant = CGRectGetMaxY(loginRegion);
     BOOL compact = !self.connectionPanelHost && (divided || loginRegion.size.height < 520) && !UIContentSizeCategoryIsAccessibilityCategory(self.traitCollection.preferredContentSizeCategory);
@@ -1237,8 +1253,8 @@
     }
     self.tabletop = tabletop; self.tabletopInputRegion = tabletop ? input : CGRectNull;
     CGFloat keyboardCeiling = CGRectGetMaxY(safe) - self.keyboardOverlap;
-    if (!self.fullscreen) keyboardCeiling -= MAX(44, self.toolbar.bounds.size.height) + 12;
-    self.tabletopCanvasBottom.constant = tabletop ? MIN(CGRectGetMaxY(content) - 8, keyboardCeiling) : 0;
+    if (!self.fullscreen && !book) keyboardCeiling -= MAX(44, self.toolbar.bounds.size.height) + 12;
+    self.tabletopCanvasBottom.constant = tabletop ? MAX(CGRectGetMinY(safe), MIN(CGRectGetMaxY(content) - 8, keyboardCeiling)) : 0;
     self.canvasToolbarBottom.active = !tabletop && !self.fullscreen;
     self.canvasFullscreenBottom.active = !tabletop && self.fullscreen;
     self.tabletopCanvasBottom.active = tabletop;
