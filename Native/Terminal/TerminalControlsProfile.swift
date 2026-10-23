@@ -495,11 +495,18 @@ struct TerminalControlsProfile: Codable, Equatable {
     }
     mutating func restoreMenuFavorites() {
         for index in actions.indices { actions[index].inMenu = false }
+        var restored: [TerminalMenuPlacement] = []
         for action in controlMode.defaults.map(TerminalControlAction.init) {
-            if let existing = actions.firstIndex(where: { $0.sameDefinition(as: action) }) { actions[existing].inMenu = true }
-            else { actions.append(action) }
+            if let existing = actions.firstIndex(where: { $0.sameDefinition(as: action) }) {
+                actions[existing].inMenu = true
+                restored.append(.init(actionID: actions[existing].id))
+            } else {
+                actions.append(action)
+                restored.append(.init(actionID: action.id))
+            }
         }
-        menuOrder = nil; menuPlacements = nil
+        // Definitions are shared and can have a different order from this menu.
+        menuOrder = nil; menuPlacements = restored
     }
     /// The row library shows these exact additions. Existing placements, including
     /// deliberately duplicated legacy keys, are never stolen by a preset.

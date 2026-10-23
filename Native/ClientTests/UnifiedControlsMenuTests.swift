@@ -85,6 +85,54 @@ import StoreKitTest
             XCTAssertFalse(loaded.resolvedRows.flatMap { loaded.barItems(in: $0) }.contains(.saved(action.id)))
         }
     }
+    func testRestoreDesktopFavoritesUsesDefaultOrderAfterReorderedImport() throws {
+        try assertRestoresRemoteDefaultOrder(.desktop)
+    }
+    func testRestoreTrackpadFavoritesDoesNotInheritDesktopDefinitionOrder() throws {
+        try assertRestoresRemoteDefaultOrder(.trackpad)
+    }
+    private func assertRestoresRemoteDefaultOrder(_ mode: DirectControlMode) throws {
+        let memory = Memory()
+        let text = VNCQuickAction(title: "Saved Text", kind: .text, text: "synthetic")
+        memory.menus["desktop"] = [.init(title: "Right Click", kind: .rightClick),
+            VNCQuickAction.composeText, .init(title: "Copy Text", kind: .copyText), text]
+        let store = memory.store(mode)
+        var draft = try store.load()
+        let textID = try XCTUnwrap(draft.actions.first { $0.kind == .text }).id
+        draft.place(textID, in: TerminalKeyboardRow.mainID)
+        draft.pin(textID, in: .menu, enabled: true)
+        _ = try store.save(draft)
+        draft = try store.load()
+        let rows = draft.keyboardRows
+        let otherMode: DirectControlMode = mode == .desktop ? .trackpad : .desktop
+        let otherFavorites = try memory.store(otherMode).load().resolvedMenuPlacements
+        func definitions(_ profile: TerminalControlsProfile) -> [TerminalControlAction] {
+            profile.actions.map { action in var action = action; action.inMenu = false; return action }
+        }
+        let originalDefinitions = definitions(draft)
+        draft.restoreMenuFavorites()
+        XCTAssertEqual(draft.placed(.menu).map(\.title), mode.defaults.map(\.title))
+        _ = try store.save(draft)
+        let reloaded = try store.load()
+        XCTAssertTrue(reloaded.valid)
+        XCTAssertEqual(reloaded.placed(.menu).map(\.title), mode.defaults.map(\.title))
+        XCTAssertEqual(definitions(reloaded), originalDefinitions, "Restoring placements must preserve shared definition identities and content")
+        XCTAssertEqual(reloaded.keyboardRows, rows)
+        XCTAssertEqual(try memory.store(otherMode).load().resolvedMenuPlacements, otherFavorites)
+    }
+    func testRestoreTerminalFavoritesUsesDefaultOrderWithReversedDefinitions() throws {
+        var data = try JSONEncoder().encode(TerminalControlsProfile.defaults)
+        let store = TerminalControlsStore(read: { data }, write: { data = $0 },
+            legacyIDs: { [] }, legacyActions: { [] })
+        var draft = try store.load()
+        draft.actions.reverse()
+        let ids = Set(draft.actions.map(\.id))
+        draft.restoreMenuFavorites()
+        _ = try store.save(draft)
+        let reloaded = try store.load()
+        XCTAssertEqual(reloaded.placed(.menu).map(\.title), DirectControlMode.terminal.defaults.map(\.title))
+        XCTAssertEqual(Set(reloaded.actions.map(\.id)), ids)
+    }
     func testConcurrentRemoteModeEditsAreRejectedAndUnreadableLegacyFavoritesArePreserved() throws {
         let memory = Memory()
         let first = try memory.store().load()
