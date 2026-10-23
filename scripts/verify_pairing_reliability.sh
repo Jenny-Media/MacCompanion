@@ -2,9 +2,13 @@
 set -euo pipefail
 
 repository_root=${0:A:h:h}
-developer_root=${MACCOMPANION_DEVELOPER_DIR:-/Applications/Xcode-beta.app/Contents/Developer}
+cd "$repository_root"
+if [[ ${MACCOMPANION_LEGACY_MANAGED:-} != pairing-reliability ]]; then
+  exec python3 scripts/legacy_build_cache.py pairing-reliability "$@"
+fi
+developer_root=$MACCOMPANION_DEVELOPER_DIR
 package_path="$repository_root/Packages/MacCompanionKit"
-derived_root=${MACCOMPANION_PAIRING_DERIVED_DATA:-/private/tmp/maccompanion-pairing-reliability}
+derived_root="$MACCOMPANION_LEGACY_WORKSPACE/DerivedData"
 
 cd "$repository_root"
 
@@ -12,18 +16,23 @@ python3 scripts/validate_fixtures.py
 
 DEVELOPER_DIR="$developer_root" swift test \
   --package-path "$package_path" \
+  --scratch-path "$MACCOMPANION_LEGACY_WORKSPACE/package-build" \
   --filter goldenCryptoVectorMatchesEveryNormativeConstruction
 DEVELOPER_DIR="$developer_root" swift test \
   --package-path "$package_path" \
+  --scratch-path "$MACCOMPANION_LEGACY_WORKSPACE/package-build" \
   --filter authoritativePairingFixturesDecodeAndCanonicalize
 DEVELOPER_DIR="$developer_root" swift test \
   --package-path "$package_path" \
+  --scratch-path "$MACCOMPANION_LEGACY_WORKSPACE/package-build" \
   --filter lostPairingCompletionRecoversExactDurableDeviceEndToEnd
 DEVELOPER_DIR="$developer_root" swift test \
   --package-path "$package_path" \
+  --scratch-path "$MACCOMPANION_LEGACY_WORKSPACE/package-build" \
   --filter clientPairingApplicationOwnerRecoversDroppedCompletionWithoutRescan
 DEVELOPER_DIR="$developer_root" swift test \
   --package-path "$package_path" \
+  --scratch-path "$MACCOMPANION_LEGACY_WORKSPACE/package-build" \
   --filter lostCompletionRecoveryRemainsVisibleAndAcceptsOnlyExactAttempt
 
 if [[ ${1:-} != "--signed-builds" ]]; then

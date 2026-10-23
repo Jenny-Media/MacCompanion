@@ -148,3 +148,41 @@ build-cache deletion.
 Other repositories can use the same layout and lock policy, with their own
 build entry points and namespace. This change is local to MacCompanion's build
 workflow; it does not change global Xcode or SwiftPM preferences.
+
+## Legacy feature and pairing checks
+
+`bash scripts/verify_simulator_features.sh` and
+`zsh scripts/verify_pairing_reliability.sh [--signed-builds]` also use
+`BuildSession`. Their checkout/toolchain/SDK/configuration/architecture and
+signing profiles stay separate from normal client builds and from each other.
+The feature runner keeps its existing Simulator lease and requires an already
+booted Simulator. No device, consent, signing or test-selection action is added.
+The opt-in signed pairing command still requires its development team.
+
+Compiler output goes to the existing internal managed root. Each invocation
+retains a new evidence generation, including workflow logs and successful app
+snapshots under `products/`. Feature reports, screenshots/result bundles and the
+test-host binary remain in that generation. The lease lasts through compilation,
+installation, testing, verification, child-process cleanup and app snapshotting.
+The feature runner's final pairing checkpoint uses a distinct managed profile;
+its evidence location is retained in `pairing.log`.
+
+`MACCOMPANION_LEGACY_EVIDENCE_ROOT` optionally selects a dedicated evidence root
+for one profile. Its ownership rules match other managed workflows: use a new
+root after changing the profile. Default roots are selected automatically by
+profile. `MACCOMPANION_LEGACY_COLD=1` requests a new compiler workspace without
+deleting existing output. `MACCOMPANION_LEGACY_CACHE_VARIANT` separates deliberate
+experimental compiler variants. Suite names, iteration counts and report dates
+do not create another compiler tree.
+
+The old `MACCOMPANION_LAB_DERIVED_DATA` and
+`MACCOMPANION_PAIRING_DERIVED_DATA` overrides are rejected with migration guidance;
+they cannot bypass the lease. Use `MACCOMPANION_BUILD_CACHE_ROOT` for a dedicated
+internal compiler root. Toolchain selection honors `MACCOMPANION_DEVELOPER_DIR`,
+then `DEVELOPER_DIR`, then `xcode-select`; it no longer defaults these callers to
+an Xcode beta. An Xcode `.app` path is normalized to its developer directory.
+
+The separately opted-in signed Agent/native-host probes and historical WebRTC
+experiment recipes retain their existing layouts and admission requirements.
+They are not entry points for these two managed workflows. The normal native
+builders, validation command, hosted CI and paused platform work are unchanged.
