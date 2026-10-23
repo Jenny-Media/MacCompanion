@@ -19,6 +19,7 @@
 - (void)publishFrame:(rfbClient *)client;
 - (void)report:(NSString *)state;
 - (BOOL)writeKeyEvent:(uint32_t)key down:(BOOL)down client:(rfbClient *)client;
+- (BOOL)sendInputEvents:(NSArray<NSDictionary *> *)events client:(rfbClient *)client inputEpoch:(NSUInteger)inputEpoch;
 @end
 @interface CompanionVNCViewer (LifecycleTesting)
 - (void)frame:(UIImage *)frame;
@@ -65,6 +66,74 @@
 @interface SessionLifecycleTests : XCTestCase
 @end
 @implementation SessionLifecycleTests
+- (void)testTimedSequenceCleanupPreservesQueuedInputAndReleasesHeldButtonBeforeKeys {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+    int yes=1; setsockopt(pair[0],SOL_SOCKET,SO_NOSIGPIPE,&yes,sizeof(yes));
+    struct timeval timeout={.tv_sec=2}; setsockopt(pair[1],SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
+    CompanionVNCSession *session=[CompanionVNCSession new]; rfbClient *client=rfbGetClient(8,3,4);
+    client->sock=pair[0]; client->width=2; client->height=2; [session configureClient:client];
+    client->supportedMessages.client2server[0]|=(1<<rfbKeyEvent)|(1<<rfbPointerEvent);
+    session.inputOnly=YES;
+    for (NSString *key in @[@"running",@"established",@"inputReady"]) [session setValue:@YES forKey:key];
+    NSString *connection=session.connectionIdentifier;
+    XCTAssertTrue(SendKeyEvent(client,0xffe1,TRUE)); [[session valueForKey:@"heldKeys"] addObject:@0xffe1];
+    XCTAssertTrue(SendPointerEvent(client,1,1,1));
+    [session setValue:@1 forKey:@"lastX"]; [session setValue:@1 forKey:@"lastY"];
+    uint8_t held[14]; XCTAssertEqual(recv(pair[1],held,sizeof(held),MSG_WAITALL),sizeof(held));
+    [session key:0x78 down:YES]; [session key:0x78 down:NO];
+    NSString *owner=[session beginControlSequence]; XCTAssertNotNil(owner);
+    XCTAssertNil([session beginControlSequence], @"An immediate or timed shortcut cannot acquire a second owner");
+    NSArray *competing=@[@{@"key":@0x7a,@"down":@YES},@{@"key":@0x7a,@"down":@NO}];
+    XCTAssertFalse([session tryKeyEvents:competing]);
+    XCTAssertFalse([session tryClickX:1 y:1 mask:1], @"Pointer input is reserved with keyboard input");
+    XCTAssertEqualObjects(connection,session.connectionIdentifier);
+    [session pointerX:1 y:1 mask:0]; // Ordinary cleanup can be blocked; the owner barrier must still release it.
+    NSArray *chord=@[@{@"key":@0x61,@"down":@YES},@{@"key":@0x61,@"down":@NO}];
+    XCTestExpectation *written=[self expectationWithDescription:@"Sequence group written"];
+    XCTAssertTrue([session tryControlSequenceEvents:chord identifier:owner completion:^(BOOL ok){XCTAssertTrue(ok);[written fulfill];}]);
+    NSMutableArray *queue=[session valueForKey:@"events"]; NSArray *batch=[queue copy]; [queue removeAllObjects];
+    XCTAssertTrue([session sendInputEvents:batch client:client inputEpoch:[[session valueForKey:@"inputEpoch"] unsignedIntegerValue]]);
+    uint8_t wire[46]; XCTAssertEqual(recv(pair[1],wire,sizeof(wire),MSG_WAITALL),sizeof(wire));
+    XCTAssertEqual(wire[0],rfbKeyEvent); XCTAssertEqual(wire[7],0x78); XCTAssertEqual(wire[8],rfbKeyEvent); XCTAssertEqual(wire[9],0);
+    XCTAssertEqual(wire[16],rfbKeyEvent); XCTAssertEqual(wire[17],0); // Held Shift up.
+    XCTAssertEqual(wire[24],rfbPointerEvent); XCTAssertEqual(wire[25],0); // Mouse up before sequence key.
+    XCTAssertEqual(wire[30],rfbKeyEvent); XCTAssertEqual(wire[31],1); XCTAssertEqual(wire[37],0x61);
+    [self waitForExpectations:@[written] timeout:1];
+    [session endControlSequence:owner]; batch=[queue copy]; [queue removeAllObjects];
+    XCTAssertTrue([session sendInputEvents:batch client:client inputEpoch:[[session valueForKey:@"inputEpoch"] unsignedIntegerValue]]);
+    uint8_t released[6]; XCTAssertEqual(recv(pair[1],released,sizeof(released),MSG_WAITALL),sizeof(released));
+    XCTAssertEqual(released[0],rfbPointerEvent); XCTAssertEqual(released[1],0);
+    XCTAssertTrue([session tryKeyEvents:chord]);
+    [session setValue:@NO forKey:@"running"]; [session stop]; client->sock=-1; close(pair[0]);close(pair[1]);rfbClientCleanup(client);
+}
+- (void)testTimedSequenceCancellationReleasesPartialChordAndRetiresCopiedSuffix {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+    struct timeval timeout={.tv_sec=2}; setsockopt(pair[1],SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
+    CompanionVNCSession *session=[CompanionVNCSession new]; rfbClient *client=rfbGetClient(8,3,4);
+    client->sock=pair[0]; client->width=2; client->height=2; [session configureClient:client];
+    client->supportedMessages.client2server[0]|=(1<<rfbKeyEvent)|(1<<rfbPointerEvent); session.inputOnly=YES;
+    for (NSString *key in @[@"running",@"established",@"inputReady"]) [session setValue:@YES forKey:key];
+    NSString *owner=[session beginControlSequence]; NSMutableArray *queue=[session valueForKey:@"events"];
+    NSArray *batch=[queue copy]; [queue removeAllObjects]; NSUInteger epoch=[[session valueForKey:@"inputEpoch"] unsignedIntegerValue];
+    XCTAssertTrue([session sendInputEvents:batch client:client inputEpoch:epoch]);
+    uint8_t boundary[6]; XCTAssertEqual(recv(pair[1],boundary,6,MSG_WAITALL),6);
+    XCTestExpectation *cancelled=[self expectationWithDescription:@"Partial group canceled"];
+    NSArray *chord=@[@{@"key":@0x61,@"down":@YES},@{@"key":@0x61,@"down":@NO}];
+    XCTAssertTrue([session tryControlSequenceEvents:chord identifier:owner completion:^(BOOL ok){XCTAssertFalse(ok);[cancelled fulfill];}]);
+    batch=[queue copy]; [queue removeAllObjects];
+    XCTAssertTrue([session sendInputEvents:@[batch.firstObject] client:client inputEpoch:epoch]);
+    uint8_t down[8]; XCTAssertEqual(recv(pair[1],down,8,MSG_WAITALL),8); XCTAssertEqual(down[1],1);
+    [session cancelControlSequence:owner];
+    XCTAssertTrue([session sendInputEvents:@[batch.lastObject] client:client inputEpoch:epoch]); // Retired copy sends nothing.
+    batch=[queue copy]; [queue removeAllObjects];
+    XCTAssertTrue([session sendInputEvents:batch client:client inputEpoch:epoch]);
+    uint8_t released[14]; XCTAssertEqual(recv(pair[1],released,14,MSG_WAITALL),14);
+    XCTAssertEqual(released[0],rfbKeyEvent); XCTAssertEqual(released[1],0); XCTAssertEqual(released[7],0x61);
+    XCTAssertEqual(released[8],rfbPointerEvent); XCTAssertEqual(released[9],0);
+    [self waitForExpectations:@[cancelled] timeout:1];
+    XCTAssertEqual([[session valueForKey:@"heldKeys"] count],0);
+    [session setValue:@NO forKey:@"running"]; [session stop]; client->sock=-1; close(pair[0]);close(pair[1]);rfbClientCleanup(client);
+}
 - (void)testWarmResumeKeepsPixelsAndPausedStatusUntilFreshEvidence {
     CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
     LifecycleSession *session=[LifecycleSession new]; session.alive=YES; session.ready=YES; session.authenticated=YES; viewer.session=session;

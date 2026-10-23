@@ -3,6 +3,322 @@ import StoreKitTest
 import UIKit
 
 @MainActor final class TerminalControlsJourneyTests: XCTestCase {
+    func testTimedSequenceExecutionOverlayCoversExpandedRowsAndKeyboard() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        startSequenceProbe(app)
+        let keyboard = app.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Show Keyboard", "Hide Keyboard")).firstMatch
+        if keyboard.label == "Show Keyboard" { keyboard.tap() }
+        try await waitForSoftwareKeyboard(app)
+        let bar = app.otherElements["terminal-keyboard-bar"].firstMatch
+        let original = bar.frame
+        runSequenceProbe("C013", review: false, app: app)
+        let cancel = app.buttons["shortcut-running-cancel"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5))
+        let overlay = app.otherElements["shortcut-execution-blocker"].firstMatch
+        XCTAssertEqual(overlay.frame, original, "The progress surface must reuse the expanded rows' footprint")
+        XCTAssertFalse(keyboard.isHittable)
+        XCTAssertTrue(app.keyboards.firstMatch.exists)
+        app.keyboards.firstMatch.keys["x"].firstMatch.tap()
+        await assertInput("740d", app: app)
+        capture("terminal-expanded-rows-progress-keyboard-visible", app: app)
+        cancel.tap(); XCTAssertTrue(cancel.waitForNonExistence(timeout: 2))
+        XCTAssertTrue(keyboard.isHittable); keyboard.tap()
+        capture("terminal-rows-restored-keyboard-hidden", app: app)
+        runSequenceProbe("C013", review: false, app: app)
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5))
+        capture("terminal-expanded-rows-progress-keyboard-hidden", app: app)
+        cancel.tap(); XCTAssertTrue(cancel.waitForNonExistence(timeout: 2))
+    }
+
+    func testTimedSequenceImmediateBlockedSSHRejectsCompetingRunAndCancels() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        startSequenceProbe(app)
+        let second = app.buttons["terminal-row-action-00000000-0000-0000-0000-00000000C011"]
+        let position = second.frame
+        let point = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: position.minX + position.width * 0.2, dy: position.midY))
+        runSequenceProbe("C017", review: false, app: app)
+        XCTAssertTrue(app.staticTexts["SSH writer stalled"].waitForExistence(timeout: 5))
+        let cancel = app.buttons["shortcut-running-cancel"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5)); point.tap()
+        await assertInput("", app: app)
+        XCTAssertTrue(cancel.exists); capture("immediate-shortcut-reserves-input-while-ssh-stalled", app: app)
+        cancel.tap(); XCTAssertTrue(cancel.waitForNonExistence(timeout: 2))
+        runSequenceProbe("C011", review: false, app: app)
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5), "A blocked no-wait shortcut must also expose progress and Cancel")
+        app.buttons["controls-qa-release-write"].tap()
+        await assertInput("74070f64", app: app)
+        XCTAssertTrue(cancel.waitForNonExistence(timeout: 3))
+        capture("immediate-cancel-preserves-accepted-write-and-retires-suffix", app: app)
+    }
+
+    func testRemoteExecutionOverlayInScreenSharing() async throws { try await remoteExecutionOverlay(mode: "desktop") }
+    func testRemoteExecutionOverlayInTrackpadAndKeyboard() async throws { try await remoteExecutionOverlay(mode: "trackpad") }
+    private func remoteExecutionOverlay(mode: String) async throws {
+        let (app, store) = try await launchPro(remoteMode: mode, executionOverlay: true); defer { app.terminate(); store.clearTransactions() }
+        app.buttons["controls-qa-remote"].tap()
+        XCTAssertTrue(app.buttons["remote-qa-edit"].waitForExistence(timeout: 5))
+        XCTAssertTrue((app.buttons["remote-qa-edit"].value as? String)?.contains("overlay=true; environment=1") == true, app.debugDescription)
+        let action = app.buttons["terminal-row-action-00000000-0000-0000-0000-00000000C020"]
+        let quick = app.buttons["terminal-row-action-00000000-0000-0000-0000-00000000C021"]
+        let keyboard = app.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Show Keyboard", "Hide Keyboard")).firstMatch
+        action.tap()
+        let cancel = app.buttons["shortcut-running-cancel"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5)); XCTAssertFalse(action.isHittable); XCTAssertFalse(quick.isHittable)
+        XCTAssertEqual(app.staticTexts["remote-qa-events"].label, "Remote events: 2")
+        capture(mode + "-progress-covers-rows-keyboard-hidden", app: app)
+        cancel.tap(); XCTAssertTrue(cancel.waitForNonExistence(timeout: 2)); XCTAssertTrue(action.isHittable)
+        keyboard.tap(); try await waitForSoftwareKeyboard(app)
+        action.tap(); XCTAssertTrue(cancel.waitForExistence(timeout: 5))
+        capture(mode + "-progress-covers-rows-keyboard-visible", app: app)
+        cancel.tap(); XCTAssertTrue(cancel.waitForNonExistence(timeout: 2))
+        quick.tap()
+        await fulfillment(of: [expectation(for: NSPredicate(format: "label == %@", "Remote events: 6"), evaluatedWith: app.staticTexts["remote-qa-events"])], timeout: 3)
+        XCTAssertFalse(cancel.exists)
+        capture(mode + "-quick-shortcut-completes-without-progress-flash", app: app)
+    }
+
+    func testShortcutConfirmationSettingDefaultsOffAndPersists() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        library(app); app.buttons["terminal-library-create"].tap()
+        let name = app.textFields["terminal-control-name"]; XCTAssertTrue(name.waitForExistence(timeout: 5))
+        name.tap(); name.typeText("Confirmation Choice\n"); addSequenceReturn(app)
+        let setting = app.switches["shortcut-confirm-before-running"]
+        reveal(setting, app: app); XCTAssertEqual(setting.value as? String, "0")
+        capture("confirmation-default-off", app: app)
+        await setSwitch(setting, on: true, app: app)
+        app.buttons["terminal-item-save"].tap()
+        XCTAssertTrue(app.staticTexts["Confirmation Choice"].waitForExistence(timeout: 5)); app.staticTexts["Confirmation Choice"].tap()
+        reveal(setting, app: app); XCTAssertEqual(setting.value as? String, "1")
+        capture("confirmation-setting-saved", app: app)
+    }
+    func testTimedSequenceConfirmationSkipCancelAndReconnect() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        startSequenceProbe(app)
+        let action = app.buttons["terminal-row-action-00000000-0000-0000-0000-00000000C014"]
+        let run = app.buttons["shortcut-sequence-send"]
+        let skip = app.switches["shortcut-skip-connection-confirmation"]
+        action.tap(); XCTAssertTrue(run.waitForExistence(timeout: 5))
+        await setSwitch(skip, on: true, app: app); capture("confirm-skip-until-new-connection", app: app)
+        app.buttons["Cancel"].firstMatch.tap()
+        await assertInput("", app: app)
+        action.tap(); XCTAssertTrue(run.waitForExistence(timeout: 5)); XCTAssertEqual(skip.value as? String, "0", "Cancel must not accept the skip choice")
+        run.tap(); await assertInput("6f6b0d", app: app)
+        action.tap(); XCTAssertTrue(run.waitForExistence(timeout: 5)); await setSwitch(skip, on: true, app: app); run.tap()
+        await assertInput("6f6b0d6f6b0d", app: app)
+        action.tap(); await assertInput("6f6b0d6f6b0d6f6b0d", app: app); XCTAssertFalse(run.exists)
+        XCUIDevice.shared.press(.home); app.activate()
+        XCTAssertTrue(app.staticTexts["Input ready"].waitForExistence(timeout: 10))
+        action.tap(); await assertInput("6f6b0d6f6b0d6f6b0d6f6b0d", app: app); XCTAssertFalse(run.exists)
+        capture("same-connection-keeps-skip-after-background", app: app)
+        app.buttons["controls-qa-reconnect"].tap()
+        XCTAssertTrue(app.staticTexts["Input ready"].waitForExistence(timeout: 15)); await assertInput("", app: app)
+        XCTAssertTrue(action.waitForExistence(timeout: 5)); action.tap(); XCTAssertTrue(run.waitForExistence(timeout: 5))
+        capture("new-connection-requires-confirmation-again", app: app)
+    }
+    func testTimedSequenceCancelBlockedSSHWriterAndRunAgain() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        startSequenceProbe(app); runSequenceProbe("C013", review: false, app: app)
+        XCTAssertTrue(app.staticTexts["SSH writer stalled"].waitForExistence(timeout: 5))
+        let cancel = app.buttons["shortcut-running-cancel"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5)); capture("blocked-ssh-write-before-cancel", app: app)
+        cancel.tap()
+        XCTAssertTrue(cancel.waitForNonExistence(timeout: 2), "The banner must close while the SSH write remains blocked")
+        XCTAssertTrue(app.staticTexts["SSH writer stalled"].exists)
+        await assertInput("", app: app); capture("cancel-closes-banner-before-ssh-write-drains", app: app)
+        runSequenceProbe("C011", review: false, app: app)
+        await assertInput("", app: app)
+        app.buttons["controls-qa-release-write"].tap()
+        await assertInput("74070f64", app: app)
+        XCTAssertFalse(cancel.exists)
+        capture("accepted-prefix-then-fresh-shortcut-with-no-canceled-suffix", app: app)
+        runSequenceProbe("C011", review: false, app: app); await assertInput("74070f64070f64", app: app)
+        XCTAssertFalse(cancel.exists)
+    }
+    func testTimedSequenceProtocolRepliesAndOutputStayVisible() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        startSequenceProbe(app); runSequenceProbe("C016", review: false, app: app)
+        let result = app.staticTexts["controls-qa-sequence-result"]
+        await fulfillment(of: [expectation(for: NSPredicate(format: "label == %@", "Terminal replies received during wait"), evaluatedWith: result)], timeout: 5)
+        XCTAssertTrue(app.buttons["shortcut-running-cancel"].exists)
+        XCTAssertTrue(app.staticTexts["shortcut-running-step"].label.contains("remaining"))
+        XCTAssertFalse(app.buttons["shortcut-sequence-send"].exists, "Text steps run immediately when confirmation is off")
+        capture("nonmodal-progress-with-visible-output-and-terminal-replies", app: app)
+        await fulfillment(of: [expectation(for: NSPredicate(format: "label == %@", "Session 1 selected after waiting"), evaluatedWith: result)], timeout: 8)
+        XCTAssertTrue(app.staticTexts["controls-qa-input"].label.contains("1b5b306e"))
+        XCTAssertFalse(app.buttons["shortcut-running-cancel"].exists)
+        capture("terminal-query-flow-completed", app: app)
+    }
+    func testReturnQuickAddSearchEditAndPersistence() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        library(app); app.buttons["terminal-library-create"].tap()
+        let name = app.textFields["terminal-control-name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5)); name.tap(); name.typeText("Return Example\n")
+        let addStep = app.buttons["shortcut-add-step"]
+        XCTAssertTrue(addStep.isHittable)
+        addStep.coordinate(withNormalizedOffset: .init(dx: 0.9, dy: 0.5)).tap()
+        capture("add-step-menu-with-direct-return", app: app)
+        for label in ["Return", "Press Key…", "Type Text…", "Paste Text…", "Wait…"] { XCTAssertTrue(sequenceMenuChoice(label, app: app).exists, app.debugDescription) }
+        sequenceMenuChoice("Return", app: app).tap()
+        XCTAssertFalse(app.buttons["shortcut-step-type"].exists)
+        addSequenceReturn(app)
+        let preview = app.descendants(matching: .any)["shortcut-sequence-preview"].firstMatch
+        XCTAssertEqual(preview.label, "↵ Return → ↵ Return")
+        capture("return-steps-use-readable-names", app: app)
+        openSequenceStep("Press Key", app: app); app.buttons["terminal-choose-key"].tap()
+        let search = app.searchFields.matching(NSPredicate(format: "placeholderValue == %@", "Find a key")).firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: 5)); search.tap(); search.typeText("Enter")
+        let key = app.buttons["terminal-choose-character-65293-"]
+        XCTAssertTrue(key.waitForExistence(timeout: 5)); XCTAssertEqual(key.label, "Return")
+        capture("enter-search-finds-readable-return-key", app: app)
+        key.tap()
+        XCTAssertTrue(app.buttons["terminal-choose-key"].label.contains("Return"))
+        app.buttons["terminal-shortcut-modifier-Ctrl"].tap(); app.buttons["shortcut-step-save"].tap()
+        XCTAssertEqual(preview.label, "↵ Return → ↵ Return → ⌃↵ Return")
+        app.buttons["terminal-item-save"].tap()
+        XCTAssertTrue(app.staticTexts["Return Example"].waitForExistence(timeout: 5))
+        app.staticTexts["Return Example"].tap()
+        XCTAssertTrue(app.textFields["terminal-control-name"].waitForExistence(timeout: 5))
+        reveal(preview, app: app)
+        XCTAssertEqual(preview.label, "↵ Return → ↵ Return → ⌃↵ Return")
+        capture("return-steps-persist-with-modifiers", app: app)
+    }
+    func testReturnQuickAddCancelKeepsLibraryUnchanged() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        library(app); app.buttons["terminal-library-create"].tap()
+        let name = app.textFields["terminal-control-name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5)); name.tap(); name.typeText("Discard Return\n")
+        addSequenceReturn(app)
+        XCTAssertEqual(app.descendants(matching: .any)["shortcut-sequence-preview"].firstMatch.label, "↵ Return")
+        app.buttons["terminal-item-cancel"].tap()
+        XCTAssertFalse(app.staticTexts["Discard Return"].exists)
+        capture("cancel-return-draft-keeps-library-unchanged", app: app)
+    }
+    func testTimedSequenceEditorSupportsAllFourStepTypesAndPersists() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        library(app); app.buttons["terminal-library-create"].tap()
+        let name = app.textFields["terminal-control-name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5)); name.tap(); name.typeText("Launch and Select\n")
+        openSequenceStep("Type Text", app: app)
+        let text = app.textViews["shortcut-step-text"]; XCTAssertTrue(text.waitForExistence(timeout: 5)); text.tap(); text.typeText("t")
+        selectSequenceKind("Paste Text", app: app)
+        XCTAssertEqual(app.textViews["shortcut-step-text"].value as? String, "t")
+        selectSequenceKind("Type Text", app: app)
+        XCTAssertEqual(app.textViews["shortcut-step-text"].value as? String, "t")
+        app.buttons["shortcut-step-save"].tap()
+        addSequenceReturn(app)
+        openSequenceStep("Wait", app: app)
+        XCTAssertTrue(app.steppers["shortcut-wait-duration"].exists)
+        capture("wait-step-default-one-second", app: app)
+        app.buttons["shortcut-step-save"].tap()
+        addSequenceText("1", kind: "Type Text", app: app)
+        addSequenceReturn(app)
+        addSequenceText("sample", kind: "Paste Text", app: app)
+        let preview = app.descendants(matching: .any)["shortcut-sequence-preview"].firstMatch
+        reveal(preview, app: app)
+        XCTAssertTrue(preview.label.contains("Type · t → ↵ Return → Wait 1 s → Type · 1 → ↵ Return → Paste · sample"))
+        capture("four-step-types-ordered-editor", app: app)
+        app.buttons["terminal-item-save"].tap()
+        XCTAssertTrue(app.staticTexts["Launch and Select"].waitForExistence(timeout: 5))
+        app.staticTexts["Launch and Select"].tap()
+        XCTAssertTrue(app.textFields["terminal-control-name"].waitForExistence(timeout: 5))
+        reveal(preview, app: app)
+        XCTAssertTrue(preview.label.contains("Wait 1 s")); XCTAssertTrue(preview.label.contains("Paste · sample"))
+        capture("four-step-types-persisted", app: app)
+    }
+
+    func testTimedSequenceLaunchWaitAndNumericSelectionOverSSH() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        startSequenceProbe(app)
+        runSequenceProbe("C010", review: false, app: app)
+        let result = app.staticTexts["controls-qa-sequence-result"]
+        await fulfillment(of: [expectation(for: NSPredicate(format: "label == %@", "Session 1 selected after waiting"), evaluatedWith: result)], timeout: 8)
+        XCTAssertEqual(app.staticTexts["controls-qa-input"].label, "Input: 740d310d")
+        XCTAssertFalse(app.buttons["shortcut-running-cancel"].exists)
+        capture("t-return-wait-one-second-1-return-success", app: app)
+    }
+
+    func testTypedSequenceChordsAndSingleCharacterOverSSH() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        startSequenceProbe(app); runSequenceProbe("C011", review: false, app: app)
+        await assertInput("070f64", app: app)
+        XCTAssertEqual(app.staticTexts["controls-qa-sequence-result"].label, "Received Ctrl+G → Ctrl+O → d")
+        capture("ctrl-g-ctrl-o-d-success", app: app)
+    }
+
+    func testTypedSequenceChordsAndMultipleCharactersAvoidPasteFormatting() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        startSequenceProbe(app); runSequenceProbe("C012", review: false, app: app)
+        await assertInput("070f646f6e65", app: app)
+        XCTAssertEqual(app.staticTexts["controls-qa-sequence-result"].label, "Received Ctrl+G → Ctrl+O → done")
+        capture("ctrl-g-ctrl-o-multiple-typed-characters-success", app: app)
+    }
+
+    func testTimedSequenceCancelDuringWaitDoesNotSendSelection() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        startSequenceProbe(app); runSequenceProbe("C013", review: false, app: app)
+        let cancel = app.buttons["shortcut-running-cancel"]
+        capture("running-cancel-inspection", app: app)
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5), app.debugDescription)
+        await fulfillment(of: [expectation(for: NSPredicate(format: "label CONTAINS %@", "Wait"), evaluatedWith: app.staticTexts["shortcut-running-step"])], timeout: 4)
+        capture("wait-in-progress-with-cancel", app: app)
+        cancel.tap()
+        await fulfillment(of: [expectation(for: NSPredicate { _, _ in !cancel.exists }, evaluatedWith: nil)], timeout: 5)
+        await assertInput("740d", app: app)
+        runSequenceProbe("C011", review: false, app: app)
+        await assertInput("740d070f64", app: app)
+        capture("wait-canceled-and-fresh-input-accepted", app: app)
+    }
+
+    func testTimedSequenceBackgroundRetiresWaitingSuffix() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        startSequenceProbe(app); runSequenceProbe("C013", review: false, app: app)
+        capture("running-background-inspection", app: app)
+        await fulfillment(of: [expectation(for: NSPredicate(format: "label CONTAINS %@", "Wait"), evaluatedWith: app.staticTexts["shortcut-running-step"])], timeout: 4)
+        XCUIDevice.shared.press(.home); app.activate()
+        XCTAssertTrue(app.staticTexts["Input ready"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["shortcut-running-cancel"].exists)
+        await assertInput("740d", app: app)
+        capture("background-cancels-wait-with-no-replay", app: app)
+    }
+
+    private func selectSequenceKind(_ kind: String, app: XCUIApplication) {
+        app.buttons["shortcut-step-type"].tap()
+        app.buttons[kind].firstMatch.tap()
+    }
+    private func addSequenceText(_ text: String, kind: String, app: XCUIApplication) {
+        openSequenceStep(kind, app: app)
+        let field = app.textViews["shortcut-step-text"]; XCTAssertTrue(field.waitForExistence(timeout: 5)); field.tap(); field.typeText(text)
+        app.buttons["shortcut-step-save"].tap()
+    }
+    private func addSequenceReturn(_ app: XCUIApplication) {
+        app.buttons["shortcut-add-step"].tap(); sequenceMenuChoice("Return", app: app).tap()
+        XCTAssertFalse(app.buttons["shortcut-step-type"].exists, "Quick Return appends a key without opening another editor")
+    }
+    private func openSequenceStep(_ kind: String, app: XCUIApplication) {
+        app.buttons["shortcut-add-step"].tap()
+        sequenceMenuChoice(kind + "…", app: app).tap()
+        XCTAssertTrue(app.buttons["shortcut-step-type"].waitForExistence(timeout: 5))
+    }
+    private func sequenceMenuChoice(_ label: String, app: XCUIApplication) -> XCUIElement {
+        let choice = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label)).firstMatch
+        XCTAssertTrue(choice.waitForExistence(timeout: 3), app.debugDescription)
+        return choice
+    }
+    private func startSequenceProbe(_ app: XCUIApplication) {
+        app.buttons["controls-qa-live"].tap()
+        XCTAssertTrue(app.staticTexts["controls-qa-input"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["Input ready"].waitForExistence(timeout: 10))
+    }
+    private func runSequenceProbe(_ suffix: String, review: Bool, app: XCUIApplication) {
+        let button = app.buttons["terminal-row-action-00000000-0000-0000-0000-00000000" + suffix]
+        revealHorizontal(button, scroll: app.scrollViews["terminal-modifier-keys"]); button.tap()
+        if review {
+            XCTAssertTrue(app.buttons["shortcut-sequence-send"].waitForExistence(timeout: 5))
+            if suffix == "C010" || suffix == "C013" { XCTAssertTrue(app.staticTexts["↵ Return"].firstMatch.exists) }
+            capture("review-" + suffix, app: app); app.buttons["shortcut-sequence-send"].tap()
+        }
+    }
+
     func testRemoteCommandCanBeRemovedAndReaddedWithoutResettingTheLayout() async throws {
         let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
         app.buttons["controls-qa-remote"].tap()
@@ -104,12 +420,14 @@ import UIKit
         library(app)
         app.buttons["terminal-library-create"].tap()
         let name = app.textFields["terminal-control-name"]; XCTAssertTrue(name.waitForExistence(timeout: 5)); name.tap(); name.typeText("Two Steps\n")
+        openSequenceStep("Press Key", app: app)
         try XCTUnwrap(app.buttons.matching(identifier: "terminal-choose-key").allElementsBoundByIndex.last).tap()
         let character = app.textFields["terminal-key-character"]; character.tap(); character.typeText("b")
         XCTAssertTrue(app.buttons["terminal-use-character"].isEnabled)
         app.buttons["terminal-use-character"].tap()
         app.buttons["terminal-shortcut-modifier-Ctrl"].tap()
-        app.buttons["shortcut-add-step"].tap()
+        app.buttons["shortcut-step-save"].tap()
+        openSequenceStep("Press Key", app: app)
         try XCTUnwrap(app.buttons.matching(identifier: "terminal-choose-key").allElementsBoundByIndex.last).tap()
         let next = app.textFields["terminal-key-character"]; next.tap(); next.typeText("c")
         app.buttons["terminal-use-character"].tap(); app.buttons["shortcut-step-save"].tap()
@@ -178,6 +496,17 @@ import UIKit
             if up { app.swipeUp() } else { app.swipeDown() }
         }
         XCTAssertTrue(element.isHittable, app.debugDescription)
+    }
+    private func setSwitch(_ control: XCUIElement, on: Bool, app: XCUIApplication) async {
+        reveal(control, app: app)
+        let expected = on ? "1" : "0"
+        if control.value as? String != expected {
+            // A SwiftUI switch's accessible frame includes its label. Hit the
+            // trailing native switch instead of tapping the label's center.
+            control.coordinate(withNormalizedOffset: .init(dx: 0.92, dy: 0.5)).tap()
+            await fulfillment(of: [expectation(for: NSPredicate(format: "value == %@", expected), evaluatedWith: control)], timeout: 3)
+        }
+        XCTAssertEqual(control.value as? String, expected)
     }
     private func revealHorizontal(_ element: XCUIElement, scroll: XCUIElement) {
         for _ in 0..<18 {
@@ -317,11 +646,16 @@ import UIKit
         XCTAssertTrue(menuItem.exists || button.exists)
         if menuItem.exists { menuItem.tap() } else { button.tap() }
         field.typeText(name)
+        if field.value as? String != name {
+            capture("rename-awaiting-text-commit", app: app)
+            let tree = XCTAttachment(string: app.debugDescription); tree.name = "rename-text-entry-state"; tree.lifetime = .keepAlways; add(tree)
+            await fulfillment(of: [expectation(for: NSPredicate(format: "value == %@", name), evaluatedWith: field)], timeout: 3)
+        }
         XCTAssertEqual(field.value as? String, name)
         try await waitForSoftwareKeyboard(app)
     }
     private func launchPro(failWriteOnce: Bool = false, remoteMode: String? = nil, failRead: Bool = false,
-                           futureFormat: Bool = false) async throws -> (XCUIApplication, SKTestSession) {
+                           futureFormat: Bool = false, executionOverlay: Bool = false) async throws -> (XCUIApplication, SKTestSession) {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .portrait
         let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.controlsqa.ios")
@@ -332,6 +666,13 @@ import UIKit
         app.launchArguments = ["-UIPreferredContentSizeCategoryName", (name.contains("testAccessibility") ? UIContentSizeCategory.accessibilityExtraExtraExtraLarge : .large).rawValue]
         if name.contains("testInteractiveReview"), ProcessInfo.processInfo.environment["MACCOMPANION_TERMINAL_CONTROLS_REVIEW"] == "1" { app.launchEnvironment["MACCOMPANION_TERMINAL_CONTROLS_REVIEW"] = "1" }
         if name.contains("testCommand") { app.launchEnvironment["MACCOMPANION_COMMAND_QA"] = "1" }
+        if executionOverlay || name.contains("ExecutionOverlay") { app.launchEnvironment["MACCOMPANION_EXECUTION_OVERLAY_QA"] = "1" }
+        if name.contains("testTimedSequence") || name.contains("testTypedSequence") {
+            app.launchEnvironment["MACCOMPANION_SEQUENCE_INPUT_QA"] = "1"
+            app.launchEnvironment["MACCOMPANION_SEQUENCE_FOCUS"] = name.contains("ImmediateBlockedSSH") ? "C017" : name.contains("ExecutionOverlay") ? "C013" : name.contains("ConfirmationSkip") ? "C014" : name.contains("ProtocolReplies") ? "C016" : name.contains("CancelDuring") || name.contains("BackgroundRetires") || name.contains("BlockedSSH") ? "C013" : name.contains("MultipleCharacters") ? "C012" : name.contains("SingleCharacter") ? "C011" : "C010"
+            if name.contains("ProtocolReplies") { app.launchEnvironment["MACCOMPANION_SEQUENCE_PROTOCOL_QA"] = "1" }
+            if name.contains("BlockedSSH") { app.launchEnvironment["MACCOMPANION_SEQUENCE_BLOCKED_WRITE_QA"] = "1" }
+        }
         if name.contains("testFailedSave") { app.launchEnvironment["MACCOMPANION_CONTROLS_FAIL_WRITE"] = "1" }
         if failWriteOnce { app.launchEnvironment["MACCOMPANION_CONTROLS_FAIL_WRITE_ONCE"] = "1" }
         if name.contains("testDirectLibraryRecovery") { app.launchEnvironment["MACCOMPANION_CONTROLS_FAIL_READ_ONCE"] = "1" }
@@ -339,11 +680,14 @@ import UIKit
         if name.contains("testNewerFormat") { app.launchEnvironment["MACCOMPANION_CONTROLS_FUTURE_FORMAT"] = "1" }
         if name.contains("testRightEdgeRowRotation") { app.launchEnvironment["MACCOMPANION_CONTROLS_ROTATION"] = "1" }
         if name.contains("testRepeatedUtilityControls") { app.launchEnvironment["MACCOMPANION_CONTROLS_REPEATED_UTILITIES"] = "1" }
-        app.launch()
-        XCTAssertTrue(app.staticTexts["controls-qa-pro"].waitForExistence(timeout: 10))
+        app.terminate() // Interrupted runs must not reuse a process with older fixture flags.
+        // Seed the entitlement before launch so the first controls adapter does
+        // not render the free layout while StoreKit is replacing old receipts.
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "LifetimePro", withExtension: "storekit"))
         let store = try SKTestSession(contentsOf: url); store.disableDialogs = true; store.clearTransactions()
         _ = try await store.buyProduct(identifier: "media.jenny.maccompanion.pro.lifetime")
+        app.launch()
+        XCTAssertTrue(app.staticTexts["controls-qa-pro"].waitForExistence(timeout: 10))
         for _ in 0..<5 where !app.staticTexts["Pro ready"].exists {
             app.buttons["controls-qa-refresh-pro"].tap()
             if app.staticTexts["Pro ready"].waitForExistence(timeout: 2) { break }
@@ -427,6 +771,7 @@ import UIKit
         library(app); app.buttons["terminal-library-create"].tap()
         let name = app.textFields["terminal-control-name"]; XCTAssertTrue(name.waitForExistence(timeout: 5)); name.tap(); name.typeText("Uppercase B")
         try await waitForSoftwareKeyboard(app)
+        openSequenceStep("Press Key", app: app)
         app.buttons["terminal-choose-key"].tap()
         let character = app.textFields["terminal-key-character"]; character.tap()
         character.typeText(XCUIKeyboardKey.delete.rawValue + "B")
@@ -438,6 +783,7 @@ import UIKit
         await fulfillment(of: [expectation(for: NSPredicate { _, _ in !app.buttons["terminal-use-character"].exists }, evaluatedWith: nil)], timeout: 5)
         XCTAssertEqual(app.staticTexts["terminal-shortcut-preview"].label, "Sends B.")
         capture("redesign-uppercase-shortcut", app: app)
+        app.buttons["shortcut-step-save"].tap()
         app.buttons["terminal-item-save"].tap()
         XCTAssertTrue(app.staticTexts["Uppercase B"].waitForExistence(timeout: 5))
         switchToText(app); app.buttons["terminal-library-create"].tap()
@@ -797,9 +1143,10 @@ import UIKit
         app.buttons["terminal-item-save"].tap()
         XCTAssertTrue(app.staticTexts["terminal-item-validation"].exists)
         app.textFields["terminal-control-name"].tap(); app.textFields["terminal-control-name"].typeText("My Prefix")
+        openSequenceStep("Press Key", app: app)
         app.buttons["terminal-shortcut-modifier-Ctrl"].tap(); app.buttons["terminal-choose-key"].tap()
         let character = app.textFields["terminal-key-character"]; character.tap(); character.typeText(XCUIKeyboardKey.delete.rawValue + "b")
-        app.buttons["terminal-use-character"].tap(); app.buttons["terminal-item-save"].tap()
+        app.buttons["terminal-use-character"].tap(); app.buttons["shortcut-step-save"].tap(); app.buttons["terminal-item-save"].tap()
         XCTAssertTrue(app.buttons["terminal-add-row"].waitForExistence(timeout: 5)); capture("focused-inline-shortcut-added", app: app)
         closeLayout(app, save: true); app.buttons["terminal-edit-menu"].tap()
         app.buttons["terminal-control-add"].tap(); app.segmentedControls["terminal-add-page"].buttons["Shortcuts"].tap()
@@ -1167,7 +1514,7 @@ import UIKit
         let selected = projects.element(boundBy: 0)
         revealHorizontal(selected, scroll: row); selected.tap(); app.buttons["terminal-replace-key"].tap()
         pages.buttons["Shortcuts"].tap(); app.buttons["terminal-tool-presets-tmux"].tap()
-        let prefix = app.buttons["terminal-preset-tmux.prefix"], window = app.buttons["terminal-preset-tmux.window"]
+        let prefix = app.buttons["terminal-preset-tmux.prefix"], window = app.buttons["terminal-preset-tmux.window.complete"]
         XCTAssertTrue(prefix.waitForExistence(timeout: 5)); prefix.tap(); window.tap()
         XCTAssertEqual(prefix.value as? String, "Not selected")
         XCTAssertEqual(window.value as? String, "Selected")
@@ -1176,16 +1523,17 @@ import UIKit
         app.buttons["terminal-presets-add"].tap()
         XCTAssertTrue(app.buttons["terminal-add-row"].waitForExistence(timeout: 5))
         XCTAssertEqual(projects.count, 1)
-        let tmux = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "terminal-row-preview-", "Tmux New Window")).firstMatch
+        let tmux = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label BEGINSWITH %@", "terminal-row-preview-", "Tmux New Window")).firstMatch
         revealHorizontal(tmux, scroll: row); tmux.tap()
         XCTAssertTrue(app.buttons["terminal-edit-selected"].exists, "Shared definition editing remains separate")
         app.buttons["terminal-replace-key"].tap(); pages.buttons["Shortcuts"].tap()
         app.buttons["terminal-create-inline"].tap()
         XCTAssertTrue(app.textFields["terminal-control-name"].waitForExistence(timeout: 5))
         app.textFields["terminal-control-name"].tap(); app.textFields["terminal-control-name"].typeText("My Prefix")
+        openSequenceStep("Press Key", app: app)
         app.buttons["terminal-shortcut-modifier-Ctrl"].tap(); app.buttons["terminal-choose-key"].tap()
         let character = app.textFields["terminal-key-character"]; character.tap(); character.typeText(XCUIKeyboardKey.delete.rawValue + "b")
-        app.buttons["terminal-use-character"].tap(); app.buttons["terminal-item-save"].tap()
+        app.buttons["terminal-use-character"].tap(); app.buttons["shortcut-step-save"].tap(); app.buttons["terminal-item-save"].tap()
         XCTAssertTrue(app.buttons["terminal-add-row"].waitForExistence(timeout: 5))
         let replacement = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label == %@", "terminal-row-preview-", "My Prefix")).firstMatch
         revealHorizontal(replacement, scroll: row)

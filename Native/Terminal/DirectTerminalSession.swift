@@ -101,6 +101,11 @@ private enum TerminalPTY {
     private var pauseDeadline: Task<Void, Never>?
     #if os(iOS)
     private var backgroundTask = UIBackgroundTaskIdentifier.invalid
+    private var customSequenceOwner: (id: UUID, epoch: UUID, completion: @MainActor (String?) -> Void)?
+    @ObservationIgnored private var controlsWriteGeneration: UUID?
+    @ObservationIgnored private var controlsGeneration = UUID()
+    private var customSequenceTask: Task<Void, Never>?
+    var isSendingCustomSequence: Bool { customSequenceOwner?.epoch == writeGeneration }
     var textSendNotice: DirectRecoveryNotice?
     func interruptComposedText() {
         textSendNotice = .init(reason: .inputPaused, title: "Check the sent text",
@@ -500,11 +505,20 @@ private enum TerminalPTY {
     }
     var canSendUserInput: Bool { admits(.userInput) && connected && DirectClientPlatformV1.sessionAvailable && writer != nil }
     #if os(iOS)
-    var customInputEpoch: UUID? { canSendUserInput ? writeGeneration : nil }
+    var customInputEpoch: UUID? {
+        guard canSendUserInput else { return nil }
+        if controlsWriteGeneration != writeGeneration {
+            controlsWriteGeneration = writeGeneration; controlsGeneration = UUID()
+        }
+        return controlsGeneration
+    }
     #endif
     func send(_ data: [UInt8], source: OutputSource = .userInput) { _ = trySend(data, source: source) }
     /// Immediate local queue admission; no transport acknowledgement is awaited.
     @discardableResult func trySend(_ data: [UInt8], source: OutputSource = .userInput) -> Bool {
+        #if os(iOS)
+        if source == .userInput && isSendingCustomSequence { return false }
+        #endif
         guard admits(source), connected, DirectClientPlatformV1.sessionAvailable, let writer, !data.isEmpty else { return false }
         #if os(macOS) || os(visionOS)
         let releasingBytes = nativeInputReleaseBytes
@@ -523,14 +537,14 @@ private enum TerminalPTY {
             #endif
             defer { if generation == id && writeGeneration == writeID { queuedBytes -= data.count } }
             guard admits(source), generation == id, writeGeneration == writeID, !Task.isCancelled, DirectClientPlatformV1.sessionAvailable else { return }
-            do { try await writer.write(data) }
+            do { try await writeInput(data, using: writer) }
             catch { if generation == id && writeGeneration == writeID { stop(); present(.terminalEnded, message: "The connection ended while sending input. It won’t be replayed. Open a new shell to continue.") } }
         }
         return true
     }
     #if os(iOS)
     var composeGeneration: UUID { generation }
-    var canComposeText: Bool { connected && !inputInactive && !suspended && DirectAppLockV1.shared.canAccess && DirectClientPlatformV1.sessionAvailable && writer != nil }
+    var canComposeText: Bool { connected && !inputInactive && !suspended && !isSendingCustomSequence && DirectAppLockV1.shared.canAccess && DirectClientPlatformV1.sessionAvailable && writer != nil }
     /// Use the same PTY and write ordering as live typing. A completion confirms
     /// only the local write; the remote program supplies no consumption receipt.
     func sendComposedText(_ data: [UInt8], generation expected: UUID, completion: @escaping (String?) -> Void) {
@@ -545,11 +559,11 @@ private enum TerminalPTY {
         writeTail = Task {
             await previous?.value
             defer { if generation == id && writeGeneration == writeID { queuedBytes -= data.count } }
-            guard generation == id, writeGeneration == writeID, canComposeText, !Task.isCancelled else {
+            guard generation == id, writeGeneration == writeID, canSendUserInput, !Task.isCancelled else {
                 completion("Sending was interrupted. Check the Terminal before sending again."); return
             }
             do {
-                try await writer.write(data)
+                try await writeInput(data, using: writer)
                 guard generation == id, writeGeneration == writeID else {
                     completion("Text may have been partially sent. Check the Terminal before sending again."); return
                 }
@@ -564,32 +578,118 @@ private enum TerminalPTY {
     }
     #endif
     #if os(iOS)
-    /// Reserve one position in the existing write chain for every packet. Other
-    /// producers append after this task; retirement invalidates each next write.
-    @discardableResult func sendSequence(_ packets: [[UInt8]], epoch expected: UUID, stillValid: @escaping @MainActor () -> Bool = { true }, completion: @escaping @MainActor (String?) -> Void) -> Bool {
+    /// Immediate shortcuts use the same exclusive owner as timed shortcuts,
+    /// retaining their compact ordered packet path and actual-byte budget.
+    @discardableResult func sendSequence(_ packets: [[UInt8]], epoch expected: UUID, stillValid: @escaping @MainActor () -> Bool = { true },
+        progress: @escaping @MainActor (Int) -> Void = { _ in }, completion: @escaping @MainActor (String?) -> Void) -> Bool {
         let size = packets.reduce(0) { $0 + $1.count }
-        guard customInputEpoch == expected, stillValid(), let writer, !packets.isEmpty, packets.allSatisfy({ !$0.isEmpty }),
+        guard customInputEpoch == expected, !isSendingCustomSequence, stillValid(), let writer, !packets.isEmpty, packets.allSatisfy({ !$0.isEmpty }),
               size <= 16384, queuedBytes + size <= Self.maximumQueuedInputBytes else {
             completion("Input changed or is busy. Nothing was queued."); return false
         }
-        queuedBytes += size
-        let id = generation, writeID = writeGeneration, previous = writeTail
-        writeTail = Task {
+        let owner = UUID(), id = generation, writeID = writeGeneration, previous = writeTail
+        customSequenceOwner = (owner, writeID, completion); queuedBytes += size
+        customSequenceTask = Task {
             await previous?.value
-            defer { if generation == id && writeGeneration == writeID { queuedBytes -= size } }
+            var charged = true
+            let releaseBudget = {
+                guard charged else { return }; charged = false
+                if self.generation == id && self.writeGeneration == writeID { self.queuedBytes -= size }
+            }
+            defer { releaseBudget() }
+            let finish = { (message: String?) in releaseBudget(); self.finishCustomSequence(owner, message: message) }
             do {
-                try await TerminalSequencePump.write(packets, current: {
-                    self.generation == id && self.writeGeneration == writeID && self.canSendUserInput && stillValid()
-                }, send: { try await writer.write($0) })
-                completion(nil)
+                try await TerminalSequencePump.run(packets.map { TerminalSequenceOperation.input($0) }, current: {
+                    self.generation == id && self.writeGeneration == writeID && self.customSequenceOwner?.id == owner && self.canSendUserInput && stillValid()
+                }, progress: progress) { _, packet in try await self.writeInput(packet, using: writer) }
+                finish(nil)
             } catch is CancellationError {
-                completion("Sending stopped. Check the session before trying again.")
+                finish("Shortcut canceled. Remaining steps were not sent and will not be replayed.")
             } catch {
-                completion("The shortcut may have been partially sent. It will not be replayed.")
-                if generation == id && writeGeneration == writeID { stop(); present(.terminalEnded) }
+                let current = customSequenceOwner?.id == owner
+                finish("The shortcut may have been partially sent. It will not be replayed.")
+                if current && generation == id && writeGeneration == writeID { stop(); present(.terminalEnded) }
+            }
+        }
+        writeTail = customSequenceTask
+        return true
+    }
+    /// Reserve user input while allowing terminal protocol replies during waits.
+    /// Resolve each input again after waits because terminal modes can change.
+    @discardableResult func sendSequencePlan(_ operations: [TerminalSequenceOperation<[UInt8]>], epoch expected: UUID,
+        resolve: @escaping @MainActor (Int) -> [UInt8]?, stillValid: @escaping @MainActor () -> Bool,
+        progress: @escaping @MainActor (Int) -> Void, completion: @escaping @MainActor (String?) -> Void) -> Bool {
+        let inputs = operations.compactMap(\.input)
+        let waits = operations.compactMap { if case .wait(let value) = $0 { return value }; return nil }
+        guard customInputEpoch == expected, !isSendingCustomSequence, stillValid(), let writer,
+              (1...32).contains(operations.count), !inputs.isEmpty, inputs.allSatisfy({ !$0.isEmpty }),
+              inputs.reduce(0, { $0 + $1.count }) <= 16384,
+              waits.allSatisfy({ (100...30_000).contains($0) }), waits.reduce(0, +) <= 60_000,
+              queuedBytes + 16384 <= Self.maximumQueuedInputBytes else {
+            completion("Input changed or is busy. Nothing was queued."); return false
+        }
+        let owner = UUID(), id = generation, writeID = writeGeneration, previous = writeTail
+        customSequenceOwner = (owner, writeID, completion); queuedBytes += 16384
+        customSequenceTask = Task {
+            await previous?.value
+            // Keep the reservation charged until accepted writes drain, even
+            // when Cancel has already completed the runner and its UI.
+            var charged = true
+            let releaseBudget = {
+                guard charged else { return }; charged = false
+                if self.generation == id && self.writeGeneration == writeID { self.queuedBytes -= 16384 }
+            }
+            defer { releaseBudget() }
+            let finish = { (message: String?) in releaseBudget(); self.finishCustomSequence(owner, message: message) }
+            do {
+                var sentBytes = 0
+                try await TerminalSequencePump.run(operations, current: {
+                    self.generation == id && self.writeGeneration == writeID && self.customSequenceOwner?.id == owner && self.canSendUserInput && stillValid()
+                }, progress: progress) { index, _ in
+                    let priorPacket = self.writeTail
+                    try await withCheckedThrowingContinuation { (reply: CheckedContinuation<Void, Error>) in
+                        self.writeTail = Task {
+                            await priorPacket?.value
+                            guard self.generation == id && self.writeGeneration == writeID && self.customSequenceOwner?.id == owner && self.canSendUserInput && stillValid() && !Task.isCancelled else {
+                                reply.resume(throwing: CancellationError()); return
+                            }
+                            guard let bytes = resolve(index), !bytes.isEmpty, sentBytes + bytes.count <= 16384 else {
+                                reply.resume(throwing: TerminalSequenceFailure.unsupported); return
+                            }
+                            sentBytes += bytes.count
+                            do { try await self.writeInput(bytes, using: writer); reply.resume() }
+                            catch { reply.resume(throwing: error) }
+                        }
+                    }
+                }
+                finish(nil)
+            } catch is CancellationError { finish("Shortcut canceled. Remaining steps were not sent and will not be replayed.") }
+            catch is TerminalSequenceFailure { finish("The terminal input mode changed. Remaining shortcut steps were not sent.") }
+            catch {
+                let current = customSequenceOwner?.id == owner
+                finish("The shortcut stopped after partial input. Check the session before trying again. It will not be replayed.")
+                if current && generation == id && writeGeneration == writeID { stop(); present(.terminalEnded) }
             }
         }
         return true
+    }
+    private func finishCustomSequence(_ owner: UUID, message: String?) {
+        guard let current = customSequenceOwner, current.id == owner else { return }
+        customSequenceOwner = nil; customSequenceTask = nil
+        current.completion(message)
+    }
+    private func retireCustomSequence() {
+        customSequenceTask?.cancel()
+        if let owner = customSequenceOwner?.id {
+            finishCustomSequence(owner, message: "Shortcut canceled. Remaining steps were not sent and will not be replayed.")
+        }
+    }
+    func cancelSequence(epoch expected: UUID) {
+        guard expected == customInputEpoch, isSendingCustomSequence else { return }
+        // Retire UI callbacks without dropping the transport tail: NIO writes
+        // may ignore task cancellation, so fresh input must remain behind them.
+        controlsGeneration = UUID()
+        retireCustomSequence()
     }
     #endif
     #if os(macOS) || os(visionOS)
@@ -605,7 +705,7 @@ private enum TerminalPTY {
             await previous?.value; await previousRelease?.value
             guard generation == id, connected, !Task.isCancelled else { return }
             defer { if generation == id { nativeInputReleaseBytes -= data.count } }
-            do { try await writer.write(data) }
+            do { try await writeInput(data, using: writer) }
             catch { if generation == id { stop(); present(.terminalEnded, message: "The Terminal ended while releasing held input. Open a new shell to continue.") } }
         }
     }
@@ -632,6 +732,15 @@ private enum TerminalPTY {
             try? await writeSize(writer, columns: cols, rows: rows)
         }
     }
+    #if DEBUG
+    var beforeWriteForTesting: (@MainActor ([UInt8]) async throws -> Void)?
+    #endif
+    private func writeInput(_ bytes: [UInt8], using writer: TerminalWriter) async throws {
+        #if DEBUG
+        try await beforeWriteForTesting?(bytes)
+        #endif
+        try await writer.write(bytes)
+    }
     private func writeSize(_ writer: TerminalWriter, columns: Int, rows: Int) async throws {
         #if DEBUG
         if let resizeForTesting { try await resizeForTesting(columns, rows); return }
@@ -641,6 +750,9 @@ private enum TerminalPTY {
     func stop() {
         inputInactive = false; readPauseCompleted = false
         lifecycleGeneration = UUID(); writeGeneration = UUID()
+        #if os(iOS)
+        retireCustomSequence()
+        #endif
         pauseWork?.cancel(); pauseWork = nil; resumeWork?.cancel(); resumeWork = nil; finishBackgroundWork()
         suspended = false; pausedOutput.removeAll(keepingCapacity: false)
         suspendInput?(); activity?.finish(); activity = nil
@@ -682,6 +794,9 @@ private enum TerminalPTY {
         if connecting { cancelConnection(); return }
         guard connected, !inputInactive else { return }
         inputInactive = true; writeGeneration = UUID(); writeTail?.cancel(); writeTail = nil; queuedBytes = 0
+        #if os(iOS)
+        retireCustomSequence()
+        #endif
         suspendInput?()
     }
     func background() {
@@ -690,6 +805,9 @@ private enum TerminalPTY {
         suspended = true; lifecycleGeneration = UUID(); let token = lifecycleGeneration
         inputInactive = true; readPauseCompleted = false
         writeGeneration = UUID(); writeTail?.cancel()
+        #if os(iOS)
+        retireCustomSequence()
+        #endif
         resumeWork?.cancel(); resumeWork = nil; suspendInput?()
         writeTail = nil; queuedBytes = 0
         activity?.setForeground(false); activity?.setPhase("paused")

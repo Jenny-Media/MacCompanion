@@ -2174,10 +2174,26 @@
     return self.remoteControls ? self.remoteControls.modifierButtons.mutableCopy : _modifiers;
 }
 - (NSUInteger)controlsEpoch { return self.textGeneration; }
+- (NSString *)controlsConnectionID { return self.session.connectionIdentifier ?: @""; }
 - (BOOL)controlsInputAvailable { return [self sessionKeyInputAvailable]; }
 - (BOOL)sendControlEvents:(NSArray<NSDictionary *> *)events completion:(void (^)(BOOL))completion {
     if (![self sessionKeyInputAvailable]) return NO;
     return [self.session tryComposedTextEvents:events completion:completion];
+}
+- (NSString *)beginControlSequence {
+    [self retirePointerForMenu];
+    return [self sessionKeyInputAvailable] ? [self.session beginControlSequence] : nil;
+}
+- (BOOL)sendControlSequenceEvents:(NSArray<NSDictionary *> *)events identifier:(NSString *)identifier completion:(void (^)(BOOL))completion {
+    return [self sessionKeyInputAvailable] && [self.session tryControlSequenceEvents:events identifier:identifier completion:completion];
+}
+- (void)endControlSequence:(NSString *)identifier {
+    if ([self.session ownsControlSequence:identifier]) [self retirePointerForMenu];
+    [self.session endControlSequence:identifier];
+}
+- (void)cancelControlSequence:(NSString *)identifier {
+    if ([self.session ownsControlSequence:identifier]) [self retirePointerForMenu];
+    [self.session cancelControlSequence:identifier];
 }
 - (void)sendOrdinaryControlEvents:(NSArray<NSDictionary *> *)events {
     if ([self sessionKeyInputAvailable]) [self.session keyEvents:events];

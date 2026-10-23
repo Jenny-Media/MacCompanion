@@ -26,15 +26,15 @@ struct TerminalSavedControlEditor: View {
                         .textInputAutocapitalization(.words).autocorrectionDisabled().focused($editingName).submitLabel(.done).onSubmit { editingName = false }
                 }
                 if action.kind == .shortcut {
-                    if action.steps == nil {
-                        Section("Key Combination") { TerminalShortcutCombination(action: $action, allowsCommand: profile.family == .remoteMac) }
-                        Section {
-                            Button("Add Step", systemImage: "plus") { newStep = .init() }
-                                .accessibilityIdentifier("shortcut-add-step")
-                        }
-                    } else { TerminalSequenceEditor(action: $action, edit: { step in
+                    TerminalSequenceEditor(action: $action, edit: { step in
                         editingExistingStep = true; newStep = step
-                    }, add: { editingExistingStep = false; newStep = .init() }) }
+                    }, add: { kind in
+                        editingExistingStep = false; newStep = .init(kind: kind, waitMilliseconds: kind == .wait ? 1000 : nil)
+                    })
+                    Section {
+                        Toggle("Confirm Before Running", isOn: Binding(get: { action.confirmBeforeRunning == true }, set: { action.confirmBeforeRunning = $0 }))
+                            .accessibilityIdentifier("shortcut-confirm-before-running")
+                    } footer: { Text("Ask before running this shortcut. You can skip confirmation for the current connection.") }
                 } else if action.kind == .text {
                     Section {
                         TextEditor(text: $action.text).font(.body.monospaced()).frame(minHeight: 150, maxHeight: 210)
@@ -74,10 +74,15 @@ struct TerminalSavedControlEditor: View {
                 .alert("Couldn’t Save", isPresented: $failed) { Button("Keep Editing", role: .cancel) {} }
                 message: { Text("Your changes are still open. If controls changed in another window, cancel and reopen this editor before trying again.") }
         }.privacySensitive().directAppearance().interactiveDismissDisabled().presentationSizing(.page)
+            .onAppear {
+                if action.kind == .shortcut && action.steps == nil {
+                    action.steps = creating && action.character == 0 ? [] : action.resolvedSteps
+                }
+            }
             .sheet(item: $newStep) { step in
                 TerminalSequenceStepEditor(step: step, allowsCommand: profile.family == .remoteMac, creating: !editingExistingStep) { result in
                     if editingExistingStep, let index = action.steps?.firstIndex(where: { $0.id == result.id }) { action.steps?[index] = result }
-                    else { action.steps = action.resolvedSteps + [result] }
+                    else { action.appendShortcutStep(result) }
                     newStep = nil
                 }
             }
@@ -128,6 +133,7 @@ private struct TerminalShortcutKeyPicker: View {
     let select: (UInt32) -> Void
     @State private var query = ""
     @State private var typed = ""
+    @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         NavigationStack {
@@ -140,9 +146,9 @@ private struct TerminalShortcutKeyPicker: View {
                 }
                 ForEach(TerminalKeyCatalog.groups.filter { $0.title != "Common Shortcuts" }) { group in
                     Section(group.title) {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 88))], spacing: 8) {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: typeSize.isAccessibilitySize ? 220 : 88))], spacing: 8) {
                             ForEach(TerminalKeyCatalog.matching(query, in: group).filter { $0.modifiers.isEmpty }) { key in
-                                Button { select(key.shortcutCode) } label: { Text(key.title) }
+                                Button { select(key.shortcutCode) } label: { Text(key.pickerTitle) }
                                     .buttonStyle(TerminalKeycapStyle()).accessibilityLabel(key.name).accessibilityIdentifier("terminal-choose-" + key.id)
                             }
                         }

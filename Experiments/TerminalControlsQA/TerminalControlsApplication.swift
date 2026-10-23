@@ -125,7 +125,14 @@ struct TerminalControlsHarness: View {
                                 TerminalControlsInputBadge(host: live).allowsHitTesting(false)
                             }
                             .overlay(alignment: .topTrailing) {
-                                if ProcessInfo.processInfo.environment["MACCOMPANION_TERMINAL_CONTROLS_REVIEW"] == "1" {
+                                if ProcessInfo.processInfo.environment["MACCOMPANION_SEQUENCE_INPUT_QA"] == "1" {
+                                    VStack {
+                                        Button("Reconnect") { live.reconnect() }.buttonStyle(.bordered).accessibilityIdentifier("controls-qa-reconnect")
+                                        if ProcessInfo.processInfo.environment["MACCOMPANION_SEQUENCE_BLOCKED_WRITE_QA"] == "1" {
+                                            Button("Release SSH Write") { live.releaseBlockedWrite() }.buttonStyle(.bordered).accessibilityIdentifier("controls-qa-release-write")
+                                        }
+                                    }
+                                } else if ProcessInfo.processInfo.environment["MACCOMPANION_TERMINAL_CONTROLS_REVIEW"] == "1" {
                                     if reviewFinished { Text("Review finished").accessibilityIdentifier("controls-qa-review-finished") }
                                     else { Button("Finish Review") { reviewFinished = true }.buttonStyle(.bordered).accessibilityIdentifier("controls-qa-finish-review") }
                                 }
@@ -139,14 +146,28 @@ struct TerminalControlsHarness: View {
 }
 
 @MainActor @Observable final class TerminalControlsLiveHost {
-    let record = SSHTestRecord(echoInput: false, initialOutput: "\u{1b}[?25lSynthetic Terminal UX QA\r\nConnected to local test SSH server\r\n" + (ProcessInfo.processInfo.environment["MACCOMPANION_COMMAND_QA"] == "1" ? "\u{1b}[=3u" : ""))
+    let record = SSHTestRecord(echoInput: false, initialOutput: "\u{1b}[?25lSynthetic Terminal UX QA\r\nConnected to local test SSH server\r\n" + (ProcessInfo.processInfo.environment["MACCOMPANION_COMMAND_QA"] == "1" ? "\u{1b}[=3u" : "") + (ProcessInfo.processInfo.environment["MACCOMPANION_SEQUENCE_INPUT_QA"] == "1" ? "\u{1b}[?2004h" : ""))
     var session: DirectTerminalSession?
     private var server: Channel?
     var inputHex = ""
+    var sequenceResult = "Waiting for input"
+    var writerBlocked = false
+    private var blockedOnce = false
+    private var blockedWrite: CheckedContinuation<Void, Error>?
+    func releaseBlockedWrite() {
+        let pending = blockedWrite; blockedWrite = nil; writerBlocked = false; pending?.resume()
+    }
+    private var numericStarted: ContinuousClock.Instant?
+    private var numericReady = false
+    private var numericCompleted = false
     func prepare() async throws {
         let key = NIOSSHPrivateKey(ed25519Key: .init())
         let record = record
-        record.inputChanged = { [weak self] bytes in Task { @MainActor in self?.inputHex = bytes.map { String(format: "%02x", $0) }.joined() } }
+        record.inputChanged = { [weak self] bytes in Task { @MainActor in
+            guard let self else { return }
+            self.inputHex = bytes.map { String(format: "%02x", $0) }.joined()
+            if ProcessInfo.processInfo.environment["MACCOMPANION_SEQUENCE_INPUT_QA"] == "1" { self.receiveSequenceProbe(bytes) }
+        } }
         server = try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton).childChannelInitializer { channel in
             record.openedTransport(channel)
             return channel.pipeline.addHandler(NIOSSHHandler(role: .server(.init(hostKeys: [key], userAuthDelegate: SSHTestAuth(record))), allocator: channel.allocator,
@@ -166,15 +187,80 @@ struct TerminalControlsHarness: View {
         }
         var sequence = TerminalControlAction(id: UUID(uuidString: "00000000-0000-0000-0000-00000000C005")!, title: "Review Sequence", kind: .shortcut, inRow: true, inMenu: true)
         sequence.steps = [.init(character: 0x62, modifiers: [0xffe3]), .init(kind: .text, text: "synthetic"), .init(character: 0xff0d)]
+        sequence.confirmBeforeRunning = true
         profile.actions.append(sequence)
+        if ProcessInfo.processInfo.environment["MACCOMPANION_SEQUENCE_INPUT_QA"] == "1" {
+            func action(_ suffix: String, _ title: String, _ steps: [TerminalShortcutStep]) -> TerminalControlAction {
+                var value = TerminalControlAction(id: UUID(uuidString: "00000000-0000-0000-0000-00000000" + suffix)!, title: title, kind: .shortcut, inRow: true, inMenu: true)
+                value.steps = steps; return value
+            }
+            let launch: [TerminalShortcutStep] = [.init(kind: .typeText, text: "t"), .init(character: 0xff0d), .init(kind: .wait, waitMilliseconds: 1000), .init(kind: .typeText, text: "1"), .init(character: 0xff0d)]
+            let chords: [TerminalShortcutStep] = [.init(character: 0x67, modifiers: [0xffe3]), .init(character: 0x6f, modifiers: [0xffe3])]
+            var cancel = launch; cancel[2].waitMilliseconds = 10_000
+            var confirmed = action("C014", "Confirmed Shortcut", [.init(kind: .typeText, text: "ok"), .init(character: 0xff0d)])
+            confirmed.confirmBeforeRunning = true
+            var queries = launch; queries[2].waitMilliseconds = 4000
+            let probes = [action("C010", "Launch Session", launch), action("C011", "Chord Input", chords + [.init(character: 0x64)]),
+                          action("C012", "Type Words", chords + [.init(kind: .typeText, text: "done")]), action("C013", "Cancel Wait", cancel), confirmed,
+                          action("C016", "Live Terminal Replies", queries), action("C017", "Immediate Input", [.init(kind: .typeText, text: "t"), .init(character: 0xff0d), .init(kind: .typeText, text: "z")])]
+            profile.actions += probes
+            profile.freezeKeyboardLayout()
+            let focus = ProcessInfo.processInfo.environment["MACCOMPANION_SEQUENCE_FOCUS"]
+            let ordered = probes.filter { $0.id.uuidString.hasSuffix(focus ?? "C010") } + probes.filter { $0.id.uuidString.hasSuffix("C011") && !$0.id.uuidString.hasSuffix(focus ?? "C010") }
+            profile.keyboardRows = [.init(id: TerminalKeyboardRow.mainID, kind: .main, title: "Main", actionIDs: ordered.map(\.id), items: ordered.map { .saved($0.id) })]
+            if ProcessInfo.processInfo.environment["MACCOMPANION_EXECUTION_OVERLAY_QA"] == "1" {
+                profile.keyboardRows = [.init(kind: .numbers, title: "Numbers", items: TerminalRowPreset.numbers.items),
+                                        .init(id: TerminalKeyboardRow.mainID, kind: .main, title: "Main", actionIDs: ordered.map(\.id), items: [.control(.keyboard), .control(.expand)] + ordered.map { .saved($0.id) })]
+                profile.rowsExpanded = true
+            }
+            precondition(profile.valid, "Sequence probes must use a valid shipping controls profile")
+        }
         for index in 1...40 { profile.actions.append(.init(title: "Saved Path \(index)", kind: .text, text: "/synthetic/path/\(index)", inMenu: false)) }
         if ProcessInfo.processInfo.environment["MACCOMPANION_CONTROLS_REPEATED_UTILITIES"] == "1" {
             profile.addPreset(.essentials, before: TerminalKeyboardRow.mainID)
         }
         try TerminalSecretStore.write(JSONEncoder().encode(profile), id: TerminalControlsStore.account, kind: TerminalControlsStore.kind)
         session = DirectTerminalSession(mac: mac); session?.saveMacRequested = false
+        if ProcessInfo.processInfo.environment["MACCOMPANION_SEQUENCE_BLOCKED_WRITE_QA"] == "1" {
+            session?.beforeWriteForTesting = { [weak self] bytes in
+                guard let self, !blockedOnce, bytes == [116] else { return }
+                blockedOnce = true; writerBlocked = true
+                try await withCheckedThrowingContinuation { blockedWrite = $0 }
+            }
+        }
+    }
+    private func receiveSequenceProbe(_ bytes: [UInt8]) {
+        if bytes == [116, 13], numericStarted == nil {
+            numericStarted = .now; sequenceResult = "Starting session launcher"
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(800))
+                guard let self, session?.connected == true else { return }
+                numericReady = true
+                let queries = ProcessInfo.processInfo.environment["MACCOMPANION_SEQUENCE_PROTOCOL_QA"] == "1" ? "\r\nIntermediate output remains visible\r\n\u{1b}[5n\u{1b}[6n" : ""
+                try? await record.emit("\u{1b}[?2004lAvailable sessions\r\n1) Synthetic session\r\nPlease choose your session: " + queries)
+            }
+        }
+        if bytes.starts(with: [116, 13]), bytes.suffix(2) == [49, 13], !numericCompleted {
+            numericCompleted = true
+            sequenceResult = numericReady ? "Session 1 selected after waiting" : "FAILED: selection arrived before the prompt"
+            let result = sequenceResult
+            Task { try? await record.emit("\r\n" + result + "\r\n") }
+        }
+        if ProcessInfo.processInfo.environment["MACCOMPANION_SEQUENCE_PROTOCOL_QA"] == "1", !numericCompleted,
+           String(decoding: bytes, as: UTF8.self).contains("\u{1b}[0n") { sequenceResult = "Terminal replies received during wait" }
+        if bytes == [7, 15, 100] || bytes == [7, 15, 100, 111, 110, 101] {
+            sequenceResult = bytes.count == 3 ? "Received Ctrl+G → Ctrl+O → d" : "Received Ctrl+G → Ctrl+O → done"
+            let result = sequenceResult
+            Task { try? await record.emit("\r\n" + result + "\r\n") }
+        }
+    }
+    func reconnect() {
+        session?.stop(); record.clearReceived(); inputHex = ""; sequenceResult = "Waiting for input"
+        numericStarted = nil; numericReady = false; numericCompleted = false
+        session?.connect(username: "synthetic", password: "synthetic-only", remember: false)
     }
     func close() {
+        releaseBlockedWrite()
         if let session { session.stop(); try? TerminalSecretStore.remove(session.mac.id) }
         session = nil
         if let server { Task { try? await server.close() } }; server = nil
@@ -186,6 +272,12 @@ private struct TerminalControlsInputBadge: View {
         VStack(alignment: .leading) {
             Text("Input: " + host.inputHex).accessibilityIdentifier("controls-qa-input")
             Text(host.session?.canSendUserInput == true && DirectProAccess.shared.hasPro ? "Input ready" : "Input paused").accessibilityIdentifier("controls-qa-input-ready")
+            if ProcessInfo.processInfo.environment["MACCOMPANION_SEQUENCE_INPUT_QA"] == "1" {
+                Text(host.sequenceResult).accessibilityIdentifier("controls-qa-sequence-result")
+                if ProcessInfo.processInfo.environment["MACCOMPANION_SEQUENCE_BLOCKED_WRITE_QA"] == "1" {
+                    Text(host.writerBlocked ? "SSH writer stalled" : "SSH writer flowing").accessibilityIdentifier("controls-qa-writer-state")
+                }
+            }
         }.font(.caption2).padding(4).background(.regularMaterial)
     }
 }
@@ -207,11 +299,25 @@ private struct TerminalRemoteControlsHost: UIViewControllerRepresentable {
     private var epoch: UInt = 1
     private var available = true
     private var data: Data
+    private var activeSequence: String?
+    private let overlayProbe = ProcessInfo.processInfo.environment["MACCOMPANION_EXECUTION_OVERLAY_QA"] == "1"
     init(close: @escaping () -> Void) {
         self.close = close
         var profile = TerminalControlsProfile.remoteDefaults; profile.freezeKeyboardLayout()
+        if ProcessInfo.processInfo.environment["MACCOMPANION_EXECUTION_OVERLAY_QA"] == "1" {
+            var wait = TerminalControlAction(id: UUID(uuidString: "00000000-0000-0000-0000-00000000C020")!, title: "Open workspace", kind: .shortcut, inRow: true)
+            wait.steps = [.init(character: 97), .init(kind: .wait, waitMilliseconds: 10_000), .init(character: 98)]
+            var quick = TerminalControlAction(id: UUID(uuidString: "00000000-0000-0000-0000-00000000C021")!, title: "Quick key", kind: .shortcut, inRow: true)
+            quick.steps = [.init(character: 99)]
+            profile.actions += [wait, quick]
+            profile.keyboardRows = [.init(kind: .numbers, title: "Numbers", items: TerminalRowPreset.numbers.items),
+                                    .init(id: TerminalKeyboardRow.mainID, kind: .main, title: "Main", actionIDs: [wait.id, quick.id], items: [.control(.keyboard), .control(.expand), .saved(wait.id), .saved(quick.id), .control(.ctrl)])]
+            profile.rowsExpanded = true
+            precondition(profile.valid, "Remote overlay probes must use valid shipping profiles")
+        }
         data = try! JSONEncoder().encode(profile)
         super.init(nibName: nil, bundle: nil)
+        inputOnly = TerminalControlsMemory.remoteMode == .trackpad
     }
     required init?(coder: NSCoder) { fatalError() }
     override func loadView() { view = UIView(); view.backgroundColor = .systemBackground }
@@ -220,20 +326,42 @@ private struct TerminalRemoteControlsHost: UIViewControllerRepresentable {
         setValue(CompanionVNCInterfaceFeedback(view: view), forKey: "keyFeedback")
         controlsHost = RemoteMacControls(viewer: self, store: .init(read: { self.data }, write: { self.data = $0 }, legacyIDs: { [] }, legacyActions: { [] }, family: .remoteMac))
         let edit = UIButton(type: .system); edit.setTitle("Customize Remote Keyboard", for: .normal)
-        edit.accessibilityIdentifier = "remote-qa-edit"; edit.addAction(.init { [weak self] _ in self?.controlsHost.showSettings() }, for: .touchUpInside)
+        edit.accessibilityIdentifier = "remote-qa-edit"
+        edit.accessibilityValue = "overlay=\(overlayProbe); environment=\(ProcessInfo.processInfo.environment["MACCOMPANION_EXECUTION_OVERLAY_QA"] ?? "unset"); definitions=\((try? JSONDecoder().decode(TerminalControlsProfile.self, from: data).actions.count) ?? -1); proAtLoad=\(DirectProAccess.shared.hasPro)"
+        edit.addAction(.init { [weak self] _ in self?.controlsHost.showSettings() }, for: .touchUpInside)
         let done = UIButton(type: .system); done.setTitle("Close Remote Controls", for: .normal)
         done.addAction(.init { [weak self] _ in self?.close() }, for: .touchUpInside)
         output.text = "Remote events: 0"; output.accessibilityIdentifier = "remote-qa-events"; output.textAlignment = .center
         let stack = UIStackView(arrangedSubviews: [edit, output, done]); stack.axis = .vertical; stack.spacing = 16
         stack.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(stack)
+        if overlayProbe {
+            let heading = UILabel(); heading.text = inputOnly ? "Trackpad & Keyboard" : "Screen Sharing"; heading.textAlignment = .center
+            heading.font = .preferredFont(forTextStyle: .title2); stack.insertArrangedSubview(heading, at: 0)
+        }
         let bar = controlsHost.bar; view.addSubview(bar)
         view.addSubview(inputField); inputField.frame = .init(x: 0, y: 0, width: 1, height: 1); inputField.alpha = 0.01
         NSLayoutConstraint.activate([stack.centerXAnchor.constraint(equalTo: view.centerXAnchor), stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 24),
             bar.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor), bar.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
             bar.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor)])
+        if overlayProbe {
+            let floating = CompanionVNCControls(); floating.macName = "Synthetic Mac"; floating.buttonAnchorView = controlsHost.menuAnchor
+            floating.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(floating)
+            NSLayoutConstraint.activate([floating.leadingAnchor.constraint(equalTo: view.leadingAnchor), floating.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                                         floating.topAnchor.constraint(equalTo: view.topAnchor), floating.bottomAnchor.constraint(equalTo: view.bottomAnchor)])
+        }
     }
     override func viewWillLayoutSubviews() {}
     override func viewDidLayoutSubviews() {}
+    override func beginControlSequence() -> String? {
+        guard available, activeSequence == nil else { return nil }
+        let id = UUID().uuidString; activeSequence = id; return id
+    }
+    override func sendControlSequenceEvents(_ events: [[AnyHashable: Any]], identifier: String, completion: @escaping (Bool) -> Void) -> Bool {
+        guard activeSequence == identifier, available else { return false }
+        return sendControlEvents(events, completion: completion)
+    }
+    override func endControlSequence(_ identifier: String) { if activeSequence == identifier { activeSequence = nil } }
+    override func cancelControlSequence(_ identifier: String) { endControlSequence(identifier) }
     override var controlsEpoch: UInt { epoch }
     override func controlsInputAvailable() -> Bool { available }
     override func beginKeyboardCustomization() { available = false; epoch += 1; controlsHost.reset(); view.endEditing(true) }

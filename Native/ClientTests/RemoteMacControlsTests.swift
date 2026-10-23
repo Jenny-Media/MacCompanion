@@ -24,11 +24,18 @@ private final class RemoteAnchorSession: CompanionVNCSession {
     var shown: UIViewController?
     var keyboardToggles = 0
     var composerReview: (text: String, title: String, available: () -> Bool)?
+    var sequenceOwner: String?
+    var holdSequenceReplies = false
+    var pendingSequenceReplies: [(Bool) -> Void] = []
+    var connectionID = UUID().uuidString
     lazy var feedback = CompanionVNCInterfaceFeedback(view: view)
     override func loadView() { view = UIView() }
     override func viewDidLoad() {}
+    override func viewWillLayoutSubviews() {}
+    override func viewDidLayoutSubviews() {}
     override var controlsFeedback: CompanionVNCInterfaceFeedback { feedback }
     override var controlsEpoch: UInt { epoch }
+    override var controlsConnectionID: String { connectionID }
     override func controlsInputAvailable() -> Bool { available }
     override func toggleControlsKeyboard() { keyboardToggles += 1 }
     override func showControlsComposer(text: String, title: String, available: @escaping () -> Bool) {
@@ -38,14 +45,228 @@ private final class RemoteAnchorSession: CompanionVNCSession {
         guard available, accepts else { return false }; self.events += events; completion(true); return true
     }
     override func sendOrdinaryControlEvents(_ events: [[AnyHashable: Any]]) { if available { self.events += events } }
+    override func beginControlSequence() -> String? {
+        guard available, sequenceOwner == nil else { return nil }
+        let id = UUID().uuidString; sequenceOwner = id; return id
+    }
+    override func sendControlSequenceEvents(_ events: [[AnyHashable: Any]], identifier: String, completion: @escaping (Bool) -> Void) -> Bool {
+        guard available, accepts, sequenceOwner == identifier else { return false }
+        self.events += events
+        if holdSequenceReplies { pendingSequenceReplies.append(completion) } else { completion(true) }
+        return true
+    }
+    override func endControlSequence(_ identifier: String) { if sequenceOwner == identifier { sequenceOwner = nil } }
+    override func cancelControlSequence(_ identifier: String) { endControlSequence(identifier) }
     override func dismiss(animated flag: Bool, completion: (() -> Void)? = nil) { shown = nil; completion?() }
     override func present(_ viewControllerToPresent: UIViewController, animated flag: Bool, completion: (() -> Void)? = nil) { shown = viewControllerToPresent; completion?() }
 }
 
 @MainActor final class RemoteMacControlsTests: XCTestCase {
+    func testExplicitConfirmationAndConnectionSkipApplyInBothRemoteModes() async throws {
+        let entitlement = try await pro(); defer { entitlement.clearTransactions() }
+        for inputOnly in [false, true] {
+            var action = TerminalControlAction(title: "Confirmable", kind: .shortcut)
+            action.steps = [.init(kind: .typeText, text: "x")]
+            var profile = TerminalControlsProfile.remoteDefaults
+            profile.actions.append(action); profile.pin(action.id, in: .menu, enabled: true); profile.captureRemoteMenu()
+            profile.remoteMenus = ["desktop": profile.resolvedMenuPlacements, "trackpad": profile.resolvedMenuPlacements]
+            profile.remoteMenuMode = "desktop"
+            var data = try JSONEncoder().encode(profile)
+            let viewer = RemoteControlsTestViewer(); viewer.inputOnly = inputOnly
+            let host = RemoteMacControls(viewer: viewer, store: .init(read: { data }, write: { data = $0 }, legacyIDs: { [] }, family: .remoteMac))
+            mount(host, in: viewer)
+            func run() throws { host.performMenuAction(try XCTUnwrap(host.menuActions().first { $0["title"] as? String == action.title })) }
+            try run(); XCTAssertNil(viewer.shown); XCTAssertEqual(viewer.events.count, 2)
+            profile.actions[profile.actions.firstIndex { $0.id == action.id }!].confirmBeforeRunning = true
+            data = try JSONEncoder().encode(profile); host.reload(); viewer.events = []
+            try run()
+            let canceled = try XCTUnwrap((viewer.shown as? UIHostingController<TerminalSequenceReview>)?.rootView)
+            canceled.cancel(); XCTAssertTrue(viewer.events.isEmpty)
+            try run()
+            try XCTUnwrap((viewer.shown as? UIHostingController<TerminalSequenceReview>)?.rootView).send(true)
+            XCTAssertEqual(viewer.events.count, 2); XCTAssertNil(viewer.shown)
+            viewer.epoch += 1; host.reset() // Same transport, brief inactivity or mode retirement.
+            try run(); XCTAssertNil(viewer.shown); XCTAssertEqual(viewer.events.count, 4)
+            viewer.connectionID = UUID().uuidString; try run()
+            let review = try XCTUnwrap((viewer.shown as? UIHostingController<TerminalSequenceReview>)?.rootView)
+            review.send(true)
+            let index = profile.actions.firstIndex { $0.id == action.id }!
+            profile.actions[index].steps![0].text = "changed"
+            data = try JSONEncoder().encode(profile); host.reload(); try run()
+            XCTAssertNotNil(viewer.shown as? UIHostingController<TerminalSequenceReview>)
+            host.reset()
+        }
+    }
+    func testTimedRemoteSequenceCompletesAndResetCancelsSuffixInBothModes() async throws {
+        let entitlement = try await pro(); defer { entitlement.clearTransactions() }
+        for inputOnly in [false, true] {
+            var action = TerminalControlAction(title: "Timed Remote", kind: .shortcut)
+            action.steps = [.init(character: 97), .init(kind: .wait, waitMilliseconds: 500), .init(character: 98)]
+            var profile = TerminalControlsProfile.remoteDefaults
+            profile.actions.append(action); profile.pin(action.id, in: .menu, enabled: true); profile.captureRemoteMenu()
+            profile.remoteMenus = ["desktop": profile.resolvedMenuPlacements, "trackpad": profile.resolvedMenuPlacements]
+            profile.remoteMenuMode = "desktop"
+            XCTAssertTrue(profile.valid)
+            let viewer = RemoteControlsTestViewer(); viewer.inputOnly = inputOnly
+            let host = controls(viewer, data: try JSONEncoder().encode(profile))
+            let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+            let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+            window.rootViewController = viewer; viewer.view.backgroundColor = .systemBackground; window.makeKeyAndVisible()
+            defer { host.reset(); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+            func run() throws { host.performMenuAction(try XCTUnwrap(host.menuActions().first { $0["title"] as? String == action.title })) }
+            try run()
+            for _ in 0..<100 where viewer.events.count < 4 || viewer.sequenceOwner != nil { try await Task.sleep(for: .milliseconds(10)) }
+            XCTAssertEqual(viewer.events.compactMap { ($0["key"] as? NSNumber)?.uint32Value }, [97, 97, 98, 98])
+            XCTAssertNil(viewer.sequenceOwner)
+            viewer.events = []; try run()
+            for _ in 0..<100 where viewer.events.isEmpty { try await Task.sleep(for: .milliseconds(1)) }
+            XCTAssertEqual(viewer.events.count, 2)
+            XCTAssertNil(viewer.shown, "Progress must not present a modal sheet")
+            try await Task.sleep(for: .milliseconds(210)) // The progress surface appears only after the quick-run threshold.
+            viewer.view.frame = window.bounds; window.layoutIfNeeded(); viewer.view.layoutIfNeeded()
+            XCTAssertGreaterThan(host.bar.bounds.height, 0)
+            let screenshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
+            let attachment = XCTAttachment(image: screenshot); attachment.name = inputOnly ? "trackpad-nonmodal-shortcut-progress" : "desktop-nonmodal-shortcut-progress"; attachment.lifetime = .keepAlways; add(attachment)
+            host.reset()
+            try await Task.sleep(for: .milliseconds(200))
+            XCTAssertEqual(viewer.events.count, 2, "Reset during the wait must retire its suffix in either remote mode")
+            XCTAssertNil(viewer.sequenceOwner)
+            viewer.events = []; try run()
+            for _ in 0..<100 where viewer.events.isEmpty { try await Task.sleep(for: .milliseconds(1)) }
+            let banner = try XCTUnwrap(viewer.children.compactMap { $0 as? TerminalSequenceBannerController }.first)
+            banner.rootView.cancel()
+            try await Task.sleep(for: .milliseconds(200))
+            XCTAssertEqual(viewer.events.count, 2, "Explicit Cancel must stop a key-only suffix in either mode")
+            XCTAssertNil(viewer.sequenceOwner)
+            XCTAssertTrue(viewer.children.compactMap { $0 as? TerminalSequenceBannerController }.isEmpty)
+        }
+    }
+    func testImmediateRemoteShortcutIsExclusiveAndOldCallbacksCannotFinishNewRunInBothModes() async throws {
+        let entitlement = try await pro(); defer { entitlement.clearTransactions() }
+        for inputOnly in [false, true] {
+            var first = TerminalControlAction(title: "First", kind: .shortcut)
+            first.steps = [.init(character: 97), .init(character: 98)]
+            var second = TerminalControlAction(title: "Second", kind: .shortcut)
+            second.steps = [.init(character: 99)]
+            var profile = TerminalControlsProfile.remoteDefaults
+            profile.actions += [first, second]
+            profile.pin(first.id, in: .menu, enabled: true); profile.pin(second.id, in: .menu, enabled: true); profile.captureRemoteMenu()
+            profile.remoteMenus = ["desktop": profile.resolvedMenuPlacements, "trackpad": profile.resolvedMenuPlacements]
+            profile.remoteMenuMode = "desktop"
+            let viewer = RemoteControlsTestViewer(); viewer.inputOnly = inputOnly; viewer.holdSequenceReplies = true
+            let host = controls(viewer, data: try JSONEncoder().encode(profile)); defer { host.reset() }
+            func run(_ action: TerminalControlAction) throws { host.performMenuAction(try XCTUnwrap(host.menuActions().first { $0["title"] as? String == action.title })) }
+            try run(first)
+            let originalOwner = try XCTUnwrap(viewer.sequenceOwner)
+            let original = try XCTUnwrap(viewer.children.compactMap { $0 as? TerminalSequenceBannerController }.first)
+            XCTAssertFalse(original.progressVisible, "Block input immediately without flashing progress")
+            XCTAssertFalse(host.bar.isUserInteractionEnabled); XCTAssertTrue(host.bar.accessibilityElementsHidden)
+            try run(second)
+            XCTAssertEqual(viewer.sequenceOwner, originalOwner); XCTAssertEqual(viewer.pendingSequenceReplies.count, 1)
+            original.rootView.cancel()
+            XCTAssertNil(viewer.sequenceOwner); XCTAssertTrue(host.bar.isUserInteractionEnabled)
+            try run(second)
+            let current = try XCTUnwrap(viewer.sequenceOwner)
+            XCTAssertNotEqual(current, originalOwner)
+            original.rootView.cancel()
+            viewer.pendingSequenceReplies[0](true)
+            XCTAssertEqual(viewer.sequenceOwner, current, "An old Cancel or reply must not release the newer owner")
+            XCTAssertFalse(host.bar.isUserInteractionEnabled)
+            viewer.pendingSequenceReplies[1](true)
+            XCTAssertNil(viewer.sequenceOwner); XCTAssertTrue(host.bar.isUserInteractionEnabled)
+            XCTAssertFalse(host.bar.accessibilityElementsHidden)
+            XCTAssertTrue(viewer.children.compactMap { $0 as? TerminalSequenceBannerController }.isEmpty)
+        }
+    }
+
+    func testRemoteLayoutChangesDoNotCancelExecutionButDefinitionChangesDoInBothModes() async throws {
+        let entitlement = try await pro(); defer { entitlement.clearTransactions() }
+        for inputOnly in [false, true] {
+            var action = TerminalControlAction(title: "Keep running", kind: .shortcut)
+            action.steps = [.init(character: 97), .init(kind: .wait, waitMilliseconds: 600), .init(character: 98)]
+            var profile = TerminalControlsProfile.remoteDefaults
+            profile.actions.append(action); profile.pin(action.id, in: .menu, enabled: true); profile.captureRemoteMenu()
+            profile.remoteMenus = ["desktop": profile.resolvedMenuPlacements, "trackpad": profile.resolvedMenuPlacements]; profile.remoteMenuMode = "desktop"
+            var data = try JSONEncoder().encode(profile)
+            let viewer = RemoteControlsTestViewer(); viewer.inputOnly = inputOnly
+            let host = RemoteMacControls(viewer: viewer, store: .init(read: { data }, write: { data = $0 }, legacyIDs: { [] }, family: .remoteMac))
+            mount(host, in: viewer)
+            defer { host.reset() }
+            func run() throws { host.performMenuAction(try XCTUnwrap(host.menuActions().first { $0["title"] as? String == action.title })) }
+            try run()
+            for _ in 0..<100 where viewer.events.isEmpty { try await Task.sleep(for: .milliseconds(5)) }
+            profile.rowsExpanded = true; profile.revision = UUID(); data = try JSONEncoder().encode(profile); host.reload()
+            for _ in 0..<200 where viewer.sequenceOwner != nil { try await Task.sleep(for: .milliseconds(10)) }
+            XCTAssertEqual(viewer.events.compactMap { ($0["key"] as? NSNumber)?.uint32Value }, [97, 97, 98, 98])
+            viewer.events = []; try run()
+            for _ in 0..<100 where viewer.events.isEmpty { try await Task.sleep(for: .milliseconds(5)) }
+            let index = try XCTUnwrap(profile.actions.firstIndex { $0.id == action.id })
+            profile.actions[index].steps![2].character = 99; profile.revision = UUID(); data = try JSONEncoder().encode(profile); host.reload()
+            for _ in 0..<100 where viewer.sequenceOwner != nil { try await Task.sleep(for: .milliseconds(10)) }
+            XCTAssertNil(viewer.sequenceOwner)
+            XCTAssertEqual(viewer.events.compactMap { ($0["key"] as? NSNumber)?.uint32Value }, [97, 97], "Changed definitions must still retire the suffix")
+        }
+    }
+
+    func testProgressOverlayCoversExistingRowsAndRestoresInteractionForBothTextSizes() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        for category in [UIContentSizeCategory.large, .accessibilityExtraExtraExtraLarge] {
+            let viewer = RemoteControlsTestViewer()
+            viewer.traitOverrides.preferredContentSizeCategory = category
+            let host = controls(viewer), bar = try XCTUnwrap(host.bar as? TerminalKeyboardBar)
+            let window = UIWindow(windowScene: scene); window.rootViewController = viewer; window.makeKeyAndVisible()
+            defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+            viewer.view.backgroundColor = .systemBackground; window.layoutIfNeeded(); viewer.view.layoutIfNeeded()
+            var action = TerminalControlAction(title: "Open workspace", kind: .shortcut)
+            action.steps = [.init(character: 97), .init(kind: .wait, waitMilliseconds: 10_000), .init(character: 98)]
+            let progress = TerminalSequenceProgress(action: action)
+            progress.move(to: 1)
+            let panel = TerminalSequenceBannerController(progress: progress, cancel: {})
+            let original = bar.frame
+            panel.attach(to: viewer, covering: bar)
+            viewer.view.layoutIfNeeded()
+            XCTAssertTrue(bar.executionActive); XCTAssertFalse(bar.isUserInteractionEnabled); XCTAssertTrue(bar.accessibilityElementsHidden)
+            XCTAssertFalse(panel.progressVisible); XCTAssertTrue(panel.children.isEmpty, "Quick shortcuts must not build a hidden glass/SwiftUI graph")
+            let point = bar.convert(CGPoint(x: bar.bounds.midX, y: bar.bounds.midY), to: viewer.view)
+            let hit = try XCTUnwrap(viewer.view.hitTest(point, with: nil))
+            XCTAssertTrue(hit === panel.view || hit.isDescendant(of: panel.view), "Even before progress appears, touches cannot reach the rows")
+            try await Task.sleep(for: .milliseconds(230)); window.layoutIfNeeded(); viewer.view.layoutIfNeeded()
+            XCTAssertTrue(panel.progressVisible)
+            XCTAssertGreaterThanOrEqual(bar.bounds.height, bar.executionMinimumHeight - 0.5)
+            XCTAssertEqual(panel.view.convert(panel.view.bounds, to: viewer.view), bar.frame, "Progress must occupy the rows, not terminal content above them")
+            if category == .large { XCTAssertEqual(bar.frame, original, "Normal text must not resize the terminal") }
+            let screenshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
+            let attachment = XCTAttachment(image: screenshot); attachment.name = category == .large ? "in-place-progress-overlay" : "accessible-in-place-progress-overlay"; attachment.lifetime = .keepAlways; add(attachment)
+            if category.isAccessibilityCategory {
+                // Model limited space above a landscape or floating keyboard.
+                viewer.additionalSafeAreaInsets.top = max(0, window.bounds.height - 220)
+                viewer.view.layoutIfNeeded(); panel.view.setNeedsLayout(); panel.view.layoutIfNeeded(); viewer.view.layoutIfNeeded()
+                XCTAssertGreaterThanOrEqual(bar.frame.minY, viewer.view.safeAreaLayoutGuide.layoutFrame.minY)
+                XCTAssertLessThan(bar.executionMinimumHeight, 200)
+                viewer.additionalSafeAreaInsets.top = 0
+            }
+            panel.close(); viewer.view.layoutIfNeeded()
+            XCTAssertFalse(bar.executionActive); XCTAssertTrue(bar.isUserInteractionEnabled); XCTAssertFalse(bar.accessibilityElementsHidden)
+            XCTAssertEqual(bar.executionMinimumHeight, 0); XCTAssertNil(panel.parent); XCTAssertEqual(bar.frame, original)
+            let quick = TerminalSequenceBannerController(progress: progress, cancel: {})
+            quick.attach(to: viewer, covering: bar); quick.close()
+            try await Task.sleep(for: .milliseconds(200))
+            XCTAssertFalse(quick.progressVisible, "A completed fast shortcut must not show late progress")
+            XCTAssertTrue(quick.children.isEmpty)
+            XCTAssertTrue(bar.isUserInteractionEnabled)
+        }
+    }
+
     private func controls(_ viewer: RemoteControlsTestViewer, data initialData: Data? = nil) -> RemoteMacControls {
         var data = initialData
-        return .init(viewer: viewer, store: .init(read: { data }, write: { data = $0 }, legacyIDs: { [] }, legacyActions: { [] }, family: .remoteMac))
+        let host = RemoteMacControls(viewer: viewer, store: .init(read: { data }, write: { data = $0 }, legacyIDs: { [] }, legacyActions: { [] }, family: .remoteMac))
+        mount(host, in: viewer)
+        return host
+    }
+    private func mount(_ host: RemoteMacControls, in viewer: UIViewController) {
+        viewer.view.addSubview(host.bar)
+        NSLayoutConstraint.activate([host.bar.leadingAnchor.constraint(equalTo: viewer.view.leadingAnchor), host.bar.trailingAnchor.constraint(equalTo: viewer.view.trailingAnchor), host.bar.bottomAnchor.constraint(equalTo: viewer.view.safeAreaLayoutGuide.bottomAnchor)])
     }
     private func pro() async throws -> SKTestSession {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "LifetimePro", withExtension: "storekit"))
@@ -324,7 +545,7 @@ private final class RemoteAnchorSession: CompanionVNCSession {
         let review = try XCTUnwrap((viewer.shown as? UIHostingController<TerminalSequenceReview>)?.rootView)
         XCTAssertTrue(viewer.events.isEmpty, "Reviewing text cannot send any prefix")
         host.reset()
-        review.send()
+        review.send(false)
         XCTAssertTrue(viewer.events.isEmpty, "A brief inactive transition retires the local callback even if the VNC transport epoch stays unchanged")
     }
     func testLiveAndEditingBarsShareKeycapsAndMinimumTargetSize() throws {

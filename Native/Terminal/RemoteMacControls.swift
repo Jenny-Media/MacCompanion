@@ -26,6 +26,10 @@ import SwiftUI
     private var observation: NSObjectProtocol?
     private weak var panel: UIViewController?
     private var keypad: TerminalKeypadState?
+    private var sequenceTask: Task<Void, Never>?
+    private var sequenceIdentifier: String?
+    private var sequenceBanner: TerminalSequenceBannerController?
+    private var shortcutConfirmations = TerminalShortcutConfirmations()
     @objc var bar: UIView { keyboardBar }
     @objc var menuAnchor: UIView { keyboardBar.menuAnchor }
     @objc func layoutRows() { keyboardBar.layoutIfNeeded(); keyboardBar.layoutRows() }
@@ -63,14 +67,15 @@ import SwiftUI
         reload()
     }
     isolated deinit { if let observation { NotificationCenter.default.removeObserver(observation) } }
-    private var ready: Bool { viewer?.controlsInputAvailable() == true && DirectAppLockV1.shared.canAccess }
+    private var ready: Bool { sequenceIdentifier == nil && viewer?.controlsInputAvailable() == true && DirectAppLockV1.shared.canAccess }
     private func canUse(_ action: TerminalControlAction) -> Bool {
-        action.isLocalKeyboardControl || ready && !(action.operation?.requiresScreen == true && viewer?.inputOnly == true)
-            && (action.operation != .copyScreenText || viewer?.controlsCopyTextAvailable() == true)
+        sequenceIdentifier == nil && (action.isLocalKeyboardControl || ready && !(action.operation?.requiresScreen == true && viewer?.inputOnly == true)
+            && (action.operation != .copyScreenText || viewer?.controlsCopyTextAvailable() == true))
     }
     @objc func reload() {
         do { profile = try activeStore.load(); readable = true }
         catch { readable = false; profile = .remoteDefaults }
+        shortcutConfirmations.definitionsChanged(profile.actions)
         keyboardBar.configure(profile) { [weak self] in self?.use($0) }
         keyboardBar.showsExtraRows = profile.rowsExpanded ?? false
         refresh()
@@ -85,6 +90,10 @@ import SwiftUI
     @objc func clearModifiers() { state.reset(); refresh() }
     @objc func reset() {
         inputGeneration = UUID()
+        sequenceTask?.cancel(); sequenceTask = nil
+        if let sequenceIdentifier { viewer?.cancelControlSequence(sequenceIdentifier) }
+        sequenceIdentifier = nil
+        sequenceBanner?.close(); sequenceBanner = nil
         if customizing { customizing = false; viewer?.endKeyboardCustomization() }
         keypad?.ready = false; keypad = nil
         if let panel, viewer?.presentedViewController === panel { viewer?.dismiss(animated: false) }
@@ -186,7 +195,7 @@ import SwiftUI
     }
     private func reviewText(_ text: String, requiresPro: Bool = false) {
         var action = TerminalControlAction(title: "Paste Text", kind: .shortcut)
-        action.steps = [.init(kind: .text, text: text)]; run(action, requiresPro: requiresPro)
+        action.steps = [.init(kind: .text, text: text)]; run(action, requiresPro: requiresPro, forceReview: true)
     }
     private func applyPointerSettings() {
         guard let viewer, let id = viewer.preferenceID.flatMap(UUID.init(uuidString:)) else { return }
@@ -263,23 +272,78 @@ import SwiftUI
             }
         }
     }
-    private func run(_ action: TerminalControlAction, requiresPro: Bool = true) {
+    private func run(_ action: TerminalControlAction, requiresPro: Bool = true, forceReview: Bool = false) {
         guard ready, let viewer else { return }
-        guard let events = try? action.remoteSequence() else { notice("This shortcut is too large or contains an unsupported step. Nothing was sent."); return }
+        guard let plan = try? action.remotePlan() else { notice("This shortcut is too large or contains an unsupported step. Nothing was sent."); return }
         let epoch = viewer.controlsEpoch, revision = profile.revision, token = inputGeneration
+        let connectionID = viewer.controlsConnectionID
         let send = { [weak self, weak viewer] in
             guard let self, let viewer, ready, viewer.controlsEpoch == epoch, profile.revision == revision, inputGeneration == token, (!requiresPro || DirectProAccess.shared.hasPro) else { return }
-            if !viewer.sendControlEvents(events, completion: { [weak self, weak viewer] written in
-                guard viewer?.controlsEpoch == epoch else { return }
-                if !written { self?.notice("Sending stopped. Check the Mac before trying again. The shortcut will not be replayed.") }
-            }) { notice("Input is busy. Nothing was queued.") }
-            else { keyboardBar.keyFeedback.feedback("commit") }
+            self.runOwned(action, plan: plan, requiresPro: requiresPro)
+
         }
-        if action.hasSequenceText {
-            present { [weak self] in UIHostingController(rootView: TerminalSequenceReview(action: action, send: { [weak self] in
-                self?.viewer?.dismiss(animated: true, completion: send)
+        if forceReview || shortcutConfirmations.requiresReview(action, connectionID: connectionID) {
+            present { [weak self] in UIHostingController(rootView: TerminalSequenceReview(action: action, allowsConnectionSkip: !forceReview, send: { [weak self] skip in
+                guard let self, let viewer = self.viewer, viewer.controlsEpoch == epoch, profile.revision == revision, inputGeneration == token else { return }
+                if skip && !forceReview { shortcutConfirmations.skip(action, connectionID: connectionID) }
+                viewer.dismiss(animated: true, completion: send)
             }, cancel: { [weak self] in self?.viewer?.dismiss(animated: true) })) }
         } else { send() }
+    }
+    private func finishRun(_ identifier: String) {
+        guard sequenceIdentifier == identifier else { return }
+        viewer?.endControlSequence(identifier)
+        sequenceIdentifier = nil; sequenceTask = nil
+        sequenceBanner?.close(); sequenceBanner = nil; refresh()
+    }
+    private func runOwned(_ action: TerminalControlAction, plan: [TerminalSequenceOperation<[[String: Any]]>], requiresPro: Bool) {
+        guard ready, let viewer, let identifier = viewer.beginControlSequence() else { notice("Input is busy. Nothing was queued."); return }
+        sequenceIdentifier = identifier
+        let epoch = viewer.controlsEpoch, token = inputGeneration
+        let progress = TerminalSequenceProgress(action: action, batching: !action.hasSequenceWait)
+        let controller = TerminalSequenceBannerController(progress: progress, cancel: { [weak self, weak viewer] in
+            guard let self, sequenceIdentifier == identifier else { return }
+            progress.cancelled = true; sequenceTask?.cancel(); viewer?.cancelControlSequence(identifier)
+            finishRun(identifier)
+        })
+        sequenceBanner = controller
+        controller.attach(to: viewer, covering: keyboardBar, blocking: viewer.view.subviews.filter { $0 is CompanionVNCControls })
+        let current: @MainActor () -> Bool = { [weak self, weak viewer] in
+            guard let self, let viewer else { return false }
+            return !progress.cancelled && viewer.controlsInputAvailable() && DirectAppLockV1.shared.canAccess
+                && viewer.controlsEpoch == epoch && inputGeneration == token && sequenceIdentifier == identifier
+                && profile.actions.contains { $0.id == action.id && $0.sameDefinition(as: action) }
+                && (!requiresPro || DirectProAccess.shared.hasPro)
+        }
+        if !action.hasSequenceWait {
+            // Preserve one compact native event batch; admission is still exclusive.
+            let accepted = viewer.sendControlSequenceEvents(plan.compactMap(\.input).flatMap { $0 }, identifier: identifier) { [weak self, weak viewer] written in
+                guard let self, sequenceIdentifier == identifier else { return }
+                finishRun(identifier)
+                if !written, !progress.cancelled, viewer?.controlsEpoch == epoch { notice("Sending stopped. Check the Mac before trying again. The shortcut will not be replayed.") }
+            }
+            if !accepted { finishRun(identifier); notice("Input is busy. Nothing was queued.") }
+            else { keyboardBar.keyFeedback.feedback("commit") }
+            refresh(); return
+        }
+        sequenceTask = Task { [weak self, weak viewer] in
+            guard let self, let viewer else { return }
+            defer { finishRun(identifier) }
+            do {
+                try await TerminalSequencePump.run(plan, current: current, progress: { progress.move(to: $0) }) { _, group in
+                    try await withCheckedThrowingContinuation { (reply: CheckedContinuation<Void, Error>) in
+                        if !viewer.sendControlSequenceEvents(group, identifier: identifier, completion: { written in
+                            if written { reply.resume() } else { reply.resume(throwing: CancellationError()) }
+                        }) { reply.resume(throwing: CancellationError()) }
+                    }
+                }
+            } catch {
+                guard sequenceIdentifier == identifier else { return }
+                viewer.cancelControlSequence(identifier)
+                if !progress.cancelled, viewer.controlsEpoch == epoch { notice("Shortcut stopped. Remaining steps will not be replayed.") }
+            }
+        }
+        refresh()
     }
     private func notice(_ message: String) {
         guard viewer?.presentedViewController == nil else { keypad?.notice = message; return }

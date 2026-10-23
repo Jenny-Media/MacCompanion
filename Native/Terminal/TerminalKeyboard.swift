@@ -481,10 +481,30 @@ private final class TerminalKeyScrollView: UIScrollView {
     var toggleKeyboard: (() -> Void)?
     var openKeypad: ((Bool) -> Void)?
     var showsNavigation = true
+    var executionActive = false { didSet { refresh() } }
+    private var executionHeightConstraint: NSLayoutConstraint?
+    var executionMinimumHeight: CGFloat = 0 {
+        didSet {
+            guard oldValue != executionMinimumHeight else { return }
+            executionHeightConstraint?.isActive = false
+            // Fixed key heights determine the resting bar. While covered, keep
+            // those keys at their natural size and let the progress surface grow.
+            if let bottom = viewportConstraints.first(where: { $0.firstAttribute == .bottom }), bottom.isActive {
+                bottom.isActive = false
+                bottom.priority = executionMinimumHeight > 0 ? .defaultHigh : .required
+                bottom.isActive = true
+            }
+            if executionMinimumHeight > 0 {
+                let height = executionHeightConstraint ?? heightAnchor.constraint(greaterThanOrEqualToConstant: executionMinimumHeight)
+                height.constant = executionMinimumHeight; height.isActive = true; executionHeightConstraint = height
+            }
+            invalidateIntrinsicContentSize(); superview?.setNeedsLayout()
+        }
+    }
     var showsExtraRows = false { didSet { updateVisibility() } }
     var height: CGFloat {
         let count = max(1, rows.arrangedSubviews.filter { !$0.isHidden }.count)
-        return 8 + CGFloat(count) * keyHeight + CGFloat(count - 1) * 3
+        return max(executionMinimumHeight, 8 + CGFloat(count) * keyHeight + CGFloat(count - 1) * 3)
     }
 
     init(terminal: SessionTerminalView?, preferences: TerminalKeyboardPreferences) {
@@ -1053,24 +1073,26 @@ private final class TerminalKeyScrollView: UIScrollView {
         return key
     }
     private func performKeyboardToggle() {
+        guard !executionActive else { return }
         if let remoteInput { remoteInput.toggleKeyboard(); return }
         guard let terminal else { return }
         let before = terminal.isFirstResponder; toggleKeyboard?()
         if before != terminal.isFirstResponder { keyFeedback.feedback("selection") }
     }
     private func performExpandToggle() {
+        guard !executionActive else { return }
         showsExtraRows.toggle(); keyFeedback.feedback("selection"); layoutChanged?()
     }
     func toggle(_ modifier: TerminalModifiers, lock: Bool = false) {
         if let remoteInput { guard remoteInput.ready() else { return }; remoteInput.toggle(modifier, lock); keyFeedback.feedback("selection"); refresh(); return }
-        guard let terminal, terminal.customInputEpoch() != nil, modifier != .command || terminal.keyEncoding.supportsCommand else { return }
+        guard let terminal, inputReady, modifier != .command || terminal.keyEncoding.supportsCommand else { return }
         terminal.keyboardState.toggle(modifier, lock: lock); keyFeedback.feedback("selection"); refresh()
     }
     @objc private func lockModifier(_ gesture: UILongPressGestureRecognizer) {
         guard gesture.state == .began, let key = gesture.view as? UIButton, let modifier = modifierButtons.first(where: { $0.0 === key })?.1 else { return }
         toggle(modifier, lock: true)
     }
-    private var inputReady: Bool { remoteInput?.ready() ?? (terminal?.customInputEpoch() != nil) }
+    private var inputReady: Bool { remoteInput?.ready() ?? (terminal?.customInputEpoch() != nil && terminal?.inputReserved() != true) }
     private func refreshModifier(_ key: UIButton, modifier: TerminalModifiers, state: TerminalKeyboardState) {
         let locked = state.locked.contains(modifier)
         let title = key.accessibilityLabel ?? modifier.title
@@ -1081,6 +1103,10 @@ private final class TerminalKeyScrollView: UIScrollView {
     }
     func refresh() {
         guard !editingPreview else { return }
+        if executionActive {
+            for key in allKeys + [keypadButton] { key.isEnabled = false; key.alpha = 0.4 }
+            return
+        }
         if let remoteInput {
             let ready = remoteInput.ready(), state = remoteInput.state()
             for key in allKeys { key.isEnabled = ready; key.alpha = ready ? 1 : 0.4 }
@@ -1092,9 +1118,9 @@ private final class TerminalKeyScrollView: UIScrollView {
             return
         }
         guard let terminal else { return }
-        let ready = terminal.customInputEpoch() != nil
+        let ready = terminal.customInputEpoch() != nil && !terminal.inputReserved()
         if !terminal.keyEncoding.supportsCommand { terminal.keyboardState.armed.remove(.command); terminal.keyboardState.locked.remove(.command) }
-        if !ready { terminal.keyboardState.reset(); terminal.controlModifier = false; terminal.metaModifier = false }
+        if terminal.customInputEpoch() == nil { terminal.keyboardState.reset(); terminal.controlModifier = false; terminal.metaModifier = false }
         for key in allKeys { key.isEnabled = ready; key.alpha = ready ? 1 : 0.4 }
         for (key, modifier) in modifierButtons {
             key.isEnabled = ready && (modifier != .command || terminal.keyEncoding.supportsCommand); key.alpha = key.isEnabled ? 1 : 0.4

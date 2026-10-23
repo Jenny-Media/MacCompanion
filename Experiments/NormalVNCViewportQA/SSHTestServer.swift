@@ -10,7 +10,11 @@ final class SSHTestRecord: @unchecked Sendable {
     let initialOutput: String
     let respondToInstall: Bool
     let echoInput: Bool
-    init(respondToInstall: Bool = true, echoInput: Bool = true, initialOutput: String = "synthetic-ready\r\n") { self.respondToInstall = respondToInstall; self.echoInput = echoInput; self.initialOutput = initialOutput }
+    let inputLimit: Int
+    init(respondToInstall: Bool = true, echoInput: Bool = true, initialOutput: String = "synthetic-ready\r\n", inputLimit: Int = 512) {
+        precondition((1...16384).contains(inputLimit))
+        self.respondToInstall = respondToInstall; self.echoInput = echoInput; self.initialOutput = initialOutput; self.inputLimit = inputLimit
+    }
     private let lock=NSLock()
     private var auth=0, keyAuth=0
     private var execs=0
@@ -41,7 +45,7 @@ final class SSHTestRecord: @unchecked Sendable {
     var received: [UInt8] { lock.lock(); defer { lock.unlock() }; return input }
     func clearReceived() { lock.lock(); input.removeAll(); lock.unlock() }
     func received(_ bytes: [UInt8]) {
-        lock.lock(); input.append(contentsOf: bytes.prefix(max(0, 512 - input.count))); let snapshot = input; lock.unlock()
+        lock.lock(); input.append(contentsOf: bytes.prefix(max(0, inputLimit - input.count))); let snapshot = input; lock.unlock()
         inputChanged?(snapshot)
     }
     var commands: Int { lock.lock(); defer { lock.unlock() }; return execs }

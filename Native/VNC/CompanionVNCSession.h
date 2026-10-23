@@ -68,10 +68,18 @@ typedef UIImage CompanionVNCImage;
 - (void)keyEvents:(NSArray<NSDictionary *> *)events;
 - (BOOL)tryKeyEvents:(NSArray<NSDictionary *> *)events;
 #if TARGET_OS_IOS
+/// Changes only when this owner starts a new transport connection.
+@property(nonatomic, readonly) NSString *connectionIdentifier;
 /// Mode-specific input admission, including the current Desktop baseline.
 @property(nonatomic, readonly) BOOL composedTextReady;
 /// Completion acknowledges local writes only, never remote application consumption.
 - (BOOL)tryComposedTextEvents:(NSArray<NSDictionary *> *)events completion:(void (^)(BOOL written))completion;
+/// A local reservation keeps other input out while a timed shortcut yields.
+- (nullable NSString *)beginControlSequence;
+- (BOOL)ownsControlSequence:(NSString *)identifier;
+- (BOOL)tryControlSequenceEvents:(NSArray<NSDictionary *> *)events identifier:(NSString *)identifier completion:(void (^)(BOOL written))completion;
+- (void)endControlSequence:(NSString *)identifier;
+- (void)cancelControlSequence:(NSString *)identifier;
 #endif
 - (void)viewChanged;
 
