@@ -3,7 +3,7 @@ import Foundation
 
 /// Local terminal operations, independent of key and shortcut definitions.
 enum TerminalAppAction: String, Codable, CaseIterable, Identifiable {
-    case composeText, paste, copySelection, keyboard, expandRows
+    case composeText, paste, copySelection, keyboard, expandRows, controlAlone, optionAlone, shiftAlone, commandAlone
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -12,6 +12,10 @@ enum TerminalAppAction: String, Codable, CaseIterable, Identifiable {
         case .copySelection: "Copy Selection"
         case .keyboard: "Show/Hide Keyboard"
         case .expandRows: "Expand/Collapse Rows"
+        case .controlAlone: "Control Alone"
+        case .optionAlone: "Option Alone"
+        case .shiftAlone: "Shift Alone"
+        case .commandAlone: "Command Alone"
         }
     }
     var symbol: String {
@@ -21,16 +25,24 @@ enum TerminalAppAction: String, Codable, CaseIterable, Identifiable {
         case .copySelection: "doc.on.doc"
         case .keyboard: "keyboard"
         case .expandRows: "rectangle.expand.vertical"
+        case .controlAlone: "control"
+        case .optionAlone: "option"
+        case .shiftAlone: "shift"
+        case .commandAlone: "command"
         }
     }
     var detail: String {
         switch self {
         case .composeText: "Open a draft before sending text"
-        case .paste: "Paste clipboard text into the terminal"
+        case .paste: "Review and insert clipboard text into the current session"
         case .copySelection: "Copy selected terminal text"
         case .keyboard: "Show or hide the native keyboard"
         case .expandRows: "Show or hide rows set to When Expanded"
+        case .controlAlone, .optionAlone, .shiftAlone, .commandAlone: "Press and release this modifier alone on the remote Mac"
         }
+    }
+    var modifierAlone: UInt32? {
+        switch self { case .controlAlone: 0xffe3; case .optionAlone: 0xffe9; case .shiftAlone: 0xffe1; case .commandAlone: 0xffeb; default: nil }
     }
     var definition: TerminalControlAction {
         var action = TerminalControlAction(title: title, kind: .builtIn, inMenu: false)
@@ -48,6 +60,7 @@ struct TerminalControlAction: Codable, Identifiable, Equatable {
     var key: TerminalAccessoryKey? = nil
     var character: UInt32 = 0
     var modifiers: [UInt32] = []
+    var steps: [TerminalShortcutStep]?
     var text = ""
     var builtIn: VNCQuickAction.Kind? = nil
     var operation: TerminalAppAction? = nil
@@ -57,10 +70,8 @@ struct TerminalControlAction: Codable, Identifiable, Equatable {
     var usage: String?
     var keycapTitle: String {
         guard kind == .shortcut else { return title }
-        let names: [(UInt32, String)] = [(0xffe3, "⌃"), (0xffe9, "⌥"), (0xffe1, "⇧"), (0xffeb, "⌘")]
-        let key = TerminalAccessoryKey.allCases.first { $0.shortcutCode == character }?.title
-            ?? (character == 0xff08 ? "⌫" : character == 0xff0d ? "↵" : character == 0x20 ? "Space" : UnicodeScalar(character).map(String.init) ?? title)
-        return names.filter { modifiers.contains($0.0) }.map(\.1).joined() + key
+        let preview = sequencePreview
+        return !hasSequenceText && preview.count <= 12 ? preview : title
     }
 
 
@@ -79,13 +90,18 @@ struct TerminalControlAction: Codable, Identifiable, Equatable {
     var shortcut: VNCQuickAction {
         .init(id: id, title: title, kind: .shortcut, key: character, modifiers: modifiers)
     }
-    var requiresCommand: Bool { kind == .shortcut && modifiers.contains(0xffeb) }
+    var requiresCommand: Bool { kind == .shortcut && resolvedSteps.contains { $0.modifiers.contains(0xffeb) } }
+    /// These controls change the local bar, even while remote input is paused.
+    var isLocalKeyboardControl: Bool { kind == .builtIn && (operation == .keyboard || operation == .expandRows) }
     var valid: Bool {
         guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, title.count <= 40 else { return false }
-        guard operation == nil || kind == .builtIn else { return false }
+        guard (steps == nil || kind == .shortcut), operation == nil || kind == .builtIn else { return false }
         switch kind {
         case .key: return key != nil
-        case .shortcut: return shortcut.terminalShortcutValid && shortcut.compatible(with: .terminal)
+        case .shortcut:
+            let values = resolvedSteps
+            return (1...32).contains(values.count) && Set(values.map(\.id)).count == values.count
+                && values.allSatisfy(\.valid) && values.reduce(0, { $0 + $1.text.utf8.count }) <= 4096
         case .text: return !text.isEmpty && text.utf8.count <= 4096 && !text.contains("\0") && !text.contains("\u{1b}")
         case .builtIn:
             if operation != nil { return builtIn == nil }
@@ -104,10 +120,7 @@ struct TerminalControlAction: Codable, Identifiable, Equatable {
         switch kind {
         case .key: return key?.title ?? "Choose a key"
         case .shortcut:
-            let names: [(UInt32, String)] = [(0xffe3, "Ctrl"), (0xffe9, "Option"), (0xffe1, "Shift"), (0xffeb, "Command")]
-            let title = TerminalAccessoryKey.allCases.first { $0.shortcutCode == character }?.title
-                ?? (character == 0xff08 ? "Backspace" : character == 0xff0d ? "Return" : UnicodeScalar(character).map(String.init) ?? "Choose Key")
-            return (names.filter { modifiers.contains($0.0) }.map(\.1) + [title]).joined(separator: " + ")
+            return sequencePreview
         case .text: return text
         case .builtIn: return operation?.detail ?? "Standard action"
         }
@@ -138,7 +151,7 @@ struct TerminalControlAction: Codable, Identifiable, Equatable {
         switch kind {
         case .builtIn: return operation != nil ? operation == other.operation : builtIn != nil && builtIn == other.builtIn
         case .key: return key == other.key
-        case .shortcut: return character == other.character && Set(modifiers) == Set(other.modifiers)
+        case .shortcut: return resolvedSteps.map { [$0.kind.rawValue, String($0.character), $0.modifiers.sorted().map(String.init).joined(separator: ","), $0.text] } == other.resolvedSteps.map { [$0.kind.rawValue, String($0.character), $0.modifiers.sorted().map(String.init).joined(separator: ","), $0.text] }
         case .text: return id == other.id
         }
     }
@@ -262,8 +275,9 @@ struct TerminalKeyboardRow: Codable, Identifiable, Equatable {
 
 struct TerminalControlsProfile: Codable, Equatable {
     static let maximumKeyboardRows = 6
-    static let currentVersion = 1
+    static let currentVersion = 2
     static let currentRowsSchema = 4
+    var family: TerminalControlsFamily?
     var version = Self.currentVersion
     var revision = UUID()
     var actions: [TerminalControlAction] = []
@@ -284,10 +298,10 @@ struct TerminalControlsProfile: Codable, Equatable {
     /// Old flat placements remain on the main row. New rows reference the same
     /// saved definitions, and never copy or discard their content.
     var resolvedRows: [TerminalKeyboardRow] {
-        var rows = keyboardRows ?? [
+        var rows = keyboardRows ?? (family == .remoteMac ? Self.remoteDefaultRows : [
             .init(id: TerminalKeyboardRow.numbersID, kind: .custom, title: "Numbers", preset: .numbers, expandedOnly: false),
             .init(id: TerminalKeyboardRow.navigationID, kind: .navigation, title: "Navigation"),
-            .init(id: TerminalKeyboardRow.mainID, kind: .main, title: "Main Row", alignment: .fill)]
+            .init(id: TerminalKeyboardRow.mainID, kind: .main, title: "Main Row", alignment: .fill)])
         let assigned = Set(rows.flatMap(\.actionIDs))
         if let main = rows.firstIndex(where: { $0.kind == .main }) {
             let missing = placed(.keyboard).map(\.id).filter { !assigned.contains($0) }
@@ -632,6 +646,14 @@ struct TerminalControlsProfile: Codable, Equatable {
         keyboardRows = rows
     }
     static var defaults: Self { .init(actions: DirectControlMode.terminal.defaults.map(TerminalControlAction.init)) }
+    static var remoteDefaultRows: [TerminalKeyboardRow] {
+        [.init(id: TerminalKeyboardRow.mainID, kind: .main, title: "Main Row", items: [
+            .control(.keyboard), .control(.expand), .key("key-escape"), .key("key-tab"),
+            .control(.ctrl), .control(.alt), .control(.shift), .control(.command),
+            .key("key-left"), .key("key-down"), .key("key-up"), .key("key-right"), .control(.keypad)], alignment: .fill)]
+    }
+    static var remoteDefaults: Self { .init(family: .remoteMac) }
+    var availableActions: [TerminalAppAction] { TerminalAppAction.allCases.filter { family == .remoteMac ? $0 != .copySelection : $0.modifierAlone == nil } }
     mutating func importKeyboard(_ preferences: TerminalKeyboardPreferences, macID: UUID) {
         guard !importedMacs.contains(macID) else { return }
         for key in preferences.keys where !actions.contains(where: { $0.kind == .key && $0.key == key }) {
@@ -676,16 +698,33 @@ struct TerminalControlsProfile: Codable, Equatable {
         }
         func checkSupported() throws {
             if version > TerminalControlsProfile.currentVersion || (rowsSchema ?? 0) > TerminalControlsProfile.currentRowsSchema { throw Failure.newerFormat }
-            guard version == TerminalControlsProfile.currentVersion, rowsSchema.map({ $0 > 0 }) ?? true else { throw Failure.unreadable }
+            guard (1...TerminalControlsProfile.currentVersion).contains(version), rowsSchema.map({ $0 > 0 }) ?? true else { throw Failure.unreadable }
         }
     }
     private static let keyboardFields = ["keyboardRows", "rowOrder", "numberRow", "expandedBar", "navigationRow", "rowsExpanded", "commandInBar"]
+    static func remoteMac() -> Self {
+        Self(read: { try TerminalSecretStore.read(DirectControlMode.desktop.profileID, kind: "remote-keyboard-controls-v1") },
+             write: { try TerminalSecretStore.write($0, id: DirectControlMode.desktop.profileID, kind: "remote-keyboard-controls-v1") },
+             legacyIDs: { [] }, legacyActions: {
+                 var actions: [VNCQuickAction] = []
+                 for mode in [DirectControlMode.desktop, .trackpad] {
+                     for var action in try VNCSessionPreferences.profileActions(mode) where action.isCustom {
+                         if let same = actions.first(where: { $0.id == action.id }), same == action { continue }
+                         if actions.contains(where: { $0.id == action.id }) { action.id = UUID() }
+                         action.enabled = false; actions.append(action)
+                     }
+                 }
+                 return actions
+             }, family: .remoteMac)
+    }
     var read: () throws -> Data? = { try TerminalSecretStore.read(account, kind: kind) }
     var write: (Data) throws -> Void = { try TerminalSecretStore.write($0, id: account, kind: kind) }
     var legacyIDs: () throws -> [UUID] = { try TerminalSecretStore.accounts(kind: "terminal-keyboard-v1") }
     var legacyKeyboard: (UUID) throws -> TerminalKeyboardPreferences = { try .load($0) }
     var legacyActions: () throws -> [VNCQuickAction] = { try VNCSessionPreferences.profileActions(.terminal) }
     var excludedIDs: () -> Set<UUID> = { DirectTemporaryMacCleanup.shared.pending }
+
+    var family = TerminalControlsFamily.terminal
 
     func load() throws -> TerminalControlsProfile {
         guard DirectAppLockV1.shared.canAccess else { throw TerminalSecretStore.Failure.locked }
@@ -707,10 +746,12 @@ struct TerminalControlsProfile: Codable, Equatable {
             } else { profile = try JSONDecoder().decode(TerminalControlsProfile.self, from: stored) }
         } else {
             let actions = try legacyActions()
-            guard DirectQuickActionEditing.valid(actions, mode: .terminal) else { throw Failure.unreadable }
-            profile = .init(actions: actions.map(TerminalControlAction.init))
+            guard family == .remoteMac ? actions.allSatisfy({ $0.terminalShortcutValid || $0.kind == .text && $0.valid }) : DirectQuickActionEditing.valid(actions, mode: .terminal) else { throw Failure.unreadable }
+            profile = .init(family: family == .remoteMac ? .remoteMac : nil, actions: actions.map(TerminalControlAction.init))
             resetKeyboard = true
         }
+        profile.version = TerminalControlsProfile.currentVersion
+        guard (profile.family ?? .terminal) == family else { throw Failure.unreadable }
         // Corrupt definitions and favorites must never be replaced by defaults.
         guard profile.valid else { throw Failure.unreadable }
         let before = profile

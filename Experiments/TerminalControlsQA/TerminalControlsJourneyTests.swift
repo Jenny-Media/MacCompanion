@@ -3,6 +3,135 @@ import StoreKitTest
 import UIKit
 
 @MainActor final class TerminalControlsJourneyTests: XCTestCase {
+    func testRemoteCommandCanBeRemovedAndReaddedWithoutResettingTheLayout() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        app.buttons["controls-qa-remote"].tap()
+        XCTAssertTrue(app.buttons["remote-qa-edit"].waitForExistence(timeout: 5))
+        app.buttons["remote-qa-edit"].tap(); app.buttons["terminal-edit-keyboard"].tap()
+        let command = app.buttons["terminal-preview-item-control-command"]
+        XCTAssertTrue(command.waitForExistence(timeout: 5))
+        revealHorizontal(command, scroll: app.scrollViews["terminal-row-preview-scroll"]); command.tap()
+        app.buttons["terminal-remove-placement"].tap()
+        XCTAssertFalse(command.waitForExistence(timeout: 1))
+        addToRow(mainID, app: app)
+        let addCommand = app.buttons["terminal-add-control-command"]
+        XCTAssertTrue(addCommand.waitForExistence(timeout: 5))
+        capture("remote-command-available-in-key-picker", app: app)
+        addCommand.tap()
+        XCTAssertTrue(command.waitForExistence(timeout: 5))
+        closeLayout(app, save: true); closeSettings(app)
+        XCTAssertEqual(app.staticTexts["remote-qa-events"].label, "Remote events: 0")
+        app.buttons["remote-qa-edit"].tap(); app.buttons["terminal-edit-keyboard"].tap()
+        XCTAssertTrue(command.waitForExistence(timeout: 5), "Command must survive saving and reopening the customized layout")
+        revealHorizontal(command, scroll: app.scrollViews["terminal-row-preview-scroll"])
+        capture("remote-command-readded-and-persisted", app: app)
+        closeLayout(app, save: true); closeSettings(app)
+        app.buttons["Close Remote Controls"].tap()
+        openKeyboard(app); addToRow(mainID, app: app)
+        XCTAssertTrue(app.buttons["terminal-add-control-ctrl"].waitForExistence(timeout: 5))
+        XCTAssertFalse(addCommand.exists, "Terminal intentionally omits the remote Mac Command modifier")
+        app.navigationBars["Add to Row"].buttons["Close"].tap()
+        closeLayout(app, save: false); closeSettings(app)
+    }
+
+    func testSharedRemoteControlsAndSequenceEditor() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        app.buttons["controls-qa-remote"].tap()
+        XCTAssertTrue(app.buttons["remote-qa-edit"].waitForExistence(timeout: 5))
+        capture("remote-shared-bar-keyboard-hidden", app: app)
+        let bar = app.scrollViews["terminal-modifier-keys"]
+        let ctrl = app.buttons["Ctrl"].firstMatch
+        revealHorizontal(ctrl, scroll: bar); ctrl.tap(); XCTAssertEqual(ctrl.value as? String, "Next key")
+        ctrl.press(forDuration: 0.7); XCTAssertEqual(ctrl.value as? String, "On")
+        capture("remote-held-modifier-state", app: app)
+        let keypad = app.buttons["Keypad"].firstMatch; revealHorizontal(keypad, scroll: bar); keypad.tap()
+        XCTAssertTrue(app.buttons["remote-send-modifier-alone"].waitForExistence(timeout: 5))
+        app.buttons["remote-send-modifier-alone"].tap(); app.buttons["Control Alone"].tap()
+        capture("remote-explicit-modifier-alone", app: app)
+        app.navigationBars["All Keys"].buttons["Done"].tap()
+        XCTAssertTrue(app.staticTexts["Remote events: 2"].waitForExistence(timeout: 5))
+        revealHorizontal(ctrl, scroll: bar); XCTAssertEqual(ctrl.value as? String, "On"); ctrl.tap()
+        app.buttons["remote-qa-edit"].tap()
+        XCTAssertTrue(app.buttons["terminal-edit-keyboard"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["terminal-edit-menu"].exists)
+        app.buttons["terminal-edit-keyboard"].tap()
+        capture("remote-shared-keyboard-editor", app: app)
+        addRowPreset("Numbers", app: app)
+        capture("remote-numbers-row-added", app: app)
+        togglePreview(app); try await waitForSoftwareKeyboard(app)
+        capture("remote-native-keyboard-preview", app: app); togglePreview(app)
+        closeLayout(app, save: true); closeSettings(app)
+        XCTAssertTrue(app.staticTexts["Remote events: 2"].waitForExistence(timeout: 5), "Editing and preview never add input")
+        capture("remote-customized-bar", app: app)
+    }
+
+    func testSequenceDraftAndPlacement() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        library(app)
+        app.buttons["terminal-library-create"].tap()
+        let name = app.textFields["terminal-control-name"]; XCTAssertTrue(name.waitForExistence(timeout: 5)); name.tap(); name.typeText("Two Steps\n")
+        try XCTUnwrap(app.buttons.matching(identifier: "terminal-choose-key").allElementsBoundByIndex.last).tap()
+        let character = app.textFields["terminal-key-character"]; character.tap(); character.typeText("b")
+        XCTAssertTrue(app.buttons["terminal-use-character"].isEnabled)
+        app.buttons["terminal-use-character"].tap()
+        app.buttons["terminal-shortcut-modifier-Ctrl"].tap()
+        app.buttons["shortcut-add-step"].tap()
+        try XCTUnwrap(app.buttons.matching(identifier: "terminal-choose-key").allElementsBoundByIndex.last).tap()
+        let next = app.textFields["terminal-key-character"]; next.tap(); next.typeText("c")
+        app.buttons["terminal-use-character"].tap(); app.buttons["shortcut-step-save"].tap()
+        capture("sequence-editor-two-steps", app: app)
+        XCTAssertEqual(app.descendants(matching: .any)["shortcut-sequence-preview"].firstMatch.label, "⌃b → c")
+        let stepButtons = app.buttons.matching(NSPredicate(format: "identifier MATCHES %@", "shortcut-step-[A-F0-9-]{36}"))
+        let secondID = stepButtons.element(boundBy: 1).identifier
+        stepButtons.element(boundBy: 1).tap()
+        XCTAssertTrue(app.navigationBars["Edit Step"].waitForExistence(timeout: 5))
+        try XCTUnwrap(app.buttons.matching(identifier: "terminal-choose-key").allElementsBoundByIndex.last).tap()
+        let edited = app.textFields["terminal-key-character"]; edited.tap(); edited.typeText(XCUIKeyboardKey.delete.rawValue + "n")
+        app.buttons["terminal-use-character"].tap(); app.buttons["shortcut-step-save"].tap()
+        app.buttons["Options for n"].tap(); app.buttons["Duplicate"].tap()
+        XCTAssertEqual(app.descendants(matching: .any)["shortcut-sequence-preview"].firstMatch.label, "⌃b → n → n")
+        app.buttons.matching(identifier: "Options for n").element(boundBy: 1).tap(); app.buttons["Remove"].tap()
+        XCTAssertEqual(app.descendants(matching: .any)["shortcut-sequence-preview"].firstMatch.label, "⌃b → n")
+        let firstCell = app.cells.containing(.button, identifier: stepButtons.element(boundBy: 0).identifier).firstMatch
+        let secondCell = app.cells.containing(.button, identifier: secondID).firstMatch
+        secondCell.coordinate(withNormalizedOffset: .init(dx: 0.95, dy: 0.5)).press(forDuration: 0.7, thenDragTo: firstCell.coordinate(withNormalizedOffset: .init(dx: 0.95, dy: 0.1)))
+        XCTAssertEqual(app.descendants(matching: .any)["shortcut-sequence-preview"].firstMatch.label, "n → ⌃b")
+        capture("sequence-edit-duplicate-remove-reorder", app: app)
+        app.buttons["terminal-item-save"].tap()
+        XCTAssertTrue(app.staticTexts["Two Steps"].waitForExistence(timeout: 5))
+        actions("Two Steps", app: app); app.buttons["Add to Keyboard Bar"].tap()
+        app.buttons["terminal-row-menu-" + mainID].tap(); app.buttons["Add Key"].tap()
+        capture("sequence-placed-on-keyboard", app: app)
+        closeLayout(app, save: true)
+    }
+
+    func testSequenceReviewAndCancellation() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        app.buttons["controls-qa-live"].tap()
+        let input = app.staticTexts["controls-qa-input"]
+        XCTAssertTrue(input.waitForExistence(timeout: 15))
+        let action = app.buttons["terminal-row-action-00000000-0000-0000-0000-00000000C005"]
+        revealHorizontal(action, scroll: app.scrollViews["terminal-modifier-keys"])
+        let ctrl = app.buttons["Ctrl"].firstMatch
+        revealHorizontal(ctrl, scroll: app.scrollViews["terminal-modifier-keys"]); ctrl.tap()
+        revealHorizontal(action, scroll: app.scrollViews["terminal-modifier-keys"])
+        action.tap(); XCTAssertTrue(app.buttons["shortcut-sequence-send"].waitForExistence(timeout: 5))
+        capture("sequence-full-review-before-input", app: app)
+        app.buttons["Cancel"].tap()
+        XCTAssertEqual(input.label, "Input: ")
+        XCTAssertEqual(ctrl.value as? String, "Next key")
+        action.tap(); XCTAssertTrue(app.buttons["shortcut-sequence-send"].waitForExistence(timeout: 5))
+        XCUIDevice.shared.press(.home); app.activate()
+        XCTAssertFalse(app.buttons["shortcut-sequence-send"].exists, "The retained review retires on background")
+        XCTAssertEqual(input.label, "Input: ")
+        XCTAssertTrue(app.staticTexts["Input ready"].waitForExistence(timeout: 10))
+        revealHorizontal(action, scroll: app.scrollViews["terminal-modifier-keys"])
+        action.tap(); XCTAssertTrue(app.buttons["shortcut-sequence-send"].waitForExistence(timeout: 5))
+        app.buttons["shortcut-sequence-send"].tap()
+        let sent = NSPredicate(format: "label == %@", "Input: 0273796e7468657469630d")
+        await fulfillment(of: [expectation(for: sent, evaluatedWith: input)], timeout: 10)
+        capture("sequence-explicit-send-completed", app: app)
+    }
     override func setUp() { super.setUp(); executionTimeAllowance = 360 }
     private let itemID = "00000000-0000-0000-0000-00000000C001"
     private let mainID = "00000000-0000-0000-0000-000000000101"
@@ -18,7 +147,7 @@ import UIKit
     }
     private func revealHorizontal(_ element: XCUIElement, scroll: XCUIElement) {
         for _ in 0..<18 {
-            if element.isHittable && element.frame.intersection(scroll.frame).width >= min(40, element.frame.width) { return }
+            if element.isHittable && element.frame.intersection(scroll.frame).width >= min(scroll.frame.width, element.frame.width) - 1 { return }
             let backward = !element.frame.isEmpty && element.frame.midX < scroll.frame.midX
             let from = scroll.coordinate(withNormalizedOffset: .init(dx: backward ? 0.25 : 0.75, dy: 0.5))
             let to = scroll.coordinate(withNormalizedOffset: .init(dx: backward ? 0.75 : 0.25, dy: 0.5))

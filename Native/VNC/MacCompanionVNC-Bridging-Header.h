@@ -8,3 +8,4 @@
 #import "CompanionVNCDirectConnection.h"
 
 #import "CompanionVNCTextReview.h"
+#import "CompanionVNCKeyboard.h"

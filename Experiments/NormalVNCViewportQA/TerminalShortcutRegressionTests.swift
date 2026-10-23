@@ -10,6 +10,10 @@ import UIKit
         super.viewDidLoad()
         terminal.customInputEpoch = { [weak self] in self?.inputEpoch }
         terminal.admitCustomInput = { [weak self] bytes in self?.output += bytes; return self != nil }
+        terminal.admitCustomSequence = { [weak self] packets, valid, complete in
+            guard let self, true, valid() else { complete("Synthetic input admission rejected"); return false }
+            output += packets.flatMap { $0 }; complete(nil); return true
+        }
         keyboardBar.refresh()
     }
     override func send(source: TerminalView, data: ArraySlice<UInt8>) { output += terminal.encodeOutput(data) }

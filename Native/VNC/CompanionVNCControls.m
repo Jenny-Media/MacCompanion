@@ -166,7 +166,13 @@ void CompanionVNCPlayInterfaceFeedback(NSString *kind) {
         MAX(CGRectGetMinY(available) + 26, CGRectGetMaxY(available) - 26));
     if (self.buttonAnchorView.superview) {
         CGRect slot = [self.buttonAnchorView convertRect:self.buttonAnchorView.bounds toView:self];
-        self.button.center = CGPointMake(CGRectGetMidX(slot), CGRectGetMidY(slot));
+        if (slot.size.width > 0 && slot.size.height > 0) {
+            // Compact keyboard rows may be shorter than the standalone button.
+            // Keep its hit target inside the reserved slot in every mode.
+            CGFloat side = MIN(52, MIN(slot.size.width, slot.size.height));
+            self.button.bounds = CGRectMake(0,0,side,side);
+            self.button.center = CGPointMake(CGRectGetMidX(slot), CGRectGetMidY(slot));
+        }
     }
     if (!self.panel) return;
     BOOL favoritesEditor = self.editingPreview && !self.fullMenuPreview;

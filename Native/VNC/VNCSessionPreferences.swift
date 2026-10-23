@@ -231,6 +231,7 @@ struct VNCInputSettings: View {
     let macID: UUID?
     let mode: DirectControlMode
     let changed: @MainActor () -> Void
+    let keyboardEditingChanged: @MainActor (Bool) -> Void
     @State private var speed: Double
     @State private var scrollSpeed: Double
     @State private var showsTouchPoints: Bool
@@ -238,9 +239,12 @@ struct VNCInputSettings: View {
     @State private var followCursor: Bool
     @State private var actions: [VNCQuickAction]
     @State private var issue: DirectRecoveryNotice?
+    #if os(iOS)
+    @State private var editingKeyboard = false
+    #endif
     @State private var actionsReadable: Bool
-    init(macID: UUID? = nil, mode: DirectControlMode = .desktop, changed: @escaping @MainActor () -> Void = {}) {
-        self.macID = macID; self.mode = mode; self.changed = changed
+    init(macID: UUID? = nil, mode: DirectControlMode = .desktop, keyboardEditingChanged: @escaping @MainActor (Bool) -> Void = { _ in }, changed: @escaping @MainActor () -> Void = {}) {
+        self.macID = macID; self.mode = mode; self.changed = changed; self.keyboardEditingChanged = keyboardEditingChanged
         _scrollSpeed = State(initialValue: VNCSessionPreferences.scrollSpeed)
         _showsTouchPoints = State(initialValue: VNCSessionPreferences.showsTouchPoints)
         _trackpadHaptics = State(initialValue: VNCSessionPreferences.trackpadHaptics)
@@ -257,6 +261,12 @@ struct VNCInputSettings: View {
                     VStack(alignment: .leading, spacing: 20) {
                         if !actionsReadable { DirectRecoveryCard(notice: .make(.controlsUnavailable), primary: .init(title: "Retry", perform: reload)) }
                         if let issue { DirectRecoveryCard(notice: issue, primary: .init(title: "Retry Save", perform: save), secondary: .init(title: "Keep Editing", perform: { self.issue = nil })) }
+                        #if os(iOS)
+                        if mode != .terminal {
+                            Button("Customize Keyboard Bar", systemImage: "keyboard") { editingKeyboard = true }
+                                .buttonStyle(.bordered).frame(minHeight: 44).accessibilityIdentifier("remote-customize-keyboard")
+                        }
+                        #endif
                         DirectQuickActionsEditor(actions: $actions, mode: mode, readable: actionsReadable, macID: macID,
                             selectionChanged: { withAnimation { scroll.scrollTo("quick-action-inspector", anchor: .top) } })
                             .padding(12).background(.background, in: RoundedRectangle(cornerRadius: 20))
@@ -299,6 +309,12 @@ struct VNCInputSettings: View {
                 ToolbarItem(placement: .confirmationAction) { Button("Save") { save() }.disabled(!actionsReadable || !DirectQuickActionEditing.canSave(actions, mode: mode, hasPro: DirectProAccess.shared.hasPro)) }
             }
         }.interactiveDismissDisabled().directAppearance()
+        #if os(iOS)
+        .onChange(of: editingKeyboard) { _, value in keyboardEditingChanged(value) }
+        .sheet(isPresented: $editingKeyboard) {
+            TerminalControlsSettings(store: .remoteMac(), close: { editingKeyboard = false })
+        }
+        #endif
     }
     private var localScopeDescription: String {
         #if os(iOS)

@@ -27,9 +27,9 @@ struct TerminalControlsSettings: View {
                             Button { layout = .init(destination: .keyboard) } label: {
                                 entry("Keyboard Bar", summary: "\(profile.resolvedRows.count) customizable rows", symbol: "keyboard")
                             }.accessibilityIdentifier("terminal-edit-keyboard")
-                            Button { layout = .init(destination: .menu) } label: {
+                            if profile.family != .remoteMac { Button { layout = .init(destination: .menu) } label: {
                                 entry("Floating Menu", summary: "\(profile.placed(.menu).count) favorites", symbol: "ellipsis.circle")
-                            }.accessibilityIdentifier("terminal-edit-menu")
+                            }.accessibilityIdentifier("terminal-edit-menu") }
                         } header: { Text("Layout") }
                         Section {
                             ForEach([TerminalSavedItemsSection.shortcuts, .text], id: \.self) { section in
@@ -39,7 +39,7 @@ struct TerminalControlsSettings: View {
                             }
                         } footer: { Text("Applies to every Mac on this device.") }
                         recovery
-                    }.navigationTitle("Terminal Controls").directInlineNavigationTitle()
+                    }.navigationTitle(profile.family == .remoteMac ? "Remote Mac Controls" : "Terminal Controls").directInlineNavigationTitle()
                 }
             }.toolbar { ToolbarItem(placement: .confirmationAction) {
                 Button("Done", action: close).buttonStyle(.borderedProminent).accessibilityIdentifier("terminal-controls-cancel")
@@ -195,7 +195,7 @@ struct TerminalSavedLibrary: View {
                         if editMode != .active {
                             Menu {
                                 Button("Edit", systemImage: "pencil") { editing = item }
-                                ForEach(TerminalControlsDestination.allCases) { destination in
+                                ForEach(profile.family == .remoteMac ? [TerminalControlsDestination.keyboard] : TerminalControlsDestination.allCases) { destination in
                                     Button("Add to " + destination.title, systemImage: destination.symbol) { place(item.id, destination) }
                                 }
                                 Button("Delete…", systemImage: "trash", role: .destructive) { deleting = item }
@@ -315,11 +315,11 @@ struct TerminalShortcutPresetPicker: View {
                 }
                 Section {
                     Text(pack.guidance)
-                    Text("Each button sends one key or chord. Custom tool bindings may differ.").font(.caption).foregroundStyle(.secondary)
+                    Text("Choose an individual prefix or a complete action. Custom tool bindings may differ.").font(.caption).foregroundStyle(.secondary)
                 }
-                ForEach([false, true], id: \.self) { afterPrefix in
-                    Section(afterPrefix ? "After Prefix" : "Direct Shortcuts") {
-                    ForEach(pack.shortcuts.filter { ($0.action.usage != nil) == afterPrefix }) { preset in
+                ForEach([0, 2, 1], id: \.self) { group in
+                    Section(group == 2 ? "Complete Actions" : group == 1 ? "After Prefix" : "Direct Shortcuts") {
+                    ForEach(pack.shortcuts.filter { ($0.action.steps != nil ? 2 : $0.action.usage != nil ? 1 : 0) == group }) { preset in
                         let added = profile.actions.contains { $0.presetID == preset.id }
                         Button {
                             if selected.contains(preset.id) { selected.remove(preset.id) }

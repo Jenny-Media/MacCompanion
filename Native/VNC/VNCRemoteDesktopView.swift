@@ -392,7 +392,10 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         }
         func showInputSettings() {
             guard let viewer, viewer.presentedViewController == nil else { return }
-            let controller = UIHostingController(rootView: VNCInputSettings(macID: mac.id, mode: viewer.inputOnly ? .trackpad : .desktop) { [weak viewer] in
+            viewer.view.endEditing(true)
+            let controller = UIHostingController(rootView: VNCInputSettings(macID: mac.id, mode: viewer.inputOnly ? .trackpad : .desktop, keyboardEditingChanged: { [weak viewer] editing in
+                if editing { viewer?.beginKeyboardCustomization() } else { viewer?.endKeyboardCustomization() }
+            }) { [weak viewer] in
                 viewer?.pointerSpeed = VNCSessionPreferences.speed(self.mac.id)
                 viewer?.followCursorEnabled = VNCSessionPreferences.followCursor(self.mac.id)
                 self.refreshControls()
@@ -435,6 +438,7 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         }
         func showAppSettings() {
             guard let viewer, viewer.presentedViewController == nil else { return }
+            viewer.view.endEditing(true)
             let controller = UIHostingController(rootView: DirectSessionSettingsV1().directAppearance())
             controller.modalPresentationStyle = .pageSheet
             viewer.present(controller, animated: true)

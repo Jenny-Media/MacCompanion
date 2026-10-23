@@ -62,7 +62,7 @@ private final class TerminalPreviewAccessory: UIInputView {
     override init(frame: CGRect, inputViewStyle: UIInputView.Style) {
         super.init(frame: frame, inputViewStyle: inputViewStyle)
         allowsSelfSizing = true
-        backgroundColor = .secondarySystemBackground
+        backgroundColor = .systemBackground
         bar.editingPreview = true; bar.presentationPreview = true
         bar.translatesAutoresizingMaskIntoConstraints = true
         bar.autoresizingMask = [.flexibleWidth, .flexibleHeight]

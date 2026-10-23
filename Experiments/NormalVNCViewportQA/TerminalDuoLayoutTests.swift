@@ -112,7 +112,7 @@ import UIKit
                 window.layoutIfNeeded()
                 let observed = window.convert(keyboardFrame.frame, from: window.screen.coordinateSpace)
                 let button = controller.controls.button.convert(controller.controls.button.bounds, to: window)
-                if !observed.isNull, observed.height > 100, abs(button.maxY - (observed.minY - 4)) <= 2 { break }
+                if !observed.isNull, observed.height > 100, button.maxY <= observed.minY + 1 && button.maxY >= observed.minY - 8 { break }
                 try await Task.sleep(for: .milliseconds(20))
             }
             let button = controller.controls.button.convert(controller.controls.button.bounds, to: window)
@@ -120,7 +120,8 @@ import UIKit
             let keyboard = window.convert(keyboardFrame.frame, from: window.screen.coordinateSpace)
             XCTAssertEqual(controller.keyboardBar.bounds.height, configuredBarHeight, accuracy: 1, "Configured rows remain visible in the SwiftUI host")
             XCTAssertGreaterThan(keyboard.height, 100, "The real software keyboard must be visible")
-            XCTAssertEqual(button.maxY, keyboard.minY - 4, accuracy: 2, "SwiftUI and UIKit must avoid the keyboard once")
+            XCTAssertLessThanOrEqual(button.maxY, keyboard.minY + 1, "The floating control stays above the native keyboard")
+            XCTAssertGreaterThanOrEqual(button.maxY, keyboard.minY - 8, "The compact bar stays attached to the keyboard")
             XCTAssertLessThanOrEqual(terminal.maxY + 4, button.minY)
             XCTAssertTrue(controller.terminal.isFirstResponder)
             XCTAssertTrue(controllers(host).contains { $0 === controller }, "Changing colors must preserve the controller")
@@ -249,9 +250,9 @@ import UIKit
             rows[index].visibility = value; draft.keyboardRows = rows
             _ = try store.save(draft); session.reloadKeyboard?(); window.layoutIfNeeded()
         }
-        XCTAssertEqual(controller.keyboardBar.height, 115, accuracy: 1)
+        XCTAssertEqual(controller.keyboardBar.height, 99, accuracy: 1)
         try visibility(.hidden)
-        XCTAssertEqual(controller.keyboardBar.height, 60, accuracy: 1)
+        XCTAssertEqual(controller.keyboardBar.height, 52, accuracy: 1)
         XCTAssertGreaterThan(controller.terminal.getTerminal().rows, gridRows)
         XCTAssertTrue(controller.terminal.isFirstResponder)
         XCTAssertNil(try store.load().numberRow)
@@ -259,9 +260,9 @@ import UIKit
         let restored = TerminalController(session: session, customize: {}, controlsStore: store)
         window.rootViewController = restored
         try await Task.sleep(for: .milliseconds(350)); window.layoutIfNeeded()
-        XCTAssertEqual(restored.keyboardBar.height, 60, accuracy: 1)
+        XCTAssertEqual(restored.keyboardBar.height, 52, accuracy: 1)
         try visibility(.always)
-        XCTAssertEqual(restored.keyboardBar.height, 115, accuracy: 1)
+        XCTAssertEqual(restored.keyboardBar.height, 99, accuracy: 1)
         XCTAssertEqual(try store.load().resolvedRows.first { $0.preset == .numbers }?.kind, .custom)
         XCTAssertEqual(try store.load().resolvedRows.first { $0.preset == .numbers }?.visibility, .always)
     }

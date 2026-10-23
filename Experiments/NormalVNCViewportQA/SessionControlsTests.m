@@ -460,8 +460,8 @@
     UIWindow *previous = nil; for (UIWindow *w in scene.windows) if (w.isKeyWindow) previous = w;
     UIWindow *window = [[UIWindow alloc] initWithWindowScene:scene]; window.rootViewController = viewer; [window makeKeyAndVisible];
     UIButton *button = [viewer valueForKey:@"keyboardButton"]; UITextView *input = [viewer valueForKey:@"input"];
-    XCTAssertEqualObjects(button.accessibilityLabel,@"Show Keyboard"); XCTAssertNotNil(button.currentImage);
-    [viewer keyboard]; XCTAssertTrue(input.isFirstResponder); XCTAssertEqualObjects(button.accessibilityLabel,@"Hide Keyboard"); XCTAssertNotNil(button.currentImage);
+    XCTAssertEqualObjects(button.accessibilityLabel,@"Show Keyboard"); XCTAssertNotNil(button.configuration.image ?: button.currentImage);
+    [viewer keyboard]; XCTAssertTrue(input.isFirstResponder); XCTAssertEqualObjects(button.accessibilityLabel,@"Hide Keyboard"); XCTAssertNotNil(button.configuration.image ?: button.currentImage);
     [viewer keyboard]; XCTAssertFalse(input.isFirstResponder); XCTAssertEqualObjects(button.accessibilityLabel,@"Show Keyboard");
     [viewer stopViewer]; window.hidden = YES; window.rootViewController = nil; [previous makeKeyAndVisible];
 }
@@ -554,7 +554,7 @@
     XCTAssertEqualObjects([[controls valueForKey:@"items"] valueForKey:@"title"],(@[@"Compose Text",@"Display",@"Input",@"Session"]));
     [controls close];
 }
-- (void)testGroupedMenusNavigateBackWithoutReplacingSessionAndDisabledChoicesDoNotRun {
+- (void)testGroupedInputMenuOpensCompactKeypadWithoutReplacingSessionOrSendingInput {
     [self withFollowViewer:^(CompanionVNCViewer *viewer, ControlsSession *owner) {
         [viewer performControlAction:@{@"kind": @"inputMenu"}];
         [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.35]];
@@ -581,9 +581,13 @@
         while (navigation.transitionCoordinator && deadline.timeIntervalSinceNow > 0) {
             [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
         }
-        XCTAssertEqual(navigation.viewControllers.count,2);
-        XCTAssertEqual(navigation.popoverPresentationController.arrowDirection,UIPopoverArrowDirectionDown);
-        [navigation popViewControllerAnimated:NO]; XCTAssertEqual(navigation.topViewController,input);
+        NSDate *keypadDeadline = [NSDate dateWithTimeIntervalSinceNow:3];
+        while ((viewer.presentedViewController == navigation || !viewer.presentedViewController || viewer.presentedViewController.isBeingPresented) && keypadDeadline.timeIntervalSinceNow > 0) {
+            [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+        }
+        UIViewController *keypad = viewer.presentedViewController;
+        XCTAssertNotNil(keypad); XCTAssertNotEqual(keypad,navigation);
+        XCTAssertEqual(keypad.sheetPresentationController.detents.count,2);
         XCTAssertEqual(viewer.session,owner); XCTAssertEqual(owner.groups.count,0);
         [viewer dismissViewControllerAnimated:NO completion:nil];
         [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.35]];

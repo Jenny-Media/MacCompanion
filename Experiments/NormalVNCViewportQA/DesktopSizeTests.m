@@ -190,7 +190,7 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     viewer.inputOnly=YES;
     XCTAssertEqualObjects([self kindsInSections:[viewer displayMenuSections]],(@[@"inputOnly",@"fullscreen"]));
     XCTAssertEqualObjects([viewer displayMenuSections][0][@"items"][0][@"title"],@"Show Mac Screen");
-    XCTAssertEqualObjects([self kindsInSections:[viewer inputMenuSections]],(@[@"composeText",@"keyboard",@"keys"]));
+    XCTAssertEqualObjects([self kindsInSections:[viewer inputMenuSections]],(@[@"composeText",@"keyboard",@"keys",@"remoteControls"]));
     XCTAssertFalse([[self kindsInSections:[viewer displayMenuSections]] containsObject:@"desktopSizeMenu"]);
     viewer.inputOnly=NO;
     NSArray *input=[self kindsInSections:[viewer inputMenuSections]];

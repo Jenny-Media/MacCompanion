@@ -509,6 +509,9 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     private var deletionEncoded = false
     var customInputEpoch: () -> UUID? = { nil }
     var admitCustomInput: ([UInt8]) -> Bool = { _ in false }
+    var admitCustomSequence: ([[UInt8]], @escaping @MainActor () -> Bool, @escaping @MainActor (String?) -> Void) -> Bool = { _, _, complete in
+        complete("The input owner is unavailable. Nothing was queued."); return false
+    }
     private var customInputBytes: [UInt8]?
     private var modifiedText: [UInt8]?
     private var modifiedTextEncoded = false
@@ -526,7 +529,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         // Detach the delegate first: native responder/composition cleanup must
         // never write to the replacement shell, even through a delayed callback.
         terminalDelegate = nil; focusChanged = nil
-        customInputEpoch = { nil }; admitCustomInput = { _ in false }; customInputBytes = nil
+        customInputEpoch = { nil }; admitCustomInput = { _ in false }; admitCustomSequence = { _, _, complete in complete("The input owner retired."); return false }; customInputBytes = nil
         _ = resignFirstResponder()
         resetModifiers(); clearSelection()
         setMarkedText("", selectedRange: NSRange(location: 0, length: 0)); unmarkText()
@@ -713,6 +716,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
             if textComposer.sending { session.interruptComposedText() }
             textComposer.invalidate(); terminal.resetModifiers(); controls.cancelSlideForLayoutChange(); controls.close()
             keypadState?.ready = false
+            if let sequenceReview, presentedViewController === sequenceReview { dismiss(animated: false); self.sequenceReview = nil }
             if let navigation = presentedViewController as? UINavigationController, navigation.topViewController is CompanionVNCMenu { dismiss(animated: false) }
             if let inputPanel, presentedViewController === inputPanel { dismiss(animated: false); self.inputPanel = nil }
         }
@@ -727,6 +731,10 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     private func installTerminalSurface() {
         terminal.customInputEpoch = { [weak self] in self?.currentControlsInputEpoch() }
         terminal.admitCustomInput = { [weak self] bytes in guard let self, !customizingControls else { return false }; return session.trySend(bytes) }
+        terminal.admitCustomSequence = { [weak self] packets, valid, complete in
+            guard let self, !customizingControls, let epoch = session.customInputEpoch else { complete("The session input owner changed."); return false }
+            return session.sendSequence(packets, epoch: epoch, stillValid: valid, completion: complete)
+        }
         terminal.accessibilityIdentifier = "terminal-surface"
         terminal.terminalDelegate = self; terminal.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(terminal)
         // The persistent toolbar owns the only bottom control space. No
@@ -791,10 +799,46 @@ private struct TerminalSurface: UIViewControllerRepresentable {
             terminal.performCustomInput(feedbackKind: feedback) {
                 if let key = item.key { terminal.sendKey(.accessory(key), modifiers: terminal.keyboardState.consume()) }
             }
-        case .shortcut: terminal.performCustomInput(feedbackKind: feedback) { terminal.sendShortcut(item.shortcut) }
+        case .shortcut: runShortcut(item, feedback: feedback)
         case .text: reviewSavedText(item)
         }
         keyboardBar.refresh()
+    }
+    private var sequenceReview: UIViewController?
+    private func runShortcut(_ item: TerminalControlAction, feedback: String?) {
+        guard let epoch = terminal.customInputEpoch(),
+              let packets = try? item.terminalSequence(encoding: terminal.keyEncoding, bracketedPaste: terminal.getTerminal().bracketedPasteMode) else { return }
+        let revision = controlProfile.revision
+        let send = { [weak self] in
+            guard let self, terminal.customInputEpoch() == epoch,
+                  controlProfile.revision == revision, DirectProAccess.shared.hasPro else { return }
+            // Recheck negotiated capabilities after the review; never substitute.
+            guard let current = try? item.terminalSequence(encoding: terminal.keyEncoding, bracketedPaste: terminal.getTerminal().bracketedPasteMode), current == packets else { return }
+            let accepted = terminal.admitCustomSequence(packets, { [weak self] in
+                guard let self, terminal.customInputEpoch() == epoch, controlProfile.revision == revision, DirectProAccess.shared.hasPro else { return false }
+                return (try? item.terminalSequence(encoding: terminal.keyEncoding, bracketedPaste: terminal.getTerminal().bracketedPasteMode)) == packets
+            }) { [weak self] message in
+                guard let self, terminal.customInputEpoch() == epoch else { return }
+                if let message { let alert = UIAlertController(title: "Shortcut Stopped", message: message, preferredStyle: .alert); alert.addAction(.init(title: "OK", style: .default)); present(alert, animated: true) }
+            }
+            if accepted, let feedback { keyboardBar.keyFeedback.feedback(feedback) }
+        }
+        guard item.hasSequenceText else { send(); return }
+        let modifiers = terminal.keyboardState, focused = terminal.isFirstResponder
+        let restore = { [weak self] in
+            guard let self, terminal.customInputEpoch() == epoch else { return }
+            if focused { _ = terminal.becomeFirstResponder() }
+            terminal.keyboardState = modifiers; keyboardBar.refresh()
+        }
+        let show = { [weak self] in
+            guard let self, terminal.customInputEpoch() == epoch else { return }
+            _ = terminal.resignFirstResponder(); terminal.keyboardState = modifiers; keyboardBar.refresh()
+            let panel = UIHostingController(rootView: TerminalSequenceReview(action: item, send: { [weak self] in
+                self?.dismiss(animated: true) { self?.sequenceReview = nil; restore(); send() }
+            }, cancel: { [weak self] in self?.dismiss(animated: true) { self?.sequenceReview = nil; restore() } }))
+            sequenceReview = panel; panel.modalPresentationStyle = .pageSheet; present(panel, animated: true)
+        }
+        if presentedViewController != nil { dismiss(animated: true, completion: show) } else { show() }
     }
     private func reviewSavedText(_ item: TerminalControlAction) {
         guard let epoch = terminal.customInputEpoch() else { return }

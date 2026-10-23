@@ -48,6 +48,10 @@ import XCTest
         terminal.admitCustomInput = { [weak self] bytes in
             guard let self, self.acceptsInput else { return false }; self.output += bytes; return true
         }
+        terminal.admitCustomSequence = { [weak self] packets, valid, complete in
+            guard let self, inputReady && acceptsInput, valid() else { complete("Synthetic input admission rejected"); return false }
+            output += packets.flatMap { $0 }; complete(nil); return true
+        }
         keyboardBar.refresh()
     }
     override func send(source: TerminalView, data: ArraySlice<UInt8>) { output += terminal.encodeOutput(data) }
@@ -83,6 +87,9 @@ private final class KeyboardMenuSession: CompanionVNCSession {
             sentKeys += events.compactMap { ($0["key"] as? NSNumber)?.uint32Value }
         }
     }
+    override func tryComposedTextEvents(_ events: [[AnyHashable: Any]], completion: @escaping (Bool) -> Void) -> Bool {
+        guard tryKeyEvents(events) else { return false }; completion(true); return true
+    }
     override func tryKeyEvents(_ events: [[AnyHashable: Any]]?) -> Bool {
         guard acceptsKeys else { return false }; keyEvents(events); return true
     }
@@ -99,7 +106,8 @@ private final class KeyboardMenuSession: CompanionVNCSession {
 @MainActor final class KeyboardHapticsTests: XCTestCase {
     private func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
     private func button(_ title: String, in view: UIView) throws -> UIButton {
-        try XCTUnwrap(descendants(view).compactMap { $0 as? UIButton }.first {
+        let title = title == "esc" ? "Escape" : title == "⇥" ? "Tab" : title
+        return try XCTUnwrap(descendants(view).compactMap { $0 as? UIButton }.first {
             $0.accessibilityLabel == title || $0.configuration?.title == title || $0.title(for: .normal) == title
         })
     }
@@ -274,6 +282,28 @@ private final class KeyboardMenuSession: CompanionVNCSession {
             feedback.active = false
             try button("1", in: controller.keyboardBar).sendActions(for: .touchUpInside)
             XCTAssertTrue(feedback.events.isEmpty)
+        }
+    }
+    func testKeyboardCustomizationOwnsInputUntilCloseAndCannotResumeAcrossInactivity() throws {
+        try withFeedback { _, feedback in
+            let viewer = viewer(feedback, inputOnly: true)
+            let owner = try XCTUnwrap(viewer.session as? KeyboardMenuSession)
+            defer { viewer.stop() }
+            viewer.beginKeyboardCustomization()
+            XCTAssertFalse(viewer.controlsInputAvailable())
+            let input = try XCTUnwrap(viewer.value(forKey: "input") as? UITextView)
+            input.text = "synthetic"; _ = viewer.perform(NSSelectorFromString("textViewDidChange:"), with: input)
+            XCTAssertEqual(owner.keyGroups, 0, "Native typing cannot escape into the Mac while editing controls")
+            viewer.endKeyboardCustomization(); XCTAssertTrue(viewer.controlsInputAvailable())
+            let controls = try XCTUnwrap(viewer.value(forKey: "remoteControls") as? RemoteMacControls)
+            controls.showSettings()
+            for _ in 0..<3 { _ = viewer.perform(NSSelectorFromString("updateStatusPresentation")) }
+            XCTAssertFalse(viewer.controlsInputAvailable(), "Status refreshes cannot close the editor or resume its input owner")
+            input.text = "synthetic"; _ = viewer.perform(NSSelectorFromString("textViewDidChange:"), with: input)
+            XCTAssertEqual(owner.keyGroups, 0)
+            controls.reset(); XCTAssertTrue(viewer.controlsInputAvailable())
+            viewer.beginKeyboardCustomization(); viewer.becameInactive(); viewer.endKeyboardCustomization()
+            XCTAssertFalse(viewer.controlsInputAvailable(), "Closing a retained editor cannot release a lifecycle pause")
         }
     }
     func testMirrorVirtualDisplayAndInputOnlyToolbarKeysHonorLivePreference() throws {

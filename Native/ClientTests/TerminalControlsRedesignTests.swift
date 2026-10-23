@@ -361,7 +361,7 @@ import XCTest
         let tmux = TerminalShortcutPack.tmux.shortcuts
         XCTAssertEqual(tmux.first?.action.character, 0x62)
         XCTAssertEqual(tmux.first?.action.modifiers, [0xffe3])
-        XCTAssertTrue(tmux.dropFirst().allSatisfy { $0.action.modifiers.isEmpty && $0.action.usage == "After Tmux Prefix" })
+        XCTAssertTrue(tmux.dropFirst().filter { $0.action.steps == nil }.allSatisfy { $0.action.modifiers.isEmpty && $0.action.usage == "After Tmux Prefix" })
         let herdr = TerminalShortcutPack.herdr.shortcuts
         let rename = try XCTUnwrap(herdr.first { $0.id == "herdr.rename" })
         XCTAssertEqual(rename.action.character, 0x57)
@@ -370,7 +370,7 @@ import XCTest
         XCTAssertTrue(rename.action.modifiers.isEmpty)
         XCTAssertEqual(TerminalKeyEncoding().bytes(.text("N")), [0x4e])
         XCTAssertEqual(TerminalShortcutPack.zellij.shortcuts.first?.action.modifiers, [0xffe3])
-        XCTAssertTrue(TerminalShortcutPack.zellijUnlock.shortcuts.dropFirst().allSatisfy { $0.action.usage == "After Zellij Unlock" && $0.action.modifiers.isEmpty })
+        XCTAssertTrue(TerminalShortcutPack.zellijUnlock.shortcuts.dropFirst().filter { $0.action.steps == nil }.allSatisfy { $0.action.usage == "After Zellij Unlock" && $0.action.modifiers.isEmpty })
     }
     func testRenameUpdatesBothPlacementsAndRemovalKeepsOneDefinition() throws {
         var profile = TerminalControlsProfile.defaults
