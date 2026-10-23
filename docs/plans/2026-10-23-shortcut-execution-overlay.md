@@ -34,3 +34,25 @@ relax the covered keys' bottom constraint so their fixed heights cannot
 compress progress. Bound that temporary height by the space above the keyboard,
 allow large status text to scroll, and keep Cancel visible. Cover restoration
 and a constrained viewport in the native layout regression.
+
+## Glass and temporary keyboard polish
+
+Keep the real row keycaps recognizable below one native UIKit glass backdrop,
+with a solid central status strip. Touch and accessibility blocking, including
+the floating button, remains immediate; Cancel is the sole execution control.
+Respect Reduce Transparency, including changes while progress is visible.
+
+After 500 ms of sustained execution, temporarily dismiss a visible docked
+software keyboard. Keep transport ownership, modifiers and saved keyboard
+preferences unchanged. Fast runs and hardware-keyboard-only focus do not toggle
+the keyboard. Restore only on completion or Cancel while the same connection
+and presentation remain active; lifecycle retirement, navigation, changed focus
+and stale callbacks must not reopen it. Restoration must also work when Cancel
+retires a non-cancellable write and when dismissal animation is still running.
+
+Cover the shared timing policy and both remote adapters in native regressions.
+Exercise keyboard-visible/hidden progress, completion, Cancel, quick input and
+background/connection retirement across Terminal, Screen Sharing and Trackpad
+& Keyboard. Inspect actual screenshots for row silhouettes and readable status.
+Run managed stable-Xcode builds, native/UI tests and scripts/validate.sh, then
+update PR #46 and install the resulting development build on iPhone 18 Pro Max.

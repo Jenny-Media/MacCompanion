@@ -951,6 +951,7 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         try await wait { session.canSendUserInput }
         let epoch = try XCTUnwrap(session.customInputEpoch)
         let plan: [TerminalSequenceOperation<[UInt8]>] = [.input([116, 13]), .wait(30_000), .input([49, 13])]
+        let keyboardEpoch = session.keyboardPresentationEpoch
         var finished = false
         XCTAssertTrue(session.sendSequencePlan(plan, epoch: epoch, resolve: { plan[$0].input }, stillValid: { true }, progress: { index in
             if index == 1 { session.cancelSequence(epoch: epoch) }
@@ -958,10 +959,19 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         try await wait { finished }
         XCTAssertTrue(session.connected)
         XCTAssertNotEqual(session.customInputEpoch, epoch)
+        XCTAssertEqual(session.keyboardPresentationEpoch, keyboardEpoch, "Cancel may restore this connection's keyboard")
         XCTAssertTrue(session.trySend([122]))
         try await wait { record.received == [116, 13, 122] }
         await Task.yield()
         XCTAssertEqual(record.received, [116, 13, 122], "Canceled numeric selection must never replay")
+        var stopCompleted = false
+        XCTAssertTrue(session.sendSequence([[120]], epoch: try XCTUnwrap(session.customInputEpoch), completion: { _ in
+            XCTAssertNotEqual(session.keyboardPresentationEpoch, keyboardEpoch, "Retire restoration before notifying the presentation")
+            stopCompleted = true
+        }))
+        session.stop()
+        XCTAssertTrue(stopCompleted)
+        XCTAssertNotEqual(session.keyboardPresentationEpoch, keyboardEpoch, "Stop must retire keyboard restoration before completing the old shortcut")
     }
 
     func testCancelBlockedShortcutCompletesOnceAndKeepsNewRunOrdered() async throws {

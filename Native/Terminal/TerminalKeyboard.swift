@@ -1104,7 +1104,9 @@ private final class TerminalKeyScrollView: UIScrollView {
     func refresh() {
         guard !editingPreview else { return }
         if executionActive {
-            for key in allKeys + [keypadButton] { key.isEnabled = false; key.alpha = 0.4 }
+            // The blocker owns interaction/accessibility. Keep the underlying
+            // keycaps legible through glass instead of dimming them twice.
+            for key in allKeys + [keypadButton] { key.isEnabled = false; key.alpha = 1 }
             return
         }
         if let remoteInput {

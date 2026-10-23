@@ -66,6 +66,11 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)cancelControlSequence:(NSString *)identifier;
 - (void)sendOrdinaryControlEvents:(NSArray<NSDictionary *> *)events;
 - (void)toggleControlsKeyboard;
+/// Temporary shortcut presentation; never retires the connection input epoch.
+- (BOOL)controlsSoftwareKeyboardVisible;
+- (BOOL)controlsExecutionKeyboardCurrent;
+- (BOOL)hideControlsExecutionKeyboard;
+- (void)restoreControlsExecutionKeyboard;
 - (void)beginKeyboardCustomization;
 - (void)endKeyboardCustomization;
 - (void)showControlsComposer;

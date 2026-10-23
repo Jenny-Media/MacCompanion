@@ -2217,6 +2217,25 @@
     self.restoresControlsKeyboard = NO; [self updateRemoteKeyAvailability];
 }
 - (void)toggleControlsKeyboard { [self toggleKeyboardWithFeedback:YES]; }
+- (BOOL)controlsSoftwareKeyboardVisible {
+    UIWindow *window = self.view.window;
+    if (!self.input.isFirstResponder || !window) return NO;
+    CGFloat top = [self.view convertPoint:CGPointMake(0, CGRectGetMinY(self.view.keyboardLayoutGuide.layoutFrame)) toView:window].y;
+    return top < CGRectGetMaxY(window.bounds) - window.safeAreaInsets.bottom - 100;
+}
+- (BOOL)controlsExecutionKeyboardCurrent {
+    if (UIApplication.sharedApplication.applicationState != UIApplicationStateActive || !self.foreground || self.exited
+        || !self.view.window || self.presentedViewController || self.isBeingDismissed || self.isMovingFromParentViewController) return NO;
+    NSMutableArray<UIView *> *pending = [NSMutableArray arrayWithObject:self.view];
+    while (pending.count) {
+        UIView *candidate = pending.lastObject; [pending removeLastObject];
+        if (candidate.isFirstResponder && candidate != self.input) return NO;
+        [pending addObjectsFromArray:candidate.subviews];
+    }
+    return YES;
+}
+- (BOOL)hideControlsExecutionKeyboard { BOOL hidden = [self.input resignFirstResponder]; [self updateKeyboardButton]; return hidden; }
+- (void)restoreControlsExecutionKeyboard { [self.input becomeFirstResponder]; [self updateKeyboardButton]; }
 - (void)showControlsSettings { [self.remoteControls showSettings]; }
 - (BOOL)controlsCopyTextAvailable { return [self canCopyScreenText]; }
 - (void)refreshControlsMenu {

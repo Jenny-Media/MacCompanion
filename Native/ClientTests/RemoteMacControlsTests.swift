@@ -23,6 +23,8 @@ private final class RemoteAnchorSession: CompanionVNCSession {
     var events: [[AnyHashable: Any]] = []
     var shown: UIViewController?
     var keyboardToggles = 0
+    var softwareKeyboard = false, keyboardCurrent = true
+    var keyboardHides = 0, keyboardRestores = 0
     var composerReview: (text: String, title: String, available: () -> Bool)?
     var sequenceOwner: String?
     var holdSequenceReplies = false
@@ -38,6 +40,10 @@ private final class RemoteAnchorSession: CompanionVNCSession {
     override var controlsConnectionID: String { connectionID }
     override func controlsInputAvailable() -> Bool { available }
     override func toggleControlsKeyboard() { keyboardToggles += 1 }
+    override func controlsSoftwareKeyboardVisible() -> Bool { softwareKeyboard }
+    override func controlsExecutionKeyboardCurrent() -> Bool { keyboardCurrent }
+    override func hideControlsExecutionKeyboard() -> Bool { keyboardHides += 1; softwareKeyboard = false; return true }
+    override func restoreControlsExecutionKeyboard() { keyboardRestores += 1; softwareKeyboard = true }
     override func showControlsComposer(text: String, title: String, available: @escaping () -> Bool) {
         composerReview = (text, title, available)
     }
@@ -62,6 +68,93 @@ private final class RemoteAnchorSession: CompanionVNCSession {
 }
 
 @MainActor final class RemoteMacControlsTests: XCTestCase {
+    func testKeyboardRestoresDuringNativeDismissalAnimationAndDoesNotStealFocus() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        let owner = UIViewController(); window.rootViewController = owner
+        let input = UITextField(frame: .init(x: 12, y: 100, width: 200, height: 44))
+        let other = UITextField(frame: .init(x: 12, y: 160, width: 200, height: 44))
+        owner.view.addSubview(input); owner.view.addSubview(other); window.makeKeyAndVisible()
+        defer { owner.view.endEditing(true); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        XCTAssertTrue(input.becomeFirstResponder())
+        for _ in 0..<100 where !TerminalSequenceKeyboard.softwareVisible(in: owner.view, responder: input) { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(TerminalSequenceKeyboard.softwareVisible(in: owner.view, responder: input))
+        let embedded = UIViewController(); owner.addChild(embedded); owner.view.addSubview(embedded.view); embedded.didMove(toParent: owner)
+        embedded.view.frame = .init(x: 0, y: 0, width: owner.view.bounds.width, height: owner.view.bounds.height / 2)
+        input.removeFromSuperview(); embedded.view.addSubview(input); XCTAssertTrue(input.becomeFirstResponder())
+        embedded.view.layoutIfNeeded()
+        XCTAssertTrue(TerminalSequenceKeyboard.softwareVisible(in: embedded.view, responder: input), "A SwiftUI-sized owner can end above the keyboard; compare in window coordinates")
+        input.removeFromSuperview(); owner.view.addSubview(input); XCTAssertTrue(input.becomeFirstResponder())
+        embedded.willMove(toParent: nil); embedded.view.removeFromSuperview(); embedded.removeFromParent()
+        let keyboard = TerminalSequenceKeyboard(visible: { input.isFirstResponder }, current: { TerminalSequenceKeyboard.presentationCurrent(in: owner, responder: input) },
+            hide: { input.resignFirstResponder() }, restore: { _ = input.becomeFirstResponder() })
+        keyboard.start(delay: .milliseconds(20)); try await Task.sleep(for: .milliseconds(60))
+        XCTAssertFalse(input.isFirstResponder); keyboard.finish()
+        XCTAssertTrue(input.isFirstResponder, "Cancel during native dismissal must reverse the keyboard transition")
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertTrue(TerminalSequenceKeyboard.softwareVisible(in: owner.view, responder: input))
+        XCTAssertTrue(other.becomeFirstResponder())
+        XCTAssertFalse(TerminalSequenceKeyboard.presentationCurrent(in: owner, responder: input))
+    }
+    func testKeyboardPresentationDelayCancellationAndRetirement() async throws {
+        var visible = true, current = true, hides = 0, restores = 0
+        func make() -> TerminalSequenceKeyboard {
+            .init(visible: { visible }, current: { current }, hide: { hides += 1; visible = false; return true }, restore: { restores += 1; visible = true })
+        }
+        let quick = make(); quick.start(delay: .milliseconds(40)); quick.finish()
+        try await Task.sleep(for: .milliseconds(80)); XCTAssertEqual(hides, 0); XCTAssertEqual(restores, 0)
+        let sustained = make(); sustained.start(delay: .milliseconds(30))
+        try await Task.sleep(for: .milliseconds(60)); XCTAssertFalse(visible); XCTAssertEqual(hides, 1)
+        sustained.finish(); sustained.finish(); XCTAssertTrue(visible); XCTAssertEqual(restores, 1)
+        let obsolete = make(); obsolete.start(delay: .milliseconds(30))
+        try await Task.sleep(for: .milliseconds(60)); current = false
+        obsolete.finish(); XCTAssertFalse(visible); XCTAssertEqual(restores, 1)
+        // An old completion must never reopen a keyboard during a newer run.
+        current = true; obsolete.finish(); XCTAssertFalse(visible); XCTAssertEqual(restores, 1)
+        let initiallyHidden = make(); initiallyHidden.start(delay: .milliseconds(20))
+        try await Task.sleep(for: .milliseconds(40)); initiallyHidden.finish(); XCTAssertEqual(hides, 2); XCTAssertEqual(restores, 1)
+        visible = true
+        let retired = make(); retired.start(delay: .milliseconds(20))
+        try await Task.sleep(for: .milliseconds(40)); retired.finish(restoring: false)
+        XCTAssertFalse(visible); XCTAssertEqual(restores, 1)
+        visible = true
+        let changedBeforeHide = make(); changedBeforeHide.start(delay: .milliseconds(30)); current = false
+        try await Task.sleep(for: .milliseconds(60)); changedBeforeHide.finish(); XCTAssertEqual(hides, 3)
+        current = true; visible = false
+        let arrivingKeyboard = make(); arrivingKeyboard.start(delay: .milliseconds(20)); visible = true
+        try await Task.sleep(for: .milliseconds(40)); XCTAssertFalse(visible); XCTAssertEqual(hides, 4)
+        arrivingKeyboard.finish(); XCTAssertTrue(visible); XCTAssertEqual(restores, 2)
+    }
+    func testKeyboardPresentationDoesNotRestoreWhenDismissalFailsOrFocusChanges() async throws {
+        var visible = true, focused = true, restores = 0
+        let failed = TerminalSequenceKeyboard(visible: { visible }, current: { focused }, hide: { false }, restore: { restores += 1 })
+        failed.start(delay: .milliseconds(20)); try await Task.sleep(for: .milliseconds(40)); failed.finish(); XCTAssertEqual(restores, 0)
+        let focusChanged = TerminalSequenceKeyboard(visible: { visible }, current: { focused }, hide: { visible = false; return true }, restore: { restores += 1 })
+        focusChanged.start(delay: .milliseconds(20)); try await Task.sleep(for: .milliseconds(40)); focused = false
+        focusChanged.finish(); XCTAssertEqual(restores, 0)
+    }
+    func testSustainedRemoteRunHidesKeyboardAndCancelRestoresWithoutWaitingInBothModes() async throws {
+        let entitlement = try await pro(); defer { entitlement.clearTransactions() }
+        for inputOnly in [false, true] {
+            var action = TerminalControlAction(title: "Held send", kind: .shortcut)
+            action.steps = [.init(character: 97)]
+            var profile = TerminalControlsProfile.remoteDefaults
+            profile.actions.append(action); profile.pin(action.id, in: .menu, enabled: true); profile.captureRemoteMenu()
+            profile.remoteMenus = ["desktop": profile.resolvedMenuPlacements, "trackpad": profile.resolvedMenuPlacements]; profile.remoteMenuMode = "desktop"
+            let viewer = RemoteControlsTestViewer(); viewer.inputOnly = inputOnly; viewer.softwareKeyboard = true; viewer.holdSequenceReplies = true
+            let host = controls(viewer, data: try JSONEncoder().encode(profile)); defer { host.reset() }
+            func run() throws { host.performMenuAction(try XCTUnwrap(host.menuActions().first { $0["title"] as? String == action.title })) }
+            try run(); XCTAssertTrue(viewer.softwareKeyboard)
+            try await Task.sleep(for: .milliseconds(650)); XCTAssertFalse(viewer.softwareKeyboard); XCTAssertEqual(viewer.keyboardHides, 1)
+            let panel = try XCTUnwrap(viewer.children.compactMap { $0 as? TerminalSequenceBannerController }.first)
+            panel.rootView.cancel(); XCTAssertTrue(viewer.softwareKeyboard); XCTAssertEqual(viewer.keyboardRestores, 1)
+            XCTAssertTrue(host.bar.isUserInteractionEnabled); XCTAssertNil(viewer.sequenceOwner)
+            viewer.pendingSequenceReplies[0](true); XCTAssertEqual(viewer.keyboardRestores, 1)
+            try run(); try await Task.sleep(for: .milliseconds(650)); XCTAssertFalse(viewer.softwareKeyboard)
+            host.reset(); XCTAssertFalse(viewer.softwareKeyboard); XCTAssertEqual(viewer.keyboardRestores, 1)
+            viewer.pendingSequenceReplies[1](true); XCTAssertEqual(viewer.keyboardRestores, 1)
+        }
+    }
     func testExplicitConfirmationAndConnectionSkipApplyInBothRemoteModes() async throws {
         let entitlement = try await pro(); defer { entitlement.clearTransactions() }
         for inputOnly in [false, true] {
@@ -238,6 +331,13 @@ private final class RemoteAnchorSession: CompanionVNCSession {
             if category == .large { XCTAssertEqual(bar.frame, original, "Normal text must not resize the terminal") }
             let screenshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
             let attachment = XCTAttachment(image: screenshot); attachment.name = category == .large ? "in-place-progress-overlay" : "accessible-in-place-progress-overlay"; attachment.lifetime = .keepAlways; add(attachment)
+            if category == .large, #available(iOS 26, *), !UIAccessibility.isReduceTransparencyEnabled,
+               let backdrop = panel.view.subviews.compactMap({ $0 as? UIVisualEffectView }).first {
+                backdrop.effect = UIGlassEffect(style: .clear)
+                try await Task.sleep(for: .milliseconds(150))
+                let comparison = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
+                let capture = XCTAttachment(image: comparison); capture.name = "native-clear-glass-comparison"; capture.lifetime = .keepAlways; add(capture)
+            }
             if category.isAccessibilityCategory {
                 // Model limited space above a landscape or floating keyboard.
                 viewer.additionalSafeAreaInsets.top = max(0, window.bounds.height - 220)

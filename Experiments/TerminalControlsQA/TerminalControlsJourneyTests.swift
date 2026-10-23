@@ -11,23 +11,32 @@ import UIKit
         try await waitForSoftwareKeyboard(app)
         let bar = app.otherElements["terminal-keyboard-bar"].firstMatch
         let original = bar.frame
+        capture("terminal-keyboard-before-shortcut", app: app)
         runSequenceProbe("C013", review: false, app: app)
         let cancel = app.buttons["shortcut-running-cancel"]
         XCTAssertTrue(cancel.waitForExistence(timeout: 5))
         let overlay = app.otherElements["shortcut-execution-blocker"].firstMatch
-        XCTAssertEqual(overlay.frame, original, "The progress surface must reuse the expanded rows' footprint")
-        XCTAssertFalse(keyboard.isHittable)
-        XCTAssertTrue(app.keyboards.firstMatch.exists)
-        app.keyboards.firstMatch.keys["x"].firstMatch.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 4))
+        XCTAssertFalse(bar.exists, "Covered rows must be hidden from accessibility during execution")
+        XCTAssertEqual(overlay.frame.minX, original.minX)
+        XCTAssertEqual(overlay.frame.width, original.width)
+        XCTAssertEqual(overlay.frame.height, original.height)
+        XCTAssertFalse(keyboard.exists)
         await assertInput("740d", app: app)
-        capture("terminal-expanded-rows-progress-keyboard-visible", app: app)
+        capture("terminal-glass-over-rows-keyboard-temporarily-hidden", app: app)
         cancel.tap(); XCTAssertTrue(cancel.waitForNonExistence(timeout: 2))
+        try await waitForSoftwareKeyboard(app)
+        capture("terminal-keyboard-restored-after-cancel", app: app)
         XCTAssertTrue(keyboard.isHittable); keyboard.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 4))
+        let hiddenKeyboardRows = bar.frame
         capture("terminal-rows-restored-keyboard-hidden", app: app)
         runSequenceProbe("C013", review: false, app: app)
         XCTAssertTrue(cancel.waitForExistence(timeout: 5))
-        capture("terminal-expanded-rows-progress-keyboard-hidden", app: app)
+        XCTAssertEqual(overlay.frame, hiddenKeyboardRows, "Progress occupies the existing rows without covering terminal output")
+        capture("terminal-glass-over-rows-keyboard-already-hidden", app: app)
         cancel.tap(); XCTAssertTrue(cancel.waitForNonExistence(timeout: 2))
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
     }
 
     func testTimedSequenceImmediateBlockedSSHRejectsCompetingRunAndCancels() async throws {
@@ -68,13 +77,24 @@ import UIKit
         capture(mode + "-progress-covers-rows-keyboard-hidden", app: app)
         cancel.tap(); XCTAssertTrue(cancel.waitForNonExistence(timeout: 2)); XCTAssertTrue(action.isHittable)
         keyboard.tap(); try await waitForSoftwareKeyboard(app)
+        capture(mode + "-keyboard-before-shortcut", app: app)
         action.tap(); XCTAssertTrue(cancel.waitForExistence(timeout: 5))
-        capture(mode + "-progress-covers-rows-keyboard-visible", app: app)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 4))
+        capture(mode + "-glass-over-rows-keyboard-temporarily-hidden", app: app)
         cancel.tap(); XCTAssertTrue(cancel.waitForNonExistence(timeout: 2))
+        try await waitForSoftwareKeyboard(app)
+        capture(mode + "-keyboard-restored-after-cancel", app: app)
         quick.tap()
         await fulfillment(of: [expectation(for: NSPredicate(format: "label == %@", "Remote events: 6"), evaluatedWith: app.staticTexts["remote-qa-events"])], timeout: 3)
         XCTAssertFalse(cancel.exists)
+        XCTAssertTrue(app.keyboards.firstMatch.exists, "Quick shortcuts must leave the keyboard in place")
         capture(mode + "-quick-shortcut-completes-without-progress-flash", app: app)
+        action.tap(); XCTAssertTrue(cancel.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 4))
+        XCTAssertTrue(cancel.waitForNonExistence(timeout: 15))
+        try await waitForSoftwareKeyboard(app)
+        XCTAssertEqual(app.staticTexts["remote-qa-events"].label, "Remote events: 10", "Temporary keyboard dismissal must not retire the running shortcut")
+        capture(mode + "-keyboard-restored-after-completion", app: app)
     }
 
     func testShortcutConfirmationSettingDefaultsOffAndPersists() async throws {
@@ -227,13 +247,17 @@ import UIKit
     }
 
     func testTimedSequenceLaunchWaitAndNumericSelectionOverSSH() async throws {
-        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        let (app, store) = try await launchPro(executionOverlay: true); defer { app.terminate(); store.clearTransactions() }
         startSequenceProbe(app)
+        let keyboard = app.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Show Keyboard", "Hide Keyboard")).firstMatch
+        if keyboard.label == "Show Keyboard" { keyboard.tap() }
+        try await waitForSoftwareKeyboard(app)
         runSequenceProbe("C010", review: false, app: app)
         let result = app.staticTexts["controls-qa-sequence-result"]
         await fulfillment(of: [expectation(for: NSPredicate(format: "label == %@", "Session 1 selected after waiting"), evaluatedWith: result)], timeout: 8)
         XCTAssertEqual(app.staticTexts["controls-qa-input"].label, "Input: 740d310d")
         XCTAssertFalse(app.buttons["shortcut-running-cancel"].exists)
+        try await waitForSoftwareKeyboard(app)
         capture("t-return-wait-one-second-1-return-success", app: app)
     }
 
@@ -270,14 +294,19 @@ import UIKit
     }
 
     func testTimedSequenceBackgroundRetiresWaitingSuffix() async throws {
-        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
-        startSequenceProbe(app); runSequenceProbe("C013", review: false, app: app)
+        let (app, store) = try await launchPro(executionOverlay: true); defer { app.terminate(); store.clearTransactions() }
+        startSequenceProbe(app)
+        let keyboard = app.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Show Keyboard", "Hide Keyboard")).firstMatch
+        if keyboard.exists && keyboard.label == "Show Keyboard" { keyboard.tap(); try await waitForSoftwareKeyboard(app) }
+        runSequenceProbe("C013", review: false, app: app)
         capture("running-background-inspection", app: app)
         await fulfillment(of: [expectation(for: NSPredicate(format: "label CONTAINS %@", "Wait"), evaluatedWith: app.staticTexts["shortcut-running-step"])], timeout: 4)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 4))
         XCUIDevice.shared.press(.home); app.activate()
         XCTAssertTrue(app.staticTexts["Input ready"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["shortcut-running-cancel"].exists)
         await assertInput("740d", app: app)
+        XCTAssertFalse(app.keyboards.firstMatch.exists, "Background retirement must not restore execution-hidden keyboards")
         capture("background-cancels-wait-with-no-replay", app: app)
     }
 
@@ -686,6 +715,7 @@ import UIKit
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "LifetimePro", withExtension: "storekit"))
         let store = try SKTestSession(contentsOf: url); store.disableDialogs = true; store.clearTransactions()
         _ = try await store.buyProduct(identifier: "media.jenny.maccompanion.pro.lifetime")
+        app.terminate() // StoreKit may launch the app without the explicit fixture environment.
         app.launch()
         XCTAssertTrue(app.staticTexts["controls-qa-pro"].waitForExistence(timeout: 10))
         for _ in 0..<5 where !app.staticTexts["Pro ready"].exists {

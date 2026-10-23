@@ -93,7 +93,7 @@ import SwiftUI
         sequenceTask?.cancel(); sequenceTask = nil
         if let sequenceIdentifier { viewer?.cancelControlSequence(sequenceIdentifier) }
         sequenceIdentifier = nil
-        sequenceBanner?.close(); sequenceBanner = nil
+        sequenceBanner?.close(restoreKeyboard: false); sequenceBanner = nil
         if customizing { customizing = false; viewer?.endKeyboardCustomization() }
         keypad?.ready = false; keypad = nil
         if let panel, viewer?.presentedViewController === panel { viewer?.dismiss(animated: false) }
@@ -301,7 +301,12 @@ import SwiftUI
         sequenceIdentifier = identifier
         let epoch = viewer.controlsEpoch, token = inputGeneration
         let progress = TerminalSequenceProgress(action: action, batching: !action.hasSequenceWait)
-        let controller = TerminalSequenceBannerController(progress: progress, cancel: { [weak self, weak viewer] in
+        let keyboard = TerminalSequenceKeyboard(visible: { [weak viewer] in viewer?.controlsSoftwareKeyboardVisible() == true }, current: { [weak self, weak viewer] in
+            guard let self, let viewer else { return false }
+            return inputGeneration == token && viewer.controlsEpoch == epoch && viewer.controlsInputAvailable()
+                && DirectAppLockV1.shared.canAccess && viewer.controlsExecutionKeyboardCurrent()
+        }, hide: { [weak viewer] in viewer?.hideControlsExecutionKeyboard() == true }, restore: { [weak viewer] in viewer?.restoreControlsExecutionKeyboard() })
+        let controller = TerminalSequenceBannerController(progress: progress, keyboard: keyboard, cancel: { [weak self, weak viewer] in
             guard let self, sequenceIdentifier == identifier else { return }
             progress.cancelled = true; sequenceTask?.cancel(); viewer?.cancelControlSequence(identifier)
             finishRun(identifier)

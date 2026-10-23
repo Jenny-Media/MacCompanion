@@ -106,6 +106,8 @@ private enum TerminalPTY {
     @ObservationIgnored private var controlsGeneration = UUID()
     private var customSequenceTask: Task<Void, Never>?
     var isSendingCustomSequence: Bool { customSequenceOwner?.epoch == writeGeneration }
+    /// Cancel keeps this lease; stop, background and replacement input retire it.
+    var keyboardPresentationEpoch: UUID { writeGeneration }
     var textSendNotice: DirectRecoveryNotice?
     func interruptComposedText() {
         textSendNotice = .init(reason: .inputPaused, title: "Check the sent text",

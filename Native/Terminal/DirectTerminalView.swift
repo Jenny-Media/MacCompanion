@@ -634,6 +634,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         return keyEncoding.bytes(.backspace, modifiers: deletingModifiers)
     }
     override func becomeFirstResponder() -> Bool {
+        guard !inputReserved() else { return false }
         let result = super.becomeFirstResponder(); if result { focusChanged?(true) }; return result
     }
     override func resignFirstResponder() -> Bool {
@@ -726,7 +727,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
             textComposer.invalidate(); terminal.resetModifiers(); controls.cancelSlideForLayoutChange(); controls.close()
             keypadState?.ready = false
             if let sequenceReview, presentedViewController === sequenceReview { dismiss(animated: false); self.sequenceReview = nil }
-            runningShortcut?.close(); runningShortcut = nil
+            runningShortcut?.close(restoreKeyboard: false); runningShortcut = nil
             if let navigation = presentedViewController as? UINavigationController, navigation.topViewController is CompanionVNCMenu { dismiss(animated: false) }
             if let inputPanel, presentedViewController === inputPanel { dismiss(animated: false); self.inputPanel = nil }
         }
@@ -776,7 +777,10 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         setContentScrollView(terminal, for: .top)
         if #available(iOS 26, *) { terminal.topEdgeEffect.style = .automatic }
         NSLayoutConstraint.activate([terminal.topAnchor.constraint(equalTo: view.topAnchor), normalBottom, terminal.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor), terminal.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor)])
-        terminal.focusChanged = { [weak self, weak session] visible in session?.keyboardVisible = visible; self?.updateControls(); self?.view.setNeedsLayout() }
+        terminal.focusChanged = { [weak self, weak session] visible in
+            if self?.executionKeyboardChange != true { session?.keyboardVisible = visible }
+            self?.updateControls(); self?.view.setNeedsLayout()
+        }
         keyboardBar.toggleKeyboard = { [weak session] in session?.toggleKeyboard?() }
         terminal.registerForTraitChanges([UITraitUserInterfaceStyle.self]) { [weak self] (_: TerminalView, _: UITraitCollection) in self?.updatePalette() }
     }
@@ -826,17 +830,38 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     }
     private var sequenceReview: UIViewController?
     private var runningShortcut: TerminalSequenceBannerController?
+    private var executionKeyboardChange = false
     private func runShortcut(_ item: TerminalControlAction, feedback: String?) {
         guard runningShortcut == nil, let epoch = terminal.customInputEpoch(),
               let plan = try? item.terminalPlan(encoding: terminal.keyEncoding, bracketedPaste: terminal.getTerminal().bracketedPasteMode) else { return }
         let packets = plan.compactMap(\.input)
         let revision = controlProfile.revision
         let connectionID = session.outputGeneration.uuidString
+        let keyboardEpoch = session.keyboardPresentationEpoch
         let send = { [weak self] in
             guard let self, terminal.customInputEpoch() == epoch,
                   controlProfile.revision == revision, DirectProAccess.shared.hasPro else { return }
             let progress = TerminalSequenceProgress(action: item)
-            let panel = TerminalSequenceBannerController(progress: progress, cancel: { [weak self] in
+            let keyboard = TerminalSequenceKeyboard(visible: { [weak self] in
+                guard let self else { return false }
+                return TerminalSequenceKeyboard.softwareVisible(in: view, responder: terminal)
+            }, current: { [weak self] in
+                guard let self else { return false }
+                return session.outputGeneration.uuidString == connectionID && session.keyboardPresentationEpoch == keyboardEpoch && session.canSendUserInput
+                    && TerminalSequenceKeyboard.presentationCurrent(in: self, responder: terminal)
+            }, hide: { [weak self] in
+                guard let self else { return false }
+                executionKeyboardChange = true
+                let modifiers = terminal.keyboardState
+                defer { executionKeyboardChange = false; terminal.keyboardState = modifiers; keyboardBar.refresh() }
+                return terminal.resignFirstResponder()
+            }, restore: { [weak self] in
+                guard let self else { return }
+                executionKeyboardChange = true
+                defer { executionKeyboardChange = false }
+                _ = terminal.becomeFirstResponder()
+            })
+            let panel = TerminalSequenceBannerController(progress: progress, keyboard: keyboard, cancel: { [weak self] in
                 guard let self, runningShortcut?.rootView.progress === progress else { return }
                 progress.cancelled = true; terminal.cancelCustomPlan(epoch)
             })

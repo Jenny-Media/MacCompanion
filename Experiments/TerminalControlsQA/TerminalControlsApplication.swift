@@ -371,4 +371,8 @@ private struct TerminalRemoteControlsHost: UIViewControllerRepresentable {
     }
     override func sendOrdinaryControlEvents(_ events: [[AnyHashable: Any]]) { sent += events.count; output.text = "Remote events: \(sent)" }
     override func toggleControlsKeyboard() { if inputField.isFirstResponder { inputField.resignFirstResponder() } else { inputField.becomeFirstResponder() }; controlsHost.keyboardFocused(inputField.isFirstResponder) }
+    override func controlsSoftwareKeyboardVisible() -> Bool { TerminalSequenceKeyboard.softwareVisible(in: view, responder: inputField) }
+    override func controlsExecutionKeyboardCurrent() -> Bool { TerminalSequenceKeyboard.presentationCurrent(in: self, responder: inputField) }
+    override func hideControlsExecutionKeyboard() -> Bool { let hidden = inputField.resignFirstResponder(); controlsHost.keyboardFocused(false); return hidden }
+    override func restoreControlsExecutionKeyboard() { inputField.becomeFirstResponder(); controlsHost.keyboardFocused(inputField.isFirstResponder) }
 }
