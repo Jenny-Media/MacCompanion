@@ -143,6 +143,40 @@ class CheckoutProvenanceTests(unittest.TestCase):
         with self.assertRaisesRegex(CheckoutProvenanceError, 'origin does not match'):
             self.verify()
 
+    def test_cloud_transport_matches_pinned_source_without_recording_credentials(self):
+        for origin in ['ssh://git@github.com/example/provenance-probe.git',
+                       'git@github.com:example/provenance-probe.git',
+                       'https://synthetic-user:synthetic-password@github.com/example/provenance-probe.git']:
+            with self.subTest(origin=origin):
+                git(self.cache, 'remote', 'set-url', 'origin', origin)
+                with self.assertRaises(CheckoutProvenanceError):
+                    self.verify()
+                result = verify_checkouts(self.packages, self.pins, allow_cloud_transport=True)
+                self.assertEqual(result['probe']['originURL'], self.url)
+                self.assertNotIn('synthetic-password', json.dumps(result))
+
+    def test_cloud_file_transport_is_limited_to_own_repository_cache(self):
+        git(self.checkout, 'remote', 'set-url', 'origin', self.cache.as_uri())
+        result = verify_checkouts(self.packages, self.pins, allow_cloud_transport=True)
+        self.assertEqual(result['probe']['originURL'], self.url)
+        git(self.checkout, 'remote', 'set-url', 'origin', self.checkout.as_uri())
+        with self.assertRaisesRegex(CheckoutProvenanceError, 'outside its resolved repository cache'):
+            verify_checkouts(self.packages, self.pins, allow_cloud_transport=True)
+
+    def test_cloud_transport_still_rejects_other_sources_and_modified_bytes(self):
+        for origin in ['ssh://git@github.com/example/other-source.git',
+                       'ssh://git@github.example/example/provenance-probe.git',
+                       'http://github.com/example/provenance-probe.git',
+                       'https://github.com:8443/example/provenance-probe.git']:
+            with self.subTest(origin=origin):
+                git(self.cache, 'remote', 'set-url', 'origin', origin)
+                with self.assertRaises(CheckoutProvenanceError):
+                    verify_checkouts(self.packages, self.pins, allow_cloud_transport=True)
+        git(self.cache, 'remote', 'set-url', 'origin', 'git@github.com:example/provenance-probe.git')
+        self.source.write_text('public func probe() -> Int { 99 }\n')
+        with self.assertRaises(CheckoutProvenanceError):
+            verify_checkouts(self.packages, self.pins, allow_cloud_transport=True)
+
     def test_wrong_workspace_url_is_rejected(self):
         self.workspace['object']['dependencies'][0]['packageRef']['location'] = 'https://github.com/example/other-source.git'
         self.write_workspace()

@@ -35,6 +35,11 @@ host generator and records approval for only `SwiftTermBuildInfoPlugin` at the
 locked revision, using Xcode's per-plugin approval file on the disposable cloud
 worker. It does not disable plugin or macro validation globally. The post-build
 hook verifies that the resolved package sources remained unchanged.
+Cloud-only origin matching accepts Xcode's authenticated HTTPS, GitHub SSH,
+and cache-local file URLs for the same locked repository. Credentials are
+stripped from provenance; every source file, revision, URL identity and cache
+boundary is still verified. Ordinary local builds retain strict HTTPS origin
+matching.
 
 For a local archive check, create ignored `CloudSigning.xcconfig` containing
 `MACCOMPANION_DEVELOPMENT_TEAM = <your existing team>` and prepare dependencies:

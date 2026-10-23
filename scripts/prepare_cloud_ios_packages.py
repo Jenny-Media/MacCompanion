@@ -32,7 +32,8 @@ def configure(derived_data, security_directory, *, verify_only=False):
     pins = json.loads((ROOT / cloud['resolvedLockfilePath']).read_text())['pins']
     provenance = derived_data / 'maccompanion-cloud-packages.json'
     previous = json.loads(provenance.read_text()) if verify_only else None
-    snapshot = verify_checkouts(derived_data / 'SourcePackages', pins, previous=previous)
+    snapshot = verify_checkouts(derived_data / 'SourcePackages', pins, previous=previous,
+                               allow_cloud_transport=True)
     if verify_only:
         print('Cloud package sources remain unchanged after xcodebuild')
         return
