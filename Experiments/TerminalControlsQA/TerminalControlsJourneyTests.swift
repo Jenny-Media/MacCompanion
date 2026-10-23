@@ -34,6 +34,40 @@ import UIKit
         closeLayout(app, save: false); closeSettings(app)
     }
 
+    func testRemoteFavoritesAndPointerSettingsUseTheSharedEditors() async throws {
+        let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
+        app.buttons["controls-qa-remote"].tap(); app.buttons["remote-qa-edit"].tap()
+        XCTAssertTrue(app.buttons["terminal-edit-menu"].waitForExistence(timeout: 5))
+        capture("remote-shared-customization-hub", app: app)
+        app.buttons["remote-pointer-settings"].tap()
+        XCTAssertTrue(app.navigationBars["Pointer & Gestures"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.switches["trackpad-haptics-toggle"].exists)
+        capture("remote-pointer-gestures-separated", app: app)
+        app.navigationBars["Pointer & Gestures"].buttons.element(boundBy: 0).tap()
+        app.buttons["terminal-edit-menu"].tap()
+        XCTAssertTrue(app.buttons["terminal-control-add"].waitForExistence(timeout: 5))
+        app.buttons["terminal-control-add"].tap()
+        XCTAssertTrue(app.segmentedControls["terminal-add-page"].buttons["Actions"].exists)
+        app.buttons["terminal-add-action-rightClick"].tap()
+        XCTAssertTrue(app.buttons["Right Click"].firstMatch.waitForExistence(timeout: 5))
+        capture("remote-favorite-added-directly", app: app)
+        app.buttons["Right Click"].firstMatch.tap(); app.buttons["terminal-remove-placement"].tap()
+        app.buttons["terminal-editor-undo"].tap()
+        XCTAssertTrue(app.buttons["Right Click"].firstMatch.waitForExistence(timeout: 5))
+        app.buttons["terminal-full-menu-preview"].tap()
+        XCTAssertTrue(app.navigationBars["Menu Preview"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Display"].exists)
+        XCTAssertFalse(app.staticTexts["Appearance"].exists)
+        XCTAssertFalse(app.buttons["customize-quick-actions"].exists)
+        capture("remote-full-menu-matches-live-navigation", app: app)
+        app.navigationBars["Menu Preview"].buttons["Close"].tap()
+        closeLayout(app, save: true); closeSettings(app)
+        app.buttons["remote-qa-edit"].tap(); app.buttons["terminal-edit-menu"].tap()
+        XCTAssertTrue(app.buttons["Right Click"].firstMatch.waitForExistence(timeout: 5))
+        closeLayout(app, save: false); closeSettings(app)
+        XCTAssertEqual(app.staticTexts["remote-qa-events"].label, "Remote events: 0")
+    }
+
     func testSharedRemoteControlsAndSequenceEditor() async throws {
         let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
         app.buttons["controls-qa-remote"].tap()
@@ -53,7 +87,7 @@ import UIKit
         revealHorizontal(ctrl, scroll: bar); XCTAssertEqual(ctrl.value as? String, "On"); ctrl.tap()
         app.buttons["remote-qa-edit"].tap()
         XCTAssertTrue(app.buttons["terminal-edit-keyboard"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["terminal-edit-menu"].exists)
+        XCTAssertTrue(app.buttons["terminal-edit-menu"].exists)
         app.buttons["terminal-edit-keyboard"].tap()
         capture("remote-shared-keyboard-editor", app: app)
         addRowPreset("Numbers", app: app)

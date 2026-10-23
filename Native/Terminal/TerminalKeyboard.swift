@@ -398,6 +398,7 @@ private final class TerminalKeyScrollView: UIScrollView {
     private var modifierButtons: [(UIButton, TerminalModifiers)] = []
     var renderedModifiers: [UIButton] { modifierButtons.map { $0.0 } }
     private var commandShortcuts: [UIButton] = []
+    private var remoteActionButtons: [(UIButton, TerminalControlAction)] = []
     private var keyWidths: [ObjectIdentifier: NSLayoutConstraint] = [:]
     private var keySymbols: [ObjectIdentifier: String] = [:]
     private var heights: [NSLayoutConstraint] = []
@@ -536,7 +537,7 @@ private final class TerminalKeyScrollView: UIScrollView {
         revealedPreviewSelection = selection
         layoutGeneration = UUID()
         for key in generated { keyWidths.removeValue(forKey: ObjectIdentifier(key)); keySymbols.removeValue(forKey: ObjectIdentifier(key)) }
-        generated = []; modifierButtons = []; commandShortcuts = []
+        generated = []; modifierButtons = []; commandShortcuts = []; remoteActionButtons = []
         for view in row.arrangedSubviews where view !== keyScroll && view !== menuAnchor { row.removeArrangedSubview(view); view.removeFromSuperview() }
         previewItems = [:]; previewPlacements = [:]; previewRows = [:]; previewHandles = []; rowContainers = [:]; profileRows = profile.resolvedRows.map { source in var row = source; row.items = profile.barItems(in: source); row.title = profile.rowTitle(row.id); return row }
         finishRowReorder(commit: false)
@@ -604,6 +605,7 @@ private final class TerminalKeyScrollView: UIScrollView {
                     if savedAction?.operation == .keyboard { keyboardToggles.append(key) }
                     else { expandToggles.append(key) }
                 }
+                if let savedAction { remoteActionButtons.append((key, savedAction)) }
                 if editingPreview, item.control == .expand { expandToggles.append(key) }
                 key.accessibilityLabel = title
                 key.tag = Int(item.palette?.shortcutCode ?? (item.modifier == .ctrl ? 0xffe3 : item.modifier == .alt ? 0xffe9 : item.modifier == .shift ? 0xffe1 : item.modifier == .command ? 0xffeb : 0))
@@ -1081,6 +1083,7 @@ private final class TerminalKeyScrollView: UIScrollView {
                 key.accessibilityHint = "Tap for the next key; long-press to keep on. Tap again to turn off."
             }
             for key in keyboardToggles + expandToggles + keypadToggles + [keypadButton] { key.isEnabled = true; key.alpha = 1 }
+            for (key, action) in remoteActionButtons { key.isEnabled = remoteInput.canUse(action); key.alpha = key.isEnabled ? 1 : 0.4 }
             return
         }
         guard let terminal else { return }

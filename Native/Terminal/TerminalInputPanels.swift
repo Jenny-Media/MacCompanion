@@ -100,14 +100,14 @@ struct TerminalKeypad: View {
             .buttonStyle(TerminalKeypadButtonStyle()).accessibilityLabel(key.name)
             .accessibilityIdentifier("terminal-keypad-" + (key.accessory?.rawValue ?? key.id))
             .contextMenu {
-                ForEach(state.remoteMac ? [TerminalControlsDestination.keyboard] : TerminalControlsDestination.allCases) { destination in
+                ForEach(TerminalControlsDestination.allCases) { destination in
                     Button("Pin to " + destination.title, systemImage: destination.symbol) {
                         state.pin(key.id, destination)
                     }.disabled(!state.canPin)
                 }
             }
             .accessibilityAction(named: "Pin to Keyboard Bar") { if state.canPin { state.pin(key.id, .keyboard) } }
-            .accessibilityAction(named: "Pin to Floating Menu") { if state.canPin && !state.remoteMac { state.pin(key.id, .menu) } }
+            .accessibilityAction(named: "Pin to Floating Menu") { if state.canPin { state.pin(key.id, .menu) } }
     }
     private func modifierButtons(_ modifier: TerminalModifiers) -> some View {
         let locked = state.locked.contains(modifier), active = locked || state.armed.contains(modifier)

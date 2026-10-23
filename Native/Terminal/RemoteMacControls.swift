@@ -8,6 +8,7 @@ import SwiftUI
     var toggle: (TerminalModifiers, Bool) -> Void = { _, _ in }
     var send: (TerminalPaletteKey) -> Void = { _ in }
     var toggleKeyboard: () -> Void = {}
+    var canUse: (TerminalControlAction) -> Bool = { _ in true }
 }
 
 @MainActor @objc final class RemoteMacControls: NSObject {
@@ -19,6 +20,9 @@ import SwiftUI
     private var inputGeneration = UUID()
     private var customizing = false
     private let store: TerminalControlsStore
+    private var activeStore: TerminalControlsStore {
+        var scoped = store; scoped.remoteMode = viewer?.inputOnly == true ? .trackpad : .desktop; return scoped
+    }
     private var observation: NSObjectProtocol?
     private weak var panel: UIViewController?
     private var keypad: TerminalKeypadState?
@@ -27,9 +31,12 @@ import SwiftUI
     @objc func layoutRows() { keyboardBar.layoutIfNeeded(); keyboardBar.layoutRows() }
     @objc var keyboardButton: UIButton { keyboardBar.keyboardButton }
     @objc var modifierButtons: [UIButton] { keyboardBar.renderedModifiers }
+    @objc static var navigationItems: [[String: Any]] { TerminalControlNavigation.items(for: .remoteMac) }
     @objc func setInterfaceFeedback(_ feedback: CompanionVNCInterfaceFeedback) { keyboardBar.keyFeedback = feedback }
 
-    @objc convenience init(viewer: CompanionVNCViewer) { self.init(viewer: viewer, store: .remoteMac()) }
+    @objc convenience init(viewer: CompanionVNCViewer) {
+        self.init(viewer: viewer, store: .remoteMac(legacyMac: viewer.preferenceID.flatMap(UUID.init(uuidString:))))
+    }
     init(viewer: CompanionVNCViewer, store: TerminalControlsStore) {
         self.viewer = viewer; self.store = store
         super.init()
@@ -40,12 +47,13 @@ import SwiftUI
         input.toggle = { [weak self] modifier, lock in self?.state.toggle(modifier, lock: lock) }
         input.send = { [weak self] key in self?.sendPalette(key) }
         input.toggleKeyboard = { [weak viewer] in viewer?.toggleControlsKeyboard() }
+        input.canUse = { [weak self] action in self?.canUse(action) == true }
         keyboardBar.remoteInput = input
         keyboardBar.openKeypad = { [weak self] _ in self?.showKeypad() }
         keyboardBar.layoutChanged = { [weak self, weak viewer] in
             guard let self else { return }
-            if readable, DirectProAccess.shared.hasPro, var saved = try? store.load() {
-                saved.rowsExpanded = keyboardBar.showsExtraRows; _ = try? store.save(saved)
+            if readable, DirectProAccess.shared.hasPro, var saved = try? activeStore.load() {
+                saved.rowsExpanded = keyboardBar.showsExtraRows; _ = try? activeStore.save(saved)
             }
             viewer?.view.setNeedsLayout()
         }
@@ -56,12 +64,17 @@ import SwiftUI
     }
     isolated deinit { if let observation { NotificationCenter.default.removeObserver(observation) } }
     private var ready: Bool { viewer?.controlsInputAvailable() == true && DirectAppLockV1.shared.canAccess }
-    private func reload() {
-        do { profile = try store.load(); readable = true }
+    private func canUse(_ action: TerminalControlAction) -> Bool {
+        action.isLocalKeyboardControl || ready && !(action.operation?.requiresScreen == true && viewer?.inputOnly == true)
+            && (action.operation != .copyScreenText || viewer?.controlsCopyTextAvailable() == true)
+    }
+    @objc func reload() {
+        do { profile = try activeStore.load(); readable = true }
         catch { readable = false; profile = .remoteDefaults }
         keyboardBar.configure(profile) { [weak self] in self?.use($0) }
         keyboardBar.showsExtraRows = profile.rowsExpanded ?? false
         refresh()
+        viewer?.refreshControlsMenu()
     }
     @objc func refresh() {
         keyboardBar.refresh()
@@ -122,14 +135,16 @@ import SwiftUI
         if accepted { keyboardBar.keyFeedback.feedback("key") }
         return accepted
     }
-    @objc func showSettings() {
+    @objc func showSettings() { showSettings(library: nil) }
+    private func showSettings(library: TerminalSavedItemsSection?) {
         guard !customizing, let viewer else { return }
         viewer.beginKeyboardCustomization(); customizing = true
         let token = inputGeneration
         keypad?.ready = false; keypad = nil
         present { [weak self] in
             guard let self else { return UIViewController() }
-            return UIHostingController(rootView: TerminalControlsSettings(store: store, close: { [weak self] in
+            return UIHostingController(rootView: TerminalControlsSettings(store: activeStore, initialLibrary: library,
+                remoteMacID: viewer.preferenceID.flatMap(UUID.init(uuidString:)), behaviorChanged: { [weak self] in self?.applyPointerSettings() }, close: { [weak self] in
                 guard let self, customizing, inputGeneration == token else { return }
                 self.viewer?.dismiss(animated: true) { [weak self] in
                     guard let self, customizing, inputGeneration == token else { return }
@@ -159,9 +174,9 @@ import SwiftUI
             _ = self?.sendModifierAlone(code)
         }
         state.pin = { [weak self, weak state] id, destination in
-            guard let self, let state, admitted(), readable, DirectProAccess.shared.hasPro, let key = TerminalKeyCatalog.key(id), var draft = try? store.load() else { return }
+            guard let self, let state, admitted(), readable, DirectProAccess.shared.hasPro, let key = TerminalKeyCatalog.key(id), var draft = try? activeStore.load() else { return }
             _ = draft.pin(key, in: destination)
-            if (try? store.save(draft)) != nil { reload(); state.profileRevision = profile.revision; state.notice = "Added to " + destination.title }
+            if (try? activeStore.save(draft)) != nil { reload(); state.profileRevision = profile.revision; state.notice = "Added to " + destination.title }
         }
         state.useSaved = { [weak self] id in guard admitted() else { return }; self?.use(id) }
         state.compose = { [weak viewer] in guard admitted() else { return }; viewer?.showControlsComposer() }
@@ -171,10 +186,59 @@ import SwiftUI
         var action = TerminalControlAction(title: "Paste Text", kind: .shortcut)
         action.steps = [.init(kind: .text, text: text)]; run(action, requiresPro: requiresPro)
     }
+    private func applyPointerSettings() {
+        guard let viewer, let id = viewer.preferenceID.flatMap(UUID.init(uuidString:)) else { return }
+        viewer.pointerSpeed = VNCSessionPreferences.speed(id)
+        viewer.followCursorEnabled = VNCSessionPreferences.followCursor(id)
+        if !viewer.inputOnly { viewer.performSharedControlAction(VNCSessionPreferences.trackpad(id) ? "setTrackpad" : "setPointer") }
+    }
+    @objc func menuActions() -> [[String: Any]] {
+        guard DirectProAccess.shared.hasPro else { return activeStore.remoteMode.defaults.map(\.native) }
+        guard readable else { return [] }
+        return profile.resolvedMenuPlacements.compactMap { placement in
+            guard let action = profile.actions.first(where: { $0.id == placement.actionID }) else { return nil }
+            var item = action.native
+            item["kind"] = "remoteSavedAction"; item["id"] = placement.id.uuidString
+            item["definitionID"] = action.id.uuidString; item["controlsRevision"] = profile.revision.uuidString
+            item["controlsGeneration"] = inputGeneration.uuidString; item["inputEpoch"] = viewer?.controlsEpoch ?? 0
+            item["disabled"] = !canUse(action)
+            if action.operation == .rightClick || action.operation?.modifierAlone != nil { item["inputAction"] = true }
+            if action.operation == .pointerMode { item["defersInterfaceFeedback"] = true }
+            if action.operation == .keyboard { item["title"] = keyboardBar.keyboardButton.accessibilityLabel }
+            if action.operation == .expandRows { item["title"] = keyboardBar.showsExtraRows ? "Collapse Rows" : "Expand Rows" }
+            return item
+        }
+    }
+    @objc func performMenuAction(_ item: [String: Any]) {
+        guard item["controlsGeneration"] as? String == inputGeneration.uuidString,
+              item["controlsRevision"] as? String == profile.revision.uuidString,
+              (item["inputEpoch"] as? NSNumber)?.uintValue == viewer?.controlsEpoch,
+              let placementID = (item["id"] as? String).flatMap(UUID.init(uuidString:)),
+              let placement = profile.resolvedMenuPlacements.first(where: { $0.id == placementID }),
+              item["definitionID"] as? String == placement.actionID.uuidString else { return }
+        use(placement.actionID)
+    }
+    @objc func showShortcuts() { showSavedItems(.shortcuts) }
+    @objc func showText() { showSavedItems(.text) }
+    private func showSavedItems(_ section: TerminalSavedItemsSection) {
+        let token = inputGeneration, epoch = viewer?.controlsEpoch, revision = profile.revision
+        let current = { [weak self] in self?.inputGeneration == token && self?.viewer?.controlsEpoch == epoch && self?.profile.revision == revision }
+        present { [weak self] in
+            guard let self else { return UIViewController() }
+            return UIHostingController(rootView: TerminalSavedItems(section: section,
+                items: readable && DirectProAccess.shared.hasPro ? profile.savedItems(section) : [],
+                macName: viewer?.macName ?? "Mac", supportsCommand: true, select: { [weak self] id in
+                    guard current() else { return }
+                    self?.viewer?.dismiss(animated: true) { [weak self] in if current() { self?.use(id) } }
+                }, customize: { [weak self] in
+                    guard current() else { return }; self?.showSettings(library: section)
+                }, compose: { [weak self] in guard current() else { return }; self?.viewer?.showControlsComposer() }))
+        }
+    }
     private func use(_ id: UUID) {
         guard readable, DirectProAccess.shared.hasPro, DirectAppLockV1.shared.canAccess,
               let action = profile.actions.first(where: { $0.id == id }), action.valid,
-              ready || action.isLocalKeyboardControl else { return }
+              canUse(action) else { return }
         switch action.kind {
         case .shortcut: run(action)
         case .text: reviewText(action.text, requiresPro: true)
@@ -185,6 +249,10 @@ import SwiftUI
             else if action.operation == .expandRows { keyboardBar.showsExtraRows.toggle(); keyboardBar.layoutChanged?() }
             else if action.operation == .paste, let text = UIPasteboard.general.string { reviewText(text) }
             else if action.operation == .composeText { viewer?.showControlsComposer() }
+            else if let operation = action.operation {
+                let kinds: [TerminalAppAction: String] = [.rightClick: "rightClick", .copyScreenText: "copyText", .fitToWindow: "fit", .pointerMode: "mode"]
+                if let kind = kinds[operation], !(operation.requiresScreen && viewer?.inputOnly == true) { viewer?.performSharedControlAction(kind) }
+            }
         }
     }
     private func run(_ action: TerminalControlAction, requiresPro: Bool = true) {
@@ -217,7 +285,7 @@ import SwiftUI
             guard let self, let viewer, inputGeneration == token, DirectAppLockV1.shared.canAccess else { return }
             let controller = make(); panel = controller
             controller.modalPresentationStyle = .pageSheet
-            controller.sheetPresentationController?.detents = [.medium(), .large()]
+            controller.sheetPresentationController?.detents = customizing ? [.large()] : [.medium(), .large()]
             controller.sheetPresentationController?.prefersGrabberVisible = true
             viewer.present(controller, animated: true)
         }

@@ -61,6 +61,80 @@ private final class RemoteAnchorSession: CompanionVNCSession {
             $0.accessibilityIdentifier == "terminal-row-action-" + id.uuidString
         })
     }
+    func testSavedMenuUsesSharedDefinitionsAndRetiresCapturedSelections() async throws {
+        let entitlement = try await pro(); defer { entitlement.clearTransactions() }
+        var profile = TerminalControlsProfile.remoteDefaults
+        profile.importRemoteMenus(["desktop": [], "trackpad": []])
+        var chord = TerminalControlAction(title: "Interrupt", kind: .shortcut, inMenu: false)
+        chord.character = 0x63; chord.modifiers = [0xffe3]
+        profile.actions.append(chord); profile.pin(chord.id, in: .menu, enabled: true)
+        profile.pin(chord.id, in: .menu, enabled: true); profile.captureRemoteMenu()
+        let viewer = RemoteControlsTestViewer(), host = controls(viewer, data: try JSONEncoder().encode(profile))
+        let items = host.menuActions()
+        XCTAssertEqual(items.count, 2)
+        XCTAssertNotEqual(items[0]["id"] as? String, items[1]["id"] as? String)
+        host.performMenuAction(items[0]); XCTAssertEqual(viewer.events.count, 4)
+        viewer.epoch += 1; host.performMenuAction(items[1]); XCTAssertEqual(viewer.events.count, 4)
+        host.reset(); host.performMenuAction(items[0]); XCTAssertEqual(viewer.events.count, 4)
+        host.performMenuAction(try XCTUnwrap(host.menuActions().first)); XCTAssertEqual(viewer.events.count, 8)
+        viewer.available = false
+        XCTAssertTrue(host.menuActions().allSatisfy { $0["disabled"] as? Bool == true })
+        host.performMenuAction(try XCTUnwrap(host.menuActions().first)); XCTAssertEqual(viewer.events.count, 8)
+    }
+    func testSharedPanelRoutesAndCapturesInBothRemoteModes() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        for inputOnly in [false, true] {
+            let viewer = CompanionVNCViewer(); viewer.preventsAutomaticConnection = true; viewer.inputOnly = inputOnly
+            viewer.macName = "Review Mac"; viewer.loadViewIfNeeded(); viewer.session = RemoteAnchorSession()
+            if !inputOnly {
+                let frame = UIGraphicsImageRenderer(size: CGSize(width: 1200, height: 800)).image { context in
+                    UIColor.systemGray5.setFill(); context.fill(CGRect(x: 0, y: 0, width: 1200, height: 800))
+                    ("Synthetic shared desktop" as NSString).draw(at: CGPoint(x: 60, y: 80), withAttributes: [.font: UIFont.systemFont(ofSize: 32), .foregroundColor: UIColor.label])
+                }
+                viewer.perform(NSSelectorFromString("frame:"), with: frame)
+            }
+            (viewer.value(forKey: "login") as? UIView)?.isHidden = true
+            _ = viewer.perform(NSSelectorFromString("updateConnectionChrome"))
+            window.rootViewController = viewer; window.makeKeyAndVisible(); window.layoutIfNeeded()
+            let overlay = try XCTUnwrap(viewer.value(forKey: "controls") as? CompanionVNCControls)
+            func capture(_ suffix: String) {
+                window.layoutIfNeeded()
+                let snapshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
+                let attachment = XCTAttachment(image: snapshot)
+                attachment.name = (inputOnly ? "trackpad-" : "screen-sharing-") + suffix; attachment.lifetime = .keepAlways; add(attachment)
+            }
+            overlay.button.sendActions(for: .touchUpInside); overlay.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(250))
+            XCTAssertNil(descendants(overlay).first { $0.accessibilityIdentifier == "customize-quick-actions" })
+            let items = try XCTUnwrap(overlay.value(forKey: "items") as? [[String: Any]])
+            XCTAssertEqual(items.suffix(6).compactMap { $0["title"] as? String }, ["Keypad", "Shortcuts", "Text", "Customize Controls", "Display", "Session"])
+            capture("unified-floating-menu")
+            let settings = try XCTUnwrap(descendants(overlay).compactMap { $0 as? UIButton }.first { $0.accessibilityIdentifier == "session-action-customize" })
+            settings.sendActions(for: .touchUpInside)
+            try await Task.sleep(for: .milliseconds(700))
+            let controller = try XCTUnwrap(viewer.presentedViewController as? UIHostingController<TerminalControlsSettings>)
+            XCTAssertEqual(controller.sheetPresentationController?.detents.count, 1, "Customization opens at full height")
+            XCTAssertEqual(controller.rootView.store.remoteMode, inputOnly ? .trackpad : .desktop)
+            capture("shared-customization-hub")
+            controller.rootView.close()
+            for _ in 0..<60 {
+                if viewer.presentedViewController == nil { break }
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            XCTAssertNil(viewer.presentedViewController)
+            for (kind, section) in [("savedShortcuts", TerminalSavedItemsSection.shortcuts), ("savedText", .text)] {
+                viewer.perform(NSSelectorFromString("performControlAction:"), with: ["kind": kind])
+                try await Task.sleep(for: .milliseconds(500))
+                let library = try XCTUnwrap(viewer.presentedViewController as? UIHostingController<TerminalSavedItems>)
+                XCTAssertEqual(library.rootView.section, section)
+                capture(section == .shortcuts ? "shared-shortcuts" : "shared-text")
+                viewer.dismiss(animated: false)
+            }
+            viewer.stop()
+        }
+    }
     func testFloatingButtonTracksReorderedMainRowInBothRemoteModesAndHiddenBarFallback() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)

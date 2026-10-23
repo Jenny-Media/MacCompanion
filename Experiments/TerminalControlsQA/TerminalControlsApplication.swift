@@ -211,6 +211,7 @@ private struct TerminalRemoteControlsHost: UIViewControllerRepresentable {
     required init?(coder: NSCoder) { fatalError() }
     override func loadView() { view = UIView(); view.backgroundColor = .systemBackground }
     override func viewDidLoad() {
+        preferenceID = "00000000-0000-4000-8000-00000000D001"
         setValue(CompanionVNCInterfaceFeedback(view: view), forKey: "keyFeedback")
         controlsHost = RemoteMacControls(viewer: self, store: .init(read: { self.data }, write: { self.data = $0 }, legacyIDs: { [] }, legacyActions: { [] }, family: .remoteMac))
         let edit = UIButton(type: .system); edit.setTitle("Customize Remote Keyboard", for: .normal)

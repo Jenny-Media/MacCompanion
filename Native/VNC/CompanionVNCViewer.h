@@ -64,6 +64,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)beginKeyboardCustomization;
 - (void)endKeyboardCustomization;
 - (void)showControlsComposer;
+- (void)showControlsSettings;
+- (void)refreshControlsMenu;
+- (BOOL)controlsCopyTextAvailable;
+- (void)performSharedControlAction:(NSString *)kind;
 - (void)stopViewer;
 - (void)prepareConnection;
 /// Snapshot before preparing the replacement; applied after joining SSH retirement.

@@ -834,23 +834,26 @@
     XCTAssertTrue(CGRectContainsPoint([[viewer valueForKey:@"activeCrop"] CGRectValue],[[viewer valueForKey:@"cursorPosition"] CGPointValue]));
     [viewer stopViewer];[self finish:session client:client peer:peer];
 }
-- (void)openInputMenuThroughControls:(CompanionVNCViewer *)viewer {
+- (NSArray *)openCustomizeControls:(CompanionVNCViewer *)viewer {
     CompanionVNCControls *controls=[viewer valueForKey:@"controls"];[controls open];
     UIButton *input=nil;
     for(UIButton *choice in [controls valueForKey:@"choices"])
-        if([choice.accessibilityIdentifier isEqual:@"session-action-inputMenu"]) input=choice;
+        if([choice.accessibilityIdentifier isEqual:@"session-action-customize"]) input=choice;
+    NSArray *items=[controls valueForKey:@"items"];
     XCTAssertNotNil(input);[input sendActionsForControlEvents:UIControlEventTouchUpInside];
+    return items;
 }
-- (void)testNativeInputMenuHasNoHostFollowingOptionInEitherMode {
+- (void)testSharedControlsHubHasNoHostFollowingActionInEitherMode {
     XCTAssertEqualObjects([self profile][@"cursorPositionOwnership"][@"hostPositionFollowingSetting"],@NO);
     for(NSNumber *inputOnly in @[@NO,@YES]) {
         CompanionVNCSession *session=[CompanionVNCSession new];int peer;rfbClient *client=[self clientFor:session peer:&peer];
         [self prepareLayout:session client:client peer:peer];CompanionVNCViewer *viewer=[self ownershipViewer:session];viewer.inputOnly=inputOnly.boolValue;
         UIWindow *window=[[UIWindow alloc] initWithFrame:viewer.view.frame];window.rootViewController=viewer;[window makeKeyAndVisible];
-        [self openInputMenuThroughControls:viewer];UINavigationController *navigation=(id)viewer.presentedViewController;
-        XCTAssertTrue([navigation isKindOfClass:UINavigationController.class]);
-        CompanionVNCMenu *menu=(id)navigation.topViewController;[menu loadViewIfNeeded];
-        for(NSDictionary *section in menu.sections) for(NSDictionary *item in section[@"items"]) {
+        NSArray *items=[self openCustomizeControls:viewer];
+        XCTAssertGreaterThanOrEqual(items.count,6);
+        XCTAssertNotNil(viewer.presentedViewController);
+        XCTAssertTrue([NSStringFromClass(viewer.presentedViewController.class) containsString:@"UIHostingController"]);
+        for(NSDictionary *item in items) {
             XCTAssertNotEqualObjects(item[@"kind"],@"followMacPointer");XCTAssertNotEqualObjects(item[@"title"],@"Follow Mac Pointer");
         }
         [viewer dismissViewControllerAnimated:NO completion:nil];[viewer stopViewer];window.hidden=YES;window.rootViewController=nil;

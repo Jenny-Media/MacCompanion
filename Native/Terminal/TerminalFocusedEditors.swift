@@ -241,7 +241,7 @@ private struct TerminalFullMenuPreview: View {
         NavigationStack {
             ScrollView {
                 TerminalMenuEditingPreview(actions: profile.menuPreviewActions, selected: nil, editable: false,
-                    select: { _ in }, move: { _, _ in }, fullMenu: true)
+                    select: { _ in }, move: { _, _ in }, fullMenu: true, family: profile.family ?? .terminal)
                     .padding(.vertical, 20).frame(maxWidth: .infinity)
             }.navigationTitle("Menu Preview").directInlineNavigationTitle()
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }

@@ -226,6 +226,83 @@ struct VNCQuickAction: Codable, Identifiable, Equatable, Sendable {
     }
 }
 
+#if os(iOS)
+/// Layout editing is shared by all modes. Input behavior has a separate screen.
+struct VNCInputSettings: View {
+    @Environment(\.dismiss) private var dismiss
+    var macID: UUID?
+    var mode: DirectControlMode = .desktop
+    var changed: @MainActor () -> Void = {}
+    var body: some View {
+        TerminalControlsSettings(store: mode == .terminal ? .init() : .remoteMac(mode: mode, legacyMac: macID), remoteMacID: macID,
+            behaviorChanged: changed, close: { dismiss() })
+    }
+}
+
+struct VNCPointerSettings: View {
+    let macID: UUID?
+    let mode: DirectControlMode
+    var changed: () -> Void = {}
+    @State private var speed = 1.5
+    @State private var scrollSpeed = VNCSessionPreferences.scrollSpeed
+    @State private var showsTouchPoints = VNCSessionPreferences.showsTouchPoints
+    @State private var haptics = VNCSessionPreferences.trackpadHaptics
+    @State private var followCursor = true
+    @State private var trackpad = true
+    init(macID: UUID?, mode: DirectControlMode, changed: @escaping () -> Void = {}) {
+        self.macID = macID; self.mode = mode; self.changed = changed
+        _speed = State(initialValue: macID.map(VNCSessionPreferences.speed) ?? 1.5)
+        _followCursor = State(initialValue: macID.map(VNCSessionPreferences.followCursor) ?? true)
+        _trackpad = State(initialValue: macID.map(VNCSessionPreferences.trackpad) ?? true)
+    }
+    var body: some View {
+        Form {
+            if macID != nil {
+                Section {
+                    if mode == .desktop {
+                        Picker("Interaction", selection: $trackpad) {
+                            Text("Pointer").tag(false); Text("Trackpad").tag(true)
+                        }.accessibilityIdentifier("remote-interaction-mode")
+                    }
+                    LabeledContent("Pointer Speed", value: speed.formatted(.number.precision(.fractionLength(1))))
+                    Slider(value: $speed, in: 0.5...3, step: 0.1).accessibilityLabel("Pointer Speed")
+                    Button("Reset Pointer Speed") { speed = 1.5 }
+                    if mode == .desktop {
+                        Toggle("Keep Pointer Visible", isOn: $followCursor).accessibilityIdentifier("follow-cursor-toggle")
+                    }
+                } header: { Text("Pointer · This Mac") } footer: { Text("Pointer behavior is saved for this Mac.") }
+            }
+            Section {
+                LabeledContent("Scroll Speed", value: scrollSpeed.formatted(.number.precision(.fractionLength(0...2))) + "×")
+                Slider(value: $scrollSpeed, in: VNCSessionPreferences.scrollSpeedRange, step: 0.25)
+                    .accessibilityLabel("Scroll Speed").accessibilityIdentifier("scroll-speed-slider")
+                Button("Reset Scroll Speed") { scrollSpeed = 1 }
+            } header: { Text("Scrolling") }
+            Section {
+                Toggle("Show Touch Indicators", isOn: $showsTouchPoints).accessibilityIdentifier("trackpad-touch-points-toggle")
+                Toggle("Haptic Feedback", isOn: $haptics).accessibilityIdentifier("trackpad-haptics-toggle")
+            } header: { Text("Touch & Haptics") } footer: { Text("Scrolling and feedback apply to every Mac on this device.") }
+        }.navigationTitle("Pointer & Gestures").directInlineNavigationTitle()
+            .onChange(of: speed) { _, _ in save() }
+            .onChange(of: scrollSpeed) { _, _ in save() }
+            .onChange(of: showsTouchPoints) { _, _ in save() }
+            .onChange(of: haptics) { _, _ in save() }
+            .onChange(of: followCursor) { _, _ in save() }
+            .onChange(of: trackpad) { _, _ in save() }
+    }
+    private func save() {
+        guard DirectAppLockV1.shared.canAccess else { return }
+        if let macID {
+            VNCSessionPreferences.setSpeed(speed, mac: macID)
+            VNCSessionPreferences.setFollowCursor(followCursor, mac: macID)
+            if mode == .desktop { VNCSessionPreferences.setTrackpad(trackpad, mac: macID) }
+        }
+        VNCSessionPreferences.setScrollSpeed(scrollSpeed)
+        VNCSessionPreferences.setTrackpadFeedback(showsTouchPoints: showsTouchPoints, haptics: haptics)
+        changed()
+    }
+}
+#else
 struct VNCInputSettings: View {
     @Environment(\.dismiss) private var dismiss
     let macID: UUID?
@@ -362,4 +439,5 @@ struct VNCInputSettings: View {
     }
 }
 
+#endif
 #endif

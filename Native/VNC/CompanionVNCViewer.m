@@ -273,10 +273,11 @@
     self.controls.macName = self.macName ?: @"Mac";
     self.controls.quickActions = self.quickActions ?: [DirectConnectionBridge defaultQuickActionsForInputOnly:self.inputOnly];
     self.controls.actionHandler = ^(NSDictionary *action) { [weak performControlAction:action]; };
-    self.controls.customizeHandler = ^{ if (weak.settingsHandler) weak.settingsHandler(); };
+    self.controls.categoryActions = RemoteMacControls.navigationItems;
     self.controls.openingHandler = ^{
         [weak retirePointerForMenu];
         if (weak.quickActionsProvider) weak.quickActions = weak.quickActionsProvider(weak.inputOnly);
+        else [weak refreshControlsMenu];
         weak.controls.textCopyAvailable = [weak canCopyScreenText];
         NSMutableArray *snapshot = [NSMutableArray new];
         for (NSDictionary *item in weak.controls.quickActions) {
@@ -455,6 +456,7 @@
     [self.username addTarget:self action:@selector(loginEdited) forControlEvents:UIControlEventEditingChanged];
     [self.password addTarget:self action:@selector(loginEdited) forControlEvents:UIControlEventEditingChanged];
     self.remoteControls = [[RemoteMacControls alloc] initWithViewer:self];
+    [self refreshControlsMenu];
     self.keyboardButton = self.remoteControls.keyboardButton;
     UIView *toolbar = self.remoteControls.bar; self.toolbar = toolbar;
     toolbar.translatesAutoresizingMaskIntoConstraints = NO; [self.view addSubview:toolbar];
@@ -1993,6 +1995,7 @@
     if (_inputOnly != value) { [self retireTextDraft]; self.textComposer = nil; }
     _inputOnly = value;
     if (self.quickActionsProvider) self.quickActions = self.quickActionsProvider(value);
+    else if (self.remoteControls) [self.remoteControls reload];
     else if (!self.quickActions) self.controls.quickActions = [DirectConnectionBridge defaultQuickActionsForInputOnly:value];
     if (self.isViewLoaded) {
         [self releasePointer]; [self cancelTrackpadTouches]; [self resetModifiers];
@@ -2072,6 +2075,11 @@
     NSString *kind = action[@"kind"];
     BOOL feedback = ![action[@"interfaceFeedbackHandled"] boolValue];
     if (self.textReview) return;
+    if ([kind isEqual:@"remoteSavedAction"]) { [self.remoteControls performMenuAction:action]; return; }
+    if ([kind isEqual:@"moreKeys"]) { [self.remoteControls showKeypad]; return; }
+    if ([kind isEqual:@"savedShortcuts"]) { [self.remoteControls showShortcuts]; return; }
+    if ([kind isEqual:@"savedText"]) { [self.remoteControls showText]; return; }
+    if ([kind isEqual:@"customize"]) { [self.remoteControls showSettings]; return; }
     if ([kind isEqual:@"copyText"]) { [self showCopyScreenText]; return; }
     if ([kind isEqual:@"viewMenu"]) { [self showViewMenu]; return; }
     if ([kind isEqual:@"desktopSizeMenu"]) { [self showDesktopSizeMenu]; return; }
@@ -2189,6 +2197,16 @@
     self.restoresControlsKeyboard = NO; [self updateRemoteKeyAvailability];
 }
 - (void)toggleControlsKeyboard { [self toggleKeyboardWithFeedback:YES]; }
+- (void)showControlsSettings { [self.remoteControls showSettings]; }
+- (BOOL)controlsCopyTextAvailable { return [self canCopyScreenText]; }
+- (void)refreshControlsMenu {
+    if (!self.quickActionsProvider && !self.quickActions && self.remoteControls) self.controls.quickActions = [self.remoteControls menuActions];
+}
+- (void)performSharedControlAction:(NSString *)kind {
+    if (self.inputOnly && [@[@"fit", @"copyText", @"mode", @"setPointer", @"setTrackpad"] containsObject:kind]) return;
+    if (![@[@"rightClick", @"fit", @"copyText", @"mode", @"setPointer", @"setTrackpad"] containsObject:kind]) return;
+    [self performControlAction:@{@"kind": kind, @"inputFeedback": @YES}];
+}
 - (void)showControlsComposer {
     if (self.presentedViewController) [self dismissViewControllerAnimated:YES completion:^{ [self showTextComposer]; }];
     else [self showTextComposer];
@@ -2626,8 +2644,6 @@
         @{@"kind": @"composeText", @"title": @"Compose Text", @"symbol": @"square.and.pencil", @"disabled": @(![self composedTextAvailable])},
         @{@"kind": @"keyboard", @"title": self.input.isFirstResponder ? @"Hide Keyboard" : @"Show Keyboard", @"symbol": self.input.isFirstResponder ? @"keyboard.chevron.compact.down" : @"keyboard"},
         @{@"kind": @"keys", @"title": @"Keypad", @"symbol": @"rectangle.grid.3x2", @"submenu": @YES, @"disabled": @(![self sessionKeyInputAvailable])}]}];
-    [sections addObject:@{@"title": @"Customization", @"items": @[
-        @{@"kind": @"remoteControls", @"title": @"Customize Controls", @"symbol": @"slider.horizontal.3", @"submenu": @YES}]}];
     return sections;
 }
 - (void)showInputMenu { [self presentMenu:@"Input" sections:[self inputMenuSections]]; }

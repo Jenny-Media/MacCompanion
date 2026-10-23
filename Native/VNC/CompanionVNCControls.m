@@ -1,5 +1,6 @@
 #import "CompanionVNCControls.h"
 #import "CompanionVNCAdaptiveLayout.h"
+#import "Mac_Companion-Swift.h"
 NSString *const CompanionVNCControlsHapticsPreference = @"direct-controls-haptics";
 @interface CompanionVNCInterfaceFeedback ()
 @property NSUserDefaults *defaults;
@@ -266,10 +267,7 @@ void CompanionVNCPlayInterfaceFeedback(NSString *kind) {
         [items addObject:item];
     }
     self.quickCount = items.count;
-    if (!self.editingPreview || self.categoryActions.count) [items addObjectsFromArray:self.categoryActions ?: @[
-        @{@"kind": @"viewMenu", @"title": @"Display", @"symbol": @"display.2"},
-        @{@"kind": @"inputMenu", @"title": @"Input", @"symbol": @"keyboard"},
-        @{@"kind": @"session", @"title": @"Session", @"symbol": @"link"}]];
+    if (!self.editingPreview || self.categoryActions.count) [items addObjectsFromArray:self.categoryActions ?: RemoteMacControls.navigationItems];
     self.items = items; self.choices = [NSMutableArray new];
     UIVisualEffect *effect;
     if (@available(iOS 26.0, *)) { UIGlassEffect *glass = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular]; glass.interactive = YES; effect = glass; }
@@ -280,7 +278,7 @@ void CompanionVNCPlayInterfaceFeedback(NSString *kind) {
     UILabel *name = [UILabel new]; name.text = self.macName; name.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline compatibleWithTraitCollection:self.traitCollection];
     name.numberOfLines = 1; name.tag = 1000; name.textColor = UIColor.labelColor;
     name.hidden = self.editingPreview && !self.fullMenuPreview; name.adjustsFontForContentSizeCategory = YES; self.nameLabel = name; [self.panel.contentView addSubview:name];
-    if ((self.customizeHandler && !self.editingPreview) || self.fullMenuPreview) {
+    if (self.customizeHandler && !self.editingPreview) {
         self.customizeButton = [UIButton buttonWithType:UIButtonTypeSystem];
         UIButtonConfiguration *customize = [UIButtonConfiguration plainButtonConfiguration];
         customize.title = @"Customize"; customize.image = [UIImage systemImageNamed:@"pencil"];

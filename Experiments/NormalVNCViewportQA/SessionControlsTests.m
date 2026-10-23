@@ -537,9 +537,9 @@
     NSArray<UIButton *> *choices = [controls valueForKey:@"choices"];
     UIScrollView *scroll = [controls valueForKey:@"scroll"];
     XCTAssertTrue(CGRectContainsRect(scroll.bounds, choices.firstObject.frame));
-    XCTAssertEqual(choices.count,18); // only three category entries outside quick actions
+    XCTAssertEqual(choices.count,21); // six shared category entries outside quick actions
     [controls close]; controls.inputOnly = YES; [controls open];
-    choices = [controls valueForKey:@"choices"]; XCTAssertEqual(choices.count,17); XCTAssertTrue(choices.firstObject.enabled);
+    choices = [controls valueForKey:@"choices"]; XCTAssertEqual(choices.count,20); XCTAssertTrue(choices.firstObject.enabled);
     XCTAssertFalse([[[controls valueForKey:@"items"] valueForKey:@"kind"] containsObject:@"fit"]);
     [controls close];
 }
@@ -556,9 +556,9 @@
     XCTAssertEqual([controls valueForKey:@"items"],snapshot);
     XCTAssertEqual(((NSArray *)[controls valueForKey:@"choices"])[1],row); XCTAssertTrue(row.highlighted);
     [controls close]; [controls open];
-    XCTAssertEqual([(NSArray *)[controls valueForKey:@"choices"] count],4);
+    XCTAssertEqual([(NSArray *)[controls valueForKey:@"choices"] count],7);
     XCTAssertTrue(((UIButton *)((NSArray *)[controls valueForKey:@"choices"])[0]).enabled);
-    XCTAssertEqualObjects([[controls valueForKey:@"items"] valueForKey:@"title"],(@[@"Compose Text",@"Display",@"Input",@"Session"]));
+    XCTAssertEqualObjects([[controls valueForKey:@"items"] valueForKey:@"title"],(@[@"Compose Text",@"Keypad",@"Shortcuts",@"Text",@"Customize Controls",@"Display",@"Session"]));
     [controls close];
 }
 - (void)testGroupedInputMenuOpensCompactKeypadWithoutReplacingSessionOrSendingInput {
