@@ -30,13 +30,16 @@ final class TerminalControlsScene: UIResponder, UIWindowSceneDelegate {
 }
 @MainActor @Observable final class TerminalControlsMemory {
     static let itemID = UUID(uuidString: "00000000-0000-0000-0000-00000000C001")!
+    static let remoteMode = DirectControlMode(rawValue: ProcessInfo.processInfo.environment["MACCOMPANION_CONTROLS_REMOTE_MODE"] ?? "")
+    static let remoteMacID = UUID(uuidString: "00000000-0000-0000-0000-00000000C002")!
     var writes = 0
     var dismissals = 0
     var failWrites = ProcessInfo.processInfo.environment["MACCOMPANION_CONTROLS_FAIL_WRITE"] == "1"
     var remainingWriteFailures = ProcessInfo.processInfo.environment["MACCOMPANION_CONTROLS_FAIL_WRITE_ONCE"] == "1" ? 1 : 0
     var remainingReadFailures = ProcessInfo.processInfo.environment["MACCOMPANION_CONTROLS_FAIL_READ_ONCE"] == "1" ? 1 : 0
+    var failReads = ProcessInfo.processInfo.environment["MACCOMPANION_CONTROLS_FAIL_READ"] == "1"
     var data: Data = {
-        var profile = TerminalControlsProfile(actions: [
+        var profile = TerminalControlsMemory.remoteMode != nil ? TerminalControlsProfile.remoteDefaults : TerminalControlsProfile(actions: [
             TerminalControlAction(id: TerminalControlsMemory.itemID, title: "Project", kind: .text, text: "original", inRow: true)])
         // Transaction journeys start after migration; migration has its own
         // hosted tests. A failed explicit Save must not fail the initial load.
@@ -59,13 +62,14 @@ final class TerminalControlsScene: UIResponder, UIWindowSceneDelegate {
     var profile: TerminalControlsProfile { try! JSONDecoder().decode(TerminalControlsProfile.self, from: data) }
     var store: TerminalControlsStore {
         .init(read: {
+            if self.failReads { throw TerminalControlsStore.Failure.unreadable }
             if self.remainingReadFailures > 0 { self.remainingReadFailures -= 1; throw TerminalControlsStore.Failure.unreadable }
             return self.data
         }, write: {
             if self.remainingWriteFailures > 0 { self.remainingWriteFailures -= 1; throw TerminalControlsStore.Failure.unreadable }
             if self.failWrites { throw TerminalControlsStore.Failure.unreadable }
             self.data = $0; self.writes += 1
-        }, legacyIDs: { [] })
+        }, legacyIDs: { [] }, family: Self.remoteMode == nil ? .terminal : .remoteMac, remoteMode: Self.remoteMode ?? .desktop)
     }
 }
 struct TerminalControlsHarness: View {
@@ -110,6 +114,7 @@ struct TerminalControlsHarness: View {
             }.frame(maxWidth: .infinity).padding(.vertical, 24) }.navigationTitle("Synthetic Controls QA")
                 .sheet(item: $controlsEntry) { entry in
                     TerminalControlsSettings(store: memory.store, initialLibrary: entry.library,
+                        remoteMacID: TerminalControlsMemory.remoteMode == nil ? nil : TerminalControlsMemory.remoteMacID,
                         close: { memory.dismissals += 1; controlsEntry = nil })
                 }
                 .fullScreenCover(isPresented: $showingRemote) { TerminalRemoteControlsHost(close: { showingRemote = false }) }
