@@ -18,7 +18,6 @@ import tarfile
 import tempfile
 import time
 import urllib.error
-import urllib.request
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,16 +36,33 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def download_with_curl(url, destination):
+    # A new process recalculates the resume offset from the retained partial
+    # file. Keep TLS verification and restrict initial/redirect protocols.
+    run('/usr/bin/curl', '--disable', '--silent', '--show-error', '--fail', '--location',
+        '--proto', '=https', '--proto-redir', '=https', '--connect-timeout', '30',
+        '--max-time', '180', '--continue-at', '-', '--output', destination, url)
+
+
 def download_source(artifact, archive, download=None):
-    download = download or urllib.request.urlretrieve
-    for attempt in range(3):
-        temporary = archive.with_name(archive.name + '.download-' + uuid.uuid4().hex)
+    download = download or download_with_curl
+    def fresh_partial():
+        return archive.with_name(archive.name + '.download-' + uuid.uuid4().hex)
+    temporary = fresh_partial()
+    for attempt in range(5):
         try:
             download(artifact['url'], temporary)
-        except (urllib.error.URLError, TimeoutError, ConnectionError):
-            if attempt == 2:
+        except (urllib.error.URLError, TimeoutError, ConnectionError, subprocess.CalledProcessError) as error:
+            if temporary.is_file() and digest(temporary) == artifact['sha256']:
+                temporary.replace(archive)
+                return
+            if attempt == 4:
                 raise
-            print('Incomplete source download; retrying with a fresh file', flush=True)
+            if isinstance(error, subprocess.CalledProcessError) and error.returncode in {22, 33}:
+                # A server can reject Range requests. Preserve the partial as
+                # evidence and retry from zero in another file in that case.
+                temporary = fresh_partial()
+            print('Incomplete source download; retrying with resume when supported', flush=True)
             time.sleep(2 ** attempt)
             continue
         if digest(temporary) != artifact['sha256']:
