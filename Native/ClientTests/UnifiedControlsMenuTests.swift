@@ -9,9 +9,10 @@ import StoreKitTest
     @MainActor private final class Memory {
         var data: Data?
         var writes = 0
+        var library: [VNCQuickAction] = []
         var menus = Dictionary(uniqueKeysWithValues: [DirectControlMode.desktop, .trackpad].map { ($0.rawValue, $0.defaults) })
         func store(_ mode: DirectControlMode = .desktop) -> TerminalControlsStore {
-            .init(read: { self.data }, write: { self.data = $0; self.writes += 1 }, legacyIDs: { [] }, legacyActions: { [] },
+            .init(read: { self.data }, write: { self.data = $0; self.writes += 1 }, legacyIDs: { [] }, legacyActions: { self.library },
                 family: .remoteMac, remoteMode: mode, legacyRemoteMenus: { self.menus })
         }
     }
@@ -154,6 +155,69 @@ import StoreKitTest
         XCTAssertEqual(desktop.placed(.menu).map(\.title), ["Desktop Search"])
         XCTAssertEqual(trackpad.placed(.menu).map(\.title), ["Trackpad History"])
         XCTAssertNotEqual(desktop.placed(.menu).first?.id, trackpad.placed(.menu).first?.id)
+    }
+    func testImportedIdenticalShortcutsKeepDistinctIDsThroughEditingDeletionAndReload() throws {
+        let memory = Memory()
+        let first = VNCQuickAction(title: "Jump", kind: .shortcut, key: 0x62, modifiers: [0xffe3])
+        let second = VNCQuickAction(title: "Jump", kind: .shortcut, key: 0x62, modifiers: [0xffe3])
+        // Also cover a profile whose definitions were already imported before its menus.
+        memory.library = [first, second].map { var item = $0; item.enabled = false; return item }
+        memory.menus = ["desktop": [first], "trackpad": [second]]
+        var desktop = try memory.store().load()
+        XCTAssertEqual(desktop.placed(.menu).map(\.id), [first.id])
+        XCTAssertEqual(try memory.store(.trackpad).load().placed(.menu).map(\.id), [second.id])
+        XCTAssertEqual(desktop.savedItems(.shortcuts).count, 2)
+        let index = try XCTUnwrap(desktop.actions.firstIndex { $0.id == second.id })
+        desktop.actions[index].character = 0x78
+        _ = try memory.store().save(desktop)
+        XCTAssertEqual(try memory.store(.trackpad).load().placed(.menu).first?.character, 0x78)
+        XCTAssertEqual(try memory.store().load().placed(.menu).first?.character, 0x62)
+        var trackpad = try memory.store(.trackpad).load()
+        trackpad.delete(second.id); _ = try memory.store(.trackpad).save(trackpad)
+        XCTAssertTrue(try memory.store(.trackpad).load().placed(.menu).isEmpty)
+        XCTAssertEqual(try memory.store().load().placed(.menu).map(\.id), [first.id])
+    }
+    func testSameIDAndDefinitionStaySharedWhileEnabledPlacementsRemainIndependent() throws {
+        let memory = Memory()
+        let shared = VNCQuickAction(title: "Shared", kind: .shortcut, key: 0x62, modifiers: [0xffe3])
+        var hidden = shared; hidden.enabled = false
+        memory.menus = ["desktop": [shared], "trackpad": [hidden]]
+        let desktop = try memory.store().load(), trackpad = try memory.store(.trackpad).load()
+        XCTAssertEqual(desktop.savedItems(.shortcuts).map(\.id), [shared.id])
+        XCTAssertEqual(trackpad.savedItems(.shortcuts).map(\.id), [shared.id])
+        XCTAssertEqual(desktop.placed(.menu).map(\.id), [shared.id]); XCTAssertTrue(trackpad.placed(.menu).isEmpty)
+        XCTAssertEqual(try memory.store().load(), desktop)
+    }
+    func testConflictingIDIsRemappedOnceAndBothMenusReferenceItsMatchingDefinition() throws {
+        let memory = Memory()
+        let original = VNCQuickAction(title: "Jump", kind: .shortcut, key: 0x62, modifiers: [0xffe3])
+        var conflicting = original; conflicting.key = 0x78
+        var retained = original; retained.enabled = false
+        memory.library = [retained]
+        memory.menus = ["desktop": [conflicting], "trackpad": [conflicting]]
+        let desktop = try memory.store().load(), trackpad = try memory.store(.trackpad).load()
+        let imported = try XCTUnwrap(desktop.placed(.menu).first)
+        XCTAssertNotEqual(imported.id, original.id); XCTAssertEqual(imported.character, 0x78)
+        XCTAssertEqual(trackpad.placed(.menu).map(\.id), [imported.id])
+        XCTAssertEqual(desktop.actions.first { $0.id == original.id }?.character, 0x62)
+        XCTAssertEqual(desktop.savedItems(.shortcuts).count, 2, "Do not create an unreferenced extra copy for the second menu")
+        XCTAssertEqual(try memory.store().load(), desktop)
+        XCTAssertEqual(try memory.store(.trackpad).load(), trackpad)
+    }
+    func testFreshImportSplitsConflictingIDsAndRetainsDisabledTextWithoutPreloading() throws {
+        let memory = Memory()
+        let first = VNCQuickAction(title: "Jump", kind: .shortcut, key: 0x62, modifiers: [0xffe3])
+        var second = first; second.key = 0x78
+        let hidden = VNCQuickAction(title: "Hidden Text", kind: .text, enabled: false, text: "synthetic")
+        memory.menus = ["desktop": [first, hidden], "trackpad": [second]]
+        let desktop = try memory.store().load(), trackpad = try memory.store(.trackpad).load()
+        XCTAssertEqual(desktop.placed(.menu).map(\.id), [first.id])
+        XCTAssertEqual(trackpad.placed(.menu).first?.character, 0x78)
+        XCTAssertNotEqual(trackpad.placed(.menu).first?.id, first.id)
+        XCTAssertEqual(desktop.savedItems(.shortcuts).count, 2)
+        XCTAssertEqual(desktop.savedItems(.text).map(\.id), [hidden.id])
+        XCTAssertEqual(try memory.store().load(), desktop)
+        XCTAssertEqual(try memory.store(.trackpad).load(), trackpad)
     }
     func testOpeningPointerSettingsDoesNotWritePreferencesOrNotifyTheSession() async throws {
         let id = UUID()

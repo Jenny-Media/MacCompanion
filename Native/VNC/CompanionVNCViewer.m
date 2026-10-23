@@ -1031,6 +1031,10 @@
     [self.remoteControls reset];
     [self.remoteKeyboard reset]; [self refreshModifiers];
 }
+- (void)clearControlModifiers {
+    [self.remoteControls clearModifiers];
+    [self.remoteKeyboard reset]; [self refreshModifiers];
+}
 - (void)refreshModifiers {
     if (self.remoteControls) { [self.remoteControls refresh]; return; }
     for (UIButton *key in self.modifiers) {
@@ -2675,7 +2679,7 @@
     if (![self composedTextAvailable] || !available()) return;
     if (!self.textComposer) self.textComposer = [[DirectTextComposer alloc] initWithMacName:self.macName ?: @"Mac" mode:self.inputOnly ? @"trackpad" : @"desktop"];
     self.textComposer.shortcutBar = self.toolbar;
-    [self.view endEditing:YES]; [self.loginScroll endEditing:YES]; [self resetModifiers]; [self releasePointer];
+    [self.view endEditing:YES]; [self.loginScroll endEditing:YES]; [self clearControlModifiers]; [self releasePointer];
     [self cancelTrackpadTouches]; [self.controls close];
     __weak CompanionVNCViewer *weak = self;
     __weak CompanionVNCSession *owner = self.session;
@@ -2695,7 +2699,7 @@
                 || ![current composedTextAvailable] || !available()) {
                 complete(@"The session changed. Nothing was sent."); return;
             }
-            [current resetModifiers];
+            [current clearControlModifiers];
             NSArray *events = [DirectTextComposer desktopEvents:text];
             if (![owner tryComposedTextEvents:events completion:^(BOOL written) {
                 if (!written && weak.textGeneration == generation) weak.textSendInterrupted = YES;

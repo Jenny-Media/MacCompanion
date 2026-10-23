@@ -665,16 +665,24 @@ struct TerminalControlsProfile: Codable, Equatable {
     mutating func importRemoteMenus(_ menus: [String: [VNCQuickAction]]) {
         guard family == .remoteMac, remoteMenus == nil else { return }
         var result: [String: [TerminalMenuPlacement]] = [:]
+        // An ID collision may need a new definition, but every reference to that
+        // same source ID and payload must keep the same imported destination.
+        var importedIDs: [UUID: [UUID]] = [:]
         for mode in [DirectControlMode.desktop, .trackpad] {
             var entries: [TerminalMenuPlacement] = []
             for saved in menus[mode.rawValue] ?? mode.defaults {
                 var action = TerminalControlAction(saved)
-                let existing = actions.first { $0.title == action.title && $0.sameDefinition(as: action) && (action.kind != .text || $0.text == action.text) }
+                let candidates = [saved.id] + (importedIDs[saved.id] ?? [])
+                let existing = candidates.compactMap { id in actions.first { $0.id == id } }.first {
+                    $0.title == action.title && $0.kind == action.kind
+                        && (action.kind == .text ? $0.text == action.text : $0.sameDefinition(as: action))
+                }
                 if let existing { action = existing }
                 else {
-                    if actions.contains(where: { $0.id == action.id }) { action.id = UUID() }
+                    while actions.contains(where: { $0.id == action.id }) { action.id = UUID() }
                     action.inMenu = false; actions.append(action)
                 }
+                importedIDs[saved.id, default: []].append(action.id)
                 if saved.enabled { entries.append(.init(actionID: action.id)) }
             }
             result[mode.rawValue] = entries
@@ -785,17 +793,9 @@ struct TerminalControlsProfile: Codable, Equatable {
     static func remoteMac(mode: DirectControlMode = .desktop, legacyMac: UUID? = nil) -> Self {
         Self(read: { try TerminalSecretStore.read(DirectControlMode.desktop.profileID, kind: "remote-keyboard-controls-v1") },
              write: { try TerminalSecretStore.write($0, id: DirectControlMode.desktop.profileID, kind: "remote-keyboard-controls-v1") },
-             legacyIDs: { [] }, legacyActions: {
-                 var actions: [VNCQuickAction] = []
-                 for mode in [DirectControlMode.desktop, .trackpad] {
-                     for var action in try VNCSessionPreferences.profileActions(mode) where action.isCustom {
-                         if let same = actions.first(where: { $0.id == action.id }), same == action { continue }
-                         if actions.contains(where: { $0.id == action.id }) { action.id = UUID() }
-                         action.enabled = false; actions.append(action)
-                     }
-                 }
-                 return actions
-             }, family: .remoteMac, remoteMode: mode,
+             // Import visible and disabled definitions together with their menu
+             // references, so UUID collisions are resolved in one place.
+             legacyIDs: { [] }, legacyActions: { [] }, family: .remoteMac, remoteMode: mode,
              legacyRemoteMenus: { Dictionary(uniqueKeysWithValues: try [DirectControlMode.desktop, .trackpad].map {
                  ($0.rawValue, try VNCSessionPreferences.profileActions($0, legacyMac: legacyMac))
              }) })

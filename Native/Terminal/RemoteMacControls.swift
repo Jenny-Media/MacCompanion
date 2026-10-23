@@ -81,12 +81,14 @@ import SwiftUI
         keypad?.ready = ready && keypad?.ready == true
         keypad?.armed = state.armed; keypad?.locked = state.locked
     }
+    /// Composer handoffs clear local modifiers without retiring their admission.
+    @objc func clearModifiers() { state.reset(); refresh() }
     @objc func reset() {
         inputGeneration = UUID()
         if customizing { customizing = false; viewer?.endKeyboardCustomization() }
-        state.reset(); keypad?.ready = false; keypad = nil
+        keypad?.ready = false; keypad = nil
         if let panel, viewer?.presentedViewController === panel { viewer?.dismiss(animated: false) }
-        panel = nil; refresh()
+        panel = nil; clearModifiers()
     }
     @objc func keyboardFocused(_ focused: Bool) { keyboardBar.setKeyboardFocused(focused) }
     private func modifiers(_ flags: TerminalModifiers) -> [UInt32] {

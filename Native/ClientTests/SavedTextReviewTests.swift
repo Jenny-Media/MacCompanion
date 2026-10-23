@@ -55,6 +55,9 @@ private final class SavedTextSession: CompanionVNCSession {
         var data: Data? = try JSONEncoder().encode(profile)
         let store = TerminalControlsStore(read: { data }, write: { data = $0 }, legacyIDs: { [] }, legacyActions: { [] }, family: .remoteMac)
         let controls = RemoteMacControls(viewer: viewer, store: store)
+        // The viewer must reset the same adapter whose selection captures admission.
+        viewer.setValue(controls, forKey: "remoteControls")
+        XCTAssertTrue((viewer.value(forKey: "remoteControls") as? RemoteMacControls) === controls)
         return Fixture(window: window, previous: previous, viewer: viewer, session: session, controls: controls, store: store, saved: saved)
     }
     private func waitFor(_ predicate: () -> Bool) async throws {
@@ -107,7 +110,35 @@ private final class SavedTextSession: CompanionVNCSession {
             let keys = f.session.sent.compactMap { ($0["key"] as? NSNumber)?.uint32Value }
             XCTAssertEqual(keys, "edited greeting".unicodeScalars.flatMap { [$0.value, $0.value] })
             XCTAssertFalse(keys.contains(0xff0d), "Send Text must not append Return")
+            XCTAssertFalse(viewerInterrupted(f), "Clearing modifiers during Send must not retire the saved draft")
             XCTAssertEqual(try f.store.load().actions.first { $0.id == f.saved.id }?.text, f.saved.text)
+            try await waitFor { f.viewer.presentedViewController == nil }
+        }
+    }
+    private func viewerInterrupted(_ f: Fixture) -> Bool {
+        (f.viewer.value(forKey: "textSendInterrupted") as? NSNumber)?.boolValue == true
+    }
+    func testClearingModifiersKeepsSavedDraftAdmissionButLifecycleResetRetiresItInBothModes() async throws {
+        let entitlement = try await pro(); defer { entitlement.clearTransactions() }
+        for inputOnly in [false, true] {
+            let f = try fixture(inputOnly); defer { f.close() }
+            try await selectSaved(f); _ = try await panel(f)
+            let composer = try XCTUnwrap(f.composer)
+            f.controls.keyboardBar.toggle(.ctrl, lock: false)
+            f.controls.keyboardBar.toggle(.alt, lock: true)
+            f.controls.clearModifiers()
+            XCTAssertTrue(composer.draft.canSend)
+            XCTAssertTrue(f.controls.modifierButtons.allSatisfy { $0.accessibilityValue == "Off" })
+            XCTAssertEqual(composer.draft.text, f.saved.text)
+            composer.draft.requestSend()
+            XCTAssertFalse(f.session.sent.isEmpty); XCTAssertFalse(viewerInterrupted(f))
+            try await waitFor { f.viewer.presentedViewController == nil }
+            let sent = f.session.sent.count
+            try await selectSaved(f); _ = try await panel(f)
+            // Exercise the actual viewer lifecycle entry point, not a detached adapter.
+            _ = f.viewer.perform(NSSelectorFromString("resetModifiers"))
+            composer.draft.requestSend()
+            XCTAssertEqual(f.session.sent.count, sent); XCTAssertFalse(composer.draft.active)
             try await waitFor { f.viewer.presentedViewController == nil }
         }
     }
