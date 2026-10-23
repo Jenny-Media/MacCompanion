@@ -64,6 +64,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)beginKeyboardCustomization;
 - (void)endKeyboardCustomization;
 - (void)showControlsComposer;
+- (void)showControlsComposerWithText:(NSString *)text title:(NSString *)title available:(BOOL (^)(void))available NS_SWIFT_NAME(showControlsComposer(text:title:available:));
 - (void)showControlsSettings;
 - (void)refreshControlsMenu;
 - (BOOL)controlsCopyTextAvailable;

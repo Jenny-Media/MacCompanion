@@ -14,6 +14,10 @@ import StoreKitTest
                        send: @escaping (String, @escaping (String?) -> Void) -> Void) {
         self.available = available; self.send = send
     }
+    @objc func present(from controller: UIViewController, initialText: String?, savedTitle: String?,
+                       available: @escaping () -> Bool, send: @escaping (String, @escaping (String?) -> Void) -> Void) {
+        self.available = available; self.send = send
+    }
 }
 
 @MainActor private final class ComposerPanProbe: UIPanGestureRecognizer {

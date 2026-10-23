@@ -241,7 +241,13 @@ import SwiftUI
               canUse(action) else { return }
         switch action.kind {
         case .shortcut: run(action)
-        case .text: reviewText(action.text, requiresPro: true)
+        case .text:
+            let token = inputGeneration, epoch = viewer?.controlsEpoch, revision = profile.revision
+            viewer?.showControlsComposer(text: action.text, title: action.title, available: { [weak self] in
+                guard let self else { return false }
+                return ready && readable && DirectProAccess.shared.hasPro && inputGeneration == token
+                    && viewer?.controlsEpoch == epoch && profile.revision == revision
+            })
         case .key: if let key = action.key, sendKey(key.shortcutCode) { keyboardBar.keyFeedback.feedback("key") }
         case .builtIn:
             if let code = action.operation?.modifierAlone { _ = sendModifierAlone(code) }

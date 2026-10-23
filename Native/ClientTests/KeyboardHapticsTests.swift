@@ -219,6 +219,23 @@ private final class KeyboardMenuSession: CompanionVNCSession {
             XCTAssertEqual(feedback.events, ["selection", "selection", "selection", "key", "selection"])
         }
     }
+    func testTerminalModifierAccessibilityActionsNameTheirCurrentEffect() throws {
+        try withFeedback { _, feedback in
+            let controller = terminal(feedback), bar = controller.keyboardBar
+            for key in bar.renderedModifiers where key.isEnabled {
+                let title = try XCTUnwrap(key.accessibilityLabel)
+                let keep = try XCTUnwrap(key.accessibilityCustomActions?.first)
+                XCTAssertEqual(keep.name, "Keep " + title + " On")
+                XCTAssertTrue(try XCTUnwrap(keep.actionHandler)(keep))
+                XCTAssertEqual(key.accessibilityValue, "On")
+                let turnOff = try XCTUnwrap(key.accessibilityCustomActions?.first)
+                XCTAssertEqual(turnOff.name, "Turn " + title + " Off")
+                XCTAssertTrue(try XCTUnwrap(turnOff.actionHandler)(turnOff))
+                XCTAssertEqual(key.accessibilityValue, "Off")
+            }
+            XCTAssertTrue(controller.output.isEmpty)
+        }
+    }
     func testEveryRepeatedKeyboardAndExpandPlacementEmitsSelectionFeedback() throws {
         try withFeedback { defaults, feedback in
             let controller = terminal(feedback), bar = controller.keyboardBar

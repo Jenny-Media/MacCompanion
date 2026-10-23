@@ -2208,8 +2208,10 @@
     [self performControlAction:@{@"kind": kind, @"inputFeedback": @YES}];
 }
 - (void)showControlsComposer {
-    if (self.presentedViewController) [self dismissViewControllerAnimated:YES completion:^{ [self showTextComposer]; }];
-    else [self showTextComposer];
+    [self showTextComposer];
+}
+- (void)showControlsComposerWithText:(NSString *)text title:(NSString *)title available:(BOOL (^)(void))available {
+    [self showTextComposerWithInitialText:text savedTitle:title available:available];
 }
 - (BOOL)sessionKeyInputAvailable {
     return self.foreground && !self.exited && !self.inputInactive && !self.restoreViewportPending
@@ -2667,7 +2669,10 @@
         && !self.restoreViewportPending && !self.textReview && self.session.composedTextReady;
 }
 - (void)showTextComposer {
-    if (![self composedTextAvailable]) return;
+    [self showTextComposerWithInitialText:nil savedTitle:nil available:^{ return YES; }];
+}
+- (void)showTextComposerWithInitialText:(NSString *)initialText savedTitle:(NSString *)savedTitle available:(BOOL (^)(void))available {
+    if (![self composedTextAvailable] || !available()) return;
     if (!self.textComposer) self.textComposer = [[DirectTextComposer alloc] initWithMacName:self.macName ?: @"Mac" mode:self.inputOnly ? @"trackpad" : @"desktop"];
     self.textComposer.shortcutBar = self.toolbar;
     [self.view endEditing:YES]; [self.loginScroll endEditing:YES]; [self resetModifiers]; [self releasePointer];
@@ -2679,15 +2684,15 @@
     void (^present)(void) = ^{
         CompanionVNCViewer *strong = weak;
         if (!strong || strong.textReview || strong.session != owner || strong.textGeneration != generation
-            || ![strong composedTextAvailable]) return;
-        [strong.textComposer presentFrom:strong available:^BOOL {
+            || ![strong composedTextAvailable] || !available()) return;
+        [strong.textComposer presentFrom:strong initialText:initialText savedTitle:savedTitle available:^BOOL {
             CompanionVNCViewer *current = weak;
             return current && owner && current.session == owner && current.textGeneration == generation
-                && [current composedTextAvailable];
+                && [current composedTextAvailable] && available();
         } send:^(NSString *text, void (^complete)(NSString *)) {
             CompanionVNCViewer *current = weak;
             if (!current || !owner || current.session != owner || current.textGeneration != generation
-                || ![current composedTextAvailable]) {
+                || ![current composedTextAvailable] || !available()) {
                 complete(@"The session changed. Nothing was sent."); return;
             }
             [current resetModifiers];

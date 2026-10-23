@@ -23,6 +23,7 @@ private final class RemoteAnchorSession: CompanionVNCSession {
     var events: [[AnyHashable: Any]] = []
     var shown: UIViewController?
     var keyboardToggles = 0
+    var composerReview: (text: String, title: String, available: () -> Bool)?
     lazy var feedback = CompanionVNCInterfaceFeedback(view: view)
     override func loadView() { view = UIView() }
     override func viewDidLoad() {}
@@ -30,6 +31,9 @@ private final class RemoteAnchorSession: CompanionVNCSession {
     override var controlsEpoch: UInt { epoch }
     override func controlsInputAvailable() -> Bool { available }
     override func toggleControlsKeyboard() { keyboardToggles += 1 }
+    override func showControlsComposer(text: String, title: String, available: @escaping () -> Bool) {
+        composerReview = (text, title, available)
+    }
     override func sendControlEvents(_ events: [[AnyHashable: Any]], completion: @escaping (Bool) -> Void) -> Bool {
         guard available, accepts else { return false }; self.events += events; completion(true); return true
     }
@@ -333,6 +337,53 @@ private final class RemoteAnchorSession: CompanionVNCSession {
             XCTAssertGreaterThanOrEqual(command.bounds.height, 44)
             XCTAssertGreaterThanOrEqual(command.bounds.width, 44)
             XCTAssertEqual(command.configuration?.baseForegroundColor, .systemBlue)
+        }
+    }
+    func testSavedTextRoutesToEditableComposerAndRetiresCapturedAdmissionInBothModes() async throws {
+        let entitlement = try await pro(); defer { entitlement.clearTransactions() }
+        for inputOnly in [false, true] {
+            var profile = TerminalControlsProfile.remoteDefaults
+            let saved = TerminalControlAction(title: "Greeting", kind: .text, text: "synthetic", inMenu: false)
+            profile.actions.append(saved); profile.pin(saved.id, in: .menu, enabled: true)
+            profile.place(saved.id, in: TerminalKeyboardRow.mainID); profile.captureRemoteMenu()
+            let viewer = RemoteControlsTestViewer(); viewer.inputOnly = inputOnly
+            let host = controls(viewer, data: try JSONEncoder().encode(profile))
+            try savedButton(saved.id, in: host).sendActions(for: .touchUpInside)
+            let first = try XCTUnwrap(viewer.composerReview)
+            XCTAssertEqual(first.text, saved.text); XCTAssertEqual(first.title, saved.title); XCTAssertTrue(first.available())
+            XCTAssertNil(viewer.shown, "Standalone saved text must not open a shortcut review")
+            host.reset(); XCTAssertFalse(first.available())
+            host.showText()
+            let library = try XCTUnwrap((viewer.shown as? UIHostingController<TerminalSavedItems>)?.rootView)
+            library.select(saved.id)
+            let second = try XCTUnwrap(viewer.composerReview); XCTAssertTrue(second.available())
+            viewer.epoch += 1; XCTAssertFalse(second.available())
+            host.showKeypad()
+            let keypad = try XCTUnwrap((viewer.shown as? UIHostingController<TerminalKeypad>)?.rootView.state)
+            keypad.useSaved(saved.id)
+            XCTAssertTrue(try XCTUnwrap(viewer.composerReview).available())
+            viewer.available = false; XCTAssertFalse(try XCTUnwrap(viewer.composerReview).available())
+            XCTAssertTrue(viewer.events.isEmpty)
+        }
+    }
+    func testEveryRemoteModifierAccessibilityActionMatchesItsEffectInBothModes() throws {
+        for inputOnly in [false, true] {
+            let viewer = RemoteControlsTestViewer(); viewer.inputOnly = inputOnly
+            let host = controls(viewer)
+            for key in host.modifierButtons {
+                let title = try XCTUnwrap(key.accessibilityLabel)
+                func action() throws -> UIAccessibilityCustomAction { try XCTUnwrap(key.accessibilityCustomActions?.first) }
+                XCTAssertEqual(try action().name, "Keep " + title + " On")
+                key.sendActions(for: .touchUpInside)
+                XCTAssertEqual(key.accessibilityValue, "Next key")
+                let keep = try action(); XCTAssertTrue(try XCTUnwrap(keep.actionHandler)(keep))
+                XCTAssertEqual(key.accessibilityValue, "On")
+                let turnOff = try action(); XCTAssertEqual(turnOff.name, "Turn " + title + " Off")
+                XCTAssertTrue(try XCTUnwrap(turnOff.actionHandler)(turnOff))
+                XCTAssertEqual(key.accessibilityValue, "Off")
+                XCTAssertEqual(try action().name, "Keep " + title + " On")
+            }
+            XCTAssertTrue(viewer.events.isEmpty)
         }
     }
 }

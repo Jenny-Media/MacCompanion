@@ -124,6 +124,8 @@ struct DirectComposedText: Equatable {
     var presentationChanged: ((Bool) -> Void)?
     private weak var host: UIViewController?
     private var invalidating = false
+    private var presentationRequest = UUID()
+    private weak var replacementPrompt: UIAlertController?
     private var observers: [NSObjectProtocol] = []
     @objc init(macName: String, mode: String) {
         draft = DirectTextComposerDraft(macName: macName, mode: DirectControlMode(rawValue: mode) ?? .desktop)
@@ -157,6 +159,8 @@ struct DirectComposedText: Equatable {
     @objc func invalidate() {
         // Background/lock teardown must not leave a dismissing controller
         // blocking the first action on return.
+        presentationRequest = UUID()
+        replacementPrompt?.dismiss(animated: false); replacementPrompt = nil
         invalidating = true; draft.invalidate(); invalidating = false
     }
     @objc static func desktopEvents(_ text: String) -> [[String: Any]] {
@@ -164,8 +168,41 @@ struct DirectComposedText: Equatable {
     }
     @objc func present(from controller: UIViewController, available: @escaping () -> Bool,
                        send: @escaping (String, @escaping (String?) -> Void) -> Void) {
+        present(from: controller, initialText: nil, savedTitle: nil, available: available, send: send)
+    }
+    @objc func present(from controller: UIViewController, initialText: String?, savedTitle: String?,
+                       available: @escaping () -> Bool,
+                       send: @escaping (String, @escaping (String?) -> Void) -> Void) {
         guard !draft.sending, DirectAppLockV1.shared.canAccess, available(), controller.presentedViewController == nil else { return }
-        draft.configure(available: { DirectAppLockV1.shared.canAccess && DirectClientPlatformV1.sessionAvailable && available() }, send: send)
+        let request = UUID(), epoch = draft.presentationEpoch, previousText = draft.text
+        presentationRequest = request
+        let admitted = { [weak self] in
+            self?.presentationRequest == request && DirectAppLockV1.shared.canAccess && DirectClientPlatformV1.sessionAvailable && available()
+        }
+        var pending = true
+        let show = { [weak self, weak controller] in
+            guard let self, let controller, pending, admitted(), draft.presentationEpoch == epoch,
+                  draft.text == previousText, !draft.sending, controller.presentedViewController == nil else { return }
+            pending = false
+            draft.configure(available: admitted, send: send)
+            if let initialText { draft.edit(initialText) }
+            showPanel(from: controller)
+        }
+        if let initialText, !previousText.isEmpty, previousText != initialText {
+            let message = savedTitle.map { "Your current draft has not been sent. Replace it with “" + $0 + "”?" }
+                ?? "Your current draft has not been sent. Replace it with the selected saved text?"
+            let alert = UIAlertController(title: "Replace unsent draft?", message: message, preferredStyle: .alert)
+            alert.addAction(.init(title: "Keep Draft", style: .cancel) { [weak self] _ in pending = false; self?.replacementPrompt = nil })
+            alert.addAction(.init(title: "Replace Draft", style: .destructive) { [weak alert] _ in
+                // UIKit retires the alert after its action. Present the editor
+                // only after that dismissal, then recheck the captured draft.
+                alert?.dismiss(animated: true, completion: show)
+            })
+            replacementPrompt = alert
+            controller.present(alert, animated: true)
+        } else { show() }
+    }
+    private func showPanel(from controller: UIViewController) {
         let host = DirectTextComposerPanel(draft: draft)
         draft.feedback = { [weak host] kind in
             guard let host, host.viewIfLoaded?.window != nil else { return }

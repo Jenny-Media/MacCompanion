@@ -1071,16 +1071,21 @@ private final class TerminalKeyScrollView: UIScrollView {
         toggle(modifier, lock: true)
     }
     private var inputReady: Bool { remoteInput?.ready() ?? (terminal?.customInputEpoch() != nil) }
+    private func refreshModifier(_ key: UIButton, modifier: TerminalModifiers, state: TerminalKeyboardState) {
+        let locked = state.locked.contains(modifier)
+        let title = key.accessibilityLabel ?? modifier.title
+        key.accessibilityHint = "Tap for the next key; long-press to keep on. Tap again to turn off."
+        key.accessibilityCustomActions = [UIAccessibilityCustomAction(name: locked ? "Turn " + title + " Off" : "Keep " + title + " On", actionHandler: { [weak self] _ in self?.toggle(modifier, lock: true); return true })]
+        (key as? TerminalModifierKeyButton)?.showState(active: state.active.contains(modifier), held: locked)
+        key.accessibilityValue = locked ? "On" : state.active.contains(modifier) ? "Next key" : "Off"
+    }
     func refresh() {
         guard !editingPreview else { return }
         if let remoteInput {
             let ready = remoteInput.ready(), state = remoteInput.state()
             for key in allKeys { key.isEnabled = ready; key.alpha = ready ? 1 : 0.4 }
             for (key, modifier) in modifierButtons {
-                let locked = state.locked.contains(modifier)
-                (key as? TerminalModifierKeyButton)?.showState(active: state.active.contains(modifier), held: locked)
-                key.accessibilityValue = locked ? "On" : state.active.contains(modifier) ? "Next key" : "Off"
-                key.accessibilityHint = "Tap for the next key; long-press to keep on. Tap again to turn off."
+                refreshModifier(key, modifier: modifier, state: state)
             }
             for key in keyboardToggles + expandToggles + keypadToggles + [keypadButton] { key.isEnabled = true; key.alpha = 1 }
             for (key, action) in remoteActionButtons { key.isEnabled = remoteInput.canUse(action); key.alpha = key.isEnabled ? 1 : 0.4 }
@@ -1093,11 +1098,8 @@ private final class TerminalKeyScrollView: UIScrollView {
         for key in allKeys { key.isEnabled = ready; key.alpha = ready ? 1 : 0.4 }
         for (key, modifier) in modifierButtons {
             key.isEnabled = ready && (modifier != .command || terminal.keyEncoding.supportsCommand); key.alpha = key.isEnabled ? 1 : 0.4
-            let locked = terminal.keyboardState.locked.contains(modifier)
-            key.accessibilityHint = "Tap for the next key; long-press to keep on. Tap again to turn off."
-            key.accessibilityCustomActions = [UIAccessibilityCustomAction(name: locked ? "Turn " + modifier.title + " Off" : "Keep " + modifier.title + " On", actionHandler: { [weak self] _ in self?.toggle(modifier, lock: true); return true })]
-            (key as? TerminalModifierKeyButton)?.showState(active: terminal.keyboardState.active.contains(modifier), held: locked)
-            key.accessibilityValue = modifier == .command && !terminal.keyEncoding.supportsCommand ? "Unavailable in this application" : locked ? "On" : key.isSelected ? "Next key" : "Off"
+            refreshModifier(key, modifier: modifier, state: terminal.keyboardState)
+            if modifier == .command && !terminal.keyEncoding.supportsCommand { key.accessibilityValue = "Unavailable in this application" }
         }
         for key in commandShortcuts { key.isEnabled = ready && terminal.keyEncoding.supportsCommand; key.alpha = key.isEnabled ? 1 : 0.4; key.accessibilityValue = terminal.keyEncoding.supportsCommand ? nil : "Unavailable in this application" }
         for key in keyboardToggles + expandToggles + keypadToggles + [keypadButton] { key.isEnabled = true; key.alpha = 1 }
