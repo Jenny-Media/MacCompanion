@@ -320,11 +320,15 @@ import UIKit
         XCTAssertEqual(field.value as? String, name)
         try await waitForSoftwareKeyboard(app)
     }
-    private func launchPro(failWriteOnce: Bool = false) async throws -> (XCUIApplication, SKTestSession) {
+    private func launchPro(failWriteOnce: Bool = false, remoteMode: String? = nil, failRead: Bool = false,
+                           futureFormat: Bool = false) async throws -> (XCUIApplication, SKTestSession) {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .portrait
         let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.controlsqa.ios")
         app.launchEnvironment["MACCOMPANION_CONTROLS_FUNCTIONAL_TEST"] = "1"
+        if let remoteMode { app.launchEnvironment["MACCOMPANION_CONTROLS_REMOTE_MODE"] = remoteMode }
+        if failRead { app.launchEnvironment["MACCOMPANION_CONTROLS_FAIL_READ"] = "1" }
+        if futureFormat { app.launchEnvironment["MACCOMPANION_CONTROLS_FUTURE_FORMAT"] = "1" }
         app.launchArguments = ["-UIPreferredContentSizeCategoryName", (name.contains("testAccessibility") ? UIContentSizeCategory.accessibilityExtraExtraExtraLarge : .large).rawValue]
         if name.contains("testInteractiveReview"), ProcessInfo.processInfo.environment["MACCOMPANION_TERMINAL_CONTROLS_REVIEW"] == "1" { app.launchEnvironment["MACCOMPANION_TERMINAL_CONTROLS_REVIEW"] = "1" }
         if name.contains("testCommand") { app.launchEnvironment["MACCOMPANION_COMMAND_QA"] = "1" }
@@ -1010,12 +1014,51 @@ import UIKit
     func testNewerFormatShowsUpdateMessageWithoutOverwritingSavedData() async throws {
         let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
         openSettings(app)
+        XCTAssertTrue(app.navigationBars["Terminal Controls"].exists)
+        XCTAssertFalse(app.buttons["remote-pointer-settings"].exists)
         let notice = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "newer version of Mac Companion")).firstMatch
         XCTAssertTrue(notice.waitForExistence(timeout: 5))
         capture("newer-format-update-required-data-kept", app: app)
         closeSettings(app)
         XCTAssertEqual(app.staticTexts["controls-qa-writes"].label, "Writes: 0")
         openSettings(app); XCTAssertTrue(notice.waitForExistence(timeout: 5))
+        closeSettings(app)
+        XCTAssertEqual(app.staticTexts["controls-qa-writes"].label, "Writes: 0")
+    }
+
+    func testRemoteControlsRecoveryKeepsPointerSettingsWithUnreadableData() async throws {
+        for mode in ["desktop", "trackpad"] {
+            let (app, store) = try await launchPro(remoteMode: mode, failRead: true)
+            defer { app.terminate(); store.clearTransactions() }
+            assertRemoteRecovery(app, mode: mode, failure: "unreadable")
+        }
+    }
+
+    func testRemoteControlsRecoveryKeepsPointerSettingsWithNewerFormat() async throws {
+        for mode in ["desktop", "trackpad"] {
+            let (app, store) = try await launchPro(remoteMode: mode, futureFormat: true)
+            defer { app.terminate(); store.clearTransactions() }
+            assertRemoteRecovery(app, mode: mode, failure: "newer-format")
+        }
+    }
+
+    private func assertRemoteRecovery(_ app: XCUIApplication, mode: String, failure: String) {
+        openSettings(app)
+        XCTAssertTrue(app.buttons["Reload Saved Controls"].waitForExistence(timeout: 5))
+        capture("remote-" + mode + "-" + failure + "-recovery", app: app)
+        XCTAssertTrue(app.navigationBars["Remote Mac Controls"].exists)
+        XCTAssertFalse(app.navigationBars["Terminal Controls"].exists)
+        let pointer = app.buttons["remote-pointer-settings"]
+        XCTAssertTrue(pointer.waitForExistence(timeout: 5))
+        reveal(pointer, app: app); pointer.tap()
+        XCTAssertTrue(app.navigationBars["Pointer & Gestures"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.sliders["Pointer Speed"].exists)
+        XCTAssertTrue(app.sliders["scroll-speed-slider"].exists)
+        XCTAssertTrue(app.switches["trackpad-haptics-toggle"].exists)
+        XCTAssertEqual(app.descendants(matching: .any)["remote-interaction-mode"].exists, mode == "desktop")
+        capture("remote-" + mode + "-" + failure + "-pointer-settings", app: app)
+        app.navigationBars["Pointer & Gestures"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["Remote Mac Controls"].waitForExistence(timeout: 5))
         closeSettings(app)
         XCTAssertEqual(app.staticTexts["controls-qa-writes"].label, "Writes: 0")
     }

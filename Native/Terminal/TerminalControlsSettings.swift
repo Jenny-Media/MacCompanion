@@ -33,8 +33,8 @@ struct TerminalControlsSettings: View {
                                 entry("Floating Menu", summary: "\(profile.placed(.menu).count) favorites", symbol: "ellipsis.circle")
                             }.accessibilityIdentifier("terminal-edit-menu")
                         } header: { Text("Layout") } footer: {
-                            if profile.family == .remoteMac {
-                                Text("Favorites for \(profile.controlMode.title). Keyboard rows are shared by both remote modes.")
+                            if store.family == .remoteMac {
+                                Text("Favorites for \(store.remoteMode.title). Keyboard rows are shared by both remote modes.")
                             }
                         }
                         Section {
@@ -44,7 +44,7 @@ struct TerminalControlsSettings: View {
                                 }.accessibilityIdentifier("terminal-edit-" + (section == .shortcuts ? "shortcuts" : "text"))
                             }
                         } footer: { Text("Applies to every Mac on this device.") }
-                        if profile.family == .remoteMac {
+                        if store.family == .remoteMac {
                             Section("Input Behavior") {
                                 NavigationLink {
                                     VNCPointerSettings(macID: remoteMacID, mode: store.remoteMode, changed: behaviorChanged)
@@ -54,7 +54,7 @@ struct TerminalControlsSettings: View {
                             }
                         }
                         recovery
-                    }.navigationTitle(profile.family == .remoteMac ? "Remote Mac Controls" : "Terminal Controls").directInlineNavigationTitle()
+                    }.navigationTitle(store.family == .remoteMac ? "Remote Mac Controls" : "Terminal Controls").directInlineNavigationTitle()
                 }
             }.toolbar { ToolbarItem(placement: .confirmationAction) {
                 Button("Done", action: close).buttonStyle(.borderedProminent).accessibilityIdentifier("terminal-controls-cancel")
