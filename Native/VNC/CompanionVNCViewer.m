@@ -62,7 +62,9 @@
 @property NSLayoutConstraint *loginIconHeight, *loginIconWidth, *loginTop, *loginBottom, *loginMaxWidth;
 @property NSLayoutConstraint *loginContentTop;
 @property BOOL foldedLogin;
-@property UIScrollView *toolbar;
+@property UIView *toolbar;
+@property RemoteMacControls *remoteControls;
+@property BOOL controlsCustomization, restoresControlsKeyboard;
 @property UIView *tabletopPad;
 @property UILabel *tabletopLabel;
 @property NSArray<UIGestureRecognizer *> *tabletopGestures;
@@ -271,10 +273,11 @@
     self.controls.macName = self.macName ?: @"Mac";
     self.controls.quickActions = self.quickActions ?: [DirectConnectionBridge defaultQuickActionsForInputOnly:self.inputOnly];
     self.controls.actionHandler = ^(NSDictionary *action) { [weak performControlAction:action]; };
-    self.controls.customizeHandler = ^{ if (weak.settingsHandler) weak.settingsHandler(); };
+    self.controls.categoryActions = RemoteMacControls.navigationItems;
     self.controls.openingHandler = ^{
         [weak retirePointerForMenu];
         if (weak.quickActionsProvider) weak.quickActions = weak.quickActionsProvider(weak.inputOnly);
+        else [weak refreshControlsMenu];
         weak.controls.textCopyAvailable = [weak canCopyScreenText];
         NSMutableArray *snapshot = [NSMutableArray new];
         for (NSDictionary *item in weak.controls.quickActions) {
@@ -452,42 +455,15 @@
     [self.loginBackdrop didMoveToParentViewController:self];
     [self.username addTarget:self action:@selector(loginEdited) forControlEvents:UIControlEventEditingChanged];
     [self.password addTarget:self action:@selector(loginEdited) forControlEvents:UIControlEventEditingChanged];
-    NSMutableArray *keys = [NSMutableArray new];
-    self.keyboardButton = [self button:@"" action:@selector(keyboard)];
-    self.keyboardButton.accessibilityIdentifier = @"remote-keyboard-toggle";
-    [keys addObject:self.keyboardButton]; [self updateKeyboardButton];
-    NSArray *titles = @[@"esc", @"⇥", @"⇧", @"⌃", @"⌥", @"⌘"];
-    NSArray *symbols = @[@(0xff1b), @(0xff09), @(0xffe1), @(0xffe3), @(0xffe9), @(0xffeb), @0];
-    for (NSUInteger i = 0; i < titles.count; i++) {
-        UIButton *key = [self button:titles[i] action:i == 6 ? @selector(moreKeys:) : @selector(remoteKey:)];
-        key.tag = [symbols[i] integerValue]; [keys addObject:key];
-        [key addTarget:self action:@selector(prepareKeyFeedback) forControlEvents:UIControlEventTouchDown];
-        if (i >= 2 && i <= 5) {
-            [self.modifiers addObject:key];
-            key.accessibilityLabel = @[@"Shift", @"Control", @"Option", @"Command"][i - 2];
-            key.accessibilityHint = @"Tap to apply to the next key. Hold to send this modifier alone.";
-            [key addGestureRecognizer:[[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(singleModifier:)]];
-        }
-    }
-    UIStackView *row = [[UIStackView alloc] initWithArrangedSubviews:keys];
-    row.spacing = 4; row.distribution = UIStackViewDistributionFillEqually;
-    self.keyRow = row; row.translatesAutoresizingMaskIntoConstraints = NO;
-    UIScrollView *toolbar = [UIScrollView new]; self.toolbar = toolbar;
-    toolbar.showsHorizontalScrollIndicator = NO; toolbar.alwaysBounceHorizontal = NO;
-    toolbar.translatesAutoresizingMaskIntoConstraints = NO; [toolbar addSubview:row]; [self.view addSubview:toolbar];
-    NSLayoutConstraint *fill = [row.widthAnchor constraintEqualToAnchor:toolbar.frameLayoutGuide.widthAnchor]; fill.priority = 750;
+    self.remoteControls = [[RemoteMacControls alloc] initWithViewer:self];
+    [self refreshControlsMenu];
+    self.keyboardButton = self.remoteControls.keyboardButton;
+    UIView *toolbar = self.remoteControls.bar; self.toolbar = toolbar;
+    toolbar.translatesAutoresizingMaskIntoConstraints = NO; [self.view addSubview:toolbar];
     self.loginTop = [self.loginScroll.topAnchor constraintEqualToAnchor:self.view.topAnchor];
     self.loginBottom = [self.loginScroll.bottomAnchor constraintEqualToAnchor:self.view.topAnchor];
     self.loginMaxWidth = [self.login.widthAnchor constraintLessThanOrEqualToConstant:440];
     self.loginContentTop = [self.login.topAnchor constraintEqualToAnchor:self.loginScroll.contentLayoutGuide.topAnchor constant:12];
-    [NSLayoutConstraint activateConstraints:@[
-        [row.leadingAnchor constraintEqualToAnchor:toolbar.contentLayoutGuide.leadingAnchor],
-        [row.trailingAnchor constraintEqualToAnchor:toolbar.contentLayoutGuide.trailingAnchor],
-        [row.topAnchor constraintEqualToAnchor:toolbar.contentLayoutGuide.topAnchor],
-        [row.bottomAnchor constraintEqualToAnchor:toolbar.contentLayoutGuide.bottomAnchor],
-        [row.heightAnchor constraintEqualToAnchor:toolbar.frameLayoutGuide.heightAnchor],
-        [row.widthAnchor constraintGreaterThanOrEqualToConstant:332], fill,
-        [toolbar.heightAnchor constraintEqualToAnchor:row.heightAnchor]]];
     self.toolbarBottom = [toolbar.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor constant:-4];
     [self.view addSubview:self.statusBackdrop]; [self.view addSubview:self.controls];
     self.canvasToolbarBottom = [self.canvas.bottomAnchor constraintEqualToAnchor:toolbar.topAnchor constant:-8];
@@ -500,7 +476,7 @@
         [self.statusBackdrop.leadingAnchor constraintGreaterThanOrEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor constant:16],
         [self.statusBackdrop.trailingAnchor constraintLessThanOrEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-16],
         [toolbar.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor constant:6],
-        [toolbar.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-68], self.toolbarBottom,
+        [toolbar.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-6], self.toolbarBottom,
         self.canvasTop,
         self.canvasToolbarBottom,
         [self.canvas.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor],
@@ -552,7 +528,7 @@
     self.input.autocorrectionType = UITextAutocorrectionTypeNo;
     self.input.autocapitalizationType = UITextAutocapitalizationTypeNone;
     self.input.smartQuotesType = UITextSmartQuotesTypeNo; self.input.smartDashesType = UITextSmartDashesTypeNo;
-    self.input.remoteDelete = ^{ [weak sendRemoteKey:0xff08]; };
+    self.input.remoteDelete = ^{ [weak.remoteControls deleteBackward]; };
     [self.view addSubview:self.input];
     [self prepareTabletopPad];
     [self prepareTrackpadFeedback];
@@ -962,6 +938,7 @@
 - (void)becameInactive {
     if (!self.foreground || self.exited || self.inputInactive) return;
     [self retireSessionMenu];
+    self.controlsCustomization = NO; self.restoresControlsKeyboard = NO;
     self.inputInactive = YES; self.modeVerificationTimed = NO; self.modeVerificationGeneration++;
     [self discardPendingDisplayPreferences];
     [self cancelDisplayModeConfirmation];
@@ -974,6 +951,7 @@
 - (void)backgroundWithCompletion:(void (^)(void))completion {
     [self retireSessionMenu];
     [self retireTextDraft];
+    self.controlsCustomization = NO; self.restoresControlsKeyboard = NO;
     if (!self.foreground || self.exited) { if (completion) completion(); return; }
     [self discardPendingDisplayPreferences];
     self.reconnectWhenReady = self.session.running || self.starting;
@@ -1050,9 +1028,15 @@
     [self applyViewportRatio:self.resumeZoomRatio center:self.resumeCenter];
 }
 - (void)resetModifiers {
+    [self.remoteControls reset];
+    [self.remoteKeyboard reset]; [self refreshModifiers];
+}
+- (void)clearControlModifiers {
+    [self.remoteControls clearModifiers];
     [self.remoteKeyboard reset]; [self refreshModifiers];
 }
 - (void)refreshModifiers {
+    if (self.remoteControls) { [self.remoteControls refresh]; return; }
     for (UIButton *key in self.modifiers) {
         key.selected = [self.remoteKeyboard.armedModifiers containsObject:@(key.tag)];
         key.backgroundColor = key.selected ? UIColor.systemBlueColor : UIColor.secondarySystemBackgroundColor;
@@ -1262,6 +1246,11 @@
 - (CGRect)activeDivision { return CompanionVNCActiveDivision(self.view); }
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
+    // Finish the shared bar before converting its movable main-row slot into
+    // the sibling overlay. Hidden bars retain the normal fullscreen fallback.
+    [self.remoteControls layoutRows];
+    self.controls.buttonAnchorView = self.toolbar.hidden ? nil : self.remoteControls.menuAnchor;
+    [self.controls setNeedsLayout]; [self.controls layoutIfNeeded];
     if (!self.connectionPanelHost) [DirectConnectionBridge styleCard:self.login];
     self.tabletopPad.hidden = !self.tabletop || !self.login.hidden || self.recoveryPanel != nil;
     if (self.tabletop) {
@@ -1782,6 +1771,7 @@
     else reply(CGRectNull);
 }
 - (void)updateKeyboardButton {
+    if (self.remoteControls) { [self.remoteControls keyboardFocused:self.input.isFirstResponder]; return; }
     BOOL active = self.input.isFirstResponder;
     UIImage *symbol = [UIImage systemImageNamed:active ? @"keyboard.chevron.compact.down" : @"keyboard"];
     [self.keyboardButton setImage:symbol forState:UIControlStateNormal];
@@ -1829,12 +1819,13 @@
 }
 - (void)textViewDidChange:(UITextView *)textView {
     if (textView.markedTextRange || !textView.text.length) return;
-    [self.remoteKeyboard text:textView.text]; textView.text = @""; [self refreshModifiers];
+    [self.remoteControls typeText:textView.text]; textView.text = @""; [self refreshModifiers];
 }
 - (void)sendRemoteKey:(uint32_t)key {
     [self.remoteKeyboard pressKey:key]; [self refreshModifiers];
 }
 - (BOOL)sendCustomKey:(uint32_t)key {
+    if (self.remoteControls) return [self.remoteControls sendKey:key];
     self.keyGroupAccepted = NO; self.admittingCustomKey = YES;
     [self.remoteKeyboard pressKey:key]; self.admittingCustomKey = NO; [self refreshModifiers];
     return self.keyGroupAccepted;
@@ -2008,6 +1999,7 @@
     if (_inputOnly != value) { [self retireTextDraft]; self.textComposer = nil; }
     _inputOnly = value;
     if (self.quickActionsProvider) self.quickActions = self.quickActionsProvider(value);
+    else if (self.remoteControls) [self.remoteControls reload];
     else if (!self.quickActions) self.controls.quickActions = [DirectConnectionBridge defaultQuickActionsForInputOnly:value];
     if (self.isViewLoaded) {
         [self releasePointer]; [self cancelTrackpadTouches]; [self resetModifiers];
@@ -2087,6 +2079,11 @@
     NSString *kind = action[@"kind"];
     BOOL feedback = ![action[@"interfaceFeedbackHandled"] boolValue];
     if (self.textReview) return;
+    if ([kind isEqual:@"remoteSavedAction"]) { [self.remoteControls performMenuAction:action]; return; }
+    if ([kind isEqual:@"moreKeys"]) { [self.remoteControls showKeypad]; return; }
+    if ([kind isEqual:@"savedShortcuts"]) { [self.remoteControls showShortcuts]; return; }
+    if ([kind isEqual:@"savedText"]) { [self.remoteControls showText]; return; }
+    if ([kind isEqual:@"customize"]) { [self.remoteControls showSettings]; return; }
     if ([kind isEqual:@"copyText"]) { [self showCopyScreenText]; return; }
     if ([kind isEqual:@"viewMenu"]) { [self showViewMenu]; return; }
     if ([kind isEqual:@"desktopSizeMenu"]) { [self showDesktopSizeMenu]; return; }
@@ -2127,7 +2124,8 @@
     if ([kind isEqual:@"displays"]) { [self chooseView]; return; }
     if ([kind isEqual:@"input"]) { if (self.settingsHandler) self.settingsHandler(); return; }
     if ([kind isEqual:@"fit"]) { [self fitDesktop]; return; }
-    if ([kind isEqual:@"keys"]) { [self moreKeys:self.views]; return; }
+    if ([kind isEqual:@"keys"]) { [self.remoteControls showKeypad]; return; }
+    if ([kind isEqual:@"remoteControls"]) { [self.remoteControls showSettings]; return; }
     if ([kind isEqual:@"session"]) { [self showSessionMenu]; return; }
     if (![self sessionKeyInputAvailable]) {
         self.status.hidden = NO; self.status.text = @"Wait for the desktop to resume before sending input."; [self updateStatusPresentation]; return;
@@ -2168,18 +2166,72 @@
         [self refreshModifiers];
     }
 }
+- (void)setKeyFeedback:(CompanionVNCInterfaceFeedback *)feedback {
+    _keyFeedback = feedback; [self.remoteControls setInterfaceFeedback:feedback];
+}
+- (CompanionVNCInterfaceFeedback *)controlsFeedback { return self.keyFeedback; }
+- (NSMutableArray<UIButton *> *)modifiers {
+    return self.remoteControls ? self.remoteControls.modifierButtons.mutableCopy : _modifiers;
+}
+- (NSUInteger)controlsEpoch { return self.textGeneration; }
+- (BOOL)controlsInputAvailable { return [self sessionKeyInputAvailable]; }
+- (BOOL)sendControlEvents:(NSArray<NSDictionary *> *)events completion:(void (^)(BOOL))completion {
+    if (![self sessionKeyInputAvailable]) return NO;
+    return [self.session tryComposedTextEvents:events completion:completion];
+}
+- (void)sendOrdinaryControlEvents:(NSArray<NSDictionary *> *)events {
+    if ([self sessionKeyInputAvailable]) [self.session keyEvents:events];
+}
+- (void)beginKeyboardCustomization {
+    if (self.controlsCustomization) return;
+    [self retireSessionMenu]; [self.controls close];
+    self.restoresControlsKeyboard = self.input.isFirstResponder;
+    [self.view endEditing:YES]; [self releasePointer]; [self cancelTrackpadTouches];
+    self.controlsCustomization = YES;
+    [self.session suspendInputForInterruption]; [self resetModifiers];
+    [self updateRemoteKeyAvailability];
+}
+- (void)endKeyboardCustomization {
+    if (!self.controlsCustomization) return;
+    self.controlsCustomization = NO;
+    if (self.foreground && !self.inputInactive && !self.exited && !self.checkingResume && !self.restoreViewportPending && self.session.connected) {
+        [self.session resumeInputAfterInterruption];
+        if (self.restoresControlsKeyboard) [self.input becomeFirstResponder];
+    }
+    self.restoresControlsKeyboard = NO; [self updateRemoteKeyAvailability];
+}
+- (void)toggleControlsKeyboard { [self toggleKeyboardWithFeedback:YES]; }
+- (void)showControlsSettings { [self.remoteControls showSettings]; }
+- (BOOL)controlsCopyTextAvailable { return [self canCopyScreenText]; }
+- (void)refreshControlsMenu {
+    if (!self.quickActionsProvider && !self.quickActions && self.remoteControls) self.controls.quickActions = [self.remoteControls menuActions];
+}
+- (void)performSharedControlAction:(NSString *)kind {
+    if (self.inputOnly && [@[@"fit", @"copyText", @"mode", @"setPointer", @"setTrackpad"] containsObject:kind]) return;
+    if (![@[@"rightClick", @"fit", @"copyText", @"mode", @"setPointer", @"setTrackpad"] containsObject:kind]) return;
+    [self performControlAction:@{@"kind": kind, @"inputFeedback": @YES}];
+}
+- (void)showControlsComposer {
+    [self showTextComposer];
+}
+- (void)showControlsComposerWithText:(NSString *)text title:(NSString *)title available:(BOOL (^)(void))available {
+    [self showTextComposerWithInitialText:text savedTitle:title available:available];
+}
 - (BOOL)sessionKeyInputAvailable {
     return self.foreground && !self.exited && !self.inputInactive && !self.restoreViewportPending
-        && !self.checkingResume && !self.textReview && self.session.connected;
+        && !self.checkingResume && !self.textReview && !self.controlsCustomization && self.session.connected;
 }
 - (void)updateRemoteKeyAvailability {
+    [self.remoteControls refresh];
     BOOL ready = [self sessionKeyInputAvailable];
     for (UIButton *key in self.keyRow.arrangedSubviews) {
         if (key == self.keyboardButton) continue; // Local keyboard visibility stays usable.
         key.enabled = ready; key.alpha = ready ? 1 : .4;
     }
     if (!ready) {
-        [self resetModifiers];
+        // Customization cleared modifiers on entry. A status refresh must not
+        // retire that editor's owner or release its input suspension.
+        if (!self.controlsCustomization) [self resetModifiers];
         for (UIViewController *menu in self.sessionMenu.viewControllers) {
             if ([menu isKindOfClass:CompanionVNCKeyMenu.class]) { [self retireSessionMenu]; break; }
         }
@@ -2597,7 +2649,7 @@
     [sections addObject:@{@"title": @"Keyboard", @"items": @[
         @{@"kind": @"composeText", @"title": @"Compose Text", @"symbol": @"square.and.pencil", @"disabled": @(![self composedTextAvailable])},
         @{@"kind": @"keyboard", @"title": self.input.isFirstResponder ? @"Hide Keyboard" : @"Show Keyboard", @"symbol": self.input.isFirstResponder ? @"keyboard.chevron.compact.down" : @"keyboard"},
-        @{@"kind": @"keys", @"title": @"Extra Keys", @"symbol": @"keyboard", @"submenu": @YES, @"push": @YES, @"disabled": @(![self sessionKeyInputAvailable])}]}];
+        @{@"kind": @"keys", @"title": @"Keypad", @"symbol": @"rectangle.grid.3x2", @"submenu": @YES, @"disabled": @(![self sessionKeyInputAvailable])}]}];
     return sections;
 }
 - (void)showInputMenu { [self presentMenu:@"Input" sections:[self inputMenuSections]]; }
@@ -2621,10 +2673,13 @@
         && !self.restoreViewportPending && !self.textReview && self.session.composedTextReady;
 }
 - (void)showTextComposer {
-    if (![self composedTextAvailable]) return;
+    [self showTextComposerWithInitialText:nil savedTitle:nil available:^{ return YES; }];
+}
+- (void)showTextComposerWithInitialText:(NSString *)initialText savedTitle:(NSString *)savedTitle available:(BOOL (^)(void))available {
+    if (![self composedTextAvailable] || !available()) return;
     if (!self.textComposer) self.textComposer = [[DirectTextComposer alloc] initWithMacName:self.macName ?: @"Mac" mode:self.inputOnly ? @"trackpad" : @"desktop"];
     self.textComposer.shortcutBar = self.toolbar;
-    [self.view endEditing:YES]; [self.loginScroll endEditing:YES]; [self resetModifiers]; [self releasePointer];
+    [self.view endEditing:YES]; [self.loginScroll endEditing:YES]; [self clearControlModifiers]; [self releasePointer];
     [self cancelTrackpadTouches]; [self.controls close];
     __weak CompanionVNCViewer *weak = self;
     __weak CompanionVNCSession *owner = self.session;
@@ -2633,18 +2688,18 @@
     void (^present)(void) = ^{
         CompanionVNCViewer *strong = weak;
         if (!strong || strong.textReview || strong.session != owner || strong.textGeneration != generation
-            || ![strong composedTextAvailable]) return;
-        [strong.textComposer presentFrom:strong available:^BOOL {
+            || ![strong composedTextAvailable] || !available()) return;
+        [strong.textComposer presentFrom:strong initialText:initialText savedTitle:savedTitle available:^BOOL {
             CompanionVNCViewer *current = weak;
             return current && owner && current.session == owner && current.textGeneration == generation
-                && [current composedTextAvailable];
+                && [current composedTextAvailable] && available();
         } send:^(NSString *text, void (^complete)(NSString *)) {
             CompanionVNCViewer *current = weak;
             if (!current || !owner || current.session != owner || current.textGeneration != generation
-                || ![current composedTextAvailable]) {
+                || ![current composedTextAvailable] || !available()) {
                 complete(@"The session changed. Nothing was sent."); return;
             }
-            [current resetModifiers];
+            [current clearControlModifiers];
             NSArray *events = [DirectTextComposer desktopEvents:text];
             if (![owner tryComposedTextEvents:events completion:^(BOOL written) {
                 if (!written && weak.textGeneration == generation) weak.textSendInterrupted = YES;

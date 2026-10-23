@@ -563,6 +563,35 @@ private enum TerminalPTY {
         }
     }
     #endif
+    #if os(iOS)
+    /// Reserve one position in the existing write chain for every packet. Other
+    /// producers append after this task; retirement invalidates each next write.
+    @discardableResult func sendSequence(_ packets: [[UInt8]], epoch expected: UUID, stillValid: @escaping @MainActor () -> Bool = { true }, completion: @escaping @MainActor (String?) -> Void) -> Bool {
+        let size = packets.reduce(0) { $0 + $1.count }
+        guard customInputEpoch == expected, stillValid(), let writer, !packets.isEmpty, packets.allSatisfy({ !$0.isEmpty }),
+              size <= 16384, queuedBytes + size <= Self.maximumQueuedInputBytes else {
+            completion("Input changed or is busy. Nothing was queued."); return false
+        }
+        queuedBytes += size
+        let id = generation, writeID = writeGeneration, previous = writeTail
+        writeTail = Task {
+            await previous?.value
+            defer { if generation == id && writeGeneration == writeID { queuedBytes -= size } }
+            do {
+                try await TerminalSequencePump.write(packets, current: {
+                    self.generation == id && self.writeGeneration == writeID && self.canSendUserInput && stillValid()
+                }, send: { try await writer.write($0) })
+                completion(nil)
+            } catch is CancellationError {
+                completion("Sending stopped. Check the session before trying again.")
+            } catch {
+                completion("The shortcut may have been partially sent. It will not be replayed.")
+                if generation == id && writeGeneration == writeID { stop(); present(.terminalEnded) }
+            }
+        }
+        return true
+    }
+    #endif
     #if os(macOS) || os(visionOS)
     // This type is constructed only by the native owner ledger. Cleanup is
     // allowed after focus/lock, but remains bounded and tied to this generation.

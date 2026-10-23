@@ -4,6 +4,8 @@ import SwiftUI
 struct TerminalControlsSettings: View {
     var store = TerminalControlsStore()
     var initialLibrary: TerminalSavedItemsSection?
+    var remoteMacID: UUID?
+    var behaviorChanged: () -> Void = {}
     var contextImage: UIImage?
     let close: () -> Void
     @State private var profile = TerminalControlsProfile.defaults
@@ -25,21 +27,34 @@ struct TerminalControlsSettings: View {
                     List {
                         Section {
                             Button { layout = .init(destination: .keyboard) } label: {
-                                entry("Keyboard Bar", summary: "\(profile.resolvedRows.count) customizable rows", symbol: "keyboard")
+                                entry("Keyboard Bar", summary: "\(profile.resolvedRows.count) customizable \(profile.resolvedRows.count == 1 ? "row" : "rows")", symbol: "keyboard")
                             }.accessibilityIdentifier("terminal-edit-keyboard")
                             Button { layout = .init(destination: .menu) } label: {
                                 entry("Floating Menu", summary: "\(profile.placed(.menu).count) favorites", symbol: "ellipsis.circle")
                             }.accessibilityIdentifier("terminal-edit-menu")
-                        } header: { Text("Layout") }
+                        } header: { Text("Layout") } footer: {
+                            if profile.family == .remoteMac {
+                                Text("Favorites for \(profile.controlMode.title). Keyboard rows are shared by both remote modes.")
+                            }
+                        }
                         Section {
                             ForEach([TerminalSavedItemsSection.shortcuts, .text], id: \.self) { section in
                                 NavigationLink { library(section) } label: {
-                                    entry(section.managementTitle, summary: "\(profile.savedItems(section).count) saved items", symbol: section == .shortcuts ? "keyboard" : "text.quote")
+                                    entry(section.managementTitle, summary: "\(profile.savedItems(section).count) saved \(profile.savedItems(section).count == 1 ? "item" : "items")", symbol: section == .shortcuts ? "keyboard" : "text.quote")
                                 }.accessibilityIdentifier("terminal-edit-" + (section == .shortcuts ? "shortcuts" : "text"))
                             }
                         } footer: { Text("Applies to every Mac on this device.") }
+                        if profile.family == .remoteMac {
+                            Section("Input Behavior") {
+                                NavigationLink {
+                                    VNCPointerSettings(macID: remoteMacID, mode: store.remoteMode, changed: behaviorChanged)
+                                } label: {
+                                    entry("Pointer & Gestures", summary: "Movement, scrolling and feedback", symbol: "hand.draw")
+                                }.accessibilityIdentifier("remote-pointer-settings")
+                            }
+                        }
                         recovery
-                    }.navigationTitle("Terminal Controls").directInlineNavigationTitle()
+                    }.navigationTitle(profile.family == .remoteMac ? "Remote Mac Controls" : "Terminal Controls").directInlineNavigationTitle()
                 }
             }.toolbar { ToolbarItem(placement: .confirmationAction) {
                 Button("Done", action: close).buttonStyle(.borderedProminent).accessibilityIdentifier("terminal-controls-cancel")
@@ -315,11 +330,11 @@ struct TerminalShortcutPresetPicker: View {
                 }
                 Section {
                     Text(pack.guidance)
-                    Text("Each button sends one key or chord. Custom tool bindings may differ.").font(.caption).foregroundStyle(.secondary)
+                    Text("Choose an individual prefix or a complete action. Custom tool bindings may differ.").font(.caption).foregroundStyle(.secondary)
                 }
-                ForEach([false, true], id: \.self) { afterPrefix in
-                    Section(afterPrefix ? "After Prefix" : "Direct Shortcuts") {
-                    ForEach(pack.shortcuts.filter { ($0.action.usage != nil) == afterPrefix }) { preset in
+                ForEach([0, 2, 1], id: \.self) { group in
+                    Section(group == 2 ? "Complete Actions" : group == 1 ? "After Prefix" : "Direct Shortcuts") {
+                    ForEach(pack.shortcuts.filter { ($0.action.steps != nil ? 2 : $0.action.usage != nil ? 1 : 0) == group }) { preset in
                         let added = profile.actions.contains { $0.presetID == preset.id }
                         Button {
                             if selected.contains(preset.id) { selected.remove(preset.id) }
@@ -361,6 +376,7 @@ struct TerminalMenuEditingPreview: UIViewRepresentable {
         let adding: Bool
         let category: UIContentSizeCategory
         let fullMenu: Bool
+        let family: TerminalControlsFamily
     }
     final class Coordinator { var configuration: Configuration? }
     let actions: [TerminalControlAction]
@@ -370,6 +386,7 @@ struct TerminalMenuEditingPreview: UIViewRepresentable {
     let move: (UUID, UUID) -> Void
     var add: (() -> Void)? = nil
     var fullMenu = false
+    var family = TerminalControlsFamily.terminal
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private var category: UIContentSizeCategory {
         switch dynamicTypeSize {
@@ -398,14 +415,15 @@ struct TerminalMenuEditingPreview: UIViewRepresentable {
             let destination = target == addIdentifier ? actions.last?.id : UUID(uuidString: target)
             if let source = UUID(uuidString: source), let destination { move(source, destination) }
         } : nil
-        let configuration = Configuration(actions: actions, selected: selected, enabled: allowed, adding: add != nil, category: category, fullMenu: fullMenu)
+        let configuration = Configuration(actions: actions, selected: selected, enabled: allowed, adding: add != nil, category: category, fullMenu: fullMenu, family: family)
         guard context.coordinator.configuration != configuration else { return }
         // Layout can re-enter updateUIView. Recreating the material panel on
         // every pass prevents the event loop from settling and replaces hit
         // targets while a selection or drag is still being delivered.
         context.coordinator.configuration = configuration
         view.traitOverrides.preferredContentSizeCategory = category
-        view.macName = "Terminal"; view.categoryActions = fullMenu ? TerminalControlNavigation.items : []; view.quickActions = actions.map(\.native)
+        view.macName = family == .terminal ? "Terminal" : "Remote Mac"
+        view.categoryActions = fullMenu ? TerminalControlNavigation.items(for: family) : []; view.quickActions = actions.map(\.native)
         if add != nil { view.quickActions.append(["id": addIdentifier, "kind": "previewAdd", "title": "Add Favorite", "symbol": "plus", "enabled": true, "inputAction": false]) }
         view.selectedPreviewID = selected?.uuidString
         view.refreshEditingPreview()

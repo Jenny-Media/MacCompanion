@@ -237,9 +237,17 @@
 - (void)testNarrowModifierRowScrollsInsteadOfShrinkingKeysBelowTouchTarget {
     CompanionVNCViewer *viewer = [CompanionVNCViewer new]; [viewer loadViewIfNeeded];
     viewer.view.frame = CGRectMake(0,0,320,680); [viewer.view layoutIfNeeded];
-    UIScrollView *toolbar = [viewer valueForKey:@"toolbar"]; UIStackView *row = [viewer valueForKey:@"keyRow"];
-    XCTAssertGreaterThan(toolbar.contentSize.width,toolbar.bounds.size.width);
-    for (UIView *key in row.arrangedSubviews) XCTAssertGreaterThanOrEqual(key.bounds.size.width,44);
+    UIView *toolbar = [viewer valueForKey:@"toolbar"];
+    NSMutableArray<UIView *> *pending = [NSMutableArray arrayWithObject:toolbar];
+    NSMutableArray<UIButton *> *keys = [NSMutableArray new]; UIScrollView *scroll = nil;
+    for (NSUInteger index = 0; index < pending.count; index++) {
+        UIView *view = pending[index]; [pending addObjectsFromArray:view.subviews];
+        if ([view isKindOfClass:UIScrollView.class] && [view.accessibilityIdentifier isEqual:@"terminal-modifier-keys"]) scroll = (id)view;
+        if ([view isKindOfClass:UIButton.class] && !view.hidden) [keys addObject:(id)view];
+    }
+    XCTAssertNotNil(scroll); XCTAssertGreaterThan(scroll.contentSize.width,scroll.bounds.size.width);
+    XCTAssertGreaterThan(keys.count,6);
+    for (UIButton *key in keys) { XCTAssertGreaterThanOrEqual(key.bounds.size.width,44); XCTAssertGreaterThanOrEqual(key.bounds.size.height,44); }
     [viewer stopViewer];
 }
 - (void)testLowerTrackpadUsesRelativeMotionAndBalancedClickWhileDesktopRemainsInPointerMode {

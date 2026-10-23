@@ -14,6 +14,10 @@ import StoreKitTest
                        send: @escaping (String, @escaping (String?) -> Void) -> Void) {
         self.available = available; self.send = send
     }
+    @objc func present(from controller: UIViewController, initialText: String?, savedTitle: String?,
+                       available: @escaping () -> Bool, send: @escaping (String, @escaping (String?) -> Void) -> Void) {
+        self.available = available; self.send = send
+    }
 }
 
 @MainActor private final class ComposerPanProbe: UIPanGestureRecognizer {
@@ -176,7 +180,7 @@ import StoreKitTest
         let bar = controller.keyboardBar
         let preferences = TerminalKeyboardPreferences(keys: [.f1, .f2])
         bar.configure(preferences); bar.setKeyboardFocused(true)
-        XCTAssertEqual(bar.height, 115, accuracy: 1, "Numbers have an independent row while optional Navigation starts collapsed")
+        XCTAssertEqual(bar.height, 99, accuracy: 1, "Numbers have an independent row while optional Navigation starts collapsed")
         for landscape in [false, true] {
             scene.requestGeometryUpdate(.iOS(interfaceOrientations: landscape ? .landscapeRight : .portrait))
             for _ in 0..<300 {
@@ -197,14 +201,14 @@ import StoreKitTest
                 XCTAssertGreaterThan(panel.view.keyboardLayoutGuide.layoutFrame.height, 100)
                 controller.textComposer.draft.edit("retained landscape draft")
                 panel.view.setNeedsLayout(); panel.view.layoutIfNeeded()
-                XCTAssertEqual(bar.height, 115, accuracy: 1)
+                XCTAssertEqual(bar.height, 99, accuracy: 1)
                 XCTAssertEqual(controller.controls.isHidden, bar.isHidden, "Do not leave an orphan menu button when the row yields space")
                 XCTAssertGreaterThanOrEqual(panel.panelFrame.height, 112)
                 if bar.isHidden {
                     XCTAssertTrue(landscape, "Portrait must retain its visible shortcut row")
                     XCTAssertEqual(panel.panelFrame.maxY, panel.view.keyboardLayoutGuide.layoutFrame.minY - 8, accuracy: 1)
                 } else {
-                    XCTAssertEqual(bar.bounds.height, 115, accuracy: 1)
+                    XCTAssertEqual(bar.bounds.height, 99, accuracy: 1)
                     let shortcut = panel.view.convert(bar.bounds, from: bar)
                     XCTAssertEqual(panel.panelFrame.maxY, shortcut.minY - 8, accuracy: 1)
                     XCTAssertFalse(panel.panelFrame.intersects(shortcut))
@@ -220,7 +224,7 @@ import StoreKitTest
                 bar.setKeyboardFocused(true)
                 XCTAssertFalse(bar.isHidden, "Restore the shortcut row after either close path")
                 XCTAssertFalse(controller.controls.isHidden, "Restore the anchored menu with the row")
-                XCTAssertEqual(bar.height, 115, accuracy: 1, "Restore both rows with number and custom keys intact")
+                XCTAssertEqual(bar.height, 99, accuracy: 1, "Restore both rows with number and custom keys intact")
                 XCTAssertTrue(bar.subviews.flatMap { $0.subviews }.contains { !$0.isHidden && $0.accessibilityIdentifier == "terminal-extra-row-" + TerminalKeyboardRow.numbersID.uuidString })
             }
         }
@@ -557,9 +561,16 @@ import StoreKitTest
         XCTAssertEqual(draft.floatingAnchor, CGPoint(x: 0.5, y: 1)); XCTAssertFalse(draft.docked); XCTAssertTrue(draft.active)
         panel.toggleDock(); panel.toggleExpansion(); XCTAssertFalse(draft.docked); XCTAssertFalse(draft.expanded)
     }
+    private func installSharedControlDefaults(_ viewer: CompanionVNCViewer) {
+        var data: Data?
+        let host = RemoteMacControls(viewer: viewer, store: .init(read: { data }, write: { data = $0 },
+            legacyIDs: { [] }, legacyActions: { [] }, family: .remoteMac))
+        viewer.setValue(host, forKey: "remoteControls"); viewer.refreshControlsMenu()
+    }
     func testTrackpadNativeControlsExposeComposeBeforeAndAfterModeChanges() throws {
         let viewer = CompanionVNCViewer(); viewer.loadViewIfNeeded()
         let controls = try XCTUnwrap(viewer.value(forKey: "controls") as? CompanionVNCControls)
+        installSharedControlDefaults(viewer)
         let owner = viewer.session
         // An established input-only owner admits video only for bounded geometry.
         // Seed a normal desktop so each requested transition can actually occur.
@@ -576,12 +587,12 @@ import StoreKitTest
             XCTAssertEqual(owner.composedTextReady, ready)
             controls.perform(NSSelectorFromString("open"))
             let choices = try XCTUnwrap(controls.value(forKey: "choices") as? [UIButton])
-            let compose = try XCTUnwrap(choices.first { $0.accessibilityIdentifier == "session-action-composeText" })
+            let compose = try XCTUnwrap(choices.first { $0.configuration?.title == "Compose Text" })
             XCTAssertEqual(compose.isEnabled, ready, "Keep Compose discoverable while disabled until the session is ready")
-            let expected = (onlyInput ? DirectControlMode.trackpad : .desktop).defaults.map { $0.kind.rawValue }
-            XCTAssertEqual(controls.quickActions.compactMap { $0["kind"] as? String }, expected)
-            XCTAssertEqual(choices.prefix(expected.count).compactMap(\.accessibilityIdentifier), expected.map { "session-action-" + $0 })
-            XCTAssertEqual(expected.contains("copyText"), !onlyInput)
+            let expected = (onlyInput ? DirectControlMode.trackpad : .desktop).defaults.map(\.title)
+            XCTAssertEqual(controls.quickActions.compactMap { $0["title"] as? String }, expected)
+            XCTAssertEqual(choices.prefix(expected.count).compactMap { $0.configuration?.title }, expected)
+            XCTAssertEqual(expected.contains("Copy Text"), !onlyInput)
         } }
         controls.close()
     }
@@ -599,10 +610,11 @@ import StoreKitTest
             window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible()
         }
         XCTAssertNil(viewer.value(forKey: "lastFramebuffer")); XCTAssertTrue(owner.composedTextReady)
+        installSharedControlDefaults(viewer)
         let controls = try XCTUnwrap(viewer.value(forKey: "controls") as? CompanionVNCControls)
         controls.perform(NSSelectorFromString("open"))
         let choices = try XCTUnwrap(controls.value(forKey: "choices") as? [UIButton])
-        let compose = try XCTUnwrap(choices.first { $0.accessibilityIdentifier == "session-action-composeText" })
+        let compose = try XCTUnwrap(choices.first { $0.configuration?.title == "Compose Text" })
         compose.sendActions(for: .touchUpInside)
         try await Task.sleep(for: .milliseconds(350))
         let composer = try XCTUnwrap(viewer.value(forKey: "textComposer") as? DirectTextComposer)

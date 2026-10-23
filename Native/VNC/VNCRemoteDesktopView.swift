@@ -83,10 +83,6 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         viewer.presentationHandler = { value in MainActor.assumeIsolated { VNCSessionPreferences.setFullscreen(value, mac: mac.id) } }
         viewer.preferredTrackpad = VNCSessionPreferences.trackpad(mac.id)
         viewer.followCursorEnabled = VNCSessionPreferences.followCursor(mac.id)
-        viewer.quickActionsProvider = { onlyInput in
-            MainActor.assumeIsolated { VNCSessionPreferences.actions(onlyInput ? .trackpad : .desktop, legacyMac: mac.id) }.map(\.native)
-        }
-        viewer.quickActions = VNCSessionPreferences.actions(inputOnly ? .trackpad : .desktop, legacyMac: mac.id).map(\.native)
         viewer.settingsHandler = { [weak coordinator = context.coordinator] in
             MainActor.assumeIsolated { coordinator?.showInputSettings() }
         }
@@ -388,18 +384,9 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         }
         func refreshControls() {
             guard let viewer else { return }
-            viewer.quickActions = VNCSessionPreferences.actions(viewer.inputOnly ? .trackpad : .desktop, legacyMac: mac.id).map(\.native)
+            viewer.refreshControlsMenu()
         }
-        func showInputSettings() {
-            guard let viewer, viewer.presentedViewController == nil else { return }
-            let controller = UIHostingController(rootView: VNCInputSettings(macID: mac.id, mode: viewer.inputOnly ? .trackpad : .desktop) { [weak viewer] in
-                viewer?.pointerSpeed = VNCSessionPreferences.speed(self.mac.id)
-                viewer?.followCursorEnabled = VNCSessionPreferences.followCursor(self.mac.id)
-                self.refreshControls()
-            }.directAppearance())
-            controller.modalPresentationStyle = .pageSheet
-            viewer.present(controller, animated: true)
-        }
+        func showInputSettings() { viewer?.showControlsSettings() }
         func showAccess() {
             guard let viewer, viewer.presentedViewController == nil else { return }
             let root = DirectMacAccessView(mac: mac, saved: { [weak self, weak viewer] in
@@ -435,6 +422,7 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         }
         func showAppSettings() {
             guard let viewer, viewer.presentedViewController == nil else { return }
+            viewer.view.endEditing(true)
             let controller = UIHostingController(rootView: DirectSessionSettingsV1().directAppearance())
             controller.modalPresentationStyle = .pageSheet
             viewer.present(controller, animated: true)

@@ -6,6 +6,8 @@ import Observation
     var armed: TerminalModifiers = []
     var locked: TerminalModifiers = []
     var ready = true
+    var remoteMac = false
+    var alone: (TerminalAppAction) -> Void = { _ in }
     var supportsCommand = false
     var profileRevision = UUID()
     var canPin = false
@@ -53,9 +55,17 @@ struct TerminalKeypad: View {
     private var allKeys: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 4) {
-                ForEach([TerminalModifiers.ctrl, .alt, .shift], id: \.rawValue) { modifierButtons($0) }
+                ForEach(state.remoteMac ? [TerminalModifiers.ctrl, .alt, .shift, .command] : [TerminalModifiers.ctrl, .alt, .shift], id: \.rawValue) { modifierButtons($0) }
             }
             Text("Tap for next key · Long-press to keep on").font(.caption2).foregroundStyle(.secondary)
+            if state.remoteMac {
+                Menu("Send Modifier Alone…", systemImage: "keyboard") {
+                    ForEach(TerminalAppAction.allCases.filter { $0.modifierAlone != nil }) { action in
+                        Button(action.title, systemImage: action.symbol) { state.alone(action) }
+                    }
+                }.frame(minHeight: 44).accessibilityIdentifier("remote-send-modifier-alone")
+                Text("Presses and releases the modifier once. Your selected modifiers stay unchanged.").font(.caption).foregroundStyle(.secondary)
+            }
             ForEach(TerminalKeyCatalog.groups) { group in
                 let keys = TerminalKeyCatalog.matching(query, in: group)
                 if !keys.isEmpty {
@@ -65,18 +75,18 @@ struct TerminalKeypad: View {
             }
             if query.isEmpty {
                 HStack {
-                    Button("Copy Selection") { state.send("copySelection") }
+                    if !state.remoteMac { Button("Copy Selection") { state.send("copySelection") } }
                     Button("Paste") { state.send("paste") }
                 }.buttonStyle(.bordered).frame(minHeight: 44)
-                Button {
+                if !state.remoteMac { Button {
                     advancedExpanded.toggle()
                 } label: {
                     Label("Advanced · Command", systemImage: advancedExpanded ? "chevron.down" : "chevron.right").frame(minHeight: 44)
-                }.accessibilityIdentifier("terminal-keypad-advanced").accessibilityValue(advancedExpanded ? "Expanded" : "Collapsed")
-                if advancedExpanded {
+                }.accessibilityIdentifier("terminal-keypad-advanced").accessibilityValue(advancedExpanded ? "Expanded" : "Collapsed") }
+                if advancedExpanded && !state.remoteMac {
                     modifierButtons(.command)
-                    Text("Command works only when the remote application negotiates support. Ctrl and Option work in ordinary terminal sessions.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    if !state.remoteMac { Text("Command works only when the remote application negotiates support. Ctrl and Option work in ordinary terminal sessions.")
+                        .font(.caption).foregroundStyle(.secondary) }
                 }
                 if !state.canPin { Text("All keys are available here. Pinning favorites requires Pro.").font(.caption).foregroundStyle(.secondary) }
             }
@@ -141,8 +151,8 @@ struct TerminalKeycapStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.font(.callout.weight(.medium)).lineLimit(1).minimumScaleFactor(0.8)
             .padding(.horizontal, 6).frame(maxWidth: .infinity, minHeight: 44)
-            .foregroundStyle(.primary)
-            .background(Color(uiColor: .secondarySystemFill), in: .rect(cornerRadius: 8))
+            .foregroundStyle(.tint)
+            .background(Color(uiColor: .secondarySystemBackground), in: .rect(cornerRadius: 8))
             .contentShape(.rect).opacity(!enabled ? 0.4 : configuration.isPressed ? 0.65 : 1)
     }
 }

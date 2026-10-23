@@ -4,6 +4,11 @@ import StoreKitTest
 import SwiftUI
 @testable import Mac_Companion
 
+@MainActor private final class ControlsMenuRefreshViewer: CompanionVNCViewer {
+    var refreshCount = 0
+    override func refreshControlsMenu() { refreshCount += 1 }
+}
+
 @MainActor final class DirectMacLibraryTests: XCTestCase {
     func testSessionSelectionKeepsTappedModeWhileLibraryChanges() throws {
         let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
@@ -187,17 +192,15 @@ import SwiftUI
     }
     func testStoppedDesktopViewerDoesNotReceiveControlProfileUpdates() throws {
         let mac = try DirectMacRecordV1.normalized(name: "Synthetic Mac", addresses: ["studio.local"])
-        let viewer = CompanionVNCViewer()
+        let viewer = ControlsMenuRefreshViewer()
         let coordinator = VNCRemoteDesktopView.Coordinator(mac: mac)
         coordinator.viewer = viewer; coordinator.observeActivity()
         defer { coordinator.stopObserving(); coordinator.activity.finish() }
-        viewer.quickActions = [["title": "Sentinel"]]
         NotificationCenter.default.post(name: VNCSessionPreferences.actionsChanged, object: DirectControlMode.desktop)
-        XCTAssertNotEqual(viewer.quickActions.first?["title"] as? String, "Sentinel")
+        XCTAssertEqual(viewer.refreshCount, 1)
         coordinator.stopObserving()
-        viewer.quickActions = [["title": "Sentinel"]]
         NotificationCenter.default.post(name: VNCSessionPreferences.actionsChanged, object: DirectControlMode.desktop)
-        XCTAssertEqual(viewer.quickActions.first?["title"] as? String, "Sentinel")
+        XCTAssertEqual(viewer.refreshCount, 1)
     }
     func testAuditedAppSymbolsExistOnSupportedRuntime() throws {
         guard let path = ProcessInfo.processInfo.environment["MACCOMPANION_ICON_AUDIT_PATH"] else { throw XCTSkip("Opt-in source inventory audit") }

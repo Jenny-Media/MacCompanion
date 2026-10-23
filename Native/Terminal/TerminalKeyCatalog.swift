@@ -25,7 +25,7 @@ struct TerminalPaletteKey: Identifiable, Equatable {
     }
     func matches(_ item: TerminalControlAction) -> Bool {
         if let accessory { return item.kind == .key && item.key == accessory }
-        return item.kind == .shortcut && item.character == character && item.modifiers == modifiers
+        return item.kind == .shortcut && item.resolvedSteps.count == 1 && item.resolvedSteps[0].kind == .key && item.resolvedSteps[0].character == character && item.resolvedSteps[0].modifiers == modifiers
     }
 }
 

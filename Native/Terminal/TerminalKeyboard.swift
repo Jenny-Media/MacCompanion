@@ -269,11 +269,11 @@ private final class TerminalModifierKeyButton: UIButton {
         guard var value = configuration else { return }
         value.subtitle = nil; value.attributedSubtitle = nil
         value.automaticallyUpdateForSelection = false
-        value.baseForegroundColor = active ? .white : .label
-        value.imageColorTransformer = UIConfigurationColorTransformer { [active] _ in active ? .white : .label }
-        value.background.backgroundColor = active ? TerminalModifierAppearance.fill : .secondarySystemFill
+        value.baseForegroundColor = active ? .white : .systemBlue
+        value.imageColorTransformer = UIConfigurationColorTransformer { [active] _ in active ? .white : .systemBlue }
+        value.background.backgroundColor = active ? TerminalModifierAppearance.fill : .secondarySystemBackground
         value.background.backgroundColorTransformer = UIConfigurationColorTransformer { $0 }
-        value.background.strokeColor = active ? .label : .clear
+        value.background.strokeColor = active ? TerminalModifierAppearance.fill : .clear
         value.background.strokeWidth = active ? 1.5 : 0
         value.background.cornerRadius = 8; value.cornerStyle = .fixed
         configuration = value
@@ -388,6 +388,7 @@ private final class TerminalKeyScrollView: UIScrollView {
 
 @MainActor final class TerminalKeyboardBar: UIView, UIDragInteractionDelegate, UIDropInteractionDelegate {
     weak var terminal: SessionTerminalView?
+    var remoteInput: TerminalRemoteInput?
     lazy var keyFeedback = CompanionVNCInterfaceFeedback(view: self)
     private let rows = UIStackView()
     private let row = UIStackView()
@@ -395,12 +396,14 @@ private final class TerminalKeyScrollView: UIScrollView {
     private var extraViews: [UIView] = []
     private var generated: [UIButton] = []
     private var modifierButtons: [(UIButton, TerminalModifiers)] = []
+    var renderedModifiers: [UIButton] { modifierButtons.map { $0.0 } }
     private var commandShortcuts: [UIButton] = []
+    private var remoteActionButtons: [(UIButton, TerminalControlAction)] = []
     private var keyWidths: [ObjectIdentifier: NSLayoutConstraint] = [:]
     private var keySymbols: [ObjectIdentifier: String] = [:]
     private var heights: [NSLayoutConstraint] = []
     private var viewportConstraints: [NSLayoutConstraint] = []
-    private var keyHeight: CGFloat = 52
+    private var keyHeight: CGFloat = 44
     private var keyboardFocused: Bool?
     let keyboardButton = UIButton(type: .system)
     let keypadButton = UIButton(type: .system)
@@ -534,7 +537,7 @@ private final class TerminalKeyScrollView: UIScrollView {
         revealedPreviewSelection = selection
         layoutGeneration = UUID()
         for key in generated { keyWidths.removeValue(forKey: ObjectIdentifier(key)); keySymbols.removeValue(forKey: ObjectIdentifier(key)) }
-        generated = []; modifierButtons = []; commandShortcuts = []
+        generated = []; modifierButtons = []; commandShortcuts = []; remoteActionButtons = []
         for view in row.arrangedSubviews where view !== keyScroll && view !== menuAnchor { row.removeArrangedSubview(view); view.removeFromSuperview() }
         previewItems = [:]; previewPlacements = [:]; previewRows = [:]; previewHandles = []; rowContainers = [:]; profileRows = profile.resolvedRows.map { source in var row = source; row.items = profile.barItems(in: source); row.title = profile.rowTitle(row.id); return row }
         finishRowReorder(commit: false)
@@ -570,6 +573,7 @@ private final class TerminalKeyScrollView: UIScrollView {
                 let item = placement.item
                 if item.savedID != nil, !editingPreview && !DirectProAccess.shared.hasPro { continue }
                 let title = item.title(in: profile)
+                let savedAction = item.savedID.flatMap { id in profile.actions.first { $0.id == id } }
                 let key: UIButton
                 if !editingPreview, let control = item.control {
                     switch control {
@@ -587,18 +591,24 @@ private final class TerminalKeyScrollView: UIScrollView {
                     default: key = button(title, symbol: item.symbol, modifier: item.modifier != nil) { [weak self] in if let modifier = item.modifier { self?.toggle(modifier) } }
                     }
                 } else {
-                    key = button(item.savedID.flatMap { id in profile.actions.first { $0.id == id } }?.keycapTitle ?? item.palette?.title ?? title, symbol: item.symbol, modifier: item.modifier != nil) { [weak self] in
+                    key = button(savedAction?.keycapTitle ?? item.palette?.title ?? title, symbol: item.symbol ?? (savedAction?.isLocalKeyboardControl == true ? savedAction?.symbol : nil), modifier: item.modifier != nil) { [weak self] in
                         guard let self else { return }
                         if editingPreview {
                             if let previewPlacementSelect { previewPlacementSelect(placement, definition.id) }
                             else { previewSelect?(item, definition.id) }
                         }
-                        else if let id = item.savedID { guard terminal?.customInputEpoch() != nil, DirectProAccess.shared.hasPro else { return }; perform(id) }
+                        else if let id = item.savedID { guard inputReady || savedAction?.isLocalKeyboardControl == true, DirectProAccess.shared.hasPro else { return }; perform(id) }
                         else if let palette = item.palette { send(palette) }
                     }
                 }
+                if !editingPreview, savedAction?.isLocalKeyboardControl == true {
+                    if savedAction?.operation == .keyboard { keyboardToggles.append(key) }
+                    else { expandToggles.append(key) }
+                }
+                if let savedAction { remoteActionButtons.append((key, savedAction)) }
                 if editingPreview, item.control == .expand { expandToggles.append(key) }
                 key.accessibilityLabel = title
+                key.tag = Int(item.palette?.shortcutCode ?? (item.modifier == .ctrl ? 0xffe3 : item.modifier == .alt ? 0xffe9 : item.modifier == .shift ? 0xffe1 : item.modifier == .command ? 0xffeb : 0))
                 if let action = item.savedID.flatMap({ id in profile.actions.first { $0.id == id } }) { key.accessibilityHint = ([action.detail] + [action.usage].compactMap { $0 }).joined(separator: ". ") }
                 if let modifier = item.modifier {
                     modifierButtons.append((key, modifier))
@@ -615,7 +625,7 @@ private final class TerminalKeyScrollView: UIScrollView {
                     if item.savedID == nil { key.accessibilityIdentifier = previewPreset.map { "terminal-template-item-" + $0.id + "-" + item.id } ?? "terminal-preview-item-" + item.id }
                     key.accessibilityValue = previewUnavailableItems.contains(item) ? "Already placed" : selectedPreviewItem == item && selectedPreviewRow == definition.id ? "Selected" : nil
                     key.alpha = previewUnavailableItems.contains(item) ? 0.3 : 1
-                    key.configuration?.baseBackgroundColor = .secondarySystemFill
+                    key.configuration?.background.backgroundColor = .secondarySystemBackground
                     key.layer.borderWidth = selectedPreviewItem == item && selectedPreviewRow == definition.id ? 1.5 : 0
                     key.layer.borderColor = UIColor.systemBlue.cgColor; key.layer.cornerRadius = 8
                     previewItems[ObjectIdentifier(key)] = item; previewPlacements[ObjectIdentifier(key)] = placement; previewRows[ObjectIdentifier(key)] = definition.id
@@ -940,6 +950,7 @@ private final class TerminalKeyScrollView: UIScrollView {
         keyFeedback.feedback("commit")
     }
     private func send(_ key: TerminalPaletteKey) {
+        if let remoteInput { if remoteInput.ready() { remoteInput.send(key) }; refresh(); return }
         guard let terminal else { return }
         terminal.performCustomInput {
             var modifiers = terminal.keyboardState.consume()
@@ -1013,14 +1024,16 @@ private final class TerminalKeyScrollView: UIScrollView {
             let width = max(text.size(withAttributes: [.font: font]).width, key.configuration?.image?.size.width ?? 0)
             keyWidths[ObjectIdentifier(key)]?.constant = max(44, ceil(width) + 12)
         }
-        keyHeight = max(52, ceil(font.lineHeight) + 8)
+        keyHeight = max(44, ceil(font.lineHeight) + 8)
         heights.forEach { $0.constant = keyHeight }
         invalidateIntrinsicContentSize(); setNeedsLayout(); superview?.setNeedsLayout()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override var intrinsicContentSize: CGSize { CGSize(width: UIView.noIntrinsicMetric, height: height) }
     private func configureButton(_ key: UIButton, title: String, symbol: String? = nil) {
-        var configuration = UIButton.Configuration.gray(); configuration.cornerStyle = .medium
+        var configuration = UIButton.Configuration.plain(); configuration.cornerStyle = .fixed
+        configuration.background.cornerRadius = 8; configuration.background.backgroundColor = .secondarySystemBackground
+        configuration.baseForegroundColor = .systemBlue
         configuration.contentInsets = .init(top: 2, leading: 0, bottom: 2, trailing: 0)
         configuration.titleLineBreakMode = .byClipping
         if let symbol { keySymbols[ObjectIdentifier(key)] = symbol; configuration.image = UIImage(systemName: symbol) } else { configuration.title = title }
@@ -1040,6 +1053,7 @@ private final class TerminalKeyScrollView: UIScrollView {
         return key
     }
     private func performKeyboardToggle() {
+        if let remoteInput { remoteInput.toggleKeyboard(); return }
         guard let terminal else { return }
         let before = terminal.isFirstResponder; toggleKeyboard?()
         if before != terminal.isFirstResponder { keyFeedback.feedback("selection") }
@@ -1048,6 +1062,7 @@ private final class TerminalKeyScrollView: UIScrollView {
         showsExtraRows.toggle(); keyFeedback.feedback("selection"); layoutChanged?()
     }
     func toggle(_ modifier: TerminalModifiers, lock: Bool = false) {
+        if let remoteInput { guard remoteInput.ready() else { return }; remoteInput.toggle(modifier, lock); keyFeedback.feedback("selection"); refresh(); return }
         guard let terminal, terminal.customInputEpoch() != nil, modifier != .command || terminal.keyEncoding.supportsCommand else { return }
         terminal.keyboardState.toggle(modifier, lock: lock); keyFeedback.feedback("selection"); refresh()
     }
@@ -1055,19 +1070,36 @@ private final class TerminalKeyScrollView: UIScrollView {
         guard gesture.state == .began, let key = gesture.view as? UIButton, let modifier = modifierButtons.first(where: { $0.0 === key })?.1 else { return }
         toggle(modifier, lock: true)
     }
+    private var inputReady: Bool { remoteInput?.ready() ?? (terminal?.customInputEpoch() != nil) }
+    private func refreshModifier(_ key: UIButton, modifier: TerminalModifiers, state: TerminalKeyboardState) {
+        let locked = state.locked.contains(modifier)
+        let title = key.accessibilityLabel ?? modifier.title
+        key.accessibilityHint = "Tap for the next key; long-press to keep on. Tap again to turn off."
+        key.accessibilityCustomActions = [UIAccessibilityCustomAction(name: locked ? "Turn " + title + " Off" : "Keep " + title + " On", actionHandler: { [weak self] _ in self?.toggle(modifier, lock: true); return true })]
+        (key as? TerminalModifierKeyButton)?.showState(active: state.active.contains(modifier), held: locked)
+        key.accessibilityValue = locked ? "On" : state.active.contains(modifier) ? "Next key" : "Off"
+    }
     func refresh() {
-        guard !editingPreview, let terminal else { return }
+        guard !editingPreview else { return }
+        if let remoteInput {
+            let ready = remoteInput.ready(), state = remoteInput.state()
+            for key in allKeys { key.isEnabled = ready; key.alpha = ready ? 1 : 0.4 }
+            for (key, modifier) in modifierButtons {
+                refreshModifier(key, modifier: modifier, state: state)
+            }
+            for key in keyboardToggles + expandToggles + keypadToggles + [keypadButton] { key.isEnabled = true; key.alpha = 1 }
+            for (key, action) in remoteActionButtons { key.isEnabled = remoteInput.canUse(action); key.alpha = key.isEnabled ? 1 : 0.4 }
+            return
+        }
+        guard let terminal else { return }
         let ready = terminal.customInputEpoch() != nil
         if !terminal.keyEncoding.supportsCommand { terminal.keyboardState.armed.remove(.command); terminal.keyboardState.locked.remove(.command) }
         if !ready { terminal.keyboardState.reset(); terminal.controlModifier = false; terminal.metaModifier = false }
         for key in allKeys { key.isEnabled = ready; key.alpha = ready ? 1 : 0.4 }
         for (key, modifier) in modifierButtons {
             key.isEnabled = ready && (modifier != .command || terminal.keyEncoding.supportsCommand); key.alpha = key.isEnabled ? 1 : 0.4
-            let locked = terminal.keyboardState.locked.contains(modifier)
-            key.accessibilityHint = "Tap for the next key; long-press to keep on. Tap again to turn off."
-            key.accessibilityCustomActions = [UIAccessibilityCustomAction(name: locked ? "Turn " + modifier.title + " Off" : "Keep " + modifier.title + " On", actionHandler: { [weak self] _ in self?.toggle(modifier, lock: true); return true })]
-            (key as? TerminalModifierKeyButton)?.showState(active: terminal.keyboardState.active.contains(modifier), held: locked)
-            key.accessibilityValue = modifier == .command && !terminal.keyEncoding.supportsCommand ? "Unavailable in this application" : locked ? "On" : key.isSelected ? "Next key" : "Off"
+            refreshModifier(key, modifier: modifier, state: terminal.keyboardState)
+            if modifier == .command && !terminal.keyEncoding.supportsCommand { key.accessibilityValue = "Unavailable in this application" }
         }
         for key in commandShortcuts { key.isEnabled = ready && terminal.keyEncoding.supportsCommand; key.alpha = key.isEnabled ? 1 : 0.4; key.accessibilityValue = terminal.keyEncoding.supportsCommand ? nil : "Unavailable in this application" }
         for key in keyboardToggles + expandToggles + keypadToggles + [keypadButton] { key.isEnabled = true; key.alpha = 1 }

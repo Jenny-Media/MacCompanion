@@ -1,7 +1,7 @@
 #if os(iOS) && MACCOMPANION_VNC_DEVELOPMENT
 import Foundation
 
-/// Presets contain one chord each. Prefix/mode steps remain separate user taps.
+/// Individual prefix/mode keys and complete editable actions share one picker.
 /// Default bindings are configurable in each tool; never infer remote state.
 enum TerminalShortcutPack: String, CaseIterable, Identifiable {
     case tmux, zellij, zellijUnlock, herdr
@@ -25,7 +25,7 @@ enum TerminalShortcutPack: String, CaseIterable, Identifiable {
         }
         return URL(string: address)!
     }
-    var shortcuts: [TerminalShortcutPreset] {
+    private var individualShortcuts: [TerminalShortcutPreset] {
         switch self {
         case .tmux:
             return [preset("prefix", "Tmux Prefix", "b", ctrl: true),
@@ -57,6 +57,31 @@ enum TerminalShortcutPack: String, CaseIterable, Identifiable {
                 preset("resize", "Herdr Resize Mode", "r", after: "After Herdr Navigate"),
                 preset("detach", "Herdr Detach", "q", after: "After Herdr Navigate")]
         }
+    }
+    var shortcuts: [TerminalShortcutPreset] {
+        let singles = individualShortcuts
+        let prefix: TerminalShortcutStep? = switch self {
+        case .tmux, .herdr: .init(character: 0x62, modifiers: [0xffe3])
+        case .zellijUnlock: .init(character: 0x67, modifiers: [0xffe3])
+        case .zellij: nil
+        }
+        var complete: [TerminalShortcutPreset] = []
+        if let prefix {
+            complete = singles.filter { $0.action.usage != nil }.map { value in
+                var action = value.action; action.id = UUID(); action.presetID = value.id + ".complete"
+                action.steps = [prefix] + action.resolvedSteps
+                action.title += " · Full"; action.usage = "Complete action using " + title + " default bindings."
+                return .init(id: action.presetID!, action: action)
+            }
+        }
+        if self == .zellij || self == .zellijUnlock {
+            var action = TerminalControlAction(title: "Zellij New Pane · Full", kind: .shortcut, inMenu: false)
+            action.steps = self == .zellij ? [.init(character: 0x70, modifiers: [0xffe3]), .init(character: 0x6e)]
+                : [.init(character: 0x67, modifiers: [0xffe3]), .init(character: 0x70), .init(character: 0x6e)]
+            action.presetID = rawValue + ".new-pane.complete"; action.usage = "Complete action using " + title + " default bindings."
+            complete.append(.init(id: action.presetID!, action: action))
+        }
+        return singles + complete
     }
     private func preset(_ key: String, _ name: String, _ character: Character, ctrl: Bool = false, alt: Bool = false, after: String? = nil) -> TerminalShortcutPreset {
         var action = TerminalControlAction(title: name, kind: .shortcut, inMenu: false)

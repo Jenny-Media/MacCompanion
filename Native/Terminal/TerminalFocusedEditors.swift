@@ -112,12 +112,12 @@ struct TerminalKeyboardEditingPreview: View {
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { if $0 > 0 { barHeight = $0 } }
             }.scrollBounceBehavior(.basedOnSize)
                 .frame(height: min(barHeight, max(60, editorHeight - (compact ? 126 : 226))))
-                .background(Color(uiColor: .secondarySystemBackground))
+                .background(Color(uiColor: .systemBackground))
             HStack {
                 Button("Add Row", systemImage: "plus") { show(.rows) }.buttonStyle(.bordered)
                     .accessibilityIdentifier("terminal-add-row")
                 Spacer()
-                Text("\(profile.resolvedRows.count) rows").font(.caption).foregroundStyle(.secondary)
+                Text(profile.resolvedRows.count == 1 ? "1 row" : "\(profile.resolvedRows.count) rows").font(.caption).foregroundStyle(.secondary)
             }.dynamicTypeSize(...DynamicTypeSize.xxxLarge).padding(.horizontal, 20).padding(.vertical, 16)
             if !compact {
                 Text("Applies to every Mac on this device.").font(.caption).foregroundStyle(.secondary)
@@ -241,7 +241,7 @@ private struct TerminalFullMenuPreview: View {
         NavigationStack {
             ScrollView {
                 TerminalMenuEditingPreview(actions: profile.menuPreviewActions, selected: nil, editable: false,
-                    select: { _ in }, move: { _, _ in }, fullMenu: true)
+                    select: { _ in }, move: { _, _ in }, fullMenu: true, family: profile.family ?? .terminal)
                     .padding(.vertical, 20).frame(maxWidth: .infinity)
             }.navigationTitle("Menu Preview").directInlineNavigationTitle()
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
@@ -312,7 +312,7 @@ private struct TerminalEditorItemPicker: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Picker(replacing == nil ? "Add" : "Replace", selection: $page) { ForEach(destination == .menu ? ["Actions", "Keys", "Shortcuts", "Text"] : ["Keys", "Shortcuts", "Text"], id: \.self) { Text($0) } }
+                    Picker(replacing == nil ? "Add" : "Replace", selection: $page) { ForEach(destination == .menu || profile.family == .remoteMac ? ["Actions", "Keys", "Shortcuts", "Text"] : ["Keys", "Shortcuts", "Text"], id: \.self) { Text($0) } }
                         .pickerStyle(.segmented).accessibilityIdentifier("terminal-add-page")
                     if let error { Text(error).font(.subheadline).foregroundStyle(.red).accessibilityIdentifier("terminal-add-error") }
                     if page == "Actions" { actions }
@@ -352,7 +352,7 @@ private struct TerminalEditorItemPicker: View {
     @ViewBuilder private var keys: some View {
         let controls = TerminalBarItem.Control.allCases.filter {
             let item = TerminalBarItem.control($0)
-            return $0 != .command && (query.isEmpty || (item.title(in: profile) + " " + $0.rawValue + " " + (item.symbol ?? "")).localizedCaseInsensitiveContains(query))
+            return ($0 != .command || profile.family == .remoteMac) && (query.isEmpty || (item.title(in: profile) + " " + $0.rawValue + " " + (item.symbol ?? "")).localizedCaseInsensitiveContains(query))
         }
         if destination == .keyboard && !controls.isEmpty {
             Text("Controls & Modifiers").font(.headline)
@@ -381,7 +381,7 @@ private struct TerminalEditorItemPicker: View {
     }
     private var actions: some View {
         VStack(spacing: 8) {
-            ForEach(TerminalAppAction.allCases.filter { query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) || $0.detail.localizedCaseInsensitiveContains(query) }) { standard in
+            ForEach(profile.availableActions.filter { query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) || $0.detail.localizedCaseInsensitiveContains(query) }) { standard in
                 Button {
                     if let existing = profile.actions.first(where: { $0.operation == standard }) {
                         place(.saved(existing.id))

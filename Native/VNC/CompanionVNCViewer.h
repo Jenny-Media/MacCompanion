@@ -1,6 +1,7 @@
 #import <UIKit/UIKit.h>
 #import "CompanionVNCSession.h"
 @class DirectConnectionPanelHost;
+@class CompanionVNCInterfaceFeedback;
 NS_ASSUME_NONNULL_BEGIN
 @interface CompanionVNCViewer : UIViewController
 @property(nonatomic, strong, nullable) DirectConnectionPanelHost *connectionPanelHost;
@@ -53,6 +54,21 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy, nullable) void (^chromeHandler)(BOOL);
 @property(nonatomic, copy, nullable) void (^diagnosticHandler)(NSDictionary *);
 @property(nonatomic, copy, nullable) void (^windowBoundsHandler)(CGPoint, CGSize, void (^)(CGRect));
+/// Shared iOS keyboard presentation uses the existing connection-owned queue.
+@property(nonatomic, readonly) NSUInteger controlsEpoch;
+@property(nonatomic, readonly) CompanionVNCInterfaceFeedback *controlsFeedback;
+- (BOOL)controlsInputAvailable;
+- (BOOL)sendControlEvents:(NSArray<NSDictionary *> *)events completion:(void (^)(BOOL))completion;
+- (void)sendOrdinaryControlEvents:(NSArray<NSDictionary *> *)events;
+- (void)toggleControlsKeyboard;
+- (void)beginKeyboardCustomization;
+- (void)endKeyboardCustomization;
+- (void)showControlsComposer;
+- (void)showControlsComposerWithText:(NSString *)text title:(NSString *)title available:(BOOL (^)(void))available NS_SWIFT_NAME(showControlsComposer(text:title:available:));
+- (void)showControlsSettings;
+- (void)refreshControlsMenu;
+- (BOOL)controlsCopyTextAvailable;
+- (void)performSharedControlAction:(NSString *)kind;
 - (void)stopViewer;
 - (void)prepareConnection;
 /// Snapshot before preparing the replacement; applied after joining SSH retirement.

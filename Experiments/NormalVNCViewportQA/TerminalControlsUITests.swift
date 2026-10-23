@@ -15,6 +15,10 @@ import StoreKit
         terminal.admitCustomInput = { [weak self] bytes in
             guard let self, ready else { return false }; output += bytes; return true
         }
+        terminal.admitCustomSequence = { [weak self] packets, valid, complete in
+            guard let self, ready, valid() else { complete("Synthetic input admission rejected"); return false }
+            output += packets.flatMap { $0 }; complete(nil); return true
+        }
         updateControls()
     }
     override func send(source: TerminalView, data: ArraySlice<UInt8>) { output += terminal.encodeOutput(data) }
@@ -237,8 +241,11 @@ import StoreKit
         controller.loadViewIfNeeded(); defer { session.stop() }
         controller.terminal.feed(text: "\u{1b}[=\(vector.flags)u" + fixture.paste.enable)
         controller.output = []
+        controller.terminal.keyboardState.armed = .alt; controller.terminal.keyboardState.locked = .ctrl
         controller.performControlAction(uppercase.id)
         XCTAssertEqual(controller.output, expected)
+        XCTAssertEqual(controller.terminal.keyboardState.armed, .alt)
+        XCTAssertEqual(controller.terminal.keyboardState.locked, .ctrl, "Saved shortcuts own their chord without consuming live modifiers")
         controller.output = []
         controller.performControlAction(saved.id)
         XCTAssertTrue(controller.output.isEmpty, "Saved text is reviewed before explicit Send Text")
@@ -415,6 +422,8 @@ import StoreKit
             let keyboard = controller.keyboardBar.keyboardButton.convert(controller.keyboardBar.keyboardButton.bounds, to: controller.view)
             XCTAssertEqual(button.midY, anchor.midY, accuracy: 1)
             XCTAssertEqual(button.midY, keyboard.midY, accuracy: 1)
+            XCTAssertGreaterThanOrEqual(button.height, 44)
+            XCTAssertLessThanOrEqual(button.height, anchor.height, "The anchored button must fit inside its compact keyboard row")
             XCTAssertTrue(controller.view.bounds.contains(button), "Menu remains reachable after either transition")
         }
     }
@@ -555,7 +564,7 @@ import StoreKit
         let handles = descendants(bar).compactMap { $0 as? UIButton }.filter { $0.accessibilityIdentifier?.hasPrefix("terminal-row-handle-") == true }
         XCTAssertEqual(handles.count, 6)
         XCTAssertTrue(handles.allSatisfy { !$0.isHidden })
-        XCTAssertGreaterThan(bar.height, 320)
+        XCTAssertEqual(bar.height, 6 * 44 + 5 * 3 + 8, accuracy: 1, "All six compact rows remain available in the editor")
         let main = try XCTUnwrap(handles.first { $0.accessibilityIdentifier?.hasSuffix(TerminalKeyboardRow.mainID.uuidString) == true })
         XCTAssertEqual(main.accessibilityLabel, "Reorder Row 6")
         XCTAssertTrue(main.gestureRecognizers?.contains { $0 is UIPanGestureRecognizer } == true,
@@ -569,7 +578,7 @@ import StoreKit
         let up = try XCTUnwrap(main.accessibilityCustomActions?.first { $0.name == "Move Row Up" })
         XCTAssertTrue(up.actionHandler?(up) == true); XCTAssertEqual(moved, TerminalKeyboardRow.mainID)
         bar.previewShowsAllRows = false; bar.previewShowsRowHandles = false; bar.configure(profile) { _ in }
-        XCTAssertEqual(bar.height, 60)
+        XCTAssertEqual(bar.height, 52)
         XCTAssertFalse(profile.rowsExpanded!); XCTAssertEqual(profile.resolvedRows[0].visibility, .hidden)
     }
 

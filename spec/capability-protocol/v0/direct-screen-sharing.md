@@ -457,6 +457,36 @@ session; local display/input settings remain available during recovery.
 Admit the complete custom action into the bounded input queue or none of it.
 A busy queue reports a retryable issue without partial text or a disconnect.
 
+## iOS shared keyboard controls and saved sequences
+
+Terminal and Remote Mac have independent device-local keyboard layouts. Screen
+Sharing and Trackpad & Keyboard use the same Remote Mac layout and editor.
+Existing mode quick-action profiles remain intact. The bar and editor share
+compact blue keycaps with 44-point minimum hit targets. Tapping a modifier arms
+one key, long-press locks it locally, and tapping again clears it. Every remote
+key is still independently balanced; no modifier is held across network groups.
+The remote Keypad offers explicit Send Modifier Alone actions, independent of
+armed or locked controls. These actions can be pinned.
+
+A saved shortcut contains one to 32 ordered key/chord/text steps. Absent steps
+retain the previous single-chord meaning. Saved Text remains a separate library;
+inline sequence text is not implicitly a shared saved-text definition. Changing
+a shortcut updates its placements; replacing a placement does not alter another
+placement's definition. Editing, previews and preset selection never send input.
+
+Preflight every step and the complete bounded output before admission. Terminal
+uses its negotiated key encoder and paste framing; Remote Mac uses balanced RFB
+key groups and the existing 512-event admission bound. Reject unsupported keys,
+modifiers or oversized sequences without sending a prefix. Review the entire
+sequence before any text-containing sequence starts. Return is always explicit.
+The connection input owner serializes the complete sequence against other user
+input. Each chord owns its modifiers and preserves the user's armed/locked state.
+Retirement on background, lock, disconnect, reconnect or owner-generation change
+cancels unsent remainder; a sequence is never resumed or replayed. Completion
+acknowledges local writes, not remote tool consumption. Tool presets declare their
+default binding assumptions and remain editable. No timing or conditional steps
+are inferred.
+
 ## iOS session text composer
 
 Desktop, Trackpad & Keyboard and Terminal offer a free **Compose Text** session

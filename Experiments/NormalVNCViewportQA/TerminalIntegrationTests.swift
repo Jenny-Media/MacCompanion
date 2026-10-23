@@ -785,6 +785,37 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         XCTAssertFalse(session.connected); XCTAssertEqual(record.passwordRequests, 0)
         try await server.close()
     }
+    func testShortcutSequenceReservesWholeWriteOrderAndRetiresBeforeStart() async throws {
+        let record = SSHTestRecord(), key = NIOSSHPrivateKey(ed25519Key: .init())
+        let peer = try await server(record: record, key: key)
+        defer { _ = peer.close() }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic sequence owner", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(peer.localAddress?.port))
+        let session = DirectTerminalSession(mac: mac)
+        defer { session.stop(); try? TerminalSecretStore.remove(mac.id) }
+        session.connect(username: "synthetic", password: "synthetic-only", remember: false)
+        try await wait { session.trust != nil }; session.answerTrust(true)
+        try await wait { session.canSendUserInput }
+        let epoch = try XCTUnwrap(session.customInputEpoch)
+        var completed = false
+        session.sendSequence([[2], [99], [13]], epoch: epoch) { XCTAssertNil($0); completed = true }
+        XCTAssertTrue(session.trySend([120]))
+        try await wait { completed && record.received == [2, 99, 13, 120] }
+        var stopped = false
+        session.sendSequence([[97], [98]], epoch: epoch) { XCTAssertNotNil($0); stopped = true }
+        session.becameInactive()
+        try await wait { stopped }
+        session.foreground()
+        try await wait { session.canSendUserInput }
+        XCTAssertNotEqual(session.customInputEpoch, epoch)
+        session.sendSequence([[122]], epoch: epoch) { XCTAssertNotNil($0) }
+        await Task.yield()
+        XCTAssertEqual(record.received, [2, 99, 13, 120], "A retired task or stale admission cannot replay in the resumed shell")
+        var valid = true, invalidated = false
+        XCTAssertTrue(session.sendSequence([[65], [66]], epoch: try XCTUnwrap(session.customInputEpoch), stillValid: { valid }) { XCTAssertNotNil($0); invalidated = true })
+        valid = false
+        try await wait { invalidated }
+        XCTAssertEqual(record.received, [2, 99, 13, 120], "A queued sequence rechecks its encoder/policy predicate before writing")
+    }
     func testCustomInputAdmissionFollowsWriterPauseResumeAndQueueLimit() async throws {
         let record = SSHTestRecord(), key = NIOSSHPrivateKey(ed25519Key: .init())
         let peer = try await server(record: record, key: key)

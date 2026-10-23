@@ -15,15 +15,26 @@ struct TerminalSavedControlEditor: View {
     @State private var confirmingDelete = false
     @State private var failed = false
     @State private var validation = false
+    @State private var newStep: TerminalShortcutStep?
+    @State private var editingExistingStep = false
+    @FocusState private var editingName: Bool
     var body: some View {
         NavigationStack {
             Form {
                 Section("Name") {
                     TextField("Name", text: $action.title).accessibilityIdentifier("terminal-control-name")
-                        .textInputAutocapitalization(.words).autocorrectionDisabled()
+                        .textInputAutocapitalization(.words).autocorrectionDisabled().focused($editingName).submitLabel(.done).onSubmit { editingName = false }
                 }
                 if action.kind == .shortcut {
-                    Section("Key Combination") { TerminalShortcutCombination(action: $action) }
+                    if action.steps == nil {
+                        Section("Key Combination") { TerminalShortcutCombination(action: $action, allowsCommand: profile.family == .remoteMac) }
+                        Section {
+                            Button("Add Step", systemImage: "plus") { newStep = .init() }
+                                .accessibilityIdentifier("shortcut-add-step")
+                        }
+                    } else { TerminalSequenceEditor(action: $action, edit: { step in
+                        editingExistingStep = true; newStep = step
+                    }, add: { editingExistingStep = false; newStep = .init() }) }
                 } else if action.kind == .text {
                     Section {
                         TextEditor(text: $action.text).font(.body.monospaced()).frame(minHeight: 150, maxHeight: 210)
@@ -40,7 +51,8 @@ struct TerminalSavedControlEditor: View {
                     Section { Text(localDraft ? "Updates this saved item everywhere when you tap Done in the layout editor." : "Saving updates this item everywhere it is used.").font(.caption).foregroundStyle(.secondary) }
                 }
                 if validation && !action.valid { Section { Text("Enter a name up to 40 characters and valid content. Text supports up to 4096 UTF-8 bytes.").font(.caption).foregroundStyle(.red).accessibilityIdentifier("terminal-item-validation") } }
-            }.navigationTitle((creating ? "New " : "Edit ") + (action.kind == .text ? "Saved Text" : "Shortcut"))
+            }.environment(\.editMode, .constant(action.kind == .shortcut && action.steps != nil ? .active : .inactive))
+                .navigationTitle((creating ? "New " : "Edit ") + (action.kind == .text ? "Saved Text" : "Shortcut"))
                 .directInlineNavigationTitle()
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.accessibilityIdentifier("terminal-item-cancel") }
@@ -62,15 +74,24 @@ struct TerminalSavedControlEditor: View {
                 .alert("Couldn’t Save", isPresented: $failed) { Button("Keep Editing", role: .cancel) {} }
                 message: { Text("Your changes are still open. If controls changed in another window, cancel and reopen this editor before trying again.") }
         }.privacySensitive().directAppearance().interactiveDismissDisabled().presentationSizing(.page)
+            .sheet(item: $newStep) { step in
+                TerminalSequenceStepEditor(step: step, allowsCommand: profile.family == .remoteMac, creating: !editingExistingStep) { result in
+                    if editingExistingStep, let index = action.steps?.firstIndex(where: { $0.id == result.id }) { action.steps?[index] = result }
+                    else { action.steps = action.resolvedSteps + [result] }
+                    newStep = nil
+                }
+            }
     }
 }
 
 struct TerminalShortcutCombination: View {
     @Binding var action: TerminalControlAction
+    var allowsCommand = false
     @State private var choosingKey = false
     @Environment(\.dynamicTypeSize) private var typeSize
     private var keyTitle: String {
-        TerminalKeyCatalog.all.first { $0.shortcutCode == action.character && $0.modifiers.isEmpty }?.name
+        guard action.character != 0 else { return "Choose Key" }
+        return TerminalKeyCatalog.all.first { $0.shortcutCode == action.character && $0.modifiers.isEmpty }?.name
             ?? UnicodeScalar(action.character).map(String.init) ?? "Choose Key"
     }
     var body: some View {
@@ -79,11 +100,12 @@ struct TerminalShortcutCombination: View {
                 modifier("Ctrl", symbol: "control", code: 0xffe3)
                 modifier("Option", symbol: "option", code: 0xffe9)
                 modifier("Shift", symbol: "shift", code: 0xffe1)
+                if allowsCommand { modifier("Command", symbol: "command", code: 0xffeb) }
                 Button { choosingKey = true } label: { HStack { Text(keyTitle); Image(systemName: "chevron.down").font(.caption) }.frame(maxWidth: .infinity, minHeight: 44) }
                     .buttonStyle(.bordered).accessibilityIdentifier("terminal-choose-key")
             }
             Text("Sends " + action.detail + ".").font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("terminal-shortcut-preview")
-            if action.requiresCommand {
+            if action.requiresCommand && !allowsCommand {
                 Toggle("Command", isOn: Binding(get: { action.requiresCommand }, set: { enabled in if !enabled { action.modifiers.removeAll { $0 == 0xffeb } } }))
                 Text("Requires support from the remote terminal application.").font(.caption).foregroundStyle(.secondary)
             }
@@ -128,7 +150,7 @@ private struct TerminalShortcutKeyPicker: View {
                 }
             }.searchable(text: $query, prompt: "Find a key").navigationTitle("Choose Key").directInlineNavigationTitle()
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
-                .onAppear { if character < 0xff00 { typed = UnicodeScalar(character).map(String.init) ?? "" } }
+                .onAppear { if character >= 0x20 && character < 0xff00 { typed = UnicodeScalar(character).map(String.init) ?? "" } }
         }.presentationSizing(.page)
     }
 }

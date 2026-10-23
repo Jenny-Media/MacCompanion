@@ -41,9 +41,10 @@ remains usable. Restoring layouts keeps saved definitions and menu favorites.
 
 Keyboard shortcut keycaps show the exact character or chord, such as ⌃b, c, %,
 N or ⌃p. Pickers, editing details and accessibility retain descriptive names,
-tool identity, chord and any After Prefix prerequisite. Tool commands send one
-key or chord each; they do not automatically send the prefix or a sequence.
-Prefix-dependent commands remain optional in the picker’s After Prefix section.
+tool identity, chord and any After Prefix prerequisite. Individual commands send
+one key or chord; Complete Actions explicitly include the prefix and subsequent
+keys. Prefix-dependent individual commands remain in the picker’s After Prefix
+section. Shortcuts can contain up to 32 ordered key, chord or text steps.
 Saved text retains its name. Repeated saved placements share one editable
 shortcut/text definition and have independent ordering/removal identities.
 Replace Key changes only the selected placement, including repeated menu
@@ -87,7 +88,46 @@ outline indicate active state and an underline indicates held state. VoiceOver
 announces the state. Saved text opens Compose Text for review; explicit Send
 Text adds no Return, and multiline text requires confirmation.
 
-## Regression coverage
+## Shared iOS session menus
+
+Terminal, Screen Sharing and Trackpad & Keyboard use the same floating-panel
+renderer and six navigation slots. The first row is Keypad, Shortcuts and Text;
+the second is Customize Controls, Appearance (Terminal) or Display (remote Mac),
+and Session. Customize Controls opens the shared Keyboard Bar and Menu Favorites
+editors directly. The old header Customize button and nested Input customization
+entry are absent. The passive Full Menu Preview uses the same mode-specific slots.
+
+Screen Sharing and Trackpad & Keyboard retain separate favorites while sharing
+their keyboard rows and shortcut/text definitions. Terminal retains its independent
+profile. Existing remote favorites are imported once, preserving order, disabled
+items, custom names and text. Removing a favorite changes only that placement;
+editing a shortcut/text definition updates all its placements, and deleting it
+removes references in both remote menus. The version-3 envelope protects this
+representation from older readers; the keyboard schema stays unchanged.
+
+Remote action pickers include Right Click and, for Screen Sharing, Copy Text from
+Screen, Fit to Window and Switch Pointer Mode. Screen-only controls on a shared
+keyboard row become unavailable in Trackpad & Keyboard. Keypad pinning supports
+both surfaces. Shortcut sequences use the existing connection-owned admission and
+lifecycle fences, including stale menu-selection rejection.
+
+Pointer & Gestures is a separate screen in the remote customization hub. It keeps
+per-Mac pointer speed, interaction mode and cursor following distinct from
+device-wide scrolling, touch indicators and haptics. Behavior settings apply as
+they change; opening the screen does not write preferences. Layout editors retain
+their existing Done, Cancel and Undo behavior.
+
+## Regression coverage (shared menus)
+
+UnifiedControlsMenuTests covers the navigation slots, one-time remote imports,
+independent favorites, shared definitions/rows, restore/delete behavior, concurrent
+edits and unreadable-data preservation. RemoteMacControlsTests exercises the real
+remote panels and entry points in both modes, captures synthetic screenshots and
+checks that captured menu selections cannot send after input retirement. Native
+UI journeys cover remote favorites, the pointer-settings destination, passive
+preview, saving/reopening and unchanged input-event counts.
+
+## Keyboard regression coverage
 
 TerminalControlsProfileTests and TerminalControlsRedesignTests cover the
 one-time development-layout reset, saved-data preservation, future-format

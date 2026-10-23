@@ -23,6 +23,7 @@
 - (void)setTrackpadModeEnabled:(BOOL)enabled;
 - (void)updateConnectionChrome;
 - (void)keyboardFrame:(NSNotification *)notification;
+- (void)keyboardFrame:(NSNotification *)notification;
 - (void)keyboard;
 - (CGPoint)viewportCenter;
 - (void)applyViewportRatio:(CGFloat)ratio center:(CGPoint)center;
@@ -460,8 +461,8 @@
     UIWindow *previous = nil; for (UIWindow *w in scene.windows) if (w.isKeyWindow) previous = w;
     UIWindow *window = [[UIWindow alloc] initWithWindowScene:scene]; window.rootViewController = viewer; [window makeKeyAndVisible];
     UIButton *button = [viewer valueForKey:@"keyboardButton"]; UITextView *input = [viewer valueForKey:@"input"];
-    XCTAssertEqualObjects(button.accessibilityLabel,@"Show Keyboard"); XCTAssertNotNil(button.currentImage);
-    [viewer keyboard]; XCTAssertTrue(input.isFirstResponder); XCTAssertEqualObjects(button.accessibilityLabel,@"Hide Keyboard"); XCTAssertNotNil(button.currentImage);
+    XCTAssertEqualObjects(button.accessibilityLabel,@"Show Keyboard"); XCTAssertNotNil(button.configuration.image ?: button.currentImage);
+    [viewer keyboard]; XCTAssertTrue(input.isFirstResponder); XCTAssertEqualObjects(button.accessibilityLabel,@"Hide Keyboard"); XCTAssertNotNil(button.configuration.image ?: button.currentImage);
     [viewer keyboard]; XCTAssertFalse(input.isFirstResponder); XCTAssertEqualObjects(button.accessibilityLabel,@"Show Keyboard");
     [viewer stopViewer]; window.hidden = YES; window.rootViewController = nil; [previous makeKeyAndVisible];
 }
@@ -496,10 +497,16 @@
     UIImage *snapshot = [[[UIGraphicsImageRenderer alloc] initWithSize:window.bounds.size] imageWithActions:^(UIGraphicsImageRendererContext *ctx) { [window drawViewHierarchyInRect:window.bounds afterScreenUpdates:YES]; }];
     XCTAttachment *attachment = [XCTAttachment attachmentWithImage:snapshot]; attachment.name = @"Synthetic floating controls"; attachment.lifetime = XCTAttachmentLifetimeKeepAlways; [self addAttachment:attachment];
     for (NSValue *size in @[[NSValue valueWithCGSize:CGSizeMake(440,956)],[NSValue valueWithCGSize:CGSizeMake(956,440)]]) {
-        controls.frame = (CGRect){CGPointZero,size.CGSizeValue}; controls.bottomInset = 8; [controls setNeedsLayout]; [controls layoutIfNeeded];
+        // The overlay and its keyboard-row anchor share the viewer's geometry.
+        // Resizing only the overlay leaves a deliberately stale anchor frame.
+        viewer.view.frame = (CGRect){CGPointZero,size.CGSizeValue}; [viewer.view setNeedsLayout]; [viewer.view layoutIfNeeded];
         UIView *panel = [controls valueForKey:@"panel"]; XCTAssertTrue(CGRectContainsRect(controls.bounds,panel.frame));
     }
-    controls.frame = CGRectMake(0,0,440,956); controls.bottomInset = 350; [controls setNeedsLayout]; [controls layoutIfNeeded];
+    viewer.view.frame = CGRectMake(0,0,440,956); [viewer.view setNeedsLayout]; [viewer.view layoutIfNeeded];
+    CGRect keyboard = [viewer.view convertRect:CGRectMake(0,606,440,350) toView:nil];
+    [viewer keyboardFrame:[NSNotification notificationWithName:UIKeyboardWillChangeFrameNotification object:nil userInfo:@{
+        UIKeyboardFrameEndUserInfoKey:[NSValue valueWithCGRect:keyboard], UIKeyboardAnimationDurationUserInfoKey:@0, UIKeyboardAnimationCurveUserInfoKey:@0}]];
+    [viewer.view setNeedsLayout]; [viewer.view layoutIfNeeded];
     XCTAssertTrue(CGRectContainsRect(controls.bounds, ((UIView *)[controls valueForKey:@"panel"]).frame));
     [viewer stopViewer]; window.hidden = YES; window.rootViewController = nil; [previous makeKeyAndVisible];
 }
@@ -530,9 +537,9 @@
     NSArray<UIButton *> *choices = [controls valueForKey:@"choices"];
     UIScrollView *scroll = [controls valueForKey:@"scroll"];
     XCTAssertTrue(CGRectContainsRect(scroll.bounds, choices.firstObject.frame));
-    XCTAssertEqual(choices.count,18); // only three category entries outside quick actions
+    XCTAssertEqual(choices.count,21); // six shared category entries outside quick actions
     [controls close]; controls.inputOnly = YES; [controls open];
-    choices = [controls valueForKey:@"choices"]; XCTAssertEqual(choices.count,17); XCTAssertTrue(choices.firstObject.enabled);
+    choices = [controls valueForKey:@"choices"]; XCTAssertEqual(choices.count,20); XCTAssertTrue(choices.firstObject.enabled);
     XCTAssertFalse([[[controls valueForKey:@"items"] valueForKey:@"kind"] containsObject:@"fit"]);
     [controls close];
 }
@@ -549,12 +556,12 @@
     XCTAssertEqual([controls valueForKey:@"items"],snapshot);
     XCTAssertEqual(((NSArray *)[controls valueForKey:@"choices"])[1],row); XCTAssertTrue(row.highlighted);
     [controls close]; [controls open];
-    XCTAssertEqual([(NSArray *)[controls valueForKey:@"choices"] count],4);
+    XCTAssertEqual([(NSArray *)[controls valueForKey:@"choices"] count],7);
     XCTAssertTrue(((UIButton *)((NSArray *)[controls valueForKey:@"choices"])[0]).enabled);
-    XCTAssertEqualObjects([[controls valueForKey:@"items"] valueForKey:@"title"],(@[@"Compose Text",@"Display",@"Input",@"Session"]));
+    XCTAssertEqualObjects([[controls valueForKey:@"items"] valueForKey:@"title"],(@[@"Compose Text",@"Keypad",@"Shortcuts",@"Text",@"Customize Controls",@"Display",@"Session"]));
     [controls close];
 }
-- (void)testGroupedMenusNavigateBackWithoutReplacingSessionAndDisabledChoicesDoNotRun {
+- (void)testGroupedInputMenuOpensCompactKeypadWithoutReplacingSessionOrSendingInput {
     [self withFollowViewer:^(CompanionVNCViewer *viewer, ControlsSession *owner) {
         [viewer performControlAction:@{@"kind": @"inputMenu"}];
         [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.35]];
@@ -581,9 +588,13 @@
         while (navigation.transitionCoordinator && deadline.timeIntervalSinceNow > 0) {
             [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
         }
-        XCTAssertEqual(navigation.viewControllers.count,2);
-        XCTAssertEqual(navigation.popoverPresentationController.arrowDirection,UIPopoverArrowDirectionDown);
-        [navigation popViewControllerAnimated:NO]; XCTAssertEqual(navigation.topViewController,input);
+        NSDate *keypadDeadline = [NSDate dateWithTimeIntervalSinceNow:3];
+        while ((viewer.presentedViewController == navigation || !viewer.presentedViewController || viewer.presentedViewController.isBeingPresented) && keypadDeadline.timeIntervalSinceNow > 0) {
+            [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.01]];
+        }
+        UIViewController *keypad = viewer.presentedViewController;
+        XCTAssertNotNil(keypad); XCTAssertNotEqual(keypad,navigation);
+        XCTAssertEqual(keypad.sheetPresentationController.detents.count,2);
         XCTAssertEqual(viewer.session,owner); XCTAssertEqual(owner.groups.count,0);
         [viewer dismissViewControllerAnimated:NO completion:nil];
         [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.35]];
