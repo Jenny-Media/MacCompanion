@@ -8,12 +8,30 @@ ROOT = Path(__file__).resolve().parents[1]
 POLICY = ROOT / 'spec/dependency-policy/v0/direct-client-development.json'
 VENDOR = 'Native/Dependencies/Citadel'
 RESOLVED = 'Native/Terminal/Package.resolved'
+CLOUD_PROJECT = 'Native/iOSCloud/MacCompanionCloud.xcodeproj/project.pbxproj'
+CLOUD_SPEC = 'Native/iOSCloud/project.json'
+CLOUD_RESOLVED = 'Native/iOSCloud/MacCompanionCloud.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
 
 def sha(path): return hashlib.sha256(path.read_bytes()).hexdigest()
 
+def validate_cloud(policy, root=ROOT):
+    assert set(policy) == {'projectFiles', 'resolvedLockfilePath', 'unusedPinsAllowedToBeOmitted'}
+    assert set(policy['projectFiles']) == {CLOUD_PROJECT, CLOUD_SPEC}
+    assert policy['resolvedLockfilePath'] == CLOUD_RESOLVED
+    assert policy['unusedPinsAllowedToBeOmitted'] == ['colorizeswift']
+    for relative, digest in policy['projectFiles'].items():
+        assert not (root / relative).is_symlink() and sha(root / relative) == digest
+    assert not (root / CLOUD_RESOLVED).is_symlink()
+    expected = {p['identity']: p for p in json.loads((root / RESOLVED).read_text())['pins']}
+    pins = json.loads((root / CLOUD_RESOLVED).read_text())['pins']
+    actual = {p['identity']: p for p in pins}
+    assert len(actual) == len(pins)
+    assert set(expected) - set(actual) <= set(policy['unusedPinsAllowedToBeOmitted'])
+    assert actual == {k: expected[k] for k in actual}
+
 def validate():
     policy = json.loads(POLICY.read_text())
-    assert set(policy) == {'profile', 'releaseAdmitted', 'vendorPackage', 'sourceLockPath', 'sourceLockSHA256', 'resolvedLockfilePath', 'resolvedLockfileSHA256', 'visionOSSwiftTermPressEndpoint'}
+    assert set(policy) == {'profile', 'releaseAdmitted', 'vendorPackage', 'sourceLockPath', 'sourceLockSHA256', 'resolvedLockfilePath', 'resolvedLockfileSHA256', 'visionOSSwiftTermPressEndpoint', 'xcodeCloud'}
     adaptation = policy['visionOSSwiftTermPressEndpoint']
     assert set(adaptation) == {'path', 'originalSHA256', 'adaptedSHA256', 'originalDeclaration', 'adaptedDeclaration', 'purpose'}
     assert adaptation['path'] == 'Sources/SwiftTerm/iOS/iOSTerminalView.swift'
@@ -21,7 +39,7 @@ def validate():
     assert adaptation['adaptedDeclaration'] == adaptation['originalDeclaration'].replace('public', 'open', 1)
     for name in ['originalSHA256', 'adaptedSHA256']:
         assert len(adaptation[name]) == 64 and all(c in '0123456789abcdef' for c in adaptation[name])
-    assert policy['profile'] == 'maccompanion.direct-client-development-dependencies.v1'
+    assert policy['profile'] == 'maccompanion.direct-client-development-dependencies.v2'
     assert policy['releaseAdmitted'] is False and policy['vendorPackage'] == VENDOR
     assert policy['resolvedLockfilePath'] == RESOLVED and policy['sourceLockPath'] == 'Native/Terminal/source-lock.json'
     source_lock = ROOT / policy['sourceLockPath']
@@ -33,7 +51,8 @@ def validate():
     assert pins and len({p['identity'] for p in pins}) == len(pins)
     assert all(p['kind'] == 'remoteSourceControl' and p['location'].startswith('https://github.com/') and len(p['state']['revision']) == 40 for p in pins)
     assert next(p for p in pins if p['identity'] == 'swiftterm')['state']['revision'] == source['SwiftTerm']['revision']
-    return {VENDOR}, {RESOLVED}
+    validate_cloud(policy['xcodeCloud'])
+    return {VENDOR}, {RESOLVED, CLOUD_RESOLVED}
 
 if __name__ == '__main__':
     validate(); print('Direct client development dependencies: vendor sources and complete package revisions hash-pinned; Release remains gated')

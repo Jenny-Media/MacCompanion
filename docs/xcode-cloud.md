@@ -49,6 +49,13 @@ python3 scripts/verify_xcode_cloud.py
 bash scripts/validate.sh
 ```
 
+The direct-client dependency policy also records the exact project/spec hashes
+in `spec/dependency-policy/v0/direct-client-development.json`. Review and update
+those hashes for an intentional project change before running validation.
+The cloud lockfile may omit the unused historical ColorizeSwift pin; every
+remaining pin must equal the normal direct-client lockfile. Other checked-in
+projects retain their existing closed dependency policy.
+
 Do not commit the local signing config, native binaries, provisioning profiles,
 account tokens, build evidence, screenshots, or Xcode user state. The dependency
 workspaces preserve previous generations; this workflow does not clean caches.
