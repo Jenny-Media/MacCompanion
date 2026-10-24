@@ -1189,10 +1189,11 @@
         leading = window ? MAX(0, window.safeAreaInsets.top - [self.view convertPoint:CGPointZero toView:window].y) + 8 : CGRectGetMinY(safe) + 8;
     }
     if (self.canvas.contentInset.top != leading) {
+        BOOL wasAdapting = self.adaptingViewport;
         self.adaptingViewport = YES;
         self.canvas.contentInset = UIEdgeInsetsMake(leading, 0, 0, 0);
         self.canvas.verticalScrollIndicatorInsets = self.canvas.contentInset;
-        self.adaptingViewport = NO;
+        self.adaptingViewport = wasAdapting;
     }
     // Both Screen Sharing modes use the same login layout. Only the connected
     // desktop needs separate video and input regions.
@@ -1282,11 +1283,13 @@
     if (size.width <= 0 || size.height <= 0) return;
     BOOL resized = !CGSizeEqualToSize(size, self.previousCanvasSize)
         || !UIEdgeInsetsEqualToEdgeInsets(self.canvas.contentInset, self.previousCanvasInset);
-    CGFloat ratio = self.layoutZoomRatio > 0 && CGRectEqualToRect(self.layoutCrop, self.activeCrop) ? self.layoutZoomRatio : 1;
-    CGPoint center = self.layoutCenter;
+    BOOL savedViewportValid = self.layoutZoomRatio > 0 && CGRectEqualToRect(self.layoutCrop, self.activeCrop);
+    CGFloat ratio = savedViewportValid ? self.layoutZoomRatio : 1;
+    CGPoint center = savedViewportValid ? self.layoutCenter : CGPointMake(.5, .5);
+    BOOL wasAdapting = self.adaptingViewport;
     self.adaptingViewport = YES;
     CGSize visible = [self canvasViewportBounds].size;
-    if (visible.width <= 0 || visible.height <= 0) { self.adaptingViewport = NO; return; }
+    if (visible.width <= 0 || visible.height <= 0) { self.adaptingViewport = wasAdapting; return; }
     self.canvas.minimumZoomScale = MIN(visible.width / self.activeCrop.size.width, visible.height / self.activeCrop.size.height);
     if (resized) {
         self.previousCanvasSize = size; self.zoomGeneration++; self.smartZoomPending = NO;
@@ -1298,14 +1301,24 @@
         }
         [self.controls cancelSlideForLayoutChange];
     }
-    if (self.keyboardLayoutPending) {
+    BOOL restoringKeyboard = self.keyboardLayoutPending;
+    if (restoringKeyboard) {
         self.keyboardLayoutPending = NO;
-        [self applyViewportRatio:self.keyboardLayoutRatio center:self.keyboardLayoutCenter];
+        ratio = self.keyboardLayoutRatio; center = self.keyboardLayoutCenter;
+        [self applyViewportRatio:ratio center:center];
     } else if (resized) {
         if (self.smartZoomed) [self.canvas zoomToRect:self.smartWindow animated:NO];
         else [self applyViewportRatio:ratio center:center];
     }
-    self.adaptingViewport = NO; [self rememberLayoutViewport];
+    self.adaptingViewport = wasAdapting;
+    if (!wasAdapting) {
+        if ((resized || restoringKeyboard) && !self.smartZoomed) {
+            // An intermediate keyboard/rotation size can make the intended
+            // center unreachable. Keep that anchor rather than saving the
+            // temporarily clamped offset as a new user pan.
+            self.layoutZoomRatio = ratio; self.layoutCenter = center; self.layoutCrop = self.activeCrop;
+        } else if (!savedViewportValid || self.smartZoomed) [self rememberLayoutViewport];
+    }
     [self updateCursor];
 }
 - (void)prepareTabletopPad {
@@ -1807,6 +1820,13 @@
 - (void)keyboardFrame:(NSNotification *)notification {
     if (self.textReview) return;
     if (!self.view.window) return;
+    // A fold/rotation may already have changed the canvas bounds when UIKit
+    // delivers this notification. Flushing layout can clamp its live offset or
+    // change the fit scale before zoom restoration finishes. Keep the last
+    // stable semantic viewport, including genuine user zoom/pan, for this crop.
+    CGRect savedCrop = self.layoutCrop;
+    CGFloat savedRatio = self.layoutZoomRatio;
+    CGPoint savedCenter = self.layoutCenter;
     [self.view layoutIfNeeded];
     CGRect keyboard = [self.view convertRect:[notification.userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue] fromView:nil];
     CGRect intersection = CGRectIntersection(self.view.bounds, keyboard);
@@ -1815,7 +1835,9 @@
     CGFloat overlap = docked ? MAX(0, intersection.size.height - self.view.safeAreaInsets.bottom) : 0;
     BOOL valid = self.login.hidden && !CGRectIsNull(self.activeCrop) && !CGRectIsEmpty(self.activeCrop) && self.canvas.minimumZoomScale > 0;
     if (valid && overlap != self.keyboardOverlap) {
-        CGFloat ratio = self.canvas.zoomScale / self.canvas.minimumZoomScale; CGPoint center = [self viewportCenter];
+        BOOL savedViewportValid = savedRatio > 0 && CGRectEqualToRect(savedCrop, self.activeCrop);
+        CGFloat ratio = savedViewportValid ? savedRatio : self.canvas.zoomScale / self.canvas.minimumZoomScale;
+        CGPoint center = savedViewportValid ? savedCenter : [self viewportCenter];
         if (overlap > 0 && self.keyboardOverlap == 0) {
             self.keyboardViewportSaved = YES; self.keyboardSavedCrop = self.activeCrop;
             self.keyboardSavedRatio = ratio; self.keyboardSavedCenter = center;

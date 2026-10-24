@@ -41,7 +41,7 @@ struct MacCompanionIOSApplication: App {
             #if MACCOMPANION_VNC_DEVELOPMENT
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains("--duo-workspace-sample") {
-                DuoWorkspaceSample().ignoresSafeArea(.container, edges: .top)
+                DuoWorkspaceSample().directDesktopSafeArea()
             } else {
                 DirectMacLibraryRootV1().directAppearance()
             }

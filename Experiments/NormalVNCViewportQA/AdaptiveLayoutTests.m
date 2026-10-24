@@ -6,6 +6,7 @@
 #import <sys/socket.h>
 #import <unistd.h>
 #import <zlib.h>
+#import <objc/runtime.h>
 
 @interface CompanionVNCSession (AdaptiveFrameTesting)
 - (void)configureClient:(rfbClient *)client;
@@ -30,6 +31,9 @@
 
 @interface CompanionVNCViewer (AdaptiveTesting)
 - (void)frame:(UIImage *)frame;
+- (void)fitDesktop;
+- (void)releasePointer;
+- (void)keyboardFrame:(NSNotification *)notification;
 - (void)applyViewportRatio:(CGFloat)ratio center:(CGPoint)center;
 - (CGPoint)viewportCenter;
 - (void)holdAt:(UILongPressGestureRecognizer *)gesture;
@@ -40,9 +44,16 @@
 @end
 @interface AdaptiveViewer : CompanionVNCViewer
 @property CGRect division;
+@property (copy) void (^viewportLayoutCallback)(void);
 @end
 @implementation AdaptiveViewer
 - (CGRect)activeDivision { return self.division; }
+- (void)releasePointer {
+    [super releasePointer];
+    void (^callback)(void) = self.viewportLayoutCallback;
+    self.viewportLayoutCallback = nil;
+    if (callback) callback();
+}
 @end
 @interface AdaptiveSession : CompanionVNCSession
 @property NSUInteger stops;
@@ -67,6 +78,25 @@
 @implementation AdaptiveHold
 - (UIGestureRecognizerState)state { return UIGestureRecognizerStateBegan; }
 - (CGPoint)locationInView:(UIView *)view { return CGPointMake(100,100); }
+@end
+// UIKit delivers keyboard and layout callbacks synchronously on the main
+// thread. Exercise notification delivery at the scale-limit mutation boundary,
+// before the viewer finishes restoring its semantic viewport.
+typedef NS_ENUM(NSUInteger, KeyboardLayoutBoundary) {
+    KeyboardLayoutBoundaryNone,
+    KeyboardLayoutBoundaryMinimumScale,
+    KeyboardLayoutBoundaryGeometryCommitted,
+};
+static char keyboardDuringScaleUpdateKey;
+@interface KeyboardInterleavingCanvas : UIScrollView
+@end
+@implementation KeyboardInterleavingCanvas
+- (void)setMinimumZoomScale:(CGFloat)scale {
+    void (^notification)(void) = objc_getAssociatedObject(self, &keyboardDuringScaleUpdateKey);
+    objc_setAssociatedObject(self, &keyboardDuringScaleUpdateKey, nil, OBJC_ASSOCIATION_COPY_NONATOMIC);
+    [super setMinimumZoomScale:scale];
+    if (notification) notification();
+}
 @end
 @interface AdaptiveLayoutTests : XCTestCase
 @end
@@ -466,4 +496,137 @@
     }
     [controls close];
 }
+
+- (void)verifyKeyboardFoldSequenceWithUserZoom:(CGFloat)userZoom interleavesKeyboard:(KeyboardLayoutBoundary)keyboardBoundary {
+    UIWindowScene *scene = (id)UIApplication.sharedApplication.connectedScenes.anyObject;
+    UIWindow *previous = nil;
+    for (UIWindow *candidate in scene.windows) if (candidate.isKeyWindow) previous = candidate;
+    UIViewController *host = [UIViewController new];
+    UIWindow *window = [[UIWindow alloc] initWithWindowScene:scene];
+    window.rootViewController = host;
+    AdaptiveViewer *viewer = [AdaptiveViewer new];
+    viewer.preventsAutomaticConnection = YES;
+    viewer.division = CGRectNull;
+    [host addChildViewController:viewer];
+    [host.view addSubview:viewer.view];
+    viewer.view.frame = CGRectMake(0, 0, 678, 466);
+    [viewer didMoveToParentViewController:host];
+    [window makeKeyAndVisible];
+    [window layoutIfNeeded];
+    AdaptiveSession *session = [AdaptiveSession new];
+    session.events = [NSMutableArray new];
+    viewer.session = session;
+    [viewer frame:[self frame]];
+    [(UIView *)[viewer valueForKey:@"login"] setHidden:YES];
+    [viewer updateConnectionChrome];
+    [viewer.view layoutIfNeeded];
+    [viewer fitDesktop];
+    [viewer applyViewportRatio:userZoom center:CGPointMake(.55, .5)];
+    CGPoint userCenter = [viewer viewportCenter];
+    UIScrollView *canvas = [viewer valueForKey:@"canvas"];
+    UIImageView *image = [viewer valueForKey:@"image"];
+    Class originalCanvasClass = object_getClass(canvas);
+    if (keyboardBoundary == KeyboardLayoutBoundaryMinimumScale) object_setClass(canvas, KeyboardInterleavingCanvas.class);
+
+    void (^keyboard)(CGFloat, NSTimeInterval) = ^(CGFloat height, NSTimeInterval duration) {
+        CGRect local = CGRectMake(0, viewer.view.bounds.size.height - height,
+                                  viewer.view.bounds.size.width, height);
+        CGRect screen = [viewer.view convertRect:local toView:nil];
+        [viewer keyboardFrame:[NSNotification notificationWithName:UIKeyboardWillChangeFrameNotification object:nil userInfo:@{
+            UIKeyboardFrameEndUserInfoKey:[NSValue valueWithCGRect:screen],
+            UIKeyboardAnimationDurationUserInfoKey:@(duration),
+            UIKeyboardAnimationCurveUserInfoKey:@(UIViewAnimationCurveEaseInOut)}]];
+    };
+    void (^check)(NSString *) = ^(NSString *phase) {
+        [viewer.view layoutIfNeeded];
+        CGFloat ratio = canvas.zoomScale / canvas.minimumZoomScale;
+        NSLog(@"DuoViewport %@ requested=%.4f zoom=%.6f min=%.6f ratio=%.4f saved=%@ pending=%@ canvas=%@ image=%@", phase, userZoom,
+              canvas.zoomScale, canvas.minimumZoomScale, ratio,
+              [viewer valueForKey:@"layoutZoomRatio"], [viewer valueForKey:@"keyboardLayoutRatio"],
+              NSStringFromCGRect(canvas.bounds), NSStringFromCGRect(image.frame));
+        XCTAssertEqualWithAccuracy(ratio, userZoom, .01, @"%@ preserves deliberate relative zoom", phase);
+        XCTAssertEqual(viewer.session, session);
+        XCTAssertEqual(session.stops, 0);
+        if (userZoom <= 1.01) {
+            CGRect visible = UIEdgeInsetsInsetRect(canvas.bounds, canvas.contentInset);
+            CGRect displayed = [image convertRect:image.bounds toView:canvas];
+            XCTAssertTrue(CGRectContainsRect(CGRectInset(visible, -1, -1), displayed),
+                          @"%@ keeps the entire fitted desktop visible: %@ in %@", phase,
+                          NSStringFromCGRect(displayed), NSStringFromCGRect(visible));
+        } else {
+            CGPoint center = [viewer viewportCenter];
+            XCTAssertEqualWithAccuracy(center.x, userCenter.x, .01, @"%@ retains horizontal pan", phase);
+            XCTAssertEqualWithAccuracy(center.y, userCenter.y, .01, @"%@ retains vertical focus", phase);
+        }
+    };
+
+    @try {
+        check(@"closed initial");
+        keyboard(214, .2);
+        [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.25]];
+        check(@"closed keyboard");
+        for (NSUInteger cycle = 0; cycle < 2; cycle++) {
+            NSArray<NSDictionary *> *steps = @[
+                @{@"name":@"open portrait", @"size":[NSValue valueWithCGSize:CGSizeMake(669,951)], @"division":[NSValue valueWithCGRect:CGRectNull], @"keyboard":@350},
+                @{@"name":@"open landscape", @"size":[NSValue valueWithCGSize:CGSizeMake(951,669)], @"division":[NSValue valueWithCGRect:CGRectNull], @"keyboard":@267},
+                @{@"name":@"book", @"size":[NSValue valueWithCGSize:CGSizeMake(951,669)], @"division":[NSValue valueWithCGRect:CGRectMake(465,0,20,669)], @"keyboard":@267},
+                @{@"name":@"tabletop", @"size":[NSValue valueWithCGSize:CGSizeMake(669,951)], @"division":[NSValue valueWithCGRect:CGRectMake(0,465,669,20)], @"keyboard":@350},
+                @{@"name":@"closed", @"size":[NSValue valueWithCGSize:CGSizeMake(678,466)], @"division":[NSValue valueWithCGRect:CGRectNull], @"keyboard":@214}
+            ];
+            for (NSDictionary *step in steps) {
+                // Exercise both notification orders with animation in flight,
+                // rather than only synchronous final-size assignments.
+                if (cycle == 0) keyboard([step[@"keyboard"] doubleValue], .2);
+                if (keyboardBoundary) {
+                    void (^notification)(void) = ^{
+                        NSLog(@"DuoViewport interleaved keyboard: zoom=%.6f min=%.6f stable=%@", canvas.zoomScale,
+                              canvas.minimumZoomScale, [viewer valueForKey:@"layoutZoomRatio"]);
+                        keyboard([step[@"keyboard"] doubleValue] + 20, .2);
+                    };
+                    if (keyboardBoundary == KeyboardLayoutBoundaryMinimumScale) objc_setAssociatedObject(canvas, &keyboardDuringScaleUpdateKey, notification, OBJC_ASSOCIATION_COPY_NONATOMIC);
+                    // releasePointer is the first callback after the viewer
+                    // commits the new canvas geometry but before restoring zoom.
+                    // Inject a one-shot keyboard notification at that boundary.
+                    else viewer.viewportLayoutCallback = notification;
+                }
+                [UIView animateWithDuration:.2 delay:0 options:UIViewAnimationOptionBeginFromCurrentState animations:^{
+                    viewer.division = [step[@"division"] CGRectValue];
+                    viewer.view.frame = (CGRect){CGPointZero, [step[@"size"] CGSizeValue]};
+                    [viewer.view setNeedsLayout];
+                    [viewer.view layoutIfNeeded];
+                } completion:nil];
+                keyboard([step[@"keyboard"] doubleValue], .2);
+                [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.25]];
+                check([NSString stringWithFormat:@"cycle%lu %@", (unsigned long)cycle, step[@"name"]]);
+            }
+        }
+        keyboard(0, .2);
+        [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.25]];
+        check(@"closed keyboard dismissed");
+    } @finally {
+        objc_setAssociatedObject(canvas, &keyboardDuringScaleUpdateKey, nil, OBJC_ASSOCIATION_COPY_NONATOMIC);
+        object_setClass(canvas, originalCanvasClass);
+        viewer.viewportLayoutCallback = nil;
+        [viewer stopViewer];
+        window.hidden = YES;
+        window.rootViewController = nil;
+        [previous makeKeyAndVisible];
+    }
+}
+- (void)verifyKeyboardFoldSequenceWithUserZoom:(CGFloat)userZoom {
+    [self verifyKeyboardFoldSequenceWithUserZoom:userZoom interleavesKeyboard:KeyboardLayoutBoundaryNone];
+}
+- (void)testKeyboardNotificationDuringScaleUpdateDoesNotTurnFitIntoZoom {
+    [self verifyKeyboardFoldSequenceWithUserZoom:1 interleavesKeyboard:KeyboardLayoutBoundaryMinimumScale];
+}
+- (void)testKeyboardNotificationAfterGeometryUpdateDoesNotTurnFitIntoZoom {
+    [self verifyKeyboardFoldSequenceWithUserZoom:1 interleavesKeyboard:KeyboardLayoutBoundaryGeometryCommitted];
+}
+- (void)testFittedDesktopStaysFitAcrossKeyboardAndFoldResizeSequence {
+    [self verifyKeyboardFoldSequenceWithUserZoom:1];
+}
+- (void)testUserZoomAndPanStayStableAcrossKeyboardAndFoldResizeSequence {
+    [self verifyKeyboardFoldSequenceWithUserZoom:4];
+}
+
 @end
