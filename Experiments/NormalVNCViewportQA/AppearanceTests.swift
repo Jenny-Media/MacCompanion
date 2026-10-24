@@ -234,3 +234,94 @@ import SwiftUI
         XCTAssertEqual(DirectTerminalAppearance.dark.style(app: .light), .dark)
     }
 }
+
+@MainActor private final class VNCSoftwareKeyboardFrame: NSObject {
+    var frame = CGRect.null
+    @objc func changed(_ notification: Notification) {
+        if let value = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue { frame = value.cgRectValue }
+    }
+}
+
+/// Exercises the SwiftUI-to-UIKit boundary, rather than mounting the viewer
+/// directly. The controller owns keyboard avoidance for its canvas and bar.
+@MainActor final class VNCKeyboardHostingTests: XCTestCase {
+    func testSampleHostKeepsUIKitKeyboardGeometryAndFit() async throws {
+        try await verifyHost(AnyView(DuoWorkspaceSample().directDesktopSafeArea()))
+    }
+
+    func testProductionHostKeepsUIKitKeyboardGeometryAndFit() async throws {
+        let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic viewport", addresses: ["unused.invalid"])
+        try await verifyHost(AnyView(DirectDesktopSessionView(mac: mac, autoConnect: false,
+            libraryURL: folder.appending(path: "macs.json"), showMacs: {})))
+    }
+
+    private func verifyHost(_ root: AnyView) async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        let host = UIHostingController(rootView: root)
+        window.rootViewController = host; window.makeKeyAndVisible()
+        defer {
+            window.endEditing(true); window.isHidden = true; window.rootViewController = nil
+            previous?.makeKeyAndVisible()
+        }
+        func controllers(_ root: UIViewController) -> [UIViewController] { [root] + root.children.flatMap(controllers) }
+        try await Task.sleep(for: .milliseconds(400)); window.layoutIfNeeded()
+        let viewer = try XCTUnwrap(controllers(host).compactMap { $0 as? CompanionVNCViewer }.first)
+        defer { viewer.stop() }
+        XCTAssertTrue(viewer.preventsAutomaticConnection)
+        let image = try XCTUnwrap(viewer.value(forKey: "image") as? UIImageView)
+        let canvas = try XCTUnwrap(viewer.value(forKey: "canvas") as? UIScrollView)
+        let input = try XCTUnwrap(viewer.value(forKey: "input") as? UITextView)
+        if image.image == nil {
+            let frame = UIGraphicsImageRenderer(size: CGSize(width: 1440, height: 900)).image { context in
+                UIColor.systemBlue.setFill(); context.fill(CGRect(x: 0, y: 0, width: 1440, height: 900))
+            }
+            viewer.perform(NSSelectorFromString("frame:"), with: frame)
+            (viewer.value(forKey: "login") as? UIView)?.isHidden = true
+            viewer.perform(NSSelectorFromString("updateConnectionChrome"))
+        }
+        try await Task.sleep(for: .milliseconds(400)); window.layoutIfNeeded()
+        viewer.perform(NSSelectorFromString("fitDesktop"))
+        let initialHeight = viewer.view.bounds.height
+        let owner = viewer.session
+        XCTAssertEqual(canvas.zoomScale / canvas.minimumZoomScale, 1, accuracy: 0.01)
+        let keyboard = VNCSoftwareKeyboardFrame()
+        NotificationCenter.default.addObserver(keyboard, selector: #selector(VNCSoftwareKeyboardFrame.changed),
+                                               name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+        defer { NotificationCenter.default.removeObserver(keyboard) }
+        XCTAssertTrue(input.becomeFirstResponder())
+        for _ in 0..<100 {
+            window.layoutIfNeeded()
+            if !keyboard.frame.isNull && window.convert(keyboard.frame, from: nil).intersection(window.bounds).height > 100 { break }
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        try await Task.sleep(for: .milliseconds(500)); window.layoutIfNeeded()
+        let keyboardRect = window.convert(keyboard.frame, from: nil)
+        let keyboardTop = keyboardRect.minY
+        XCTAssertFalse(keyboard.frame.isNull)
+        XCTAssertGreaterThan(keyboardRect.intersection(window.bounds).height, 100, "A real software keyboard must be visible")
+        XCTAssertTrue(input.isFirstResponder)
+        XCTAssertEqual(viewer.view.bounds.height, initialHeight, accuracy: 1,
+                       "SwiftUI must not shrink a controller that already owns keyboard avoidance")
+        let overlap = try XCTUnwrap(viewer.value(forKey: "keyboardOverlap") as? NSNumber).doubleValue
+        XCTAssertGreaterThan(overlap, 100, "UIKit must observe the visible keyboard inside its stable view")
+        XCTAssertEqual(canvas.zoomScale / canvas.minimumZoomScale, 1, accuracy: 0.01)
+        let visible = canvas.convert(canvas.bounds.inset(by: canvas.contentInset), to: window)
+            .intersection(CGRect(x: 0, y: 0, width: window.bounds.width, height: keyboardTop))
+        let displayed = image.convert(image.bounds, to: window)
+        XCTAssertTrue(visible.insetBy(dx: -1, dy: -1).contains(displayed),
+                      "The entire fitted synthetic image remains above the actual software keyboard: \(displayed) in \(visible), keyboard \(keyboardRect)")
+        XCTAssertTrue(viewer.session === owner)
+        NSLog("DuoHostedKeyboard view=%@ window=%@ keyboard=%@ guide=%@ overlap=%.3f ratio=%.6f",
+              String(describing: viewer.view.bounds), String(describing: window.bounds), String(describing: keyboardRect),
+              String(describing: window.keyboardLayoutGuide.layoutFrame), overlap, canvas.zoomScale / canvas.minimumZoomScale)
+        XCTAssertTrue(input.resignFirstResponder())
+        try await Task.sleep(for: .milliseconds(500)); window.layoutIfNeeded()
+        XCTAssertEqual(viewer.view.bounds.height, initialHeight, accuracy: 1)
+        XCTAssertEqual(canvas.zoomScale / canvas.minimumZoomScale, 1, accuracy: 0.01)
+        XCTAssertTrue(viewer.session === owner)
+    }
+}

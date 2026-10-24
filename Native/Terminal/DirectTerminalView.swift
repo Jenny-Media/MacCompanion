@@ -704,6 +704,8 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     private var appliedInputEpoch: UUID?
     private var normalBottom: NSLayoutConstraint!
     private var foldedBottom: NSLayoutConstraint!
+    private var barLeading: NSLayoutConstraint!, barTrailing: NSLayoutConstraint!
+    private var terminalLeading: NSLayoutConstraint!, terminalTrailing: NSLayoutConstraint!
     private let customize: @MainActor () -> Void
     private let action: @MainActor (String) -> Void
     private let defaults: UserDefaults
@@ -799,10 +801,13 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         keyboardBar.openKeypad = { [weak self] numbersFirst in self?.showKeypad(numbersFirst: numbersFirst) }
         keyboardBar.layoutChanged = { [weak self] in self?.persistBarLayout(); self?.view.setNeedsLayout() }
         textComposer.shortcutBar = keyboardBar
+        barLeading = keyboardBar.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor)
+        barTrailing = keyboardBar.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor)
+        terminalLeading = terminal.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor)
+        terminalTrailing = terminal.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor)
         NSLayoutConstraint.activate([
             keyboardBar.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
-            keyboardBar.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
-            keyboardBar.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor)
+            barLeading, barTrailing
         ])
         normalBottom = terminal.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: -keyboardBar.height)
         foldedBottom = terminal.bottomAnchor.constraint(equalTo: view.topAnchor)
@@ -810,7 +815,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         terminal.clipsToBounds = true
         setContentScrollView(terminal, for: .top)
         if #available(iOS 26, *) { terminal.topEdgeEffect.style = .automatic }
-        NSLayoutConstraint.activate([terminal.topAnchor.constraint(equalTo: view.topAnchor), normalBottom, terminal.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor), terminal.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor)])
+        NSLayoutConstraint.activate([terminal.topAnchor.constraint(equalTo: view.topAnchor), normalBottom, terminalLeading, terminalTrailing])
         terminal.focusChanged = { [weak self, weak session] visible in
             if self?.executionKeyboardChange != true { session?.keyboardVisible = visible }
             self?.updateControls(); self?.view.setNeedsLayout()
@@ -1177,7 +1182,13 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         super.viewWillLayoutSubviews()
         let safe = view.bounds.inset(by: view.safeAreaInsets)
         var content = CGRect.null, input = CGRect.null
-        let tabletop = CompanionVNCTabletopRegions(safe, activeDivision(), &content, &input)
+        let division = activeDivision()
+        let tabletop = CompanionVNCTabletopRegions(safe, division, &content, &input)
+        let book = !tabletop && CompanionVNCBookRegions(safe, division, &content, &input)
+        terminalLeading.constant = book ? content.minX - safe.minX : 0
+        terminalTrailing.constant = book ? content.maxX - safe.maxX : 0
+        barLeading.constant = book ? input.minX - safe.minX : 0
+        barTrailing.constant = book ? input.maxX - safe.maxX : 0
         let ceiling = keyboardCeiling()
         // A hosting controller can already end at the keyboard's top. Compare
         // against the physical window so that this still reveals the number row.
@@ -1198,7 +1209,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         if let window = view.window {
             top = max(0, window.safeAreaInsets.top - view.convert(CGPoint.zero, to: window).y) + 8
         } else { top = safe.minY + 8 }
-        let reservedBarHeight = composerVisible && keyboardBar.isHidden ? 0 : keyboardBar.height
+        let reservedBarHeight = book || (composerVisible && keyboardBar.isHidden) ? 0 : keyboardBar.height
         if terminal.contentInset.top != top {
             terminal.contentInset.top = top
             terminal.verticalScrollIndicatorInsets.top = top

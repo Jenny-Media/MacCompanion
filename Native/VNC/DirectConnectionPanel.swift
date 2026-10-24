@@ -19,7 +19,37 @@ import UIKit
     private var preferredHeight: CGFloat = 500
     private var expanded = false
     var isVisible: Bool { owner != nil }
-    func attach(_ anchor: UIViewController) { self.anchor = anchor; reconcile() }
+    #if DEBUG
+    // Explicit geometry fixture for hosted tests; production uses system regions.
+    var divisionForTesting: CGRect?
+    #endif
+    func attach(_ anchor: UIViewController) { self.anchor = anchor; reconcile(); updatePreferredSize() }
+    func geometryChanged() { updatePreferredSize() }
+    private func bookInputRegion() -> CGRect? {
+        guard let viewport = anchor?.viewIfLoaded?.window else { return nil }
+        let division: CGRect
+        #if DEBUG
+        division = divisionForTesting ?? CompanionVNCActiveDivision(viewport)
+        #else
+        division = CompanionVNCActiveDivision(viewport)
+        #endif
+        var content = CGRect.null, input = CGRect.null
+        return CompanionVNCBookRegions(viewport.bounds.inset(by: viewport.safeAreaInsets), division, &content, &input) ? input : nil
+    }
+    private var panelSize: CGSize {
+        let width = bookInputRegion().map { min(560, max(0, $0.width-32)) } ?? 560
+        return CGSize(width: width, height: transient == nil ? max(expanded ? 620 : 0, preferredHeight) : 620)
+    }
+    private func updatePlacement(_ panel: UIViewController) {
+        if #available(iOS 27.0, *) {
+            let book = bookInputRegion() != nil
+            let rtl = anchor?.viewIfLoaded?.effectiveUserInterfaceLayoutDirection == .rightToLeft
+            let placement: UISheetPresentationController.Placement = book ? (rtl ? .leading : .trailing) : .center
+            if panel.sheetPresentationController?.preferredPlacement != placement {
+                panel.sheetPresentationController?.preferredPlacement = placement
+            }
+        }
+    }
     @objc(showContent:owner:cancel:) func show(_ content: UIViewController, owner: NSObject, cancel: @escaping () -> Void) {
         guard !dismissedOwners.contains(owner) else { return }
         if self.owner !== owner { dismissalLocked = false; preferredHeight = 500; expanded = false }
@@ -60,7 +90,8 @@ import UIKit
     private func updatePreferredSize() {
         // Native form sizing adapts to the available window, not the device model.
         guard let sheet else { return }
-        let size = CGSize(width: 560, height: transient == nil ? max(expanded ? 620 : 0, preferredHeight) : 620)
+        updatePlacement(sheet)
+        let size = panelSize
         guard sheet.preferredContentSize != size else { return }
         let update = { sheet.preferredContentSize = size; sheet.viewIfLoaded?.layoutIfNeeded() }
         if sheet.viewIfLoaded?.window != nil, !sheet.isBeingPresented, !sheet.isBeingDismissed, !UIAccessibility.isReduceMotionEnabled {
@@ -81,9 +112,9 @@ import UIKit
             panel.view.accessibilityIdentifier = "connection-sheet"
             panel.view.accessibilityViewIsModal = true
             panel.modalPresentationStyle = .formSheet
-            panel.preferredContentSize = CGSize(width: 560, height: transient == nil ? max(expanded ? 620 : 0, preferredHeight) : 620)
+            panel.preferredContentSize = panelSize
             panel.sheetPresentationController?.prefersPageSizing = false
-            if #available(iOS 27.0, *) { panel.sheetPresentationController?.preferredPlacement = .center }
+            updatePlacement(panel)
             // Explicit height detents turn the native floating form into an
             // edge-attached sheet. Let UIKit size and position this form, including
             // its compact-window and keyboard adaptation.
@@ -111,6 +142,8 @@ struct DirectConnectionPanelAnchor: UIViewControllerRepresentable {
     let host: DirectConnectionPanelHost
     final class Anchor: UIViewController {
         var host: DirectConnectionPanelHost?
+        override func viewDidLoad() { super.viewDidLoad(); CompanionVNCObserveDivision(view) }
+        override func viewDidLayoutSubviews() { super.viewDidLayoutSubviews(); host?.geometryChanged() }
         override func viewDidAppear(_ animated: Bool) { super.viewDidAppear(animated); host?.attach(self) }
     }
     func makeUIViewController(context: Context) -> Anchor { let anchor = Anchor(); anchor.host = host; anchor.view.backgroundColor = .clear; return anchor }

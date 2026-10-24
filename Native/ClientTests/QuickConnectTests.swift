@@ -511,6 +511,32 @@ import LocalAuthentication
             }
         }
     }
+    func testBookFormUsesInputPageAndKeepsContentOwnerAcrossRegionChanges() async throws {
+        let mount = try PanelMount(); defer { mount.close() }
+        let bounds = mount.window.bounds
+        guard bounds.width >= 600 else { throw XCTSkip("Book form fixture needs two usable pages") }
+        let division = CGRect(x: bounds.midX-10, y: 0, width: 20, height: bounds.height)
+        mount.host.divisionForTesting = division
+        let owner = NSObject(), form = UIViewController(), field = UITextField()
+        form.view.addSubview(field)
+        mount.host.show(form, owner: owner, cancel: {})
+        try await eventually { mount.anchor.presentedViewController != nil }
+        let panel = try XCTUnwrap(mount.anchor.presentedViewController)
+        XCTAssertEqual(panel.preferredContentSize.width, min(560, bounds.maxX-division.maxX-32), accuracy: 1)
+        if #available(iOS 27.0, *) {
+            XCTAssertEqual(panel.sheetPresentationController?.preferredPlacement, .trailing)
+            try await eventually { !panel.isBeingPresented }
+            let frame = panel.view.convert(panel.view.bounds, to: mount.window)
+            XCTAssertGreaterThanOrEqual(frame.minX, division.maxX-1, "The actual native form stays on its Book input page")
+            XCTAssertLessThanOrEqual(frame.maxX, bounds.maxX+1)
+        }
+        mount.host.divisionForTesting = .null; mount.host.geometryChanged()
+        XCTAssertEqual(panel.preferredContentSize.width, 560)
+        if #available(iOS 27.0, *) { XCTAssertEqual(panel.sheetPresentationController?.preferredPlacement, .center) }
+        XCTAssertTrue(mount.anchor.presentedViewController === panel)
+        XCTAssertTrue(form.parent === panel); XCTAssertTrue(field.superview === form.view)
+        XCTAssertEqual(mount.anchor.presentations, 1)
+    }
     private func eventually(_ predicate: () -> Bool) async throws {
         for _ in 0..<150 { if predicate() { return }; try await Task.sleep(for: .milliseconds(20)) }
         XCTFail("Native panel did not settle")

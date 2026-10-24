@@ -402,4 +402,59 @@ import UIKit
         XCTAssertTrue(terminal.keyboardBar?.isHidden == false)
         XCTAssertTrue(descendants(host.view).contains { $0 === terminal })
     }
+    func testBookKeepsTerminalAndCustomBarOnSeparatePagesWithoutReplacingSession() async throws {
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic Mac", addresses: ["studio.local"])
+        let session = DirectTerminalSession(mac: mac)
+        session.connected = true
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        let controller = FoldTerminalController(session: session, customize: {})
+        window.rootViewController = controller; window.makeKeyAndVisible(); window.endEditing(true)
+        defer { window.endEditing(true); window.isHidden = true; window.rootViewController = nil; session.stop() }
+        try await Task.sleep(for: .milliseconds(300)); window.layoutIfNeeded()
+        guard controller.view.bounds.width >= 600 else { throw XCTSkip("Book geometry fixture requires two usable pages; ordinary phone layout is covered separately") }
+        let terminal = controller.terminal
+        let split = CGRect(x: controller.view.bounds.midX-10, y: 0, width: 20, height: controller.view.bounds.height)
+        terminal.feed(text: "Synthetic output retained across Book transitions\r\n")
+        for division in [split, .null, split] {
+            controller.division = division; controller.view.setNeedsLayout(); controller.view.layoutIfNeeded()
+            XCTAssertTrue(controller.terminal === terminal)
+            XCTAssertTrue(String(decoding: terminal.getTerminal().getBufferAsData(), as: UTF8.self).contains("Synthetic output retained"))
+            if !division.isNull {
+                XCTAssertLessThanOrEqual(terminal.frame.maxX, division.minX)
+                XCTAssertGreaterThanOrEqual(controller.keyboardBar.frame.minX, division.maxX)
+                XCTAssertGreaterThanOrEqual(controller.keyboardBar.bounds.height, 44)
+                XCTAssertGreaterThan(terminal.frame.height, controller.view.bounds.height * 0.8)
+            } else { XCTAssertGreaterThan(terminal.frame.width, controller.view.bounds.width * 0.9) }
+        }
+        XCTAssertTrue(session.connected); XCTAssertTrue(controller.terminal === terminal)
+    }
+
+    func testHostedBookKeyboardKeepsInputOnItsPageAndRetainsTerminal() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        let mac = try DirectMacRecordV1.normalized(name: "Synthetic Mac", addresses: ["studio.local"])
+        let session = DirectTerminalSession(mac: mac); session.connected = true
+        let controller = FoldTerminalController(session: session, customize: {})
+        window.rootViewController = controller; window.makeKeyAndVisible()
+        defer { window.endEditing(true); window.isHidden = true; window.rootViewController = nil; session.stop() }
+        window.layoutIfNeeded()
+        guard controller.view.bounds.width >= 600 else { throw XCTSkip("Book geometry fixture requires two usable pages; ordinary phone keyboard is covered separately") }
+        let division = CGRect(x: controller.view.bounds.midX-10, y: 0, width: 20, height: controller.view.bounds.height)
+        controller.division = division; controller.view.setNeedsLayout(); controller.view.layoutIfNeeded()
+        let terminal = controller.terminal
+        XCTAssertTrue(terminal.becomeFirstResponder())
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            window.layoutIfNeeded()
+            if controller.keyboardCeiling() < controller.view.bounds.maxY-100 { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertLessThan(controller.keyboardCeiling(), controller.view.bounds.maxY-100, "A real software keyboard must be visible")
+        XCTAssertLessThanOrEqual(terminal.frame.maxX, division.minX)
+        XCTAssertGreaterThanOrEqual(controller.keyboardBar.frame.minX, division.maxX)
+        XCTAssertLessThanOrEqual(controller.keyboardBar.frame.maxY, controller.keyboardCeiling()+1)
+        XCTAssertLessThanOrEqual(terminal.frame.maxY, controller.keyboardCeiling()+1)
+        XCTAssertTrue(terminal.isFirstResponder); XCTAssertTrue(controller.terminal === terminal); XCTAssertTrue(session.connected)
+    }
 }

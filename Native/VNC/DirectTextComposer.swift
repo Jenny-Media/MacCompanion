@@ -265,6 +265,35 @@ struct DirectComposerPlacement {
             $0.width * min(324, $0.height) < $1.width * min(324, $1.height)
         } ?? above
     }
+    struct Region {
+        let area: CGRect
+        let yieldsShortcutBar: Bool
+        let fitsEditor: Bool
+    }
+    /// Keep a divided workspace on one page. The input page owns composition
+    /// unless its unobscured area cannot hold the editor and both 44-point actions.
+    static func region(safe: CGRect, division: CGRect, keyboard: CGRect,
+                       shortcutBar: CGRect, mayYieldShortcutBar: Bool, minimumHeight: CGFloat = 112) -> Region {
+        var content = CGRect.null, input = CGRect.null
+        guard CompanionVNCTabletopRegions(safe, division, &content, &input)
+                || CompanionVNCBookRegions(safe, division, &content, &input) else {
+            let result = area(safe: safe, keyboard: keyboard, shortcutBar: shortcutBar)
+            return Region(area: result, yieldsShortcutBar: false, fitsEditor: result.width >= 264 && result.height >= minimumHeight)
+        }
+        func fits(_ rect: CGRect) -> Bool { rect.width >= 264 && rect.height >= minimumHeight }
+        let preferred = area(safe: input, keyboard: keyboard, shortcutBar: shortcutBar)
+        if fits(preferred) { return Region(area: preferred, yieldsShortcutBar: false, fitsEditor: true) }
+        if mayYieldShortcutBar && !shortcutBar.isNull && !shortcutBar.isEmpty {
+            let withoutStrip = area(safe: input, keyboard: keyboard)
+            if fits(withoutStrip) { return Region(area: withoutStrip, yieldsShortcutBar: true, fitsEditor: true) }
+        }
+        // A tall or floating keyboard may cover the input page. Use a modal
+        // editor in the other genuinely free page without remounting its owner.
+        let alternate = area(safe: content, keyboard: keyboard, shortcutBar: shortcutBar)
+        if fits(alternate) { return Region(area: alternate, yieldsShortcutBar: false, fitsEditor: true) }
+        let bounded = [preferred, alternate].max { $0.width * $0.height < $1.width * $1.height } ?? preferred
+        return Region(area: bounded, yieldsShortcutBar: false, fitsEditor: false)
+    }
     static func dockedAnchor(area: CGRect, keyboard: CGRect) -> CGPoint {
         CGPoint(x: 0.5, y: !keyboard.isEmpty && area.minY >= keyboard.maxY ? 0 : 1)
     }
@@ -296,6 +325,9 @@ struct DirectComposerPlacement {
     private var placementConstraints: [NSLayoutConstraint] = []
     private var keyboardBottom: NSLayoutConstraint?
     private var safeBottom: NSLayoutConstraint?
+    private var paneTop: NSLayoutConstraint?
+    private var usesPanePosition = false
+    private var keyboardObservations: [NSObjectProtocol] = []
     private var peek: NSLayoutConstraint?
     private var grabberHeight: NSLayoutConstraint?
     private var grabberWidth: NSLayoutConstraint?
@@ -325,6 +357,10 @@ struct DirectComposerPlacement {
     #if DEBUG
     // Controlled Simulator keyboard geometry; absent from release builds.
     var simulatedKeyboardFrame: CGRect? { didSet { view.setNeedsLayout() } }
+    private var simulatedDivision: CGRect?
+    @objc(setDivisionForComposerTesting:) func setDivisionForComposerTesting(_ value: NSValue) {
+        simulatedDivision = value.cgRectValue; view.setNeedsLayout()
+    }
     #endif
     private var keyboardFrame: CGRect {
         #if DEBUG
@@ -334,12 +370,36 @@ struct DirectComposerPlacement {
     }
     weak var shortcutBar: UIView?
     var visibilityChanged: ((Bool) -> Void)?
+    private weak var yieldedShortcutBar: UIView?
+    private var shortcutBarAlpha: CGFloat = 1
+    private func restoreShortcutBar() {
+        if let bar = yieldedShortcutBar, bar.alpha == 0 { bar.alpha = shortcutBarAlpha }
+        yieldedShortcutBar = nil
+    }
+    private var division: CGRect {
+        #if DEBUG
+        if let simulatedDivision { return simulatedDivision }
+        #endif
+        return CompanionVNCActiveDivision(view)
+    }
     var placementArea: CGRect {
+        if yieldedShortcutBar !== shortcutBar { restoreShortcutBar() }
         let bar: CGRect
-        if let shortcutBar, shortcutBar.window === view.window, !shortcutBar.isHidden, shortcutBar.alpha > 0 {
+        if let shortcutBar, shortcutBar.window === view.window, !shortcutBar.isHidden,
+           shortcutBar.alpha > 0 || yieldedShortcutBar === shortcutBar {
             bar = view.convert(shortcutBar.bounds, from: shortcutBar)
         } else { bar = .null }
-        return DirectComposerPlacement.area(safe: view.safeAreaLayoutGuide.layoutFrame, keyboard: keyboardFrame, shortcutBar: bar)
+        let executionActive = (shortcutBar as? TerminalKeyboardBar)?.executionActive == true
+        let preferred = UIFont.preferredFont(forTextStyle: .body, compatibleWith: traitCollection)
+        let minimumHeight = max(112, max(44, ceil(preferred.lineHeight) + 8) + 44 + 12)
+        let decision = DirectComposerPlacement.region(safe: view.safeAreaLayoutGuide.layoutFrame,
+            division: division, keyboard: keyboardFrame, shortcutBar: bar,
+            mayYieldShortcutBar: !executionActive, minimumHeight: minimumHeight)
+        if decision.yieldsShortcutBar, let shortcutBar {
+            if yieldedShortcutBar == nil { shortcutBarAlpha = shortcutBar.alpha; yieldedShortcutBar = shortcutBar }
+            shortcutBar.alpha = 0
+        } else { restoreShortcutBar() }
+        return decision.area
     }
     init(draft: DirectTextComposerDraft) {
         self.draft = draft; presentationEpoch = draft.presentationEpoch
@@ -360,6 +420,7 @@ struct DirectComposerPlacement {
         }
     }
     isolated deinit {
+        for token in keyboardObservations { NotificationCenter.default.removeObserver(token) }
         if let appearancePresenter, let appearanceObservation {
             appearancePresenter.unregisterForTraitChanges(appearanceObservation)
         }
@@ -367,7 +428,13 @@ struct DirectComposerPlacement {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .clear; view.accessibilityViewIsModal = true
+        CompanionVNCObserveDivision(view)
         view.keyboardLayoutGuide.followsUndockedKeyboard = true
+        for name in [UIResponder.keyboardWillChangeFrameNotification, UIResponder.keyboardDidChangeFrameNotification] {
+            keyboardObservations.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshPlacementAfterSystemUpdate() }
+            })
+        }
         let backdrop = UIControl(); backdrop.backgroundColor = UIColor.black.withAlphaComponent(0.12)
         backdrop.translatesAutoresizingMaskIntoConstraints = false
         backdrop.addTarget(self, action: #selector(back), for: .touchUpInside)
@@ -418,6 +485,9 @@ struct DirectComposerPlacement {
         let bottom = card.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: -8)
         let safeBottom = card.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -8)
         self.keyboardBottom = bottom; self.safeBottom = safeBottom
+        let paneTop = card.topAnchor.constraint(equalTo: view.topAnchor); self.paneTop = paneTop
+        paneTop.identifier = "compose-pane-top"; bottom.identifier = "compose-keyboard-bottom"
+        safeBottom.identifier = "compose-safe-bottom"
         // A top-edge keyboard cannot force the editor above the safe area.
         // UIKit switches these before layout; both offsets follow the selected free region.
         view.keyboardLayoutGuide.setConstraints([bottom], activeWhenAwayFrom: .top)
@@ -520,11 +590,49 @@ struct DirectComposerPlacement {
         default: break
         }
     }
+    private var hasUsableDivision: Bool {
+        var content = CGRect.null, input = CGRect.null
+        let safe = view.safeAreaLayoutGuide.layoutFrame
+        return CompanionVNCTabletopRegions(safe, division, &content, &input)
+            || CompanionVNCBookRegions(safe, division, &content, &input)
+    }
+    private func refreshPlacementAfterSystemUpdate() {
+        guard isViewLoaded else { return }
+        view.setNeedsLayout()
+        // The guide can commit its final frame after the controller's layout
+        // callback. Reconcile after that commit without remounting the editor.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.viewIfLoaded?.window != nil else { return }
+            self.view.setNeedsLayout(); self.view.layoutIfNeeded()
+        }
+    }
+    override func viewWillTransition(to size: CGSize, with coordinator: any UIViewControllerTransitionCoordinator) {
+        super.viewWillTransition(to: size, with: coordinator)
+        coordinator.animate(alongsideTransition: nil) { [weak self] _ in self?.refreshPlacementAfterSystemUpdate() }
+    }
+    private func usePanePosition(_ divided: Bool) {
+        guard usesPanePosition != divided, let keyboardBottom, let safeBottom, let paneTop else { return }
+        usesPanePosition = divided
+        if divided {
+            // A pane solver already chooses the unobscured rectangle. Tracking
+            // a separate keyboard bottom can otherwise compress that rectangle
+            // to zero when the keyboard changes between layout callbacks.
+            view.keyboardLayoutGuide.removeAllTrackedConstraints()
+            NSLayoutConstraint.deactivate([keyboardBottom, safeBottom])
+            peek?.isActive = false; paneTop.isActive = true
+        } else {
+            paneTop.isActive = false; peek?.isActive = true
+            view.keyboardLayoutGuide.setConstraints([keyboardBottom], activeWhenAwayFrom: .top)
+            view.keyboardLayoutGuide.setConstraints([safeBottom], activeWhenNearEdge: .top)
+        }
+        let height = placementConstraints[2]
+        height.isActive = false; height.priority = divided ? .required : .defaultHigh; height.isActive = true
+    }
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated); visibilityChanged?(true)
     }
     override func viewDidDisappear(_ animated: Bool) {
-        super.viewDidDisappear(animated); visibilityChanged?(false)
+        super.viewDidDisappear(animated); restoreShortcutBar(); visibilityChanged?(false)
     }
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
@@ -541,7 +649,9 @@ struct DirectComposerPlacement {
                           height: min(area.height, draggingHeight ?? (expanded ? area.height : compactHeight)))
         if draft.narrowLayout != (size.width < 360) { draft.narrowLayout = size.width < 360 }
         let target = DirectComposerPlacement.frame(area: area, size: size, anchor: draft.docked || expanded ? DirectComposerPlacement.dockedAnchor(area: area, keyboard: keyboardFrame) : draft.floatingAnchor)
+        paneTop?.constant = target.minY
         peek?.constant = area.minY - view.safeAreaInsets.top
+        usePanePosition(hasUsableDivision)
         let values = [target.minX - view.safeAreaInsets.left, target.width, target.height]
         let keyboardOffset = target.maxY - view.keyboardLayoutGuide.layoutFrame.minY
         if keyboardBottom?.constant != keyboardOffset { keyboardBottom?.constant = keyboardOffset }

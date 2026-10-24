@@ -156,11 +156,13 @@ void CompanionVNCPlayInterfaceFeedback(NSString *kind) {
     CGRect safe = UIEdgeInsetsInsetRect(self.bounds, self.safeAreaInsets), content = CGRectNull, input = CGRectNull;
     CGRect available = safe;
     available.size.height = MAX(0, available.size.height - self.bottomInset);
-    if (CompanionVNCTabletopRegions(safe, [self activeDivision], &content, &input)) {
+    CGRect division = [self activeDivision];
+    BOOL book = CompanionVNCBookRegions(safe, division, &content, &input);
+    if (book || CompanionVNCTabletopRegions(safe, division, &content, &input)) {
         CGRect lower = CGRectIntersection(available, input);
         // A tall keyboard may consume the lower pane. Keep the menu reachable
         // above the keyboard instead of pinning its button behind it.
-        if (!CGRectIsNull(lower) && lower.size.height >= 104) available = lower;
+        if (!CGRectIsNull(lower) && (book || lower.size.height >= 104)) available = lower;
     }
     self.button.bounds = CGRectMake(0,0,52,52);
     self.button.center = CGPointMake(MAX(CGRectGetMinX(available) + 26, CGRectGetMaxX(available) - 36),
