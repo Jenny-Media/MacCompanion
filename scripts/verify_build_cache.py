@@ -6,10 +6,15 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import shutil
+import signal
+import time
+import uuid
 import unittest
 from unittest.mock import patch
 
 import build_cache as cache
+import legacy_build_cache as legacy
 
 
 class CacheTests(unittest.TestCase):
@@ -194,6 +199,299 @@ class CacheTests(unittest.TestCase):
         self.assertTrue(status['overBudget'])
         self.assertFalse(status['deletionEnabled'])
         self.assertTrue(status['workspaces'][0]['reviewCandidate'])
+
+
+class LegacyCallerTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix='maccompanion-legacy-tests-')
+        self.addCleanup(self.temp.cleanup)
+        self.base = Path(self.temp.name).resolve()
+        self.checkout = self.base / 'checkout'
+        self.scripts = self.checkout / 'scripts'
+        self.scripts.mkdir(parents=True)
+        self.root = self.base / 'compiler'
+        self.evidence = self.base / 'evidence'
+        self.tools = self.base / 'tools'; self.tools.mkdir()
+        shutil.copy2(Path(cache.__file__).parent / 'verify_pairing_reliability.sh', self.scripts)
+        (self.scripts / 'validate_fixtures.py').write_text('print("synthetic fixture check")\n')
+        fake = '''#!SHEBANG
+import json, os, pathlib, sys
+name = pathlib.Path(sys.argv[0]).name
+args = sys.argv[1:]
+with open(os.environ['FAKE_COMMANDS'], 'a') as log:
+    log.write(json.dumps([name, args]) + '\\n')
+if name == 'swift':
+    scratch = pathlib.Path(args[args.index('--scratch-path') + 1])
+    scratch.mkdir(parents=True, exist_ok=True)
+    output = scratch / 'compiler-object'
+    if not output.exists(): output.write_text('reused')
+    if '--show-bin-path' in args:
+        print(scratch / 'bin')
+    else:
+        print(os.environ.get('FAKE_SWIFT_OUTPUT', 'synthetic test passed'))
+if name == 'xcodebuild':
+    root = pathlib.Path(args[args.index('-derivedDataPath') + 1])
+    scheme = args[args.index('-scheme') + 1]
+    configuration = 'Debug-iphoneos' if scheme == 'MacCompanionIOS' else ('Debug-iphonesimulator' if scheme == 'ClientUIHarness' else 'Debug')
+    app = root / 'Build/Products' / configuration / ('ClientUIHarness.app' if scheme == 'ClientUIHarness' else 'Mac Companion.app')
+    app.mkdir(parents=True, exist_ok=True)
+    (app / 'binary').write_text('saved-' + configuration)
+    if '-resultBundlePath' in args: pathlib.Path(args[args.index('-resultBundlePath') + 1]).mkdir()
+    print('synthetic xcodebuild passed')
+'''.replace('SHEBANG', sys.executable)
+        for name in ('swift', 'xcodebuild', 'codesign'):
+            path = self.tools / name; path.write_text(fake); path.chmod(0o755)
+        environment = {name: value for name, value in os.environ.items()
+                       if not name.startswith('MACCOMPANION_') and name != 'DEVELOPER_DIR'}
+        environment.update(PATH=str(self.tools) + os.pathsep + environment.get('PATH', ''),
+                           MACCOMPANION_BUILD_CACHE_ROOT=str(self.root),
+                           MACCOMPANION_LEGACY_EVIDENCE_ROOT=str(self.evidence),
+                           MACCOMPANION_DEVELOPER_DIR='/Applications/Synthetic.app',
+                           FAKE_COMMANDS=str(self.base / 'commands.jsonl'))
+        for patcher in (patch.dict(os.environ, environment, clear=True),
+                        patch.object(legacy, 'ROOT', self.checkout),
+                        patch.object(legacy, 'DEFAULT_EVIDENCE', self.base / 'default-evidence'),
+                        patch.object(legacy, 'toolchain_identity', return_value={'synthetic': True})):
+            patcher.start(); self.addCleanup(patcher.stop)
+
+    def runs(self, evidence=None):
+        return sorted((evidence or self.evidence).glob('runs/*'))
+
+    def metadata(self, run):
+        return json.loads((run / 'run.json').read_text())
+
+    def test_real_pairing_shell_reuses_scratch_and_retains_failure(self):
+        legacy.run('pairing-reliability', [])
+        first = self.runs()[0]
+        workspace = Path(self.metadata(first)['workspace'])
+        compiler = workspace / 'package-build/compiler-object'
+        stamp = compiler.stat().st_mtime_ns
+        legacy.run('pairing-reliability', [])
+        self.assertEqual(len(self.runs()), 2)
+        self.assertEqual(compiler.stat().st_mtime_ns, stamp)
+        self.assertEqual(len(list((self.root / 'workspaces').iterdir())), 1)
+        commands = [json.loads(line) for line in (self.base / 'commands.jsonl').read_text().splitlines()]
+        self.assertEqual([name for name, _ in commands], ['swift'] * 10)
+        with patch.dict(os.environ, FAKE_SWIFT_OUTPUT='✘ Test synthetic failure'):
+            with self.assertRaises(subprocess.CalledProcessError):
+                legacy.run('pairing-reliability', [])
+        failed = next(run for run in self.runs() if self.metadata(run)['status'] == 'failed')
+        self.assertIn('synthetic failure', (failed / 'workflow.log').read_text())
+        self.assertEqual(self.metadata(first)['status'], 'passed')
+        self.assertEqual(os.environ['DEVELOPER_DIR'], '/Applications/Synthetic.app/Contents/Developer')
+
+    def test_signed_pairing_keys_and_snapshots_survive_compiler_removal(self):
+        with patch.dict(os.environ, MACCOMPANION_DEVELOPMENT_TEAM='synthetic-team'):
+            legacy.run('pairing-reliability', ['--signed-builds'])
+        run = self.runs()[0]
+        signed = Path(self.metadata(run)['workspace'])
+        snapshots = json.loads((run / 'products.json').read_text())['apps']
+        self.assertEqual(len(snapshots), 2)
+        commands = [json.loads(line) for line in (self.base / 'commands.jsonl').read_text().splitlines()]
+        self.assertEqual([name for name, _ in commands], ['swift'] * 5 + ['xcodebuild'] * 2 + ['codesign'] * 2)
+        self.assertTrue(all('--scratch-path' in args for name, args in commands if name == 'swift'))
+        self.assertTrue(all(args[args.index('-derivedDataPath') + 1].startswith(str(signed)) for name, args in commands if name == 'xcodebuild'))
+        with patch.dict(os.environ, MACCOMPANION_LEGACY_EVIDENCE_ROOT=str(self.base / 'unsigned')):
+            legacy.run('pairing-reliability', [])
+        unsigned = self.metadata(self.runs(self.base / 'unsigned')[0])['workspace']
+        self.assertNotEqual(str(signed), unsigned)
+        # Only this test-owned fake compiler tree is disposable.
+        shutil.rmtree(signed)
+        self.assertTrue(all((Path(path) / 'binary').read_text().startswith('saved-') for path in snapshots))
+
+    def test_profile_toolchain_flags_variant_team_and_cold_isolation(self):
+        identities = [legacy.build_identity('pairing-reliability', [])]
+        for name, value in [('SWIFTFLAGS', '-DTEST'), ('MACCOMPANION_LEGACY_CACHE_VARIANT', 'probe')]:
+            with patch.dict(os.environ, {name: value}):
+                identities.append(legacy.build_identity('pairing-reliability', []))
+        with patch.dict(os.environ, MACCOMPANION_DEVELOPMENT_TEAM='team-one'):
+            identities.append(legacy.build_identity('pairing-reliability', ['--signed-builds']))
+        with patch.dict(os.environ, MACCOMPANION_DEVELOPMENT_TEAM='team-two'):
+            identities.append(legacy.build_identity('pairing-reliability', ['--signed-builds']))
+        with patch.object(legacy, 'toolchain_identity', return_value={'synthetic': 'other'}):
+            identities.append(legacy.build_identity('pairing-reliability', []))
+        identities.append(legacy.build_identity('simulator-features', []))
+        self.assertEqual(len({json.dumps(i, sort_keys=True) for i in identities}), len(identities))
+        legacy.run('pairing-reliability', [])
+        with patch.dict(os.environ, MACCOMPANION_LEGACY_COLD='1'):
+            legacy.run('pairing-reliability', [])
+        self.assertEqual(len({self.metadata(run)['workspace'] for run in self.runs()}), 2)
+
+    def test_old_overrides_and_arguments_fail_before_workflow(self):
+        for name in ('MACCOMPANION_LAB_DERIVED_DATA', 'MACCOMPANION_PAIRING_DERIVED_DATA'):
+            with patch.dict(os.environ, {name: str(self.base / 'old')}):
+                with self.assertRaisesRegex(ValueError, 'no longer a compiler override'):
+                    legacy.run('pairing-reliability', [])
+        for caller, args in [('simulator-features', ['--signed-builds']), ('pairing-reliability', ['arbitrary'])]:
+            with self.assertRaises(ValueError):
+                legacy.run(caller, args)
+        with self.assertRaisesRegex(ValueError, 'DEVELOPMENT_TEAM'):
+            legacy.run('pairing-reliability', ['--signed-builds'])
+        self.assertFalse(self.root.exists())
+
+    def test_snapshots_exclude_unrelated_warm_products_and_reject_linked_apps(self):
+        identity = legacy.build_identity('simulator-features', [])
+        with cache.BuildSession(self.checkout, self.evidence, identity, cache_root=self.root, aliases=False) as session:
+            stale = session.workspace / 'DerivedData/Build/Products/Debug/OldTarget.app'
+            stale.mkdir(parents=True); (stale / 'binary').write_text('old')
+            self.assertEqual(legacy.snapshot_apps(session), [])
+            expected = session.workspace / 'DerivedData/Build/Products/Debug-iphonesimulator/ClientUIHarness.app'
+            expected.parent.mkdir(parents=True)
+            expected.symlink_to(stale, target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, 'snapshot must come from this compiler workspace'):
+                legacy.snapshot_apps(session)
+
+    def test_feature_output_remains_parseable_and_one_supervisor_owns_both_leases(self):
+        (self.scripts / 'verify_simulator_features.sh').write_text('exit 0\n')
+        def supervised(command, env, log):
+            self.assertEqual(env['MACCOMPANION_LEGACY_MANAGED'], 'simulator-features')
+            self.assertNotIn('MACCOMPANION_LEGACY_EVIDENCE_ROOT', env)
+            self.assertNotEqual(env['MACCOMPANION_LEGACY_WORKSPACE'], env['MACCOMPANION_PAIRING_WORKSPACE'])
+            for name in ('MACCOMPANION_LEGACY_WORKSPACE', 'MACCOMPANION_PAIRING_WORKSPACE'):
+                with self.assertRaises(RuntimeError):
+                    cache.acquire_lock(Path(env[name]) / '.build.lock', 0)
+            return 0
+        import io
+        from contextlib import redirect_stdout
+        output = io.StringIO()
+        with patch.object(legacy, 'run_command', side_effect=supervised) as command, redirect_stdout(output):
+            legacy.run('simulator-features', [])
+        self.assertEqual(command.call_count, 1)
+        evidence_lines = [line.removeprefix('Evidence: ') for line in output.getvalue().splitlines() if line.startswith('Evidence: ')]
+        self.assertEqual(evidence_lines, [str(self.runs()[0])])
+        self.assertEqual(len(list((self.base / 'default-evidence').glob('legacy-*/runs/*'))), 1)
+        self.assertEqual(len(list((self.root / 'workspaces').iterdir())), 2)
+
+    def test_real_feature_shell_routes_host_and_simulator_builds_to_lease(self):
+        shutil.copy2(Path(cache.__file__).parent / 'verify_simulator_features.sh', self.scripts)
+        (self.scripts / 'validate_live_control_lab.py').write_text('print("synthetic isolation check")\n')
+        (self.scripts / 'verify_pairing_reliability.sh').write_text(
+            'set -eu\n'
+            '[[ "$MACCOMPANION_LEGACY_MANAGED" == pairing-reliability ]]\n'
+            '[[ "$MACCOMPANION_LEGACY_WORKSPACE" == "$MACCOMPANION_PAIRING_WORKSPACE" ]]\n'
+            '[[ "$MACCOMPANION_LEGACY_RUN" == "$MACCOMPANION_PAIRING_RUN" ]]\n'
+            'echo "synthetic pairing checkpoint"\n')
+        (self.scripts / 'report_simulator_run.py').write_text(
+            'import json, pathlib, sys\n'
+            'run = pathlib.Path(sys.argv[1])\n'
+            'assert (run / "features.xcresult").is_dir()\n'
+            '(run / "report.json").write_text(json.dumps({"exitCode": int(sys.argv[4])}))\n')
+        simulator = str(uuid.uuid4()).upper()
+        xcrun = self.tools / 'xcrun'
+        xcrun.write_text('#!' + sys.executable + '\nimport os, pathlib, sys\n'
+                         'args = sys.argv[1:]\n'
+                         'if args[:4] == ["simctl", "list", "devices", "booted"]: print(os.environ["MACCOMPANION_SIMULATOR_ID"])\n'
+                         'if args[:2] == ["simctl", "get_app_container"]: print(os.environ["FAKE_CONTAINER"])\n')
+        xcrun.chmod(0o755)
+        # Precreate the synthetic Swift output under the same profile the wrapper selects.
+        identity = legacy.build_identity('simulator-features', [])
+        with cache.BuildSession(self.checkout, self.base / 'preparation', identity, cache_root=self.root, aliases=False) as prepared:
+            binary = prepared.workspace / 'host-build/bin/maccompanion-test-host'
+            binary.parent.mkdir(parents=True)
+            binary.write_text('#!' + sys.executable + '\nimport json, pathlib, sys, time\n'
+                              'pathlib.Path(sys.argv[1]).write_text(json.dumps({"source": "generated"}))\n'
+                              'while True: time.sleep(.1)\n')
+            binary.chmod(0o755)
+        container = self.base / 'container'; container.mkdir()
+        with patch.dict(os.environ, MACCOMPANION_SIMULATOR_ID=simulator, MACCOMPANION_LAB_SUITE='live', FAKE_CONTAINER=str(container)):
+            legacy.run('simulator-features', [])
+        run = self.runs()[0]
+        workspace = Path(self.metadata(run)['workspace'])
+        commands = [json.loads(line) for line in (self.base / 'commands.jsonl').read_text().splitlines()]
+        self.assertEqual([name for name, _ in commands], ['swift', 'swift', 'xcodebuild', 'xcodebuild'])
+        for name, args in commands:
+            option = '--scratch-path' if name == 'swift' else '-derivedDataPath'
+            self.assertTrue(args[args.index(option) + 1].startswith(str(workspace)))
+        self.assertTrue((run / 'maccompanion-test-host').is_file())
+        self.assertEqual(json.loads((run / 'report.json').read_text())['exitCode'], 0)
+        self.assertFalse((container / 'Documents/lab-fixture.json').exists())
+        self.assertFalse(Path('/private/tmp/maccompanion-simulator-' + simulator + '.lock').exists())
+        snapshots = json.loads((run / 'products.json').read_text())['apps']
+        self.assertEqual(len(snapshots), 1)
+        pairing = next((self.base / 'default-evidence').glob('legacy-*/runs/*'))
+        metadata = self.metadata(pairing)
+        self.assertEqual(metadata['parentEvidence'], str(run))
+        self.assertTrue(metadata['checkpointAttempted'])
+        self.assertTrue(metadata['checkpointPassed'])
+        self.assertIn('synthetic pairing checkpoint', (pairing / 'workflow.log').read_text())
+
+    def test_cancellation_keeps_lease_until_owned_worker_stops(self):
+        self.cancellation_check(False)
+
+    def test_cancellation_kills_term_resistant_pairing_before_releasing_both_leases(self):
+        self.cancellation_check(True)
+
+    def cancellation_check(self, ignore_term):
+        worker = self.base / 'worker.py'
+        worker.write_text('import os, pathlib, signal, sys, time\n'
+                          'base = pathlib.Path(sys.argv[1])\n'
+                          'def stop(sig, frame):\n'
+                          ' time.sleep(.6)\n'
+                          ' (base / "worker-stopped").write_text("stopped")\n'
+                          ' raise SystemExit(0)\n'
+                          'signal.signal(signal.SIGTERM, ' + ('signal.SIG_IGN' if ignore_term else 'stop') + ')\n'
+                          '(base / "worker-ready").write_text(str(os.getpid()))\n'
+                          'while True: time.sleep(.1)\n')
+        (self.scripts / 'verify_pairing_reliability.sh').write_text(
+            '[[ "$MACCOMPANION_LEGACY_MANAGED" == pairing-reliability ]] || exit 8\n'
+            'exec "' + sys.executable + '" "' + str(worker) + '" "' + str(self.base) + '"\n')
+        (self.scripts / 'verify_simulator_features.sh').write_text(
+            'MACCOMPANION_LEGACY_MANAGED=pairing-reliability '
+            'MACCOMPANION_LEGACY_WORKSPACE="$MACCOMPANION_PAIRING_WORKSPACE" '
+            'MACCOMPANION_LEGACY_RUN="$MACCOMPANION_PAIRING_RUN" '
+            'zsh scripts/verify_pairing_reliability.sh\n')
+        program = ('import sys; from pathlib import Path; sys.path.insert(0, ' + repr(str(Path(cache.__file__).parent)) + ')\n'
+                   'import legacy_build_cache as legacy\n'
+                   'legacy.ROOT = Path(' + repr(str(self.checkout)) + ')\n'
+                   'legacy.DEFAULT_EVIDENCE = Path(' + repr(str(self.base / 'default-evidence')) + ')\n'
+                   'legacy.toolchain_identity = lambda sdks: {"synthetic": True}\n'
+                   'legacy.run("simulator-features", [])\n')
+        with (self.base / 'driver.log').open('w') as log:
+            process = subprocess.Popen([sys.executable, '-c', program], stdout=log, stderr=subprocess.STDOUT)
+            try:
+                deadline = time.monotonic() + 10
+                while not (self.base / 'worker-ready').exists():
+                    if process.poll() is not None or time.monotonic() > deadline:
+                        self.fail('Owned synthetic worker did not start; see ' + str(self.base / 'driver.log'))
+                    time.sleep(.02)
+                workspace = Path(self.metadata(self.runs()[0])['workspace'])
+                pairing_run = next((self.base / 'default-evidence').glob('legacy-*/runs/*'))
+                pairing_workspace = Path(self.metadata(pairing_run)['workspace'])
+                worker_group = os.getpgid(int((self.base / 'worker-ready').read_text()))
+                process.send_signal(signal.SIGTERM)
+                time.sleep(.15)
+                self.assertFalse((self.base / 'worker-stopped').exists())
+                with self.assertRaises(RuntimeError):
+                    cache.acquire_lock(workspace / '.build.lock', 0)
+                with self.assertRaises(RuntimeError):
+                    cache.acquire_lock(pairing_workspace / '.build.lock', 0)
+                self.assertNotEqual(process.wait(timeout=15), 0)
+                self.assertEqual((self.base / 'worker-stopped').exists(), not ignore_term)
+                self.assertFalse(legacy.group_alive(worker_group))
+                with cache.acquire_lock(workspace / '.build.lock', 0):
+                    self.assertEqual(self.metadata(self.runs()[0])['status'], 'failed')
+                with cache.acquire_lock(pairing_workspace / '.build.lock', 0):
+                    self.assertEqual(self.metadata(pairing_run)['status'], 'failed')
+            finally:
+                if process.poll() is None:
+                    process.terminate(); process.wait(timeout=20)
+
+    def test_soak_and_performance_fingerprints_cover_cache_delegates(self):
+        import importlib.util
+        subprocess.run(['git', 'init', '-q', str(self.checkout)], check=True)
+        names = ('legacy_build_cache.py', 'build_cache.py', 'verify_pairing_reliability.sh')
+        for name in names:
+            (self.scripts / name).write_text('synthetic initial\n')
+        for module_name, function in (('run_prephysical_soak', 'source_fingerprint'),
+                                      ('report_prephysical_performance', 'tested_source_sha256')):
+            spec = importlib.util.spec_from_file_location(module_name, Path(cache.__file__).parent / (module_name + '.py'))
+            module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+            module.ROOT = self.checkout
+            for name in names:
+                before = getattr(module, function)()
+                path = self.scripts / name
+                path.write_text(path.read_text() + '# changed ' + module_name + '\n')
+                self.assertNotEqual(before, getattr(module, function)(), name)
 
 
 if __name__ == '__main__':

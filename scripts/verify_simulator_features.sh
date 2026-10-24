@@ -3,13 +3,16 @@ set -euo pipefail
 
 repository_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repository_root"
-export DEVELOPER_DIR="${MACCOMPANION_DEVELOPER_DIR:-/Applications/Xcode-beta.app/Contents/Developer}"
+if [[ "${MACCOMPANION_LEGACY_MANAGED:-}" != simulator-features ]]; then
+    exec python3 scripts/legacy_build_cache.py simulator-features "$@"
+fi
+export DEVELOPER_DIR="$MACCOMPANION_DEVELOPER_DIR"
 lab_simulator="${MACCOMPANION_SIMULATOR_ID:-}"
 if [[ -z "$lab_simulator" ]]; then
     lab_simulator="$(xcrun simctl list devices booted --json | python3 -c 'import json,sys; devices=[d for runtime,items in json.load(sys.stdin)["devices"].items() if ".iOS-" in runtime for d in items if d["state"] == "Booted"]; devices.sort(key=lambda d: "iPhone" not in d["name"]); print(devices[0]["udid"] if devices else "")')"
 fi
-lab_derived="${MACCOMPANION_LAB_DERIVED_DATA:-/private/tmp/maccompanion-live-lab-build}"
-lab_run="$(mktemp -d /private/tmp/maccompanion-feature-tests.XXXXXX)"
+lab_derived="$MACCOMPANION_LEGACY_WORKSPACE/DerivedData"
+lab_run="$MACCOMPANION_LEGACY_RUN"
 lab_host_pid=""
 lab_container=""
 lab_lock=""
@@ -67,6 +70,9 @@ cleanup() {
     exit "$lab_exit_code"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 echo "Evidence: $lab_run"
 echo "Simulator-only suite: $lab_suite; source: $lab_source"
 python3 scripts/validate_live_control_lab.py
@@ -85,12 +91,13 @@ mkdir "$lab_requested_lock" 2>/dev/null || {
     echo "Another runner owns this Simulator (or a stale lock needs inspection): $lab_requested_lock" >&2; exit 2;
 }
 lab_lock="$lab_requested_lock"
-swift build --package-path Experiments/LiveControlLab > "$lab_run/host-build.log" 2>&1
-lab_bin="$(swift build --package-path Experiments/LiveControlLab --show-bin-path)"
+swift build --package-path Experiments/LiveControlLab --scratch-path "$MACCOMPANION_LEGACY_WORKSPACE/host-build" > "$lab_run/host-build.log" 2>&1
+lab_bin="$(swift build --package-path Experiments/LiveControlLab --scratch-path "$MACCOMPANION_LEGACY_WORKSPACE/host-build" --show-bin-path)"
 lab_host_args=("$lab_run/fixture.json")
 lab_host_executable="$lab_bin/maccompanion-test-host"
+cp "$lab_host_executable" "$lab_run/maccompanion-test-host"
 if [[ "$lab_source" == real-mac-window ]]; then
-    lab_mac_app="$lab_derived/Mac Companion Real Mac Lab.app"
+    lab_mac_app="$MACCOMPANION_LEGACY_WORKSPACE/Mac Companion Real Mac Lab.app"
     mkdir -p "$lab_mac_app/Contents/MacOS"
     cp Experiments/LiveControlLab/Info.plist "$lab_mac_app/Contents/Info.plist"
     cp "$lab_bin/maccompanion-test-host" "$lab_mac_app/Contents/MacOS/maccompanion-test-host"
@@ -172,9 +179,14 @@ xcodebuild test-without-building -project Experiments/ClientUIHarness/ClientUIHa
     -test-timeouts-enabled YES -maximum-test-execution-time-allowance 360 \
     "${lab_test_selection[@]}" CODE_SIGNING_ALLOWED=NO > "$lab_run/features.log" 2>&1
 echo "SIMULATOR_FEATURES_PASSED"
+touch "$MACCOMPANION_PAIRING_RUN/checkpoint-started"
+MACCOMPANION_LEGACY_MANAGED=pairing-reliability \
+MACCOMPANION_LEGACY_WORKSPACE="$MACCOMPANION_PAIRING_WORKSPACE" \
+MACCOMPANION_LEGACY_RUN="$MACCOMPANION_PAIRING_RUN" \
 zsh scripts/verify_pairing_reliability.sh > "$lab_run/pairing.log" 2>&1
 if rg -q 'Some test targets (reported failures|did not run successfully)|✘ Test|Test run with .* failed after' "$lab_run/pairing.log"; then
     echo "Pairing tests reported a failure despite the process exit status." >&2
     exit 1
 fi
+touch "$MACCOMPANION_PAIRING_RUN/checkpoint-passed"
 echo "PAIRING_REGRESSIONS_PASSED"

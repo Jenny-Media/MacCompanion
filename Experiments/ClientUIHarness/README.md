@@ -68,7 +68,7 @@ The runner selects a booted iPhone preferentially, builds the test host and
 Simulator app, installs only the disposable harness, transfers a temporary
 bootstrap file, runs XCTest, and removes the bootstrap file and test host
 on exit. Logs, video assertions, and the `.xcresult` remain in the printed
-temporary evidence directory. No Face ID, QR scan, physical iPhone, or Mac
+managed evidence generation. No Face ID, QR scan, physical iPhone, or Mac
 privacy prompt is involved. The ordinary signed apps remain untouched.
 
 Optional environment settings:
@@ -78,11 +78,17 @@ Optional environment settings:
 - `MACCOMPANION_LAB_SUITE=full|live|soak|reconnect|lifecycle|integration|journey|journey-observe`: select a test profile.
 - `MACCOMPANION_LAB_ITERATIONS=3`: repeat the selected UI tests three times.
 - `MACCOMPANION_DEVELOPER_DIR`: override the full Xcode installation.
-- `MACCOMPANION_LAB_DERIVED_DATA`: override the temporary build directory.
+- `MACCOMPANION_BUILD_CACHE_ROOT`: select a dedicated internal compiler root.
+- `MACCOMPANION_LEGACY_EVIDENCE_ROOT`: select a dedicated reports root for this profile.
+- `MACCOMPANION_LEGACY_COLD=1`: compile in a fresh workspace, retaining existing caches.
 - `MACCOMPANION_LAB_SOURCE=real-mac-window`: opt into actual ScreenCaptureKit
   capture of a disposable Mac window and own-process OS input delivery. See
   the [real Mac lab boundaries](../LiveControlLab/README.md). Missing permission
   returns exit 77, not a passing test or a generated-video fallback.
+
+The former `MACCOMPANION_LAB_DERIVED_DATA` override is rejected. See the
+[managed legacy workflow guidance](../../docs/build-cache-workflow.md#legacy-feature-and-pairing-checks)
+for compiler/evidence separation, compatible profiles and migration.
 
 The live scenario checks software-signed Control approval, visible H.264
 frames across lease renewal, tap/pinch, automatic focused-region zoom,
