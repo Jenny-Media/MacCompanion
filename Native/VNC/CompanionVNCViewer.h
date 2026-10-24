@@ -56,11 +56,21 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy, nullable) void (^windowBoundsHandler)(CGPoint, CGSize, void (^)(CGRect));
 /// Shared iOS keyboard presentation uses the existing connection-owned queue.
 @property(nonatomic, readonly) NSUInteger controlsEpoch;
+@property(nonatomic, readonly) NSString *controlsConnectionID;
 @property(nonatomic, readonly) CompanionVNCInterfaceFeedback *controlsFeedback;
 - (BOOL)controlsInputAvailable;
 - (BOOL)sendControlEvents:(NSArray<NSDictionary *> *)events completion:(void (^)(BOOL))completion;
+- (nullable NSString *)beginControlSequence;
+- (BOOL)sendControlSequenceEvents:(NSArray<NSDictionary *> *)events identifier:(NSString *)identifier completion:(void (^)(BOOL))completion;
+- (void)endControlSequence:(NSString *)identifier;
+- (void)cancelControlSequence:(NSString *)identifier;
 - (void)sendOrdinaryControlEvents:(NSArray<NSDictionary *> *)events;
 - (void)toggleControlsKeyboard;
+/// Temporary shortcut presentation; never retires the connection input epoch.
+- (BOOL)controlsSoftwareKeyboardVisible;
+- (BOOL)controlsExecutionKeyboardCurrent;
+- (BOOL)hideControlsExecutionKeyboard;
+- (void)restoreControlsExecutionKeyboard;
 - (void)beginKeyboardCustomization;
 - (void)endKeyboardCustomization;
 - (void)showControlsComposer;

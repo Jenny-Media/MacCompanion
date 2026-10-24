@@ -7,8 +7,10 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from dependency_checkout_provenance import CheckoutProvenanceError, verify_checkouts, verify_source_checkout
+from prepare_uikit_swiftterm import prepare as prepare_frontend
 
 
 def git(repository, *arguments):
@@ -102,6 +104,58 @@ class CheckoutProvenanceTests(unittest.TestCase):
         transforms['probe']['Sources/Probe.swift'] = (b'invented source', after)
         with self.assertRaisesRegex(CheckoutProvenanceError, 'pinned Git tree'):
             verify_checkouts(self.packages, self.pins, transforms=transforms)
+
+    def frontend_adaptation(self):
+        """A disposable source/policy pair, never an alternate production fixture."""
+        self.checkout = self.checkout.rename(self.checkout.with_name('SwiftTerm'))
+        name = 'Sources/SwiftTerm/iOS/iOSTerminalView.swift'
+        source = self.checkout / name
+        source.parent.mkdir(parents=True)
+        old = 'public override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?)'
+        new = old.replace('public', 'open', 1)
+        before = (old + ' {}\n').encode()
+        after = before.replace(old.encode(), new.encode())
+        source.write_bytes(before)
+        git(self.checkout, 'add', name)
+        git(self.checkout, 'commit', '--quiet', '-m', 'Synthetic UIKit endpoint')
+        revision = git(self.checkout, 'rev-parse', 'HEAD')
+        self.pins[0]['identity'] = 'swiftterm'; self.pins[0]['state']['revision'] = revision
+        dependency = self.workspace['object']['dependencies'][0]
+        dependency['packageRef']['identity'] = 'swiftterm'; dependency['subpath'] = 'SwiftTerm'
+        dependency['state']['checkoutState']['revision'] = revision
+        self.write_workspace()
+        root = Path(self.temporary.name) / 'policy-root'
+        policy = root / 'spec/dependency-policy/v0/direct-client-development.json'
+        policy.parent.mkdir(parents=True)
+        policy.write_text(json.dumps({'uikitSwiftTermPressEndpoint': {
+            'path': name, 'originalDeclaration': old, 'adaptedDeclaration': new,
+            'originalSHA256': hashlib.sha256(before).hexdigest(),
+            'adaptedSHA256': hashlib.sha256(after).hexdigest()}}))
+        return root, source, before, after
+
+    def test_frontend_adaptation_is_idempotent_and_post_build_check_never_rewrites_source(self):
+        root, source, before, after = self.frontend_adaptation()
+        with patch('prepare_uikit_swiftterm.ROOT', root):
+            prepare_frontend(self.packages.parent, pins=self.pins, verify_only=True)
+            self.assertEqual(source.read_bytes(), before)
+            transforms = prepare_frontend(self.packages.parent, pins=self.pins)
+            self.assertEqual(source.read_bytes(), after)
+            prepared = verify_checkouts(self.packages, self.pins, transforms=transforms)
+            self.assertEqual(prepare_frontend(self.packages.parent, pins=self.pins), transforms)
+            prepare_frontend(self.packages.parent, pins=self.pins, verify_only=True)
+            self.assertEqual(verify_checkouts(self.packages, self.pins, previous=prepared, transforms=transforms), prepared)
+            source.write_bytes(after + b'// unadmitted source\n')
+            with self.assertRaises(CheckoutProvenanceError):
+                prepare_frontend(self.packages.parent, pins=self.pins, verify_only=True)
+            self.assertEqual(source.read_bytes(), after + b'// unadmitted source\n')
+
+    def test_frontend_adaptation_verifies_all_packages_before_changing_any_source(self):
+        root, source, before, _ = self.frontend_adaptation()
+        (self.checkout / 'Package.swift').write_text('// unadmitted package change\n')
+        with patch('prepare_uikit_swiftterm.ROOT', root):
+            with self.assertRaises(CheckoutProvenanceError):
+                prepare_frontend(self.packages.parent, pins=self.pins)
+        self.assertEqual(source.read_bytes(), before)
 
     def test_untracked_compiled_source_is_rejected(self):
         (self.checkout / 'Sources/Added.swift').write_text('public func added() {}\n')

@@ -48,7 +48,7 @@ import XCTest
         terminal.admitCustomInput = { [weak self] bytes in
             guard let self, self.acceptsInput else { return false }; self.output += bytes; return true
         }
-        terminal.admitCustomSequence = { [weak self] packets, valid, complete in
+        terminal.admitCustomSequence = { [weak self] packets, valid, _, complete in
             guard let self, inputReady && acceptsInput, valid() else { complete("Synthetic input admission rejected"); return false }
             output += packets.flatMap { $0 }; complete(nil); return true
         }

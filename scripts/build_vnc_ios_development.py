@@ -54,7 +54,8 @@ def build(args, parser, session):
     def source_inputs():
         files = [p for root in [HERE, ROOT / 'Native/SessionActivity', ROOT / 'Native/Terminal', ROOT / 'Native/Dependencies', ROOT / 'Apps/MacCompanionIOS', ROOT / 'Apps/MacCompanionSessionActivity', ROOT / 'Packages/MacCompanionKit/Sources']
                  for p in sorted(root.rglob('*')) if p.is_file()]
-        files += [Path(__file__), *[ROOT / 'scripts' / name for name in ['build_cache.py', 'direct_app_naming.py', 'prepare_macos_vnc_cursor.py', 'prepare_vnc_read_service.py']]]
+        files += [Path(__file__), *[ROOT / 'scripts' / name for name in ['build_cache.py', 'direct_app_naming.py', 'prepare_macos_vnc_cursor.py', 'prepare_vnc_read_service.py', 'prepare_uikit_swiftterm.py', 'prepare_swiftterm_build_tool.py', 'dependency_checkout_provenance.py', 'verify_direct_client_dependencies.py']]]
+        files.append(ROOT / 'spec/dependency-policy/v0/direct-client-development.json')
         return {str(p.relative_to(ROOT)): sha(p) for p in files}
     terminal_lock = json.loads((ROOT / 'Native/Terminal/source-lock.json').read_text())
     vendor = ROOT / terminal_lock['Citadel']['localPath']
@@ -195,8 +196,13 @@ def build(args, parser, session):
         run('xcodebuild', '-project', args.output / 'NormalVNCDevelopment.xcodeproj', '-scheme', 'MacCompanionIOS',
             '-derivedDataPath', args.output / 'DerivedData', '-onlyUsePackageVersionsFromResolvedFile',
             '-resolvePackageDependencies', stdout=log, stderr=subprocess.STDOUT)
+    from prepare_uikit_swiftterm import prepare as prepare_frontend
+    transforms = prepare_frontend(args.output / 'DerivedData')
     from prepare_swiftterm_build_tool import prepare
-    prepare(args.output / 'DerivedData')
+    prepare(args.output / 'DerivedData', transforms=transforms['swiftterm'])
+    from dependency_checkout_provenance import verify_checkouts
+    expected_pins = json.loads((ROOT / 'Native/Terminal/Package.resolved').read_text())['pins']
+    package_sources = verify_checkouts(args.output / 'DerivedData/SourcePackages', expected_pins, transforms=transforms)
     with (args.output / 'build.log').open('w') as log:
         run('xcodebuild', '-project', args.output / 'NormalVNCDevelopment.xcodeproj', '-scheme', 'MacCompanionIOS',
             '-configuration', 'Debug', '-sdk', args.sdk,
@@ -205,6 +211,7 @@ def build(args, parser, session):
     expected_pins = json.loads((ROOT / 'Native/Terminal/Package.resolved').read_text())['pins']
     if json.loads(package_lock.read_text())['pins'] != expected_pins:
         raise SystemExit('Resolved terminal package revisions changed during build.')
+    verify_checkouts(args.output / 'DerivedData/SourcePackages', expected_pins, previous=package_sources, transforms=transforms)
     app = args.output / ('DerivedData/Build/Products/Debug-' + args.sdk) / APP_BUNDLE_NAME
     naming = verify_app_name(app, 'ios')
     if plistlib.loads((app / 'Info.plist').read_bytes()).get('ITSAppUsesNonExemptEncryption') is not False:
@@ -214,6 +221,7 @@ def build(args, parser, session):
         raise SystemExit('Application sources changed during the build. Rebuild the final sources.')
     report = {'profile': 'maccompanion.normal-ios-direct-screen-sharing-development.v1',
         'appNaming': naming, 'normalSourceRoot': True, 'releaseAdmitted': False, 'sdk': args.sdk, 'app': str(app),
+        'packageSources': package_sources, 'swiftTermPressEndpoint': json.loads((ROOT / 'spec/dependency-policy/v0/direct-client-development.json').read_text())['uikitSwiftTermPressEndpoint'],
         'cursorAdapter': cursor_provenance, 'upstream': LOCK, 'terminalDependencies': terminal_lock, 'terminalPackagePins': expected_pins, 'libVNCClientSHA256': sha(build / 'libvncclient.a'), 'inputs': inputs,
         'normalApplicationBinarySHA256': sha(app / 'Mac Companion'), 'installed': False}
     report = session.publish(report, app)

@@ -44,6 +44,7 @@ typedef UIImage CompanionVNCImage;
 - (BOOL)beginMagnificationX:(NSInteger)x y:(NSInteger)y;
 - (BOOL)changeMagnification:(double)delta;
 - (void)endMagnification;
+/// Cancel the active local gesture only; lifecycle retirement remains global.
 - (void)cancelNativeGestures;
 @property(nonatomic, readonly) BOOL nativeScrollingSupported;
 - (BOOL)beginScrollX:(NSInteger)x y:(NSInteger)y;
@@ -68,10 +69,21 @@ typedef UIImage CompanionVNCImage;
 - (void)keyEvents:(NSArray<NSDictionary *> *)events;
 - (BOOL)tryKeyEvents:(NSArray<NSDictionary *> *)events;
 #if TARGET_OS_IOS
+/// Changes only when this owner starts a new transport connection.
+@property(nonatomic, readonly) NSString *connectionIdentifier;
 /// Mode-specific input admission, including the current Desktop baseline.
 @property(nonatomic, readonly) BOOL composedTextReady;
+/// Connection/input readiness plus the current shortcut reservation. UI gesture
+/// handlers must check this before changing local input state; cleanup is separate.
+@property(nonatomic, readonly) BOOL ordinaryControlInputAvailable;
 /// Completion acknowledges local writes only, never remote application consumption.
 - (BOOL)tryComposedTextEvents:(NSArray<NSDictionary *> *)events completion:(void (^)(BOOL written))completion;
+/// A local reservation keeps other input out while a timed shortcut yields.
+- (nullable NSString *)beginControlSequence;
+- (BOOL)ownsControlSequence:(NSString *)identifier;
+- (BOOL)tryControlSequenceEvents:(NSArray<NSDictionary *> *)events identifier:(NSString *)identifier completion:(void (^)(BOOL written))completion;
+- (void)endControlSequence:(NSString *)identifier;
+- (void)cancelControlSequence:(NSString *)identifier;
 #endif
 - (void)viewChanged;
 

@@ -372,7 +372,7 @@ private struct TerminalEditorItemPicker: View {
                 Text(group.title).font(.headline)
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: typeSize.isAccessibilitySize ? 140 : 64))], spacing: 8) {
                     ForEach(keys) { key in
-                        Button { place(.key(key.id)) } label: { Text(key.title) }
+                        Button { place(.key(key.id)) } label: { Text(key.pickerTitle) }
                             .buttonStyle(TerminalKeycapStyle()).accessibilityLabel(key.name).accessibilityIdentifier("terminal-add-" + key.id)
                     }
                 }
@@ -414,7 +414,7 @@ private struct TerminalEditorItemPicker: View {
                         Text("Common Shortcuts").font(.headline).padding(.top, 8)
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: typeSize.isAccessibilitySize ? 140 : 64))], spacing: 8) {
                             ForEach(keys) { key in
-                                Button { place(.key(key.id)) } label: { Text(key.title) }
+                                Button { place(.key(key.id)) } label: { Text(key.pickerTitle) }
                                     .buttonStyle(TerminalKeycapStyle()).accessibilityLabel(key.name)
                                     .accessibilityIdentifier("terminal-add-" + key.id)
                             }

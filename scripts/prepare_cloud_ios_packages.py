@@ -6,6 +6,7 @@ from pathlib import Path
 
 from dependency_checkout_provenance import verify_checkouts
 from prepare_swiftterm_build_tool import prepare
+from prepare_uikit_swiftterm import prepare as prepare_frontend
 from verify_direct_client_dependencies import validate as validate_policy
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,14 +33,15 @@ def configure(derived_data, security_directory, *, verify_only=False):
     pins = json.loads((ROOT / cloud['resolvedLockfilePath']).read_text())['pins']
     provenance = derived_data / 'maccompanion-cloud-packages.json'
     previous = json.loads(provenance.read_text()) if verify_only else None
+    transforms = prepare_frontend(derived_data, pins=pins, allow_cloud_transport=True, verify_only=verify_only)
     snapshot = verify_checkouts(derived_data / 'SourcePackages', pins, previous=previous,
-                               allow_cloud_transport=True)
+                               transforms=transforms, allow_cloud_transport=True)
     if verify_only:
         print('Cloud package sources remain unchanged after xcodebuild')
         return
     # The existing helper verifies the pinned checkout again before compiling
     # its unmodified host generator for Xcode 27's Debug plugin-tool path.
-    prepare(derived_data)
+    prepare(derived_data, transforms=transforms['swiftterm'])
     pin = next(p for p in pins if p['identity'] == 'swiftterm')
     approve_swiftterm(security_directory, pin['state']['revision'])
     provenance.write_text(json.dumps(snapshot, indent=2) + '\n')

@@ -76,6 +76,8 @@ struct TerminalControlAction: Codable, Identifiable, Equatable {
     var character: UInt32 = 0
     var modifiers: [UInt32] = []
     var steps: [TerminalShortcutStep]?
+    /// Missing in older local profiles; shortcuts run immediately by default.
+    var confirmBeforeRunning: Bool?
     var text = ""
     var builtIn: VNCQuickAction.Kind? = nil
     var operation: TerminalAppAction? = nil
@@ -85,7 +87,7 @@ struct TerminalControlAction: Codable, Identifiable, Equatable {
     var usage: String?
     var keycapTitle: String {
         guard kind == .shortcut else { return title }
-        let preview = sequencePreview
+        let preview = resolvedSteps.map(\.compactLabel).joined(separator: " → ")
         return !hasSequenceText && preview.count <= 12 ? preview : title
     }
 
@@ -116,7 +118,9 @@ struct TerminalControlAction: Codable, Identifiable, Equatable {
         case .shortcut:
             let values = resolvedSteps
             return (1...32).contains(values.count) && Set(values.map(\.id)).count == values.count
-                && values.allSatisfy(\.valid) && values.reduce(0, { $0 + $1.text.utf8.count }) <= 4096
+                && values.allSatisfy(\.valid) && values.contains { $0.kind != .wait }
+                && values.reduce(0, { $0 + $1.text.utf8.count }) <= 4096
+                && values.reduce(0, { $0 + ($1.waitMilliseconds ?? 0) }) <= 60_000
         case .text: return !text.isEmpty && text.utf8.count <= 4096 && !text.contains("\0") && !text.contains("\u{1b}")
         case .builtIn:
             if operation != nil { return builtIn == nil }
@@ -170,7 +174,13 @@ struct TerminalControlAction: Codable, Identifiable, Equatable {
         switch kind {
         case .builtIn: return operation != nil ? operation == other.operation : builtIn != nil && builtIn == other.builtIn
         case .key: return key == other.key
-        case .shortcut: return resolvedSteps.map { [$0.kind.rawValue, String($0.character), $0.modifiers.sorted().map(String.init).joined(separator: ","), $0.text] } == other.resolvedSteps.map { [$0.kind.rawValue, String($0.character), $0.modifiers.sorted().map(String.init).joined(separator: ","), $0.text] }
+        case .shortcut:
+            let left = resolvedSteps, right = other.resolvedSteps
+            return left.count == right.count && zip(left, right).allSatisfy { pair in
+                let (a, b) = pair
+                return a.kind == b.kind && a.character == b.character && a.modifiers.sorted() == b.modifiers.sorted()
+                    && a.text == b.text && a.waitMilliseconds == b.waitMilliseconds
+            }
         case .text: return id == other.id
         }
     }
@@ -300,7 +310,7 @@ struct TerminalKeyboardRow: Codable, Identifiable, Equatable {
 
 struct TerminalControlsProfile: Codable, Equatable {
     static let maximumKeyboardRows = 6
-    static let currentVersion = 3
+    static let currentVersion = 5
     static let currentRowsSchema = 4
     var family: TerminalControlsFamily?
     var version = Self.currentVersion

@@ -1,4 +1,4 @@
-"""Admit one access-level adaptation for the pinned visionOS UIKit frontend.
+"""Admit one access-level adaptation for the pinned iOS/visionOS UIKit frontend.
 
 No dependency implementation or pin is changed. The complete package tree is
 verified before writing, then the native builder records the actual adapted
@@ -12,12 +12,13 @@ import subprocess
 
 from dependency_checkout_provenance import verify_checkouts
 
+ROOT = Path(__file__).resolve().parents[1]
 
-def prepare(derived_data: Path):
-    root = Path(__file__).resolve().parents[1]
+
+def prepare(derived_data: Path, *, pins=None, allow_cloud_transport=False, verify_only=False):
     packages = derived_data / 'SourcePackages'
     package = packages / 'checkouts/SwiftTerm'
-    policy = json.loads((root / 'spec/dependency-policy/v0/direct-client-development.json').read_text())['visionOSSwiftTermPressEndpoint']
+    policy = json.loads((ROOT / 'spec/dependency-policy/v0/direct-client-development.json').read_text())['uikitSwiftTermPressEndpoint']
     name = policy['path']
     if name != 'Sources/SwiftTerm/iOS/iOSTerminalView.swift':
         raise RuntimeError('Unexpected native key-release adaptation path.')
@@ -30,15 +31,16 @@ def prepare(derived_data: Path):
     if hashlib.sha256(before).hexdigest() != policy['originalSHA256'] or hashlib.sha256(after).hexdigest() != policy['adaptedSHA256']:
         raise RuntimeError('Native key-release adaptation does not match its admitted hashes.')
     transforms = {'swiftterm': {name: (before, after)}}
-    pins = json.loads((root / 'Native/Terminal/Package.resolved').read_text())['pins']
-    verify_checkouts(packages, pins, transforms=transforms)
+    if pins is None:
+        pins = json.loads((ROOT / 'Native/Terminal/Package.resolved').read_text())['pins']
+    verify_checkouts(packages, pins, transforms=transforms, allow_cloud_transport=allow_cloud_transport)
     path = package / name
-    if path.read_bytes() == before:
+    if not verify_only and path.read_bytes() == before:
         mode = stat.S_IMODE(path.stat().st_mode)
         try:
             path.chmod(mode | stat.S_IWUSR)
             path.write_bytes(after)
         finally:
             path.chmod(mode)
-    verify_checkouts(packages, pins, transforms=transforms)
+    verify_checkouts(packages, pins, transforms=transforms, allow_cloud_transport=allow_cloud_transport)
     return transforms

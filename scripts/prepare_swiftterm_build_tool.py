@@ -2,7 +2,7 @@
 
 Xcode 27 can link the tool into Debug-iphonesimulator while the package plugin
 requests Debug. Compile the original pinned tool for the host, without changing
-the generator or replacing its generated source. Only native visionOS callers
+the generator or replacing its generated source. Native iOS and visionOS callers
 may supply the separately hash-admitted key-release access adaptation.
 """
 import json
