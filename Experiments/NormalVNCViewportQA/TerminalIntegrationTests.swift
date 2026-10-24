@@ -11,6 +11,21 @@ import ActivityKit
 import AppIntents
 @testable import Mac_Companion
 
+@MainActor private final class ShortcutHardwareKey: UIKey {
+    let usage: UIKeyboardHIDUsage
+    init(_ usage: UIKeyboardHIDUsage) { self.usage = usage; super.init() }
+    required init?(coder: NSCoder) { fatalError("Synthetic hardware keys are constructed directly") }
+    override var keyCode: UIKeyboardHIDUsage { usage }
+    override var characters: String { "" }
+    override var charactersIgnoringModifiers: String { "" }
+    override var modifierFlags: UIKeyModifierFlags { [] }
+}
+@MainActor private final class ShortcutHardwarePress: UIPress {
+    let hardwareKey: UIKey
+    init(_ usage: UIKeyboardHIDUsage) { hardwareKey = ShortcutHardwareKey(usage); super.init() }
+    override var key: UIKey? { hardwareKey }
+}
+
 @MainActor private final class TerminalActivityTestBackend: RemoteSessionActivityBackend {
     var enabled = true
     var ids: [String] = []
@@ -910,6 +925,84 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         XCTAssertFalse(session.isSendingCustomSequence)
         XCTAssertTrue(session.trySend([120]))
         try await wait { record.received.last == 120 }
+    }
+
+    private func withHardwareTerminal(_ check: @MainActor (DirectTerminalSession, TerminalController, SSHTestRecord) async throws -> Void) async throws {
+        let record = SSHTestRecord(echoInput: false), key = NIOSSHPrivateKey(ed25519Key: .init())
+        let peer = try await server(record: record, key: key); defer { _ = peer.close() }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic hardware shortcut", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(peer.localAddress?.port))
+        try TerminalSecretStore.approveHostKey(String(openSSHPublicKey: key.publicKey), id: mac.id)
+        let session = DirectTerminalSession(mac: mac)
+        // One controller and one live session own both the real frontend and SSH queue.
+        let liveController = TerminalController(session: session, customize: {}); liveController.loadViewIfNeeded()
+        defer { _ = liveController.terminal.resignFirstResponder(); session.stop(); try? TerminalSecretStore.remove(mac.id) }
+        session.connect(username: "synthetic", password: "synthetic-only", remember: false)
+        try await wait { session.canSendUserInput && liveController.terminal.customInputEpoch() != nil }
+        record.clearReceived()
+        try await check(session, liveController, record)
+    }
+
+    func testRejectedHardwarePressCannotRepeatOrReleaseAfterShortcutCancelOrCompletion() async throws {
+        for enhanced in [false, true] { for cancel in [false, true] {
+            try await withHardwareTerminal { session, controller, record in
+                let terminal = controller.terminal
+                if enhanced { terminal.feed(byteArray: Array("\u{1b}[>3u".utf8)[...]) }
+                var waiting = false, completed = false
+                let epoch = try XCTUnwrap(session.customInputEpoch)
+                XCTAssertTrue(session.sendSequencePlan([.input(0), .wait(600), .input(2)], epoch: epoch,
+                    resolve: { $0 == 0 ? [97] : [98] }, stillValid: { true }, progress: { if $0 == 1 { waiting = true } }, completion: {
+                        if cancel { XCTAssertNotNil($0) } else { XCTAssertNil($0) }; completed = true
+                    }))
+                try await wait { waiting }
+                terminal.keyboardState.toggle(.ctrl, lock: true)
+                let modifiers = terminal.keyboardState.locked
+                let rejected = ShortcutHardwarePress(.keyboardRightArrow)
+                terminal.pressesBegan([rejected], with: nil)
+                XCTAssertEqual(terminal.keyboardState.locked, modifiers, "Rejected hardware input must not consume the saved modifiers")
+                if cancel { session.cancelSequence(epoch: epoch) }
+                try await wait { completed && !session.isSendingCustomSequence }
+                try await Task.sleep(for: .milliseconds(650))
+                terminal.pressesEnded([rejected], with: nil)
+                try await Task.sleep(for: .milliseconds(100))
+                XCTAssertEqual(record.received, cancel ? [97] : [97,98], "No repeat or unmatched Kitty release may escape after ownership ends")
+                let count = record.received.count
+                let fresh = ShortcutHardwarePress(.keyboardDownArrow)
+                terminal.pressesBegan([fresh], with: nil); terminal.pressesEnded([fresh], with: nil)
+                try await wait { record.received.count > count }
+            }
+        } }
+    }
+
+    func testRejectedHardwareReleaseCannotStopAnotherAcceptedKeyRepeat() async throws {
+        try await withHardwareTerminal { session, controller, record in
+            let terminal = controller.terminal, epoch = try XCTUnwrap(session.customInputEpoch)
+            var waiting = false
+            XCTAssertTrue(session.sendSequencePlan([.wait(1000), .input(1)], epoch: epoch, resolve: { _ in [97] },
+                stillValid: { true }, progress: { if $0 == 0 { waiting = true } }, completion: { _ in }))
+            try await wait { waiting }
+            let rejected = ShortcutHardwarePress(.keyboardUpArrow)
+            terminal.pressesBegan([rejected], with: nil); session.cancelSequence(epoch: epoch)
+            let accepted = ShortcutHardwarePress(.keyboardDownArrow)
+            terminal.pressesBegan([accepted], with: nil)
+            try await wait { !record.received.isEmpty }
+            let beforeRelease = record.received.count
+            terminal.pressesEnded([rejected], with: nil)
+            try await Task.sleep(for: .milliseconds(650))
+            XCTAssertGreaterThan(record.received.count, beforeRelease, "An ignored key-up must not reach SwiftTerm's global repeat cancellation")
+            terminal.pressesEnded([accepted], with: nil)
+        }
+    }
+
+    func testCancelledAcceptedHardwarePressStopsItsRepeat() async throws {
+        try await withHardwareTerminal { _, controller, record in
+            let press = ShortcutHardwarePress(.keyboardLeftArrow)
+            controller.terminal.pressesBegan([press], with: nil)
+            try await wait { !record.received.isEmpty }
+            controller.terminal.pressesCancelled([press], with: nil)
+            let count = record.received.count
+            try await Task.sleep(for: .milliseconds(650))
+            XCTAssertEqual(record.received.count, count)
+        }
     }
 
     func testFrontendProtocolRepliesAndIntermediateOutputContinueDuringWait() async throws {

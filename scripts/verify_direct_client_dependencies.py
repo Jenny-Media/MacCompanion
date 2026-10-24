@@ -31,8 +31,8 @@ def validate_cloud(policy, root=ROOT):
 
 def validate():
     policy = json.loads(POLICY.read_text())
-    assert set(policy) == {'profile', 'releaseAdmitted', 'vendorPackage', 'sourceLockPath', 'sourceLockSHA256', 'resolvedLockfilePath', 'resolvedLockfileSHA256', 'visionOSSwiftTermPressEndpoint', 'xcodeCloud'}
-    adaptation = policy['visionOSSwiftTermPressEndpoint']
+    assert set(policy) == {'profile', 'releaseAdmitted', 'vendorPackage', 'sourceLockPath', 'sourceLockSHA256', 'resolvedLockfilePath', 'resolvedLockfileSHA256', 'uikitSwiftTermPressEndpoint', 'xcodeCloud'}
+    adaptation = policy['uikitSwiftTermPressEndpoint']
     assert set(adaptation) == {'path', 'originalSHA256', 'adaptedSHA256', 'originalDeclaration', 'adaptedDeclaration', 'purpose'}
     assert adaptation['path'] == 'Sources/SwiftTerm/iOS/iOSTerminalView.swift'
     assert adaptation['originalDeclaration'] == 'public override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?)'

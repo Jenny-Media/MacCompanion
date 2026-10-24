@@ -46,6 +46,30 @@ Regressions cover pointer, trackpad and tabletop surfaces with both Cancel and
 completion, the first subsequent click and fresh gesture, independent lifecycle
 gates, stale owner callbacks, host cursor reception, and retained prefix ordering.
 
+## Terminal hardware-key admission
+
+Reject hardware presses before SwiftTerm can reset accessory modifiers, encode
+input or install its repeat timer. Admit only when the existing session input
+epoch is available and no shortcut owns input. Track admitted physical UIPress
+objects weakly by identity; a rejected press cannot acquire a release endpoint
+when ownership later ends. Only admitted releases reach SwiftTerm's global
+repeat cleanup and enhanced key-release encoding. Route admitted UIKit
+cancellation through that same cleanup, once. Retiring a terminal surface clears
+its admitted presses before responder cleanup.
+
+Reuse the existing exact, hash-admitted SwiftTerm `pressesEnded` access-level
+adaptation for both UIKit clients. The managed iOS builder and cloud preparation
+record and verify the adapted package trees before and after compilation; the
+package pin and frontend implementation remain unchanged. Post-build cloud
+verification must never rewrite package sources. macOS keeps its unadapted tree.
+
+Regressions inject synthetic public UIKit presses through the real pinned
+frontend and a disposable loopback SSH peer. Cover rejection across both Cancel
+and normal completion, classic and enhanced keyboard modes, preservation of
+accessory modifiers, fresh valid presses, rejected releases alongside a valid
+repeat, and UIKit cancellation. These are Simulator tests, not physical keyboard
+acceptance.
+
 ## Verification
 
 The three targeted native regressions failed against the unchanged previous
@@ -64,7 +88,17 @@ While reserved, gesture callbacks cannot change local targets or touch feedback,
 and the first subsequent click uses the unchanged target. Independent lifecycle
 and stale-owner gates remain closed; incoming host cursor observations continue.
 
-The normal Simulator app matches all 634 production source fingerprints.
-scripts/validate.sh passed with stable Xcode.app 27.1 (27A9275). Earlier full UI
+The normal Simulator app now matches all 639 production input fingerprints,
+including dependency preparation and its admission policy, and verifies all 12
+resolved package source trees. scripts/validate.sh passed with stable Xcode.app 27.1 (27A9275). Earlier full UI
 journeys and physical build 157 predate this follow-up; this change is verified
 by the native Simulator regressions rather than a new physical-device install.
+
+The three Terminal hardware regressions failed against unchanged da78007
+production sources, then passed after admission moved ahead of SwiftTerm state.
+All 115 current Simulator cases passed across TerminalIntegrationTests,
+TerminalCompatibilityTests, ShortcutSequenceTests and SessionLifecycleTests,
+with no failures or skips. The current validation also passes 27 dependency
+provenance cases and 14 cloud policy/preparation cases. The hardware tests use
+synthetic UIKit events and real loopback SSH; no physical keyboard acceptance or
+new hosted cloud archive is claimed.

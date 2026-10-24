@@ -509,6 +509,9 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     private var deletionEncoded = false
     var customInputEpoch: () -> UUID? = { nil }
     var inputReserved: () -> Bool = { false }
+    // Track physical presses, not HID codes: a rejected press must never gain
+    // a release endpoint just because shortcut ownership has since ended.
+    private let admittedHardwarePresses = NSHashTable<UIPress>(options: [.weakMemory, .objectPointerPersonality])
     var admitCustomInput: ([UInt8]) -> Bool = { _ in false }
     var admitCustomSequence: ([[UInt8]], @escaping @MainActor () -> Bool, @escaping @MainActor (Int) -> Void, @escaping @MainActor (String?) -> Void) -> Bool = { _, _, _, complete in
         complete("The input owner is unavailable. Nothing was queued."); return false
@@ -534,6 +537,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         // Detach the delegate first: native responder/composition cleanup must
         // never write to the replacement shell, even through a delayed callback.
         terminalDelegate = nil; focusChanged = nil
+        admittedHardwarePresses.removeAllObjects()
         customInputEpoch = { nil }; admitCustomInput = { _ in false }; admitCustomSequence = { _, _, _, complete in complete("The input owner retired."); return false }; customInputBytes = nil
         admitCustomPlan = { _, _, _, _, complete in complete("The input owner retired."); return false }; cancelCustomPlan = { _ in }
         _ = resignFirstResponder()
@@ -582,8 +586,38 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         // Hardware keys own their real modifier/repeat/release metadata. Do not
         // replace their later UITextInput commit with a discrete software key.
-        if presses.contains(where: { $0.key != nil }) { resetModifiers() }
-        super.pressesBegan(presses, with: event)
+        let available = !inputReserved() && customInputEpoch() != nil
+        let accepted = Set(presses.filter { $0.key == nil || available })
+        for press in accepted where press.key != nil { admittedHardwarePresses.add(press) }
+        if accepted.contains(where: { $0.key != nil }) { resetModifiers() }
+        if !accepted.isEmpty { super.pressesBegan(accepted, with: event) }
+    }
+    override func pressesChanged(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let accepted = Set(presses.filter { $0.key == nil || admittedHardwarePresses.contains($0) })
+        if !accepted.isEmpty { super.pressesChanged(accepted, with: event) }
+    }
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let accepted = takeAdmittedPresses(presses)
+        // SwiftTerm's release handler also cancels its global repeat timer.
+        // Even an otherwise harmless rejected key-up must not reach it.
+        if !accepted.isEmpty { super.pressesEnded(accepted, with: event) }
+    }
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let accepted = takeAdmittedPresses(presses)
+        let hardware = Set(accepted.filter { $0.key != nil })
+        let other = accepted.subtracting(hardware)
+        // UIKit cancellation must retire SwiftTerm's repeat and modifier state
+        // just as a normal release does. Repeated endpoints are ignored.
+        if !hardware.isEmpty { super.pressesEnded(hardware, with: event) }
+        if !other.isEmpty { super.pressesCancelled(other, with: event) }
+    }
+    private func takeAdmittedPresses(_ presses: Set<UIPress>) -> Set<UIPress> {
+        Set(presses.filter { press in
+            guard press.key != nil else { return true }
+            guard admittedHardwarePresses.contains(press) else { return false }
+            admittedHardwarePresses.remove(press)
+            return true
+        })
     }
     override func insertText(_ text: String) {
         guard !inputReserved() else { return }
