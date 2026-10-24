@@ -1807,7 +1807,9 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     NSIndexSet *retired = [_events indexesOfObjectsPassingTest:^BOOL(NSDictionary *event, NSUInteger index, BOOL *stop) { return event[@"composedTextID"] != nil; }];
     [_events removeObjectsAtIndexes:retired];
     if (sequence) [self enqueueControlCleanupLocked];
-    if (replies.count) _releaseInputRequested = YES;
+    // Sequence cleanup stays behind earlier accepted input. Do not request an
+    // out-of-band release, or clear one independently requested by lifecycle.
+    if (replies.count && !sequence) _releaseInputRequested = YES;
     for (void (^reply)(BOOL) in replies) dispatch_async(dispatch_get_main_queue(), ^{ reply(NO); });
 }
 - (void)enqueueControlCleanupLocked {

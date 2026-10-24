@@ -66,6 +66,61 @@
 @interface SessionLifecycleTests : XCTestCase
 @end
 @implementation SessionLifecycleTests
+- (void)testSequenceCancelPreservesEarlierDragMotionThroughTheSocketWorker {
+    [self checkSequenceCancelWorkerOrderWithInterruption:NO];
+}
+- (void)testSequenceCancelPreservesAnIndependentInterruptionRelease {
+    [self checkSequenceCancelWorkerOrderWithInterruption:YES];
+}
+- (void)checkSequenceCancelWorkerOrderWithInterruption:(BOOL)interruption {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+    int yes=1; setsockopt(pair[0],SOL_SOCKET,SO_NOSIGPIPE,&yes,sizeof(yes));
+    struct timeval timeout={.tv_sec=2}; setsockopt(pair[1],SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
+    InterruptedBatchSession *session=[InterruptedBatchSession new]; rfbClient *client=rfbGetClient(8,3,4);
+    client->sock=pair[0]; client->width=4; client->height=4;
+    [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    client->supportedMessages.client2server[0]|=(1<<rfbKeyEvent)|(1<<rfbPointerEvent);
+    session.inputOnly=YES;
+    for (NSString *key in @[@"running",@"established",@"inputReady"]) [session setValue:@YES forKey:key];
+    XCTAssertTrue([session registerSocket:pair[0]]);
+    XCTAssertTrue(SendKeyEvent(client,0xffe1,TRUE)); [[session valueForKey:@"heldKeys"] addObject:@0xffe1];
+    XCTAssertTrue(SendKeyEvent(client,0x78,TRUE)); [[session valueForKey:@"heldKeys"] addObject:@0x78];
+    XCTAssertTrue(SendPointerEvent(client,0,0,1));
+    uint8_t held[22]; XCTAssertEqual(recv(pair[1],held,sizeof(held),MSG_WAITALL),sizeof(held));
+    [session key:0x78 down:NO];
+    XCTestExpectation *ended=[self expectationWithDescription:@"Canceled sequence worker stops"];
+    __weak CompanionVNCSession *weak=session;
+    session.stateHandler=^(NSString *state,NSDictionary *stats){if(!weak.running)[ended fulfill];};
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{[session processConnectedClient:client];});
+    XCTAssertEqual(dispatch_semaphore_wait(session.firstWrite,dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC)),0);
+    // Keep the real socket worker in an accepted write while earlier drag
+    // motion, the viewer's mouse-up, and a shortcut are admitted behind it.
+    [session pointerX:2 y:1 mask:1]; [session pointerX:2 y:1 mask:0];
+    NSString *owner=[session beginControlSequence]; XCTAssertNotNil(owner);
+    XCTestExpectation *cancelled=[self expectationWithDescription:@"Cancel completes before the stalled writer"];
+    __block NSUInteger completions=0;
+    NSArray *chord=@[@{@"key":@0x61,@"down":@YES},@{@"key":@0x61,@"down":@NO}];
+    XCTAssertTrue([session tryControlSequenceEvents:chord identifier:owner
+        completion:^(BOOL ok){XCTAssertFalse(ok);completions++;[cancelled fulfill];}]);
+    if (interruption) { [session suspendInputForInterruption]; [session resumeInputAfterInterruption]; }
+    [session cancelControlSequence:owner];
+    [self waitForExpectations:@[cancelled] timeout:1]; XCTAssertEqual(completions,1);
+    [session key:0x63 down:YES];
+    dispatch_semaphore_signal(session.continueWrite);
+    const uint8_t accepted[]={4,0,0,0,0,0,0,0x78};
+    // Ordinary Cancel preserves drag motion before release. An interruption
+    // retires that motion and must retain its independently requested release.
+    const uint8_t ordered[]={5,1,0,2,0,1, 5,0,0,2,0,1, 4,0,0,0,0,0,0xff,0xe1, 5,0,0,2,0,1, 4,1,0,0,0,0,0,0x63};
+    const uint8_t interrupted[]={4,0,0,0,0,0,0xff,0xe1, 5,0,0,0,0,0, 4,1,0,0,0,0,0,0x63};
+    NSMutableData *expected=[NSMutableData dataWithBytes:accepted length:sizeof(accepted)];
+    [expected appendBytes:interruption ? interrupted : ordered length:interruption ? sizeof(interrupted) : sizeof(ordered)];
+    NSMutableData *wire=[NSMutableData dataWithLength:expected.length];
+    ssize_t count=recv(pair[1],wire.mutableBytes,wire.length,MSG_WAITALL);
+    XCTAssertEqual(count,(ssize_t)expected.length);
+    if (count==(ssize_t)expected.length) XCTAssertEqualObjects(wire,expected);
+    XCTAssertEqual(completions,1); XCTAssertTrue(session.connected);
+    [session stop]; [self waitForExpectations:@[ended] timeout:2]; session.stateHandler=nil; close(pair[1]);
+}
 - (void)testTimedSequenceCleanupPreservesQueuedInputAndReleasesHeldButtonBeforeKeys {
     int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
     int yes=1; setsockopt(pair[0],SOL_SOCKET,SO_NOSIGPIPE,&yes,sizeof(yes));
