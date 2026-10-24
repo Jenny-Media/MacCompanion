@@ -24,7 +24,7 @@ def application_inputs(probe):
     files = [p for folder in roots for p in sorted(folder.rglob('*')) if p.is_file()]
     files += [ROOT / 'Native/Mac' / (name + '.swift') for name in ['MacSessionStatus', 'MacTerminalHeldInput', 'MacTerminalMouseReport']]
     files += [Path(__file__), *[ROOT / 'scripts' / name for name in ['build_cache.py', 'direct_app_naming.py', 'verify_direct_client_dependencies.py',
-        'prepare_swiftterm_build_tool.py', 'prepare_visionos_swiftterm.py', 'dependency_checkout_provenance.py']],
+        'prepare_swiftterm_build_tool.py', 'prepare_uikit_swiftterm.py', 'dependency_checkout_provenance.py']],
         ROOT / 'spec/dependency-policy/v0/direct-client-development.json',
         ROOT / 'spec/privacy-manifest/v0/targets/ios-app/PrivacyInfo.xcprivacy']
     return {str(p.relative_to(ROOT)): digest(p) for p in files}
@@ -165,7 +165,7 @@ def build(args, parser, session):
     build_args = ['xcodebuild', '-project', project, '-scheme', name, '-derivedDataPath', args.output / 'DerivedData', '-onlyUsePackageVersionsFromResolvedFile']
     with (args.output / 'resolve.log').open('w') as log:
         run(*build_args, '-resolvePackageDependencies', stdout=log, stderr=subprocess.STDOUT)
-    from prepare_visionos_swiftterm import prepare as prepare_frontend
+    from prepare_uikit_swiftterm import prepare as prepare_frontend
     transforms = prepare_frontend(args.output / 'DerivedData')
     from prepare_swiftterm_build_tool import prepare
     prepare(args.output / 'DerivedData', transforms=transforms['swiftterm'])
@@ -195,7 +195,7 @@ def build(args, parser, session):
         'applicationCode': {str(p.relative_to(app)): digest(p) for p in sorted(app.rglob('*'))
                             if p.is_file() and (p == app / name or p.suffix == '.dylib')},
         'libVNCClientSources': vnc_before, 'pins': expected, 'packageSources': package_sources,
-        'swiftTermPressEndpoint': json.loads((ROOT / 'spec/dependency-policy/v0/direct-client-development.json').read_text())['visionOSSwiftTermPressEndpoint'],
+        'swiftTermPressEndpoint': json.loads((ROOT / 'spec/dependency-policy/v0/direct-client-development.json').read_text())['uikitSwiftTermPressEndpoint'],
         'applicationInputs': application_before, 'applicationInputsUnchanged': True, 'probe': args.probe,
         'installed': False, 'physicalAcceptance': False, 'releaseAdmitted': False}
     report = session.publish(report, app)

@@ -1,6 +1,7 @@
 #import <XCTest/XCTest.h>
 #import "CompanionVNCSession.h"
 #import "CompanionVNCViewer.h"
+#import "CompanionVNCTrackpadFeedback.h"
 #import <rfb/rfbclient.h>
 #import <sys/socket.h>
 #import <unistd.h>
@@ -13,6 +14,10 @@
 - (BOOL)sendScrollEvent:(NSDictionary *)event client:(rfbClient *)client;
 - (BOOL)releaseScroll:(rfbClient *)client;
 - (void)processConnectedClient:(rfbClient *)client;
+- (BOOL)writeKeyEvent:(uint32_t)key down:(BOOL)down client:(rfbClient *)client;
+- (BOOL)sendInputEvents:(NSArray *)events client:(rfbClient *)client inputEpoch:(NSUInteger)epoch;
+- (BOOL)servicePendingInput:(rfbClient *)client;
+- (void)retireNativeGesturesLocked;
 @end
 @interface CompanionVNCViewer (NativeGestureTesting)
 - (void)scrollRemote:(UIPanGestureRecognizer *)gesture;
@@ -21,6 +26,10 @@
 - (void)secondaryClickAt:(UITapGestureRecognizer *)gesture;
 - (void)setTrackpadModeEnabled:(BOOL)enabled;
 - (void)becameInactive;
+- (void)dragAt:(UIPanGestureRecognizer *)gesture;
+- (void)holdAt:(UILongPressGestureRecognizer *)gesture;
+- (void)clickAt:(UIGestureRecognizer *)gesture;
+- (void)receivedCursor:(UIImage *)image hotspot:(CGPoint)hotspot position:(CGPoint)position known:(BOOL)known;
 @end
 @interface SyntheticPinch : UIPinchGestureRecognizer
 @property UIGestureRecognizerState syntheticState;
@@ -37,6 +46,20 @@
 - (CGPoint)translationInView:(UIView *)view { return self.delta; }
 - (void)setTranslation:(CGPoint)translation inView:(UIView *)view { self.delta = translation; }
 @end
+@interface ReservedPointerPan : SyntheticScroll
+@property CGPoint point;
+@end
+@implementation ReservedPointerPan
+- (CGPoint)locationInView:(UIView *)view { return self.point; }
+@end
+@interface ReservedPointerHold : UILongPressGestureRecognizer
+@property UIGestureRecognizerState sampleState;
+@property CGPoint point;
+@end
+@implementation ReservedPointerHold
+- (UIGestureRecognizerState)state { return self.sampleState; }
+- (CGPoint)locationInView:(UIView *)view { return self.point; }
+@end
 @interface SecondaryTapSample : UITapGestureRecognizer
 @property UIGestureRecognizerState sampleState;
 @property CGPoint point;
@@ -47,6 +70,18 @@
 - (CGPoint)locationInView:(UIView *)view { return self.point; }
 - (void)setEnabled:(BOOL)enabled { if (!enabled) self.cancellations++; [super setEnabled:enabled]; }
 @end
+@interface GestureBoundarySession : CompanionVNCSession
+@property(nonatomic, strong) dispatch_semaphore_t firstWrite, continueWrite;
+@property BOOL stalled;
+@end
+@implementation GestureBoundarySession
+- (instancetype)init { if ((self=[super init])) { _firstWrite=dispatch_semaphore_create(0); _continueWrite=dispatch_semaphore_create(0); } return self; }
+- (BOOL)writeKeyEvent:(uint32_t)key down:(BOOL)down client:(rfbClient *)client {
+    if (!self.stalled) { self.stalled=YES; dispatch_semaphore_signal(self.firstWrite);
+        if (dispatch_semaphore_wait(self.continueWrite,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC))) return NO; }
+    return [super writeKeyEvent:key down:down client:client];
+}
+@end
 @interface NativeGestureTests : XCTestCase
 @end
 @implementation NativeGestureTests
@@ -55,7 +90,7 @@
 }
 - (CompanionVNCSession *)sessionWithInputOnly:(BOOL)inputOnly {
     CompanionVNCSession *s = [CompanionVNCSession new]; s.inputOnly = inputOnly;
-    for (NSString *key in @[@"running", @"established", @"inputReady", @"appleGestureServer", @"nativeGestureLayout"]) [s setValue:@YES forKey:key];
+    for (NSString *key in @[@"running", @"established", @"inputReady", @"baselinePresented", @"appleGestureServer", @"nativeGestureLayout"]) [s setValue:@YES forKey:key];
     [s setValue:@3024 forKey:@"framebufferWidth"]; [s setValue:@1964 forKey:@"framebufferHeight"];
     return s;
 }
@@ -78,6 +113,323 @@
     NSMutableData *actual = [NSMutableData dataWithLength:expected.length];
     XCTAssertEqual(recv(socket, actual.mutableBytes, actual.length, MSG_WAITALL), (ssize_t)actual.length);
     XCTAssertEqualObjects(actual, expected);
+}
+- (void)testFailedShortcutAdmissionLeavesTheExistingGestureAlone {
+    CompanionVNCViewer *viewer=[CompanionVNCViewer new]; viewer.inputOnly=YES; [viewer loadViewIfNeeded];
+    CompanionVNCSession *s=[self session]; viewer.session=s;
+    XCTAssertTrue([s beginScrollX:1000 y:600]);
+    [viewer setValue:@YES forKey:@"scrollingActive"];
+    NSUInteger epoch=[[s valueForKey:@"gestureLifecycleEpoch"] unsignedIntegerValue];
+    NSArray *pending=@[@{@"key":@0x61,@"down":@YES}];
+    XCTAssertTrue([s tryComposedTextEvents:pending completion:^(BOOL ok){}]);
+    XCTAssertNil([viewer beginControlSequence]);
+    XCTAssertTrue([[viewer valueForKey:@"scrollingActive"] boolValue]);
+    XCTAssertEqual([[s valueForKey:@"gestureLifecycleEpoch"] unsignedIntegerValue],epoch);
+    XCTAssertEqualObjects([self takeEvents:s].firstObject[@"scrollPhase"],@1);
+    [s stop];
+}
+- (void)testShortcutWaitCannotChangePointerStateOrTheNextClickTarget {
+    for (NSString *mode in @[@"pointer", @"trackpad", @"inputOnly", @"tabletop"]) for (NSNumber *cancel in @[@NO, @YES]) {
+        CompanionVNCViewer *viewer=[CompanionVNCViewer new]; viewer.inputOnly=[mode isEqual:@"inputOnly"]; [viewer loadViewIfNeeded];
+        CompanionVNCSession *s=[self sessionWithInputOnly:viewer.inputOnly]; viewer.session=s;
+        CGPoint original=CGPointMake(100,200), touch=CGPointMake(300,250);
+        [viewer setValue:[NSValue valueWithCGRect:CGRectMake(0,0,800,600)] forKey:@"activeCrop"];
+        [viewer setValue:[NSValue valueWithCGPoint:original] forKey:@"cursorPosition"]; [viewer setValue:@YES forKey:@"cursorPositionKnown"];
+        ((UIView *)[viewer valueForKey:@"image"]).frame=CGRectMake(0,0,800,600);
+        ((UIView *)[viewer valueForKey:@"login"]).hidden=YES;
+        [viewer setTrackpadModeEnabled:[mode isEqual:@"trackpad"] || viewer.inputOnly];
+        [viewer setValue:@([mode isEqual:@"tabletop"]) forKey:@"tabletop"];
+        [s keyEvents:@[@{@"key":@0x61,@"down":@YES},@{@"key":@0x61,@"down":@NO}]];
+        NSString *owner=[viewer beginControlSequence]; XCTAssertNotNil(owner);
+        NSArray *pending=[[s valueForKey:@"events"] copy];
+        [viewer setValue:@YES forKey:@"cursorFollowingSuspended"];
+        NSArray *keys=@[@"cursorPosition",@"lastLocalPointerInputAt",@"trackpadOrigin",@"trackpadTranslation",@"cursorFollowingSuspended",
+                        @"lastPointer",@"pointerHeld",@"magnificationActive",@"scrollingActive",@"scrollGestureActive",@"scrollRemainder",@"scrollFraction"];
+        NSDictionary *before=[viewer dictionaryWithValuesForKeys:keys];
+        NSString *statusBefore=[(UILabel *)[viewer valueForKey:@"status"] text];
+        UIView *surface=[viewer valueForKey:[mode isEqual:@"tabletop"] ? @"tabletopPad" : @"canvas"];
+        ReservedPointerPan *pan=[ReservedPointerPan new]; pan.point=touch; [surface addGestureRecognizer:pan];
+        ReservedPointerHold *hold=[ReservedPointerHold new]; hold.point=touch; [surface addGestureRecognizer:hold];
+        SyntheticScroll *scroll=[SyntheticScroll new]; [surface addGestureRecognizer:scroll];
+        SyntheticPinch *pinch=[SyntheticPinch new];
+        for (NSNumber *state in @[@(UIGestureRecognizerStateBegan),@(UIGestureRecognizerStateChanged),@(UIGestureRecognizerStateEnded),@(UIGestureRecognizerStateCancelled)]) {
+            pan.syntheticState=state.integerValue; pan.delta=CGPointMake(40,20); [viewer dragAt:pan];
+            hold.sampleState=state.integerValue; hold.point=CGPointMake(350,275); [viewer holdAt:hold];
+            scroll.syntheticState=state.integerValue; scroll.delta=CGPointMake(2,5); [viewer scrollRemote:scroll];
+            pinch.syntheticState=state.integerValue; pinch.scale=1.1; [viewer pinchRemote:pinch];
+        }
+        SecondaryTapSample *tap=[SecondaryTapSample new]; tap.point=touch; tap.sampleState=UIGestureRecognizerStateRecognized; [surface addGestureRecognizer:tap];
+        [viewer clickAt:tap]; [viewer secondaryClickAt:tap];
+        for (NSString *name in @[@"trackpadFeedback",@"tabletopFeedback"]) {
+            CompanionVNCTrackpadFeedback *feedback=[viewer valueForKey:name]; XCTAssertFalse(feedback.touchesAllowed());
+        }
+        XCTAssertEqualObjects([viewer dictionaryWithValuesForKeys:keys],before,@"%@ cancel=%@",mode,cancel);
+        XCTAssertEqualObjects([(UILabel *)[viewer valueForKey:@"status"] text],statusBefore);
+        XCTAssertEqualObjects([s valueForKey:@"events"],pending,@"Previously accepted input and its cleanup stay ordered.");
+        if (cancel.boolValue) [viewer cancelControlSequence:owner]; else [viewer endControlSequence:owner];
+        XCTAssertEqualObjects([self takeEvents:s],pending);
+        [viewer clickAt:tap]; NSArray *clicks=[self takeEvents:s]; XCTAssertEqual(clicks.count,2);
+        CGPoint expected=[mode isEqual:@"pointer"] ? touch : original;
+        XCTAssertEqualObjects(clicks.firstObject[@"x"],@((NSInteger)expected.x)); XCTAssertEqualObjects(clicks.firstObject[@"y"],@((NSInteger)expected.y));
+        pan.syntheticState=UIGestureRecognizerStateBegan; pan.delta=CGPointZero; [viewer dragAt:pan];
+        pan.syntheticState=UIGestureRecognizerStateChanged; pan.delta=CGPointMake(40,20); [viewer dragAt:pan];
+        XCTAssertFalse(CGPointEqualToPoint([[viewer valueForKey:@"cursorPosition"] CGPointValue],original));
+        XCTAssertGreaterThan([self takeEvents:s].count,0,@"Fresh gestures resume immediately.");
+        [s stop];
+    }
+}
+- (void)testReservedRecognizerCallbacksCannotRetireTheAcceptedGesturePrefix {
+    CompanionVNCSession *s=[self session]; XCTAssertTrue([s beginScrollX:1000 y:600]);
+    NSUInteger epoch=[[s valueForKey:@"gestureLifecycleEpoch"] unsignedIntegerValue];
+    NSString *owner=[s beginControlSequence]; XCTAssertNotNil(owner);
+    [s cancelNativeGestures];
+    XCTAssertFalse([s changeScrollX:12 y:24]); XCTAssertFalse([s changeMagnification:.05]);
+    XCTAssertEqual([[s valueForKey:@"gestureLifecycleEpoch"] unsignedIntegerValue],epoch);
+    XCTAssertEqualObjects([self takeEvents:s].firstObject[@"scrollPhase"],@1);
+    [s cancelControlSequence:owner]; [s stop];
+}
+- (void)testOrdinaryInputGateFollowsTheCurrentOwnerAndIndependentLifecycleGates {
+    for (NSNumber *only in @[@NO,@YES]) {
+        CompanionVNCSession *s=[self sessionWithInputOnly:only.boolValue]; XCTAssertTrue(s.ordinaryControlInputAvailable);
+        NSString *first=[s beginControlSequence]; XCTAssertFalse(s.ordinaryControlInputAvailable);
+        [s cancelControlSequence:first]; XCTAssertTrue(s.ordinaryControlInputAvailable);
+        NSString *second=[s beginControlSequence]; XCTAssertFalse(s.ordinaryControlInputAvailable);
+        [s endControlSequence:first]; [s cancelControlSequence:first]; XCTAssertFalse(s.ordinaryControlInputAvailable);
+        [s endControlSequence:second]; XCTAssertTrue(s.ordinaryControlInputAvailable);
+        NSString *third=[s beginControlSequence]; [s suspendInputForInterruption];
+        [s cancelControlSequence:third]; XCTAssertFalse(s.ordinaryControlInputAvailable);
+        XCTAssertNil([s beginControlSequence]);
+        [s resumeInputAfterInterruption]; XCTAssertTrue(s.ordinaryControlInputAvailable);
+        s.displayHandoffInputBlocked=YES; XCTAssertFalse(s.ordinaryControlInputAvailable);
+        s.displayHandoffInputBlocked=NO; XCTAssertTrue(s.ordinaryControlInputAvailable);
+        [s setValue:@NO forKey:@"baselinePresented"]; XCTAssertEqual(s.ordinaryControlInputAvailable,only.boolValue);
+        [s setValue:@YES forKey:@"baselinePresented"];
+        [s stop]; XCTAssertFalse(s.ordinaryControlInputAvailable);
+    }
+}
+- (void)testShortcutReservationKeepsReceivingHostCursorObservations {
+    for (NSNumber *only in @[@NO,@YES]) {
+        CompanionVNCViewer *viewer=[CompanionVNCViewer new]; viewer.inputOnly=only.boolValue; [viewer loadViewIfNeeded];
+        CompanionVNCSession *s=[self sessionWithInputOnly:only.boolValue]; viewer.session=s;
+        [viewer setValue:[NSValue valueWithCGRect:CGRectMake(0,0,800,600)] forKey:@"activeCrop"];
+        ((UIView *)[viewer valueForKey:@"login"]).hidden=YES;
+        [viewer setTrackpadModeEnabled:YES];
+        NSString *owner=[viewer beginControlSequence]; XCTAssertNotNil(owner);
+        CGPoint hostPosition=CGPointMake(350,250);
+        [viewer receivedCursor:nil hotspot:CGPointZero position:hostPosition known:YES];
+        XCTAssertTrue(CGPointEqualToPoint([[viewer valueForKey:@"cursorPosition"] CGPointValue],hostPosition));
+        XCTAssertFalse(s.ordinaryControlInputAvailable);
+        [viewer cancelControlSequence:owner]; [self takeEvents:s];
+        SecondaryTapSample *tap=[SecondaryTapSample new]; [[viewer valueForKey:@"canvas"] addGestureRecognizer:tap];
+        tap.sampleState=UIGestureRecognizerStateRecognized; [viewer clickAt:tap];
+        NSArray *clicks=[self takeEvents:s]; XCTAssertEqual(clicks.count,2);
+        XCTAssertEqualObjects(clicks.firstObject[@"x"],@350); XCTAssertEqualObjects(clicks.firstObject[@"y"],@250);
+        [s stop];
+    }
+}
+- (void)testShortcutPreservesQueuedNativeScrollThroughTheViewer {
+    [self checkShortcutGestureBoundary:NO copied:NO cancel:NO];
+}
+- (void)testShortcutPreservesCopiedNativePinchThroughTheViewer {
+    [self checkShortcutGestureBoundary:YES copied:YES cancel:NO];
+}
+- (void)testCancelCleanupPreservesFreshScrollBehindItsBoundary {
+    [self checkShortcutGestureBoundary:NO copied:YES cancel:YES];
+}
+- (void)testCancelOfFreshGesturesPreservesEveryQueuedAndCopiedPrefix {
+    for (NSNumber *pinch in @[@NO,@YES]) for (NSNumber *copied in @[@NO,@YES]) for (NSNumber *freshPinch in @[@NO,@YES]) {
+        [self checkShortcutGestureBoundary:pinch.boolValue copied:copied.boolValue cancel:YES
+                               freshPinch:freshPinch.boolValue freshState:UIGestureRecognizerStateCancelled];
+    }
+}
+- (void)testFailedFreshGesturePreservesTheEarlierAcceptedPrefix {
+    [self checkShortcutGestureBoundary:NO copied:YES cancel:YES freshPinch:NO freshState:UIGestureRecognizerStateFailed];
+}
+- (void)testCleanupCapacityIsSharedByEveryUserInputProducer {
+    NSArray *pair=@[@{@"key":@0x61,@"down":@YES},@{@"key":@0x61,@"down":@NO}];
+    for (NSUInteger producer=0;producer<8;producer++) {
+        CompanionVNCSession *s=[self session];
+        for (NSUInteger i=0;i<255;i++) [s keyEvents:pair];
+        NSString *owner=[s beginControlSequence]; XCTAssertNotNil(owner);
+        XCTAssertTrue([s tryControlSequenceEvents:pair identifier:owner completion:^(BOOL ok){}]);
+        [s cancelControlSequence:owner];
+        switch (producer) {
+            case 0: [s keyEvents:pair]; break;
+            case 1: [s key:0x61 down:YES]; [s key:0x61 down:NO]; break;
+            case 2: XCTAssertTrue([s tryKeyEvents:pair]); break;
+            case 3: XCTAssertTrue([s tryComposedTextEvents:pair completion:^(BOOL ok){}]); break;
+            case 4: XCTAssertTrue([s tryClickX:1000 y:600 mask:1]); break;
+            case 5: [s pointerX:1000 y:600 mask:1]; [s pointerX:1000 y:600 mask:0]; break;
+            case 6: XCTAssertTrue([s beginScrollX:1000 y:600]); [s endScroll]; break;
+            case 7: XCTAssertTrue([s beginMagnificationX:1000 y:600]); [s endMagnification]; break;
+        }
+        NSArray *events=[self takeEvents:s];
+        NSUInteger users=[events indexesOfObjectsPassingTest:^BOOL(NSDictionary *event,NSUInteger i,BOOL *stop){return ![event[@"controlCleanup"] boolValue];}].count;
+        XCTAssertEqual(users,512,@"producer %lu",(unsigned long)producer);
+        XCTAssertFalse([[s valueForKey:@"overflow"] boolValue],@"producer %lu",(unsigned long)producer);
+        [s stop];
+    }
+}
+- (void)testCleanupAllowanceDoesNotPermitRealUserOverflow {
+    CompanionVNCSession *s=[self session];
+    NSString *owner=[s beginControlSequence]; [s cancelControlSequence:owner];
+    NSArray *pair=@[@{@"key":@0x61,@"down":@YES},@{@"key":@0x61,@"down":@NO}];
+    for (NSUInteger i=0;i<256;i++) [s keyEvents:pair];
+    XCTAssertFalse([[s valueForKey:@"overflow"] boolValue]);
+    XCTAssertFalse([s tryKeyEvents:pair]);
+    [s keyEvents:pair]; XCTAssertTrue([[s valueForKey:@"overflow"] boolValue]);
+    [s stop];
+}
+- (void)testRepeatedCanceledGesturesAndShortcutsKeepBarriersBounded {
+    CompanionVNCSession *s=[self session]; [s key:0x61 down:NO];
+    for (NSUInteger i=0;i<1000;i++) {
+        NSString *owner=[s beginControlSequence]; XCTAssertNotNil(owner);
+        [s cancelControlSequence:owner];
+        XCTAssertTrue([s beginScrollX:1000 y:600]); XCTAssertTrue([s changeScrollX:12 y:24]);
+        [s cancelNativeGestures];
+        XCTAssertLessThanOrEqual([[s valueForKey:@"events"] count],2);
+        XCTAssertFalse([[s valueForKey:@"overflow"] boolValue]);
+    }
+    [s stop];
+}
+- (void)testGlobalGestureRetirementCoalescesBarriersWithoutDroppingOrdinaryInput {
+    CompanionVNCSession *s=[self session]; [s key:0x61 down:NO];
+    for (NSUInteger i=0;i<100;i++) {
+        XCTAssertTrue([s beginScrollX:1000 y:600]); [s endScroll];
+        NSString *owner=[s beginControlSequence]; XCTAssertNotNil(owner); [s cancelControlSequence:owner];
+    }
+    XCTAssertEqual([[s valueForKey:@"events"] count],301);
+    // Metadata/lifecycle retirement can remove the native events separating
+    // barriers while retaining ordinary input; exercise that locked operation.
+    NSLock *lock=[s valueForKey:@"lock"]; [lock lock]; [s retireNativeGesturesLocked]; [lock unlock];
+    NSArray *events=[self takeEvents:s]; XCTAssertEqual(events.count,2);
+    XCTAssertEqualObjects(events.firstObject[@"key"],@0x61);
+    XCTAssertTrue([events.lastObject[@"controlCleanup"] boolValue]);
+    XCTAssertFalse([[s valueForKey:@"overflow"] boolValue]); [s stop];
+}
+- (void)testCompletedGesturesSurviveLaterLocalCancellationWithoutAShortcut {
+    for (NSNumber *pinch in @[@NO,@YES]) for (NSNumber *copied in @[@NO,@YES]) {
+        int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+        struct timeval timeout={.tv_sec=1}; setsockopt(pair[1],SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
+        rfbClient *client=rfbGetClient(8,3,4); client->sock=pair[0]; client->width=3024; client->height=1964;
+        CompanionVNCSession *s=[self session]; [s configureClient:client];
+        XCTAssertTrue(pinch.boolValue ? [s beginMagnificationX:1000 y:600] : [s beginScrollX:1000 y:600]);
+        XCTAssertTrue(pinch.boolValue ? [s changeMagnification:.05] : [s changeScrollX:12 y:24]);
+        if (pinch.boolValue) [s endMagnification]; else [s endScroll];
+        NSArray *old=copied.boolValue ? [self takeEvents:s] : nil;
+        // The new gesture uses the opposite type to exercise shared retirement.
+        XCTAssertTrue(pinch.boolValue ? [s beginScrollX:1000 y:600] : [s beginMagnificationX:1000 y:600]);
+        [s cancelNativeGestures]; [s cancelNativeGestures];
+        NSArray *events=old ?: [self takeEvents:s]; XCTAssertEqual(events.count,3);
+        XCTAssertTrue([s sendInputEvents:events client:client inputEpoch:[[s valueForKey:@"inputEpoch"] unsignedIntegerValue]]);
+        NSString *cases=pinch.boolValue ? @"nativeMagnificationCases" : @"nativeScrollCases";
+        for (NSNumber *i in @[@0,@1,@3]) [self receive:pair[1] matches:[self packet:i.unsignedIntegerValue cases:cases]];
+        [s stop]; close(pair[1]); rfbClientCleanup(client);
+    }
+}
+- (void)testCancelledSentGestureIsReleasedByTheReaderWithoutQueuedInput {
+    for (NSNumber *pinch in @[@NO,@YES]) {
+        int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+        struct timeval timeout={.tv_sec=1}; setsockopt(pair[1],SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
+        rfbClient *client=rfbGetClient(8,3,4); client->sock=pair[0]; client->width=3024; client->height=1964;
+        CompanionVNCSession *s=[self session]; [s configureClient:client];
+        [s setValue:@NO forKey:@"modeChanged"]; [s setValue:@NO forKey:@"releaseInputRequested"];
+        XCTAssertTrue(pinch.boolValue ? [s beginMagnificationX:1000 y:600] : [s beginScrollX:1000 y:600]);
+        XCTAssertTrue([s sendInputEvents:[self takeEvents:s] client:client inputEpoch:[[s valueForKey:@"inputEpoch"] unsignedIntegerValue]]);
+        NSString *cases=pinch.boolValue ? @"nativeMagnificationCases" : @"nativeScrollCases";
+        [self receive:pair[1] matches:[self packet:0 cases:cases]];
+        [s cancelNativeGestures]; XCTAssertEqual([[s valueForKey:@"events"] count],0);
+        XCTAssertTrue([s servicePendingInput:client]);
+        [self receive:pair[1] matches:[self packet:3 cases:cases]];
+        XCTAssertTrue([s servicePendingInput:client]);
+        uint8_t byte; XCTAssertEqual(recv(pair[1],&byte,1,MSG_DONTWAIT),-1);
+        [s stop]; close(pair[1]); rfbClientCleanup(client);
+    }
+}
+- (void)testLifecycleStillRetiresCompletedAndBoundarySealedCopiedGestures {
+    for (NSNumber *pinch in @[@NO,@YES]) {
+        int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+        rfbClient *client=rfbGetClient(8,3,4); client->sock=pair[0]; client->width=3024; client->height=1964;
+        CompanionVNCSession *s=[self session]; [s configureClient:client];
+        XCTAssertTrue(pinch.boolValue ? [s beginMagnificationX:1000 y:600] : [s beginScrollX:1000 y:600]);
+        if (pinch.boolValue) [s endMagnification]; else [s endScroll];
+        NSArray *copied=[self takeEvents:s];
+        NSString *owner=[s beginControlSequence]; [s cancelControlSequence:owner];
+        [s suspendInputForInterruption]; [s resumeInputAfterInterruption];
+        for (NSDictionary *event in copied) {
+            XCTAssertTrue(pinch.boolValue ? [s sendMagnificationEvent:event client:client] : [s sendScrollEvent:event client:client]);
+        }
+        uint8_t byte; XCTAssertEqual(recv(pair[1],&byte,1,MSG_DONTWAIT),-1,@"A quick return must not revive old gesture tokens");
+        [s stop]; close(pair[1]); rfbClientCleanup(client);
+    }
+}
+- (void)checkShortcutGestureBoundary:(BOOL)pinch copied:(BOOL)copied cancel:(BOOL)cancel {
+    [self checkShortcutGestureBoundary:pinch copied:copied cancel:cancel freshPinch:NO freshState:UIGestureRecognizerStateEnded];
+}
+- (void)checkShortcutGestureBoundary:(BOOL)pinch copied:(BOOL)copied cancel:(BOOL)cancel
+                        freshPinch:(BOOL)freshPinch freshState:(UIGestureRecognizerState)freshState {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX,SOCK_STREAM,0,pair),0);
+    int yes=1; setsockopt(pair[0],SOL_SOCKET,SO_NOSIGPIPE,&yes,sizeof(yes));
+    struct timeval timeout={.tv_sec=1}; setsockopt(pair[1],SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
+    GestureBoundarySession *s=[GestureBoundarySession new]; s.inputOnly=YES;
+    rfbClient *client=rfbGetClient(8,3,4); client->sock=pair[0]; client->width=3024; client->height=1964;
+    [s configureClient:client];
+    client->supportedMessages.client2server[0]|=(1<<rfbKeyEvent)|(1<<rfbPointerEvent);
+    for (NSString *key in @[@"running",@"established",@"inputReady",@"appleGestureServer",@"nativeGestureLayout"]) [s setValue:@YES forKey:key];
+    [s setValue:@3024 forKey:@"framebufferWidth"]; [s setValue:@1964 forKey:@"framebufferHeight"];
+    CompanionVNCViewer *viewer=[CompanionVNCViewer new]; viewer.inputOnly=YES; [viewer loadViewIfNeeded]; viewer.session=s;
+    [viewer setValue:[NSValue valueWithCGRect:CGRectMake(0,0,3024,1964)] forKey:@"activeCrop"];
+    [viewer setValue:[NSValue valueWithCGPoint:CGPointMake(1000,600)] forKey:@"cursorPosition"];
+    [viewer setValue:@YES forKey:@"cursorPositionKnown"];
+    XCTAssertTrue(pinch ? [s beginMagnificationX:1000 y:600] : [s beginScrollX:1000 y:600]);
+    NSArray *initial=[self takeEvents:s];
+    XCTAssertTrue([s sendInputEvents:initial client:client inputEpoch:[[s valueForKey:@"inputEpoch"] unsignedIntegerValue]]);
+    NSString *cases=pinch ? @"nativeMagnificationCases" : @"nativeScrollCases";
+    [self receive:pair[1] matches:[self packet:0 cases:cases]];
+    [s key:0x78 down:NO];
+    void (^queueGesture)(void)=^{
+        XCTAssertTrue(pinch ? [s changeMagnification:.05] : [s changeScrollX:12 y:24]);
+        if (pinch) [s endMagnification]; else [s endScroll];
+    };
+    if (copied) queueGesture();
+    XCTestExpectation *ended=[self expectationWithDescription:@"Gesture worker stops"];
+    __weak CompanionVNCSession *weak=s;
+    s.stateHandler=^(NSString *state,NSDictionary *stats){if(!weak.running)[ended fulfill];};
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{[s processConnectedClient:client];});
+    XCTAssertEqual(dispatch_semaphore_wait(s.firstWrite,dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC)),0);
+    if (!copied) queueGesture();
+    NSUInteger epoch=[[s valueForKey:@"gestureLifecycleEpoch"] unsignedIntegerValue];
+    NSString *owner=[viewer beginControlSequence]; XCTAssertNotNil(owner);
+    NSUInteger after=[[s valueForKey:@"gestureLifecycleEpoch"] unsignedIntegerValue];
+    NSArray *chord=@[@{@"key":@0x61,@"down":@YES},@{@"key":@0x61,@"down":@NO}];
+    XCTestExpectation *reply=[self expectationWithDescription:@"Sequence reply"];
+    XCTAssertTrue([viewer sendControlSequenceEvents:chord identifier:owner completion:^(BOOL ok){XCTAssertEqual(ok,!cancel);[reply fulfill];}]);
+    if (cancel) {
+        [viewer cancelControlSequence:owner];
+        // Exercise a real viewer recognizer after Cancel, including its local release path.
+        if (freshPinch) {
+            SyntheticPinch *fresh=[SyntheticPinch new]; fresh.syntheticState=UIGestureRecognizerStateBegan; fresh.scale=1;
+            [viewer pinchRemote:fresh]; fresh.syntheticState=UIGestureRecognizerStateChanged; fresh.scale=1.05;
+            [viewer pinchRemote:fresh]; fresh.syntheticState=freshState; fresh.scale=1; [viewer pinchRemote:fresh];
+        } else {
+            SyntheticScroll *fresh=[SyntheticScroll new]; fresh.syntheticState=UIGestureRecognizerStateBegan;
+            [viewer scrollRemote:fresh]; fresh.syntheticState=UIGestureRecognizerStateChanged;
+            fresh.delta=CGPointMake(4,8); [viewer scrollRemote:fresh];
+            fresh.syntheticState=freshState; fresh.delta=CGPointZero; [viewer scrollRemote:fresh];
+        }
+    }
+    dispatch_semaphore_signal(s.continueWrite);
+    XCTAssertEqual(after,epoch,@"A shortcut must preserve accepted native input until its barrier");
+    const uint8_t accepted[]={4,0,0,0,0,0,0,0x78};
+    NSMutableData *expected=[NSMutableData dataWithBytes:accepted length:sizeof(accepted)];
+    [expected appendData:[self packet:1 cases:cases]]; [expected appendData:[self packet:3 cases:cases]];
+    const uint8_t cleanup[]={5,0,0,0,0,0}; [expected appendBytes:cleanup length:sizeof(cleanup)];
+    if (cancel && freshState==UIGestureRecognizerStateEnded) { for (NSNumber *i in @[@0,@1,@3]) [expected appendData:[self packet:i.unsignedIntegerValue cases:@"nativeScrollCases"]]; }
+    else if (!cancel) { const uint8_t keys[]={4,1,0,0,0,0,0,0x61, 4,0,0,0,0,0,0,0x61}; [expected appendBytes:keys length:sizeof(keys)]; }
+    [self waitForExpectations:@[reply] timeout:2];
+    [self receive:pair[1] matches:expected];
+    if (!cancel) [viewer endControlSequence:owner];
+    [s stop]; [self waitForExpectations:@[ended] timeout:2]; s.stateHandler=nil; close(pair[1]);
 }
 - (void)testUnsupportedConnectionNeverQueuesNativePinchAndDoesNotReplaceItWithKeys {
     CompanionVNCSession *s = [self session]; [s setValue:@NO forKey:@"appleGestureServer"];
@@ -105,10 +457,11 @@
 }
 - (void)testFullQueueCanAlwaysRetireAnActiveGesture {
     CompanionVNCSession *s = [self session]; XCTAssertTrue([s beginMagnificationX:1000 y:600]);
-    NSArray *copied = [self takeEvents:s]; NSUInteger epoch = [copied[0][@"gestureEpoch"] unsignedIntegerValue];
+    NSArray *copied = [self takeEvents:s]; NSUInteger epoch = [copied[0][@"gestureLifecycleEpoch"] unsignedIntegerValue];
     NSMutableArray *events = [s valueForKey:@"events"];
     for (NSUInteger i=0; i<512; i++) [events addObject:@{@"key":@0x61, @"down":@YES}];
-    [s endMagnification]; XCTAssertGreaterThan([[s valueForKey:@"gestureEpoch"] unsignedIntegerValue], epoch);
+    [s endMagnification]; XCTAssertEqual([[s valueForKey:@"gestureLifecycleEpoch"] unsignedIntegerValue], epoch);
+    XCTAssertTrue([[copied[0][@"gestureOwner"] valueForKey:@"cancelled"] boolValue]);
     XCTAssertEqual(events.count, 512); XCTAssertFalse([[s valueForKey:@"queuedMagnification"] boolValue]);
     XCTAssertFalse([s changeMagnification:.05]);
 }
@@ -174,10 +527,11 @@
     CompanionVNCSession *s=[self session]; [s setValue:@NO forKey:@"appleGestureServer"];
     XCTAssertFalse([s beginScrollX:1000 y:600]); XCTAssertEqual([self takeEvents:s].count,0);
     [s setValue:@YES forKey:@"appleGestureServer"]; XCTAssertTrue([s beginScrollX:1000 y:600]);
-    NSArray *copied=[self takeEvents:s]; NSUInteger epoch=[copied[0][@"gestureEpoch"] unsignedIntegerValue];
+    NSArray *copied=[self takeEvents:s]; NSUInteger epoch=[copied[0][@"gestureLifecycleEpoch"] unsignedIntegerValue];
     NSMutableArray *events=[s valueForKey:@"events"];
     for (NSUInteger i=0;i<512;i++) [events addObject:@{@"key":@0x61,@"down":@YES}];
-    [s endScroll]; XCTAssertGreaterThan([[s valueForKey:@"gestureEpoch"] unsignedIntegerValue],epoch);
+    [s endScroll]; XCTAssertEqual([[s valueForKey:@"gestureLifecycleEpoch"] unsignedIntegerValue],epoch);
+    XCTAssertTrue([[copied[0][@"gestureOwner"] valueForKey:@"cancelled"] boolValue]);
     XCTAssertFalse([[s valueForKey:@"queuedScroll"] boolValue]); XCTAssertEqual(events.count,512);
     XCTAssertFalse([s changeScrollX:1 y:1]);
 }

@@ -15,7 +15,7 @@ import StoreKit
         terminal.admitCustomInput = { [weak self] bytes in
             guard let self, ready else { return false }; output += bytes; return true
         }
-        terminal.admitCustomSequence = { [weak self] packets, valid, complete in
+        terminal.admitCustomSequence = { [weak self] packets, valid, _, complete in
             guard let self, ready, valid() else { complete("Synthetic input admission rejected"); return false }
             output += packets.flatMap { $0 }; complete(nil); return true
         }

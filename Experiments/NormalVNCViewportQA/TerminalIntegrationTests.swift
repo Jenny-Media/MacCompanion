@@ -11,6 +11,21 @@ import ActivityKit
 import AppIntents
 @testable import Mac_Companion
 
+@MainActor private final class ShortcutHardwareKey: UIKey {
+    let usage: UIKeyboardHIDUsage
+    init(_ usage: UIKeyboardHIDUsage) { self.usage = usage; super.init() }
+    required init?(coder: NSCoder) { fatalError("Synthetic hardware keys are constructed directly") }
+    override var keyCode: UIKeyboardHIDUsage { usage }
+    override var characters: String { "" }
+    override var charactersIgnoringModifiers: String { "" }
+    override var modifierFlags: UIKeyModifierFlags { [] }
+}
+@MainActor private final class ShortcutHardwarePress: UIPress {
+    let hardwareKey: UIKey
+    init(_ usage: UIKeyboardHIDUsage) { hardwareKey = ShortcutHardwareKey(usage); super.init() }
+    override var key: UIKey? { hardwareKey }
+}
+
 @MainActor private final class TerminalActivityTestBackend: RemoteSessionActivityBackend {
     var enabled = true
     var ids: [String] = []
@@ -67,6 +82,21 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
 }
 
 @MainActor final class TerminalIntegrationTests:XCTestCase {
+    private func sequencePro() async throws -> SKTestSession {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "LifetimePro", withExtension: "storekit"))
+        let purchases = try SKTestSession(contentsOf: url); purchases.disableDialogs = true; purchases.clearTransactions()
+        DirectProAccess.shared.start(); _ = try await purchases.buyProduct(identifier: DirectProAccess.productID)
+        await DirectProAccess.shared.refresh(); try await wait { DirectProAccess.shared.hasPro }
+        return purchases
+    }
+    /// Synthetic packets exercise the same index-only schedule as production.
+    private func schedule(_ packets: [TerminalSequenceOperation<[UInt8]>]) -> [TerminalSequenceOperation<Int>] {
+        packets.enumerated().map { index, packet in
+            if case .wait(let duration) = packet { return .wait(duration) }
+            return .input(index)
+        }
+    }
+
     func testSavedTerminalLoginDoesNotRevealCredentialFieldsBeforeOrAfterProgress() async throws {
         let record = SSHTestRecord(), hostKey = NIOSSHPrivateKey(ed25519Key: .init())
         let peer = try await server(record: record, key: hostKey)
@@ -798,8 +828,12 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         let epoch = try XCTUnwrap(session.customInputEpoch)
         var completed = false
         session.sendSequence([[2], [99], [13]], epoch: epoch) { XCTAssertNil($0); completed = true }
+        XCTAssertTrue(session.isSendingCustomSequence)
+        XCTAssertFalse(session.trySend([120]), "No-wait shortcuts must reserve ordinary input too")
+        try await wait { completed && record.received == [2, 99, 13] }
+        XCTAssertFalse(session.isSendingCustomSequence)
         XCTAssertTrue(session.trySend([120]))
-        try await wait { completed && record.received == [2, 99, 13, 120] }
+        try await wait { record.received == [2, 99, 13, 120] }
         var stopped = false
         session.sendSequence([[97], [98]], epoch: epoch) { XCTAssertNotNil($0); stopped = true }
         session.becameInactive()
@@ -816,6 +850,381 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         try await wait { invalidated }
         XCTAssertEqual(record.received, [2, 99, 13, 120], "A queued sequence rechecks its encoder/policy predicate before writing")
     }
+    func testAcceptedComposedTextStillPrecedesNewImmediateShortcut() async throws {
+        let record = SSHTestRecord(echoInput: false), key = NIOSSHPrivateKey(ed25519Key: .init())
+        let peer = try await server(record: record, key: key); defer { _ = peer.close() }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic preceding draft", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(peer.localAddress?.port))
+        let session = DirectTerminalSession(mac: mac); defer { session.stop(); try? TerminalSecretStore.remove(mac.id) }
+        session.connect(username: "synthetic", password: "synthetic-only", remember: false)
+        try await wait { session.trust != nil }; session.answerTrust(true); try await wait { session.canSendUserInput }
+        var composed = false, shortcut = false
+        session.sendComposedText([112], generation: session.composeGeneration) { XCTAssertNil($0); composed = true }
+        XCTAssertTrue(session.sendSequence([[97], [98]], epoch: try XCTUnwrap(session.customInputEpoch), completion: { XCTAssertNil($0); shortcut = true }))
+        try await wait { composed && shortcut && record.received == [112, 97, 98] }
+    }
+
+    func testImmediateShortcutOwnsInputAndRejectsQueuedShortcutsWhileWriteIsBlocked() async throws {
+        let record = SSHTestRecord(echoInput: false), key = NIOSSHPrivateKey(ed25519Key: .init())
+        let peer = try await server(record: record, key: key); defer { _ = peer.close() }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic immediate ownership", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(peer.localAddress?.port))
+        let session = DirectTerminalSession(mac: mac); defer { session.stop(); try? TerminalSecretStore.remove(mac.id) }
+        session.connect(username: "synthetic", password: "synthetic-only", remember: false)
+        try await wait { session.trust != nil }; session.answerTrust(true); try await wait { session.canSendUserInput }
+        var held: CheckedContinuation<Void, Error>?
+        session.beforeWriteForTesting = { bytes in if bytes == [97] { try await withCheckedThrowingContinuation { held = $0 } } }
+        defer { held?.resume(); held = nil }
+        let epoch = try XCTUnwrap(session.customInputEpoch)
+        var firstCompletions = 0, rejected = 0, fresh = false
+        XCTAssertTrue(session.sendSequence([[97], [98]], epoch: epoch, completion: { XCTAssertNotNil($0); firstCompletions += 1 }))
+        XCTAssertTrue(session.isSendingCustomSequence, "Reservation starts before the first async write")
+        try await wait { held != nil }
+        XCTAssertFalse(session.sendSequence([[120]], epoch: epoch, completion: { XCTAssertNotNil($0); rejected += 1 }))
+        let competing: [TerminalSequenceOperation<[UInt8]>] = [.input([120]), .wait(100), .input([121])]
+        XCTAssertFalse(session.sendSequencePlan(schedule(competing), epoch: epoch, resolve: { competing[$0].input }, stillValid: { true }, progress: { _ in }, completion: { XCTAssertNotNil($0); rejected += 1 }))
+        XCTAssertFalse(session.trySend([122])); XCTAssertEqual(rejected, 2)
+        session.cancelSequence(epoch: epoch)
+        XCTAssertEqual(firstCompletions, 1); XCTAssertFalse(session.isSendingCustomSequence)
+        let newEpoch = try XCTUnwrap(session.customInputEpoch)
+        XCTAssertTrue(session.sendSequence([[99], [100]], epoch: newEpoch, completion: { XCTAssertNil($0); fresh = true }))
+        session.cancelSequence(epoch: epoch)
+        XCTAssertTrue(session.isSendingCustomSequence, "A retained Cancel cannot retire the new immediate shortcut")
+        XCTAssertTrue(record.received.isEmpty)
+        let pending = held; held = nil; pending?.resume()
+        try await wait { fresh && record.received == [97, 99, 100] }
+        XCTAssertEqual(firstCompletions, 1); XCTAssertFalse(session.isSendingCustomSequence)
+        XCTAssertTrue(session.trySend([122])); try await wait { record.received == [97, 99, 100, 122] }
+    }
+
+    func testTimedShortcutUsesCurrentEncodingAndRejectsCompetingInput() async throws {
+        let record = SSHTestRecord(echoInput: false), key = NIOSSHPrivateKey(ed25519Key: .init())
+        let peer = try await server(record: record, key: key)
+        defer { _ = peer.close() }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic timed input", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(peer.localAddress?.port))
+        let session = DirectTerminalSession(mac: mac)
+        defer { session.stop(); try? TerminalSecretStore.remove(mac.id) }
+        session.connect(username: "synthetic", password: "synthetic-only", remember: false)
+        try await wait { session.trust != nil }; session.answerTrust(true)
+        try await wait { session.canSendUserInput }
+        var action = TerminalControlAction(title: "Mode transition", kind: .shortcut)
+        action.steps = [.init(kind: .typeText, text: "a"), .init(kind: .wait, waitMilliseconds: 100), .init(kind: .typeText, text: "b")]
+        var encoding = TerminalKeyEncoding(flags: .reportAllKeys), finished = false
+        let plan = try action.terminalPlan(encoding: encoding, bracketedPaste: true)
+        let epoch = try XCTUnwrap(session.customInputEpoch)
+        XCTAssertTrue(session.sendSequencePlan(schedule(plan), epoch: epoch, resolve: { index in
+            (try? action.terminalPlan(encoding: encoding, bracketedPaste: true))?[index].input
+        }, stillValid: { true }, progress: { index in
+            if index == 1 {
+                XCTAssertTrue(session.isSendingCustomSequence)
+                XCTAssertFalse(session.trySend([120]), "Typing cannot interleave inside a wait")
+                XCTAssertTrue(session.trySend(Array("\u{1b}[0n".utf8), source: .emulatorReply), "Protocol replies must not wait behind the shortcut")
+                encoding.flags = []
+            }
+        }, completion: { XCTAssertNil($0); finished = true }))
+        try await wait { finished }
+        try await wait { record.received == Array("\u{1b}[97u\u{1b}[0nb".utf8) }
+        XCTAssertFalse(session.isSendingCustomSequence)
+        XCTAssertTrue(session.trySend([120]))
+        try await wait { record.received.last == 120 }
+    }
+
+    private func withHardwareTerminal(_ check: @MainActor (DirectTerminalSession, TerminalController, SSHTestRecord) async throws -> Void) async throws {
+        let record = SSHTestRecord(echoInput: false), key = NIOSSHPrivateKey(ed25519Key: .init())
+        let peer = try await server(record: record, key: key); defer { _ = peer.close() }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic hardware shortcut", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(peer.localAddress?.port))
+        try TerminalSecretStore.approveHostKey(String(openSSHPublicKey: key.publicKey), id: mac.id)
+        let session = DirectTerminalSession(mac: mac)
+        // One controller and one live session own both the real frontend and SSH queue.
+        let liveController = TerminalController(session: session, customize: {}); liveController.loadViewIfNeeded()
+        defer { _ = liveController.terminal.resignFirstResponder(); session.stop(); try? TerminalSecretStore.remove(mac.id) }
+        session.connect(username: "synthetic", password: "synthetic-only", remember: false)
+        try await wait { session.canSendUserInput && liveController.terminal.customInputEpoch() != nil }
+        record.clearReceived()
+        try await check(session, liveController, record)
+    }
+
+    func testRejectedHardwarePressCannotRepeatOrReleaseAfterShortcutCancelOrCompletion() async throws {
+        for enhanced in [false, true] { for cancel in [false, true] {
+            try await withHardwareTerminal { session, controller, record in
+                let terminal = controller.terminal
+                if enhanced { terminal.feed(byteArray: Array("\u{1b}[>3u".utf8)[...]) }
+                var waiting = false, completed = false
+                let epoch = try XCTUnwrap(session.customInputEpoch)
+                XCTAssertTrue(session.sendSequencePlan([.input(0), .wait(600), .input(2)], epoch: epoch,
+                    resolve: { $0 == 0 ? [97] : [98] }, stillValid: { true }, progress: { if $0 == 1 { waiting = true } }, completion: {
+                        if cancel { XCTAssertNotNil($0) } else { XCTAssertNil($0) }; completed = true
+                    }))
+                try await wait { waiting }
+                terminal.keyboardState.toggle(.ctrl, lock: true)
+                let modifiers = terminal.keyboardState.locked
+                let rejected = ShortcutHardwarePress(.keyboardRightArrow)
+                terminal.pressesBegan([rejected], with: nil)
+                XCTAssertEqual(terminal.keyboardState.locked, modifiers, "Rejected hardware input must not consume the saved modifiers")
+                if cancel { session.cancelSequence(epoch: epoch) }
+                try await wait { completed && !session.isSendingCustomSequence }
+                try await Task.sleep(for: .milliseconds(650))
+                terminal.pressesEnded([rejected], with: nil)
+                try await Task.sleep(for: .milliseconds(100))
+                XCTAssertEqual(record.received, cancel ? [97] : [97,98], "No repeat or unmatched Kitty release may escape after ownership ends")
+                let count = record.received.count
+                let fresh = ShortcutHardwarePress(.keyboardDownArrow)
+                terminal.pressesBegan([fresh], with: nil); terminal.pressesEnded([fresh], with: nil)
+                try await wait { record.received.count > count }
+            }
+        } }
+    }
+
+    func testRejectedHardwareReleaseCannotStopAnotherAcceptedKeyRepeat() async throws {
+        try await withHardwareTerminal { session, controller, record in
+            let terminal = controller.terminal, epoch = try XCTUnwrap(session.customInputEpoch)
+            var waiting = false
+            XCTAssertTrue(session.sendSequencePlan([.wait(1000), .input(1)], epoch: epoch, resolve: { _ in [97] },
+                stillValid: { true }, progress: { if $0 == 0 { waiting = true } }, completion: { _ in }))
+            try await wait { waiting }
+            let rejected = ShortcutHardwarePress(.keyboardUpArrow)
+            terminal.pressesBegan([rejected], with: nil); session.cancelSequence(epoch: epoch)
+            let accepted = ShortcutHardwarePress(.keyboardDownArrow)
+            terminal.pressesBegan([accepted], with: nil)
+            try await wait { !record.received.isEmpty }
+            let beforeRelease = record.received.count
+            terminal.pressesEnded([rejected], with: nil)
+            try await Task.sleep(for: .milliseconds(650))
+            XCTAssertGreaterThan(record.received.count, beforeRelease, "An ignored key-up must not reach SwiftTerm's global repeat cancellation")
+            terminal.pressesEnded([accepted], with: nil)
+        }
+    }
+
+    func testCancelledAcceptedHardwarePressStopsItsRepeat() async throws {
+        try await withHardwareTerminal { _, controller, record in
+            let press = ShortcutHardwarePress(.keyboardLeftArrow)
+            controller.terminal.pressesBegan([press], with: nil)
+            try await wait { !record.received.isEmpty }
+            controller.terminal.pressesCancelled([press], with: nil)
+            let count = record.received.count
+            try await Task.sleep(for: .milliseconds(650))
+            XCTAssertEqual(record.received.count, count)
+        }
+    }
+
+    func testFrontendProtocolRepliesAndIntermediateOutputContinueDuringWait() async throws {
+        let record = SSHTestRecord(echoInput: false), key = NIOSSHPrivateKey(ed25519Key: .init())
+        let peer = try await server(record: record, key: key); defer { _ = peer.close() }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic frontend replies", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(peer.localAddress?.port))
+        try TerminalSecretStore.approveHostKey(String(openSSHPublicKey: key.publicKey), id: mac.id)
+        let session = DirectTerminalSession(mac: mac)
+        let controller = TerminalController(session: session, customize: {}); controller.loadViewIfNeeded()
+        defer { session.stop(); try? TerminalSecretStore.remove(mac.id) }
+        session.connect(username: "synthetic", password: "synthetic-only", remember: false)
+        try await wait { session.canSendUserInput && controller.terminal.customInputEpoch() != nil }
+        record.clearReceived()
+        let plan: [TerminalSequenceOperation<[UInt8]>] = [.input([116]), .wait(2000), .input([49])]
+        var waiting = false, finished = false
+        XCTAssertTrue(session.sendSequencePlan(schedule(plan), epoch: try XCTUnwrap(session.customInputEpoch), resolve: { plan[$0].input }, stillValid: { true }, progress: { if $0 == 1 { waiting = true } }, completion: { XCTAssertNil($0); finished = true }))
+        try await wait { waiting }
+        controller.terminal.insertText("should-not-interleave")
+        try await record.emit("Intermediate output is visible\r\n\u{1b}[5n\u{1b}[6n\u{1b}[?u")
+        try await wait { String(decoding: record.received, as: UTF8.self).contains("\u{1b}[0n") && String(decoding: record.received, as: UTF8.self).contains("R") && String(decoding: record.received, as: UTF8.self).contains("u") }
+        XCTAssertTrue(session.isSendingCustomSequence)
+        XCTAssertTrue(terminalCompatibilityText(controller.terminal.getTerminal()).contains("Intermediate output is visible"))
+        XCTAssertFalse(String(decoding: record.received, as: UTF8.self).contains("should-not-interleave"))
+        try await wait { finished }
+        XCTAssertEqual(record.received.last, 49)
+    }
+
+    func testControllerAdmitsLongTimedSuffixUsingTheModeAtItsStep() async throws {
+        try await checkControllerModeTransition(shrinks: true)
+    }
+    func testControllerStopsBeforeAnExpandedStepExceedsItsActualByteBudget() async throws {
+        try await checkControllerModeTransition(shrinks: false)
+    }
+    private func checkControllerModeTransition(shrinks: Bool) async throws {
+        let purchases = try await sequencePro(); defer { purchases.clearTransactions() }
+        let record = SSHTestRecord(echoInput: false, inputLimit: 8192), key = NIOSSHPrivateKey(ed25519Key: .init())
+        let peer = try await server(record: record, key: key); defer { _ = peer.close() }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic mode transition", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(peer.localAddress?.port))
+        try TerminalSecretStore.approveHostKey(String(openSSHPublicKey: key.publicKey), id: mac.id)
+        let session = DirectTerminalSession(mac: mac)
+        var action = TerminalControlAction(title: "Exit then type", kind: .shortcut)
+        action.steps = [.init(character: 0x63, modifiers: [0xffe3]), .init(kind: .wait, waitMilliseconds: 1000), .init(kind: .typeText, text: String(repeating: "a", count: 4000))]
+        var data: Data? = try JSONEncoder().encode(TerminalControlsProfile(actions: [action]))
+        let controls = TerminalControlsStore(read: { data }, write: { data = $0 }, legacyIDs: { [] }, legacyActions: { [] })
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        let controller = TerminalController(session: session, customize: {}, controlsStore: controls)
+        window.rootViewController = controller; window.makeKeyAndVisible()
+        defer { session.stop(); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible(); try? TerminalSecretStore.remove(mac.id) }
+        session.connect(username: "synthetic", password: "synthetic-only", remember: false)
+        try await wait { session.canSendUserInput && controller.terminal.customInputEpoch() != nil }
+        try await record.emit((shrinks ? "\u{1b}[>8u" : "") + "Mode-aware shortcut probe\r\n")
+        try await wait { shrinks == controller.terminal.keyEncoding.flags.contains(.reportAllKeys) }
+        controller.performControlAction(action.id)
+        XCTAssertTrue(session.isSendingCustomSequence, "A future step must not be rejected using the initial encoding")
+        // Fails immediately on the old frontend, instead of waiting for bytes it never sends.
+        guard session.isSendingCustomSequence else { return }
+        let prefix: [UInt8] = shrinks ? Array("\u{1b}[99;5u".utf8) : [3]
+        try await wait { record.received == prefix }
+        try await record.emit(shrinks ? "\u{1b}[<uProgram exited; normal typing restored\r\n" : "\u{1b}[>8uProgram enabled enhanced input\r\n")
+        try await wait { shrinks == controller.terminal.keyEncoding.flags.isEmpty }
+        try await Task.sleep(for: .milliseconds(250))
+        let waiting = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
+        let shot = XCTAttachment(image: waiting); shot.name = shrinks ? "terminal-mode-change-wait" : "terminal-budget-wait"; shot.lifetime = .keepAlways; add(shot)
+        try await wait { !session.isSendingCustomSequence }
+        if shrinks {
+            try await wait { record.received.count == 4007 }
+            XCTAssertEqual(record.received, prefix + Array(repeating: 97, count: 4000))
+            XCTAssertNil(session.textSendNotice)
+        } else {
+            XCTAssertEqual(record.received, prefix, "The oversized current step is rejected before its first byte")
+            XCTAssertTrue(session.textSendNotice?.message.contains("size limit") == true)
+        }
+        XCTAssertTrue(session.canSendUserInput)
+        let finished = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
+        let result = XCTAttachment(image: finished); result.name = shrinks ? "terminal-mode-change-completed" : "terminal-budget-stopped"; result.lifetime = .keepAlways; add(result)
+    }
+
+    func testTimedWriterCountsActualBytesAfterCompletedPrefixModeChange() async throws {
+        let record = SSHTestRecord(echoInput: false, inputLimit: 8192), key = NIOSSHPrivateKey(ed25519Key: .init())
+        let peer = try await server(record: record, key: key); defer { _ = peer.close() }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic current-step encoding", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(peer.localAddress?.port))
+        let session = DirectTerminalSession(mac: mac); defer { session.stop(); try? TerminalSecretStore.remove(mac.id) }
+        session.connect(username: "synthetic", password: "synthetic-only", remember: false)
+        try await wait { session.trust != nil }; session.answerTrust(true); try await wait { session.canSendUserInput }
+        var action = TerminalControlAction(title: "Changing mode", kind: .shortcut)
+        action.steps = [.init(kind: .typeText, text: String(repeating: "a", count: 4000)), .init(kind: .wait, waitMilliseconds: 100), .init(kind: .typeText, text: "b")]
+        var encoding = TerminalKeyEncoding(), finished = false
+        let plan = try action.terminalPlan(encoding: encoding, bracketedPaste: false)
+        XCTAssertTrue(session.sendSequencePlan(schedule(plan), epoch: try XCTUnwrap(session.customInputEpoch), resolve: { try? action.resolvedSteps[$0].terminalBytes(encoding: encoding, bracketedPaste: false) }, stillValid: { true }, progress: { if $0 == 1 { encoding.flags = .reportAllKeys } }, completion: { XCTAssertNil($0); finished = true }))
+        try await wait("4005 captured input bytes after mode change") { finished && record.received.count == 4005 }
+        XCTAssertEqual(Array(record.received.prefix(4000)), Array(repeating: 97, count: 4000))
+        XCTAssertEqual(Array(record.received.suffix(5)), Array("\u{1b}[98u".utf8))
+    }
+
+    func testCancelTimedShortcutRetiresItsSuffixAndAllowsFreshInput() async throws {
+        let record = SSHTestRecord(echoInput: false), key = NIOSSHPrivateKey(ed25519Key: .init())
+        let peer = try await server(record: record, key: key)
+        defer { _ = peer.close() }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic cancellation", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(peer.localAddress?.port))
+        let session = DirectTerminalSession(mac: mac)
+        defer { session.stop(); try? TerminalSecretStore.remove(mac.id) }
+        session.connect(username: "synthetic", password: "synthetic-only", remember: false)
+        try await wait { session.trust != nil }; session.answerTrust(true)
+        try await wait { session.canSendUserInput }
+        let epoch = try XCTUnwrap(session.customInputEpoch)
+        let plan: [TerminalSequenceOperation<[UInt8]>] = [.input([116, 13]), .wait(30_000), .input([49, 13])]
+        let keyboardEpoch = session.keyboardPresentationEpoch
+        var finished = false
+        XCTAssertTrue(session.sendSequencePlan(schedule(plan), epoch: epoch, resolve: { plan[$0].input }, stillValid: { true }, progress: { index in
+            if index == 1 { session.cancelSequence(epoch: epoch) }
+        }, completion: { XCTAssertNotNil($0); finished = true }))
+        try await wait { finished }
+        XCTAssertTrue(session.connected)
+        XCTAssertNotEqual(session.customInputEpoch, epoch)
+        XCTAssertEqual(session.keyboardPresentationEpoch, keyboardEpoch, "Cancel may restore this connection's keyboard")
+        XCTAssertTrue(session.trySend([122]))
+        try await wait { record.received == [116, 13, 122] }
+        await Task.yield()
+        XCTAssertEqual(record.received, [116, 13, 122], "Canceled numeric selection must never replay")
+        var stopCompleted = false
+        XCTAssertTrue(session.sendSequence([[120]], epoch: try XCTUnwrap(session.customInputEpoch), completion: { _ in
+            XCTAssertNotEqual(session.keyboardPresentationEpoch, keyboardEpoch, "Retire restoration before notifying the presentation")
+            stopCompleted = true
+        }))
+        session.stop()
+        XCTAssertTrue(stopCompleted)
+        XCTAssertNotEqual(session.keyboardPresentationEpoch, keyboardEpoch, "Stop must retire keyboard restoration before completing the old shortcut")
+    }
+
+    func testCancelBlockedShortcutCompletesOnceAndKeepsNewRunOrdered() async throws {
+        let record = SSHTestRecord(echoInput: false), key = NIOSSHPrivateKey(ed25519Key: .init())
+        let peer = try await server(record: record, key: key); defer { _ = peer.close() }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic blocked shortcut", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(peer.localAddress?.port))
+        let session = DirectTerminalSession(mac: mac); defer { session.stop(); try? TerminalSecretStore.remove(mac.id) }
+        session.connect(username: "synthetic", password: "synthetic-only", remember: false)
+        try await wait { session.trust != nil }; session.answerTrust(true); try await wait { session.canSendUserInput }
+        var held: CheckedContinuation<Void, Error>?
+        session.beforeWriteForTesting = { bytes in
+            if bytes == [97] { try await withCheckedThrowingContinuation { held = $0 } }
+        }
+        defer { held?.resume(); held = nil }
+        let first: [TerminalSequenceOperation<[UInt8]>] = [.input([97]), .wait(100), .input([120])]
+        let epoch = try XCTUnwrap(session.customInputEpoch)
+        var firstCompletions = 0, secondCompletions = 0, secondWaiting = false
+        XCTAssertTrue(session.sendSequencePlan(schedule(first), epoch: epoch, resolve: { first[$0].input }, stillValid: { true }, progress: { _ in }, completion: {
+            XCTAssertNotNil($0); firstCompletions += 1
+        }))
+        try await wait { held != nil }
+        session.cancelSequence(epoch: epoch)
+        XCTAssertEqual(firstCompletions, 1, "Cancel completes synchronously without waiting for the non-cancellable writer")
+        XCTAssertFalse(session.isSendingCustomSequence)
+        XCTAssertNotEqual(session.customInputEpoch, epoch)
+        let second: [TerminalSequenceOperation<[UInt8]>] = [.input([98]), .wait(500), .input([99])]
+        let freshEpoch = try XCTUnwrap(session.customInputEpoch)
+        XCTAssertTrue(session.sendSequencePlan(schedule(second), epoch: freshEpoch, resolve: { second[$0].input }, stillValid: { true }, progress: { if $0 == 1 { secondWaiting = true } }, completion: { XCTAssertNil($0); secondCompletions += 1 }))
+        session.cancelSequence(epoch: epoch)
+        XCTAssertTrue(session.isSendingCustomSequence, "An old Cancel cannot retire the new run")
+        XCTAssertTrue(record.received.isEmpty, "New input cannot overtake the accepted blocked write")
+        let pending = held; held = nil; pending?.resume()
+        try await wait { secondWaiting && record.received == [97, 98] }
+        XCTAssertEqual(firstCompletions, 1, "The late old runner completion is ignored")
+        XCTAssertEqual(secondCompletions, 0)
+        XCTAssertTrue(session.isSendingCustomSequence, "Old cleanup must not clear the newer reservation")
+        try await wait { secondCompletions == 1 && record.received == [97, 98, 99] }
+        XCTAssertTrue(session.trySend([100])); try await wait { record.received == [97, 98, 99, 100] }
+    }
+
+    func testLateCanceledWriteFailureCannotStopNewShortcut() async throws {
+        let record = SSHTestRecord(echoInput: false), key = NIOSSHPrivateKey(ed25519Key: .init())
+        let peer = try await server(record: record, key: key); defer { _ = peer.close() }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic late writer failure", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(peer.localAddress?.port))
+        let session = DirectTerminalSession(mac: mac); defer { session.stop(); try? TerminalSecretStore.remove(mac.id) }
+        session.connect(username: "synthetic", password: "synthetic-only", remember: false)
+        try await wait { session.trust != nil }; session.answerTrust(true); try await wait { session.canSendUserInput }
+        var held: CheckedContinuation<Void, Error>?
+        session.beforeWriteForTesting = { bytes in if bytes == [97] { try await withCheckedThrowingContinuation { held = $0 } } }
+        defer { held?.resume(); held = nil }
+        let old: [TerminalSequenceOperation<[UInt8]>] = [.input([97]), .wait(100), .input([120])]
+        var completed = 0, fresh = false
+        let epoch = try XCTUnwrap(session.customInputEpoch)
+        XCTAssertTrue(session.sendSequencePlan(schedule(old), epoch: epoch, resolve: { old[$0].input }, stillValid: { true }, progress: { _ in }, completion: { XCTAssertNotNil($0); completed += 1 }))
+        try await wait { held != nil }; session.cancelSequence(epoch: epoch)
+        XCTAssertEqual(completed, 1)
+        let next: [TerminalSequenceOperation<[UInt8]>] = [.input([98]), .wait(100), .input([99])]
+        XCTAssertTrue(session.sendSequencePlan(schedule(next), epoch: try XCTUnwrap(session.customInputEpoch), resolve: { next[$0].input }, stillValid: { true }, progress: { _ in }, completion: { XCTAssertNil($0); fresh = true }))
+        let pending = held; held = nil; pending?.resume(throwing: CocoaError(.fileWriteUnknown))
+        try await wait { fresh && record.received == [98, 99] }
+        XCTAssertTrue(session.connected, "The retired writer failure must not stop the newer run")
+        XCTAssertEqual(completed, 1)
+    }
+
+    func testCancelBehindBlockedPriorWriteIsPromptAndRetainsQueueBudget() async throws {
+        let record = SSHTestRecord(echoInput: false), key = NIOSSHPrivateKey(ed25519Key: .init())
+        let peer = try await server(record: record, key: key); defer { _ = peer.close() }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic blocked predecessor", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(peer.localAddress?.port))
+        let session = DirectTerminalSession(mac: mac); defer { session.stop(); try? TerminalSecretStore.remove(mac.id) }
+        session.connect(username: "synthetic", password: "synthetic-only", remember: false)
+        try await wait { session.trust != nil }; session.answerTrust(true); try await wait { session.canSendUserInput }
+        var held: CheckedContinuation<Void, Error>?
+        session.beforeWriteForTesting = { bytes in if bytes == [112] { try await withCheckedThrowingContinuation { held = $0 } } }
+        defer { held?.resume(); held = nil }
+        XCTAssertTrue(session.trySend([112])); try await wait { held != nil }
+        let plan: [TerminalSequenceOperation<[UInt8]>] = [.input([120]), .wait(100), .input([121])]
+        var completed = 0
+        for _ in 0..<3 {
+            let epoch = try XCTUnwrap(session.customInputEpoch)
+            XCTAssertTrue(session.sendSequencePlan(schedule(plan), epoch: epoch, resolve: { plan[$0].input }, stillValid: { true }, progress: { _ in }, completion: { XCTAssertNotNil($0); completed += 1 }))
+            session.cancelSequence(epoch: epoch)
+        }
+        XCTAssertEqual(completed, 3, "Cancel also completes runners still awaiting their predecessor")
+        XCTAssertFalse(session.sendSequencePlan(schedule(plan), epoch: try XCTUnwrap(session.customInputEpoch), resolve: { plan[$0].input }, stillValid: { true }, progress: { _ in }, completion: { XCTAssertNotNil($0) }), "Canceled but undrained tasks stay within the queue budget")
+        XCTAssertTrue(session.trySend([113]))
+        let pending = held; held = nil; pending?.resume()
+        try await wait { record.received == [112, 113] }
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(completed, 3)
+        var fresh = false
+        XCTAssertTrue(session.sendSequencePlan(schedule(plan), epoch: try XCTUnwrap(session.customInputEpoch), resolve: { plan[$0].input }, stillValid: { true }, progress: { _ in }, completion: { XCTAssertNil($0); fresh = true }))
+        try await wait { fresh && record.received == [112, 113, 120, 121] }
+    }
+
     func testCustomInputAdmissionFollowsWriterPauseResumeAndQueueLimit() async throws {
         let record = SSHTestRecord(), key = NIOSSHPrivateKey(ed25519Key: .init())
         let peer = try await server(record: record, key: key)

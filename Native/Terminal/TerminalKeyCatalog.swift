@@ -10,6 +10,8 @@ struct TerminalPaletteKey: Identifiable, Equatable {
     let accessory: TerminalAccessoryKey?
     let character: UInt32
     let modifiers: [UInt32]
+    var pickerTitle: String { shortcutCode == 0xff0d ? "↵ Return" : title }
+    var searchAliases: [String] { shortcutCode == 0xff0d ? ["Enter"] : [] }
     init(_ key: TerminalAccessoryKey, name: String? = nil) {
         id = "key-" + key.rawValue; title = key.title; self.name = name ?? key.title
         accessory = key; character = 0; modifiers = []
@@ -51,7 +53,10 @@ enum TerminalKeyCatalog {
     static func key(_ id: String) -> TerminalPaletteKey? { all.first { $0.id == id } }
     static func matching(_ query: String, in group: Group) -> [TerminalPaletteKey] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return group.keys.filter { query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) || $0.name.localizedCaseInsensitiveContains(query) || group.title.localizedCaseInsensitiveContains(query) }
+        return group.keys.filter { key in
+            query.isEmpty || key.title.localizedCaseInsensitiveContains(query) || key.name.localizedCaseInsensitiveContains(query)
+                || group.title.localizedCaseInsensitiveContains(query) || key.searchAliases.contains { $0.localizedCaseInsensitiveContains(query) }
+        }
     }
 }
 

@@ -191,7 +191,7 @@ class CloudProjectTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             derived = Path(folder) / 'DerivedData'
             security = Path(folder) / 'security'
-            with patch('prepare_cloud_ios_packages.verify_checkouts', side_effect=ValueError('tampered source')):
+            with patch('prepare_cloud_ios_packages.prepare_frontend', side_effect=ValueError('tampered source')):
                 with patch('prepare_cloud_ios_packages.prepare') as host_tool:
                     with self.assertRaisesRegex(ValueError, 'tampered source'):
                         configure(derived, security)
@@ -203,10 +203,34 @@ class CloudProjectTests(unittest.TestCase):
             derived = Path(folder)
             snapshot = {'swiftterm': {'sourceTreeSHA256': 'expected'}}
             (derived / 'maccompanion-cloud-packages.json').write_text(json.dumps(snapshot))
-            with patch('prepare_cloud_ios_packages.verify_checkouts', side_effect=ValueError('changed source')) as verify:
+            with patch('prepare_cloud_ios_packages.prepare_frontend', return_value={'swiftterm': {}}), \
+                 patch('prepare_cloud_ios_packages.verify_checkouts', side_effect=ValueError('changed source')) as verify:
                 with self.assertRaisesRegex(ValueError, 'changed source'):
                     configure(derived, derived / 'security', verify_only=True)
                 self.assertEqual(verify.call_args.kwargs['previous'], snapshot)
+
+    def test_cloud_build_and_post_build_verification_use_the_same_frontend_adaptation(self):
+        transforms = {'swiftterm': {'Sources/SwiftTerm/iOS/iOSTerminalView.swift': (b'original', b'adapted')}}
+        snapshot = {'swiftterm': {'sourceTreeSHA256': 'adapted source'}}
+        with tempfile.TemporaryDirectory() as folder:
+            derived = Path(folder)
+            security = derived / 'security'
+            with patch('prepare_cloud_ios_packages.prepare_frontend', return_value=transforms) as frontend, \
+                 patch('prepare_cloud_ios_packages.verify_checkouts', return_value=snapshot) as verify, \
+                 patch('prepare_cloud_ios_packages.prepare') as host_tool:
+                configure(derived, security)
+                self.assertEqual(verify.call_args.kwargs['transforms'], transforms)
+                self.assertIs(verify.call_args.kwargs['allow_cloud_transport'], True)
+                host_tool.assert_called_once_with(derived, transforms=transforms['swiftterm'])
+                self.assertEqual(json.loads((derived / 'maccompanion-cloud-packages.json').read_text()), snapshot)
+                approvals = (security / 'plugins.json').read_bytes()
+                host_tool.reset_mock()
+                configure(derived, security, verify_only=True)
+                self.assertIs(frontend.call_args.kwargs['verify_only'], True)
+                self.assertEqual(verify.call_args.kwargs['previous'], snapshot)
+                self.assertEqual(verify.call_args.kwargs['transforms'], transforms)
+                host_tool.assert_not_called()
+                self.assertEqual((security / 'plugins.json').read_bytes(), approvals)
 
 
 if __name__ == '__main__':

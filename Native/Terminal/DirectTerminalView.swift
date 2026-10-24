@@ -508,10 +508,18 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     private var deletingModifiers: TerminalModifiers?
     private var deletionEncoded = false
     var customInputEpoch: () -> UUID? = { nil }
+    var inputReserved: () -> Bool = { false }
+    // Track physical presses, not HID codes: a rejected press must never gain
+    // a release endpoint just because shortcut ownership has since ended.
+    private let admittedHardwarePresses = NSHashTable<UIPress>(options: [.weakMemory, .objectPointerPersonality])
     var admitCustomInput: ([UInt8]) -> Bool = { _ in false }
-    var admitCustomSequence: ([[UInt8]], @escaping @MainActor () -> Bool, @escaping @MainActor (String?) -> Void) -> Bool = { _, _, complete in
+    var admitCustomSequence: ([[UInt8]], @escaping @MainActor () -> Bool, @escaping @MainActor (Int) -> Void, @escaping @MainActor (String?) -> Void) -> Bool = { _, _, _, complete in
         complete("The input owner is unavailable. Nothing was queued."); return false
     }
+    var admitCustomPlan: ([TerminalSequenceOperation<Int>], @escaping @MainActor (Int) -> [UInt8]?, @escaping @MainActor () -> Bool, @escaping @MainActor (Int) -> Void, @escaping @MainActor (String?) -> Void) -> Bool = { _, _, _, _, complete in
+        complete("The input owner is unavailable. Nothing was queued."); return false
+    }
+    var cancelCustomPlan: (UUID) -> Void = { _ in }
     private var customInputBytes: [UInt8]?
     private var modifiedText: [UInt8]?
     private var modifiedTextEncoded = false
@@ -529,7 +537,9 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         // Detach the delegate first: native responder/composition cleanup must
         // never write to the replacement shell, even through a delayed callback.
         terminalDelegate = nil; focusChanged = nil
-        customInputEpoch = { nil }; admitCustomInput = { _ in false }; admitCustomSequence = { _, _, complete in complete("The input owner retired."); return false }; customInputBytes = nil
+        admittedHardwarePresses.removeAllObjects()
+        customInputEpoch = { nil }; admitCustomInput = { _ in false }; admitCustomSequence = { _, _, _, complete in complete("The input owner retired."); return false }; customInputBytes = nil
+        admitCustomPlan = { _, _, _, _, complete in complete("The input owner retired."); return false }; cancelCustomPlan = { _ in }
         _ = resignFirstResponder()
         resetModifiers(); clearSelection()
         setMarkedText("", selectedRange: NSRange(location: 0, length: 0)); unmarkText()
@@ -558,7 +568,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     /// Buffer one explicit accessory action so its encoded bytes are admitted
     /// together. Ordinary system typing keeps the existing delegate path.
     @discardableResult func performCustomInput(feedbackKind: String? = "key", ignoringFramingBytes: Int = 0, _ action: () -> Void) -> Bool {
-        guard customInputBytes == nil, let epoch = customInputEpoch() else { return false }
+        guard !inputReserved(), customInputBytes == nil, let epoch = customInputEpoch() else { return false }
         customInputBytes = []
         action()
         let bytes = customInputBytes ?? []
@@ -576,10 +586,41 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         // Hardware keys own their real modifier/repeat/release metadata. Do not
         // replace their later UITextInput commit with a discrete software key.
-        if presses.contains(where: { $0.key != nil }) { resetModifiers() }
-        super.pressesBegan(presses, with: event)
+        let available = !inputReserved() && customInputEpoch() != nil
+        let accepted = Set(presses.filter { $0.key == nil || available })
+        for press in accepted where press.key != nil { admittedHardwarePresses.add(press) }
+        if accepted.contains(where: { $0.key != nil }) { resetModifiers() }
+        if !accepted.isEmpty { super.pressesBegan(accepted, with: event) }
+    }
+    override func pressesChanged(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let accepted = Set(presses.filter { $0.key == nil || admittedHardwarePresses.contains($0) })
+        if !accepted.isEmpty { super.pressesChanged(accepted, with: event) }
+    }
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let accepted = takeAdmittedPresses(presses)
+        // SwiftTerm's release handler also cancels its global repeat timer.
+        // Even an otherwise harmless rejected key-up must not reach it.
+        if !accepted.isEmpty { super.pressesEnded(accepted, with: event) }
+    }
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let accepted = takeAdmittedPresses(presses)
+        let hardware = Set(accepted.filter { $0.key != nil })
+        let other = accepted.subtracting(hardware)
+        // UIKit cancellation must retire SwiftTerm's repeat and modifier state
+        // just as a normal release does. Repeated endpoints are ignored.
+        if !hardware.isEmpty { super.pressesEnded(hardware, with: event) }
+        if !other.isEmpty { super.pressesCancelled(other, with: event) }
+    }
+    private func takeAdmittedPresses(_ presses: Set<UIPress>) -> Set<UIPress> {
+        Set(presses.filter { press in
+            guard press.key != nil else { return true }
+            guard admittedHardwarePresses.contains(press) else { return false }
+            admittedHardwarePresses.remove(press)
+            return true
+        })
     }
     override func insertText(_ text: String) {
+        guard !inputReserved() else { return }
         let modifiers = keyboardState.consume()
         if markedTextRange != nil || text.unicodeScalars.count != 1 || !text.unicodeScalars.allSatisfy({ $0.isASCII }) {
             // IME, dictation and native normalization can emit several edits.
@@ -596,6 +637,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         super.insertText(modifiers.contains(.shift) ? TerminalKeyboardState.shifted(text) : text)
     }
     override func deleteBackward() {
+        guard !inputReserved() else { return }
         let modifiers = keyboardState.consume()
         let ordinary = modifiers.isEmpty || (modifiers == .shift && getTerminal().keyboardEnhancementFlags.isEmpty)
         deletingModifiers = ordinary || markedTextRange != nil ? nil : modifiers
@@ -626,6 +668,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         return keyEncoding.bytes(.backspace, modifiers: deletingModifiers)
     }
     override func becomeFirstResponder() -> Bool {
+        guard !inputReserved() else { return false }
         let result = super.becomeFirstResponder(); if result { focusChanged?(true) }; return result
     }
     override func resignFirstResponder() -> Bool {
@@ -672,6 +715,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     private var controlsInputEpoch = UUID()
     private var observedSessionInputEpoch: UUID?
     private var feedingRemoteOutput = false
+    private var shortcutConfirmations = TerminalShortcutConfirmations()
     init(session: DirectTerminalSession, customize: @escaping @MainActor () -> Void, action: @escaping @MainActor (String) -> Void = { _ in }, defaults: UserDefaults = .standard, controlsStore: TerminalControlsStore = .init()) {
         self.session = session; self.customize = customize; self.action = action; self.defaults = defaults
         self.controlsStore = controlsStore
@@ -717,6 +761,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
             textComposer.invalidate(); terminal.resetModifiers(); controls.cancelSlideForLayoutChange(); controls.close()
             keypadState?.ready = false
             if let sequenceReview, presentedViewController === sequenceReview { dismiss(animated: false); self.sequenceReview = nil }
+            runningShortcut?.close(restoreKeyboard: false); runningShortcut = nil
             if let navigation = presentedViewController as? UINavigationController, navigation.topViewController is CompanionVNCMenu { dismiss(animated: false) }
             if let inputPanel, presentedViewController === inputPanel { dismiss(animated: false); self.inputPanel = nil }
         }
@@ -731,9 +776,18 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     private func installTerminalSurface() {
         terminal.customInputEpoch = { [weak self] in self?.currentControlsInputEpoch() }
         terminal.admitCustomInput = { [weak self] bytes in guard let self, !customizingControls else { return false }; return session.trySend(bytes) }
-        terminal.admitCustomSequence = { [weak self] packets, valid, complete in
+        terminal.admitCustomSequence = { [weak self] packets, valid, progress, complete in
             guard let self, !customizingControls, let epoch = session.customInputEpoch else { complete("The session input owner changed."); return false }
-            return session.sendSequence(packets, epoch: epoch, stillValid: valid, completion: complete)
+            return session.sendSequence(packets, epoch: epoch, stillValid: valid, progress: progress, completion: complete)
+        }
+        terminal.admitCustomPlan = { [weak self] operations, resolve, valid, progress, complete in
+            guard let self, !customizingControls, let epoch = session.customInputEpoch else { complete("The session input owner changed."); return false }
+            return session.sendSequencePlan(operations, epoch: epoch, resolve: resolve, stillValid: valid, progress: progress, completion: complete)
+        }
+        terminal.inputReserved = { [weak session] in session?.isSendingCustomSequence == true }
+        terminal.cancelCustomPlan = { [weak self] epoch in
+            guard let self, terminal.customInputEpoch() == epoch, let sessionEpoch = session.customInputEpoch else { return }
+            session.cancelSequence(epoch: sessionEpoch)
         }
         terminal.accessibilityIdentifier = "terminal-surface"
         terminal.terminalDelegate = self; terminal.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(terminal)
@@ -757,7 +811,10 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         setContentScrollView(terminal, for: .top)
         if #available(iOS 26, *) { terminal.topEdgeEffect.style = .automatic }
         NSLayoutConstraint.activate([terminal.topAnchor.constraint(equalTo: view.topAnchor), normalBottom, terminal.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor), terminal.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor)])
-        terminal.focusChanged = { [weak self, weak session] visible in session?.keyboardVisible = visible; self?.updateControls(); self?.view.setNeedsLayout() }
+        terminal.focusChanged = { [weak self, weak session] visible in
+            if self?.executionKeyboardChange != true { session?.keyboardVisible = visible }
+            self?.updateControls(); self?.view.setNeedsLayout()
+        }
         keyboardBar.toggleKeyboard = { [weak session] in session?.toggleKeyboard?() }
         terminal.registerForTraitChanges([UITraitUserInterfaceStyle.self]) { [weak self] (_: TerminalView, _: UITraitCollection) in self?.updatePalette() }
     }
@@ -793,6 +850,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         guard DirectProAccess.shared.hasPro, DirectAppLockV1.shared.canAccess,
               let item = controlProfile.actions.first(where: { $0.id == id }), item.valid else { return }
         guard !item.requiresCommand || terminal.keyEncoding.supportsCommand else { return }
+        guard runningShortcut == nil else { return }
         switch item.kind {
         case .builtIn: performControl(item.operation?.rawValue ?? item.builtIn?.rawValue ?? "", feedbackHandled: feedbackHandled, inputFeedback: feedback)
         case .key:
@@ -805,25 +863,80 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         keyboardBar.refresh()
     }
     private var sequenceReview: UIViewController?
+    private var runningShortcut: TerminalSequenceBannerController?
+    private var executionKeyboardChange = false
     private func runShortcut(_ item: TerminalControlAction, feedback: String?) {
-        guard let epoch = terminal.customInputEpoch(),
-              let packets = try? item.terminalSequence(encoding: terminal.keyEncoding, bracketedPaste: terminal.getTerminal().bracketedPasteMode) else { return }
+        guard runningShortcut == nil, let epoch = terminal.customInputEpoch() else { return }
+        let schedule: [TerminalSequenceOperation<Int>]
+        let packets: [[UInt8]]
+        do {
+            schedule = try item.terminalSchedule()
+            packets = item.hasSequenceWait ? [] : try item.terminalSequence(encoding: terminal.keyEncoding, bracketedPaste: terminal.getTerminal().bracketedPasteMode)
+        } catch {
+            session.textSendNotice = .init(reason: .inputPaused, title: "Shortcut unavailable", message: "This shortcut is too large or contains an unsupported step. Nothing was sent.")
+            return
+        }
         let revision = controlProfile.revision
+        let connectionID = session.outputGeneration.uuidString
+        let keyboardEpoch = session.keyboardPresentationEpoch
         let send = { [weak self] in
             guard let self, terminal.customInputEpoch() == epoch,
                   controlProfile.revision == revision, DirectProAccess.shared.hasPro else { return }
-            // Recheck negotiated capabilities after the review; never substitute.
-            guard let current = try? item.terminalSequence(encoding: terminal.keyEncoding, bracketedPaste: terminal.getTerminal().bracketedPasteMode), current == packets else { return }
-            let accepted = terminal.admitCustomSequence(packets, { [weak self] in
-                guard let self, terminal.customInputEpoch() == epoch, controlProfile.revision == revision, DirectProAccess.shared.hasPro else { return false }
-                return (try? item.terminalSequence(encoding: terminal.keyEncoding, bracketedPaste: terminal.getTerminal().bracketedPasteMode)) == packets
-            }) { [weak self] message in
-                guard let self, terminal.customInputEpoch() == epoch else { return }
-                if let message { let alert = UIAlertController(title: "Shortcut Stopped", message: message, preferredStyle: .alert); alert.addAction(.init(title: "OK", style: .default)); present(alert, animated: true) }
+            let progress = TerminalSequenceProgress(action: item)
+            let keyboard = TerminalSequenceKeyboard(visible: { [weak self] in
+                guard let self else { return false }
+                return TerminalSequenceKeyboard.softwareVisible(in: view, responder: terminal)
+            }, current: { [weak self] in
+                guard let self else { return false }
+                return session.outputGeneration.uuidString == connectionID && session.keyboardPresentationEpoch == keyboardEpoch && session.canSendUserInput
+                    && TerminalSequenceKeyboard.presentationCurrent(in: self, responder: terminal)
+            }, hide: { [weak self] in
+                guard let self else { return false }
+                executionKeyboardChange = true
+                let modifiers = terminal.keyboardState
+                defer { executionKeyboardChange = false; terminal.keyboardState = modifiers; keyboardBar.refresh() }
+                return terminal.resignFirstResponder()
+            }, restore: { [weak self] in
+                guard let self else { return }
+                executionKeyboardChange = true
+                defer { executionKeyboardChange = false }
+                _ = terminal.becomeFirstResponder()
+            })
+            let panel = TerminalSequenceBannerController(progress: progress, keyboard: keyboard, cancel: { [weak self] in
+                guard let self, runningShortcut?.rootView.progress === progress else { return }
+                progress.cancelled = true; terminal.cancelCustomPlan(epoch)
+            })
+            runningShortcut = panel; panel.attach(to: self, covering: keyboardBar, blocking: [controls])
+            let current: @MainActor () -> Bool = { [weak self] in
+                guard let self else { return false }
+                return !progress.cancelled && terminal.customInputEpoch() == epoch && DirectProAccess.shared.hasPro
+                    && controlProfile.actions.contains { $0.id == item.id && $0.sameDefinition(as: item) }
             }
+            let completed: @MainActor (String?) -> Void = { [weak self, weak panel] message in
+                guard let self, let panel, runningShortcut === panel else { return }
+                panel.close(); runningShortcut = nil; keyboardBar.refresh()
+                if let message, !progress.cancelled, terminal.customInputEpoch() == epoch {
+                    session.textSendNotice = .init(reason: .inputPaused, title: "Shortcut stopped", message: message)
+                }
+            }
+            let accepted: Bool
+            if item.hasSequenceWait {
+                accepted = terminal.admitCustomPlan(schedule, { [weak self] index in
+                    guard let self, item.resolvedSteps.indices.contains(index) else { return nil }
+                    return try? item.resolvedSteps[index].terminalBytes(encoding: terminal.keyEncoding, bracketedPaste: terminal.getTerminal().bracketedPasteMode)
+                }, current, { progress.move(to: $0) }, completed)
+            } else {
+                // Keep the no-wait packet path, but reserve the same input owner.
+                accepted = terminal.admitCustomSequence(packets, { [weak self] in
+                    guard let self, current() else { return false }
+                    return (try? item.terminalSequence(encoding: terminal.keyEncoding, bracketedPaste: terminal.getTerminal().bracketedPasteMode)) == packets
+                }, { progress.move(to: $0) }, completed)
+            }
+            keyboardBar.refresh()
             if accepted, let feedback { keyboardBar.keyFeedback.feedback(feedback) }
+
         }
-        guard item.hasSequenceText else { send(); return }
+        guard shortcutConfirmations.requiresReview(item, connectionID: connectionID) else { send(); return }
         let modifiers = terminal.keyboardState, focused = terminal.isFirstResponder
         let restore = { [weak self] in
             guard let self, terminal.customInputEpoch() == epoch else { return }
@@ -833,8 +946,10 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         let show = { [weak self] in
             guard let self, terminal.customInputEpoch() == epoch else { return }
             _ = terminal.resignFirstResponder(); terminal.keyboardState = modifiers; keyboardBar.refresh()
-            let panel = UIHostingController(rootView: TerminalSequenceReview(action: item, send: { [weak self] in
-                self?.dismiss(animated: true) { self?.sequenceReview = nil; restore(); send() }
+            let panel = UIHostingController(rootView: TerminalSequenceReview(action: item, send: { [weak self] skip in
+                guard let self, terminal.customInputEpoch() == epoch, controlProfile.revision == revision else { return }
+                if skip { shortcutConfirmations.skip(item, connectionID: connectionID) }
+                dismiss(animated: true) { [weak self] in self?.sequenceReview = nil; restore(); send() }
             }, cancel: { [weak self] in self?.dismiss(animated: true) { self?.sequenceReview = nil; restore() } }))
             sequenceReview = panel; panel.modalPresentationStyle = .pageSheet; present(panel, animated: true)
         }
@@ -888,7 +1003,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
         } else { performControl(kind, feedbackHandled: item["interfaceFeedbackHandled"] as? Bool == true, inputFeedback: inputFeedback) }
     }
     private func performControl(_ kind: String, feedbackHandled: Bool = false, inputFeedback: String? = nil) {
-        guard session.connected else { return }
+        guard session.connected, runningShortcut == nil else { return }
         switch kind {
         case "moreKeys":
             showKeypad()
@@ -1115,6 +1230,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
             let loaded = try controlsStore.load(); session.controlsRecovery = nil
             if loaded.revision == controlProfile.revision, appliedInputEpoch == terminal.customInputEpoch() { applyBarProfile(); return }
             controlProfile = loaded
+            shortcutConfirmations.definitionsChanged(loaded.actions)
         } catch TerminalControlsStore.Failure.newerFormat {
             controlProfile = .defaults; session.controlsRecovery = .make(.controlsUnavailable, message: TerminalControlsStore.newerFormatMessage)
         } catch { controlProfile = .defaults; session.controlsRecovery = .make(.controlsUnavailable, message: "Custom Terminal controls couldn’t be read. Existing data is kept; the standard keyboard remains available.") }
@@ -1326,7 +1442,8 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     }
     func send(source: TerminalView, data: ArraySlice<UInt8>) {
         guard source === terminal, (!customizingControls || feedingRemoteOutput), !resettingPTY, preparedGeneration == session.outputGeneration else { return }
-        session.send(terminal.encodeOutput(data))
+        if feedingRemoteOutput { session.send(Array(data), source: .emulatorReply) }
+        else { session.send(terminal.encodeOutput(data)) }
     }
     func setTerminalTitle(source: TerminalView, title: String) {}
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
