@@ -483,28 +483,30 @@ private final class TerminalKeyScrollView: UIScrollView {
     var showsNavigation = true
     var executionActive = false { didSet { refresh() } }
     private var executionHeightConstraint: NSLayoutConstraint?
-    var executionMinimumHeight: CGFloat = 0 {
+    var executionToolbarHeight: CGFloat = 0 {
         didSet {
-            guard oldValue != executionMinimumHeight else { return }
+            guard oldValue != executionToolbarHeight else { return }
             executionHeightConstraint?.isActive = false
-            // Fixed key heights determine the resting bar. While covered, keep
-            // those keys at their natural size and let the progress surface grow.
+            // Retain the real rows and their scroll state at their natural size.
+            // Only the dock participates in the owner's layout during execution.
+            rows.isHidden = executionToolbarHeight > 0
             if let bottom = viewportConstraints.first(where: { $0.firstAttribute == .bottom }), bottom.isActive {
                 bottom.isActive = false
-                bottom.priority = executionMinimumHeight > 0 ? .defaultHigh : .required
+                bottom.priority = executionToolbarHeight > 0 ? .defaultHigh : .required
                 bottom.isActive = true
             }
-            if executionMinimumHeight > 0 {
-                let height = executionHeightConstraint ?? heightAnchor.constraint(greaterThanOrEqualToConstant: executionMinimumHeight)
-                height.constant = executionMinimumHeight; height.isActive = true; executionHeightConstraint = height
+            if executionToolbarHeight > 0 {
+                let height = executionHeightConstraint ?? heightAnchor.constraint(equalToConstant: executionToolbarHeight)
+                height.constant = executionToolbarHeight; height.isActive = true; executionHeightConstraint = height
             }
             invalidateIntrinsicContentSize(); superview?.setNeedsLayout()
         }
     }
     var showsExtraRows = false { didSet { updateVisibility() } }
     var height: CGFloat {
+        if executionToolbarHeight > 0 { return executionToolbarHeight }
         let count = max(1, rows.arrangedSubviews.filter { !$0.isHidden }.count)
-        return max(executionMinimumHeight, 8 + CGFloat(count) * keyHeight + CGFloat(count - 1) * 3)
+        return 8 + CGFloat(count) * keyHeight + CGFloat(count - 1) * 3
     }
 
     init(terminal: SessionTerminalView?, preferences: TerminalKeyboardPreferences) {
@@ -1104,8 +1106,7 @@ private final class TerminalKeyScrollView: UIScrollView {
     func refresh() {
         guard !editingPreview else { return }
         if executionActive {
-            // The blocker owns interaction/accessibility. Keep the underlying
-            // keycaps legible through glass instead of dimming them twice.
+            // The execution presentation owns interaction and accessibility.
             for key in allKeys + [keypadButton] { key.isEnabled = false; key.alpha = 1 }
             return
         }

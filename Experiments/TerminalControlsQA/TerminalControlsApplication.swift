@@ -19,7 +19,7 @@ final class TerminalControlsScene: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options: UIScene.ConnectionOptions) {
         guard let scene = scene as? UIWindowScene else { return }
-        DirectAppearanceV1.shared.app = .light
+        DirectAppearanceV1.shared.app = ProcessInfo.processInfo.environment["MACCOMPANION_DOCK_DARK_QA"] == "1" ? .dark : .light
         let functionalTest = ProcessInfo.processInfo.environment["MACCOMPANION_CONTROLS_FUNCTIONAL_TEST"] == "1"
         if functionalTest { UIView.setAnimationsEnabled(false) }
         let window = UIWindow(windowScene: scene)
@@ -196,7 +196,7 @@ struct TerminalControlsHarness: View {
             }
             let launch: [TerminalShortcutStep] = [.init(kind: .typeText, text: "t"), .init(character: 0xff0d), .init(kind: .wait, waitMilliseconds: 1000), .init(kind: .typeText, text: "1"), .init(character: 0xff0d)]
             let chords: [TerminalShortcutStep] = [.init(character: 0x67, modifiers: [0xffe3]), .init(character: 0x6f, modifiers: [0xffe3])]
-            var cancel = launch; cancel[2].waitMilliseconds = 10_000
+            var cancel = launch; cancel[2].waitMilliseconds = ProcessInfo.processInfo.environment["MACCOMPANION_DOCK_ROWS_QA"] == nil ? 10_000 : 30_000
             var confirmed = action("C014", "Confirmed Shortcut", [.init(kind: .typeText, text: "ok"), .init(character: 0xff0d)])
             confirmed.confirmBeforeRunning = true
             var queries = launch; queries[2].waitMilliseconds = 4000
@@ -211,6 +211,13 @@ struct TerminalControlsHarness: View {
             if ProcessInfo.processInfo.environment["MACCOMPANION_EXECUTION_OVERLAY_QA"] == "1" {
                 profile.keyboardRows = [.init(kind: .numbers, title: "Numbers", items: TerminalRowPreset.numbers.items),
                                         .init(id: TerminalKeyboardRow.mainID, kind: .main, title: "Main", actionIDs: ordered.map(\.id), items: [.control(.keyboard), .control(.expand)] + ordered.map { .saved($0.id) })]
+                profile.rowsExpanded = true
+            }
+            if let count = ProcessInfo.processInfo.environment["MACCOMPANION_DOCK_ROWS_QA"].flatMap(Int.init), [1, 4].contains(count),
+               let main = profile.keyboardRows?.last {
+                profile.keyboardRows = (0..<(count - 1)).map { _ in
+                    .init(kind: .custom, title: "Synthetic row", items: TerminalRowPreset.numbers.items, expandedOnly: false)
+                } + [main]
                 profile.rowsExpanded = true
             }
             precondition(profile.valid, "Sequence probes must use a valid shipping controls profile")

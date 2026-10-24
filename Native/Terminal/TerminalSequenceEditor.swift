@@ -160,6 +160,10 @@ struct TerminalSequenceReview: View {
         self.index = index
         waitEndsAt = action.resolvedSteps[index].waitMilliseconds.map { Date.now.addingTimeInterval(Double($0) / 1000) }
     }
+    // Only earlier steps have completed. A wait's duration is not an estimate
+    // of the shortcut's total duration, and batched writes have no step receipt.
+    var completedStepFraction: Double? { batching ? nil : Double(index) / Double(action.resolvedSteps.count) }
+    var symbol: String { batching ? "paperplane" : action.resolvedSteps[index].kind == .wait ? "hourglass" : action.resolvedSteps[index].kind.symbol }
     func status(at date: Date, compact: Bool = false) -> String {
         if batching { return "Sending · \(action.resolvedSteps.count) steps" }
         let step = action.resolvedSteps[index]
@@ -180,13 +184,16 @@ struct TerminalSequenceRunning: View {
         Button(role: .cancel, action: cancel) {
             Text("Cancel").fixedSize(horizontal: true, vertical: true)
                 .frame(maxWidth: typeSize.isAccessibilitySize ? .infinity : nil)
-        }.buttonStyle(.borderedProminent).frame(minHeight: 44)
+                .padding(.horizontal, 10).frame(minHeight: 44)
+                .background(Color(uiColor: .systemBackground)).contentShape(.rect)
+        }.buttonStyle(.plain).foregroundStyle(.tint)
             .accessibilityLabel("Cancel Shortcut")
             .accessibilityIdentifier("shortcut-running-cancel")
     }
     private var status: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(progress.action.title).font(.subheadline.weight(.semibold)).lineLimit(1)
+            Text(progress.action.title).font(.subheadline.weight(.semibold)).lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
+                .accessibilityIdentifier("shortcut-running-title")
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 Text(progress.status(at: context.date, compact: !typeSize.isAccessibilitySize)).font(.caption).foregroundStyle(.secondary).lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
                     .accessibilityLabel(progress.status(at: context.date))
@@ -202,18 +209,27 @@ struct TerminalSequenceRunning: View {
                     cancelButton.frame(maxWidth: .infinity, alignment: .trailing)
                 }
             } else {
-                HStack(spacing: 10) { ProgressView().accessibilityHidden(true); status; cancelButton }
+                HStack(spacing: 10) {
+                    Image(systemName: progress.symbol).font(.body).foregroundStyle(.tint).frame(width: 22).accessibilityHidden(true)
+                    status
+                    cancelButton
+                }
             }
-        }.padding(.horizontal, 10).padding(.vertical, 1)
+        }.padding(.horizontal, 16).padding(.vertical, 10)
     }
     var body: some View {
-        GeometryReader { geometry in
+        ZStack(alignment: .top) {
             content
-                .frame(minHeight: geometry.size.height < 72 ? max(0, geometry.size.height - 4) : nil)
-                .background(Color(uiColor: .systemBackground), in: .rect(cornerRadius: 12))
-                .padding(.horizontal, typeSize.isAccessibilitySize ? 2 : 44).padding(.vertical, 2)
-                .frame(width: geometry.size.width, height: geometry.size.height)
-        }.privacySensitive().accessibilityElement(children: .contain)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if let fraction = progress.completedStepFraction {
+                GeometryReader { geometry in
+                    ZStack(alignment: .leading) {
+                        Color.accentColor.opacity(0.12)
+                        Color.accentColor.frame(width: geometry.size.width * fraction)
+                    }
+                }.frame(height: 2).allowsHitTesting(false).accessibilityHidden(true)
+            }
+        }.background(Color(uiColor: .systemBackground)).privacySensitive().accessibilityElement(children: .contain)
             .accessibilityIdentifier("shortcut-execution-overlay")
     }
 }
@@ -266,17 +282,15 @@ struct TerminalSequenceRunning: View {
     }
 }
 
-/// Occupies the existing row footprint; the transparent blocker is immediate,
-/// while delayed presentation avoids flashing for quick, non-wait shortcuts.
+/// Blocks input immediately, then replaces the rows with a solid dock. Delayed
+/// presentation avoids resizing or flashing for quick, non-wait shortcuts.
 @MainActor final class TerminalSequenceBannerController: UIViewController {
     let rootView: TerminalSequenceRunning
     private var content: UIHostingController<TerminalSequenceRunning>?
     private weak var bar: TerminalKeyboardBar?
-    private var blocked: [(UIView, Bool, Bool)] = []
+    private var blocked: [(UIView, Bool, Bool, CGFloat)] = []
     private var presentation: Task<Void, Never>?
     private let keyboard: TerminalSequenceKeyboard?
-    private var glass: UIVisualEffectView?
-    private var transparencyObservation: NSObjectProtocol?
     private var closed = false
     private(set) var progressVisible = false
     init(progress: TerminalSequenceProgress, keyboard: TerminalSequenceKeyboard? = nil, cancel: @escaping () -> Void) {
@@ -292,8 +306,8 @@ struct TerminalSequenceRunning: View {
     }
     func attach(to owner: UIViewController, covering bar: TerminalKeyboardBar, blocking otherViews: [UIView] = [], delay: Duration = .milliseconds(180)) {
         self.bar = bar
-        blocked = ([bar] + otherViews).map { ($0, $0.isUserInteractionEnabled, $0.accessibilityElementsHidden) }
-        for (view, _, _) in blocked { view.isUserInteractionEnabled = false; view.accessibilityElementsHidden = true }
+        blocked = ([bar] + otherViews).map { ($0, $0.isUserInteractionEnabled, $0.accessibilityElementsHidden, $0.alpha) }
+        for (view, _, _, _) in blocked { view.isUserInteractionEnabled = false; view.accessibilityElementsHidden = true }
         bar.executionActive = true
         owner.addChild(self); view.translatesAutoresizingMaskIntoConstraints = false; owner.view.addSubview(view)
         NSLayoutConstraint.activate([view.leadingAnchor.constraint(equalTo: bar.leadingAnchor), view.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
@@ -303,18 +317,11 @@ struct TerminalSequenceRunning: View {
         presentation = Task { [weak self, weak owner] in
             do { try await Task.sleep(for: delay) } catch { return }
             guard let self, !closed, let bar = self.bar, let owner else { return }
-            // UIKit glass samples the real UIKit keycaps, rather than an empty
-            // SwiftUI hosting backdrop. Only the central status strip is solid.
-            let backdrop = UIVisualEffectView(); backdrop.isUserInteractionEnabled = false
-            backdrop.layer.cornerRadius = 15; backdrop.clipsToBounds = true
-            backdrop.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(backdrop); glass = backdrop
-            updateGlass()
-            transparencyObservation = NotificationCenter.default.addObserver(forName: UIAccessibility.reduceTransparencyStatusDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.updateGlass() }
-            }
-            NSLayoutConstraint.activate([backdrop.leadingAnchor.constraint(equalTo: view.leadingAnchor), backdrop.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-                                         backdrop.topAnchor.constraint(equalTo: view.topAnchor), backdrop.bottomAnchor.constraint(equalTo: view.bottomAnchor)])
-            // Fast shortcuts never construct the SwiftUI graph or glass effect.
+            view.backgroundColor = .systemBackground
+            // Sibling floating controls must not remain visible outside the
+            // smaller dock. Alpha survives keyboard-driven visibility updates.
+            for (other, _, _, _) in blocked where other !== bar { other.alpha = 0 }
+            // Fast shortcuts never construct the SwiftUI graph or change height.
             let hosted = UIHostingController(rootView: rootView); hosted.safeAreaRegions = []; content = hosted
             addChild(hosted); hosted.view.translatesAutoresizingMaskIntoConstraints = false; hosted.view.backgroundColor = .clear
             view.addSubview(hosted.view)
@@ -327,34 +334,25 @@ struct TerminalSequenceRunning: View {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews(); updateProgressHeight()
     }
-    private func updateGlass() {
-        guard let glass else { return }
-        glass.backgroundColor = .clear
-        if UIAccessibility.isReduceTransparencyEnabled { glass.effect = nil; glass.backgroundColor = .secondarySystemBackground }
-        else if #available(iOS 26, *) { glass.effect = UIGlassEffect(style: .regular) }
-        else { glass.effect = UIBlurEffect(style: .systemUltraThinMaterial) }
-    }
     private func updateProgressHeight() {
         guard progressVisible, !closed, let bar, let owner = parent else { return }
         let title = UIFont.preferredFont(forTextStyle: .subheadline, compatibleWith: bar.traitCollection)
         let detail = UIFont.preferredFont(forTextStyle: .caption1, compatibleWith: bar.traitCollection)
         let cancel = UIFont.preferredFont(forTextStyle: .body, compatibleWith: bar.traitCollection)
         let desired = bar.traitCollection.preferredContentSizeCategory.isAccessibilityCategory
-            ? ceil(title.lineHeight + detail.lineHeight * 3 + max(44, cancel.lineHeight + 16) + 16)
-            : max(52, ceil(title.lineHeight + detail.lineHeight + 8))
+            ? ceil(title.lineHeight * 2 + detail.lineHeight * 3 + max(44, cancel.lineHeight) + 28)
+            : max(64, ceil(title.lineHeight + detail.lineHeight + 22))
         let bottom = bar.convert(bar.bounds, to: owner.view).maxY
-        let available = max(52, bottom - owner.view.safeAreaLayoutGuide.layoutFrame.minY - 4)
+        let available = max(64, bottom - owner.view.safeAreaLayoutGuide.layoutFrame.minY - 4)
         let height = min(desired, available)
-        if abs(bar.executionMinimumHeight - height) > 0.5 { bar.executionMinimumHeight = height }
+        if abs(bar.executionToolbarHeight - height) > 0.5 { bar.executionToolbarHeight = height }
     }
     func close(restoreKeyboard: Bool = true) {
         guard !closed else { return }; closed = true; presentation?.cancel(); presentation = nil
-        if let transparencyObservation { NotificationCenter.default.removeObserver(transparencyObservation) }; transparencyObservation = nil
-        bar?.executionActive = false; bar?.executionMinimumHeight = 0
-        for (view, interaction, accessibility) in blocked { view.isUserInteractionEnabled = interaction; view.accessibilityElementsHidden = accessibility }
+        bar?.executionActive = false; bar?.executionToolbarHeight = 0
+        for (view, interaction, accessibility, alpha) in blocked { view.isUserInteractionEnabled = interaction; view.accessibilityElementsHidden = accessibility; view.alpha = alpha }
         blocked = []
         content?.willMove(toParent: nil); content?.view.removeFromSuperview(); content?.removeFromParent(); content = nil
-        glass?.removeFromSuperview(); glass = nil
         willMove(toParent: nil); view.removeFromSuperview(); removeFromParent()
         keyboard?.finish(restoring: restoreKeyboard)
     }
