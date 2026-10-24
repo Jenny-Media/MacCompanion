@@ -1123,7 +1123,9 @@
     self.views.accessibilityValue = display ? display[@"title"] : @"All Displays";
     [self.session viewChanged]; [self renderFramebuffer:YES];
 }
-- (UIView *)viewForZoomingInScrollView:(UIScrollView *)scrollView { return self.image; }
+// The hidden keyboard UITextView shares this delegate. Its first-responder
+// restoration must never zoom the desktop image or record a desktop viewport.
+- (UIView *)viewForZoomingInScrollView:(UIScrollView *)scrollView { return scrollView == self.canvas ? self.image : nil; }
 - (CGRect)canvasViewportBounds {
     // The canvas reaches behind system chrome; Fit and automatic cursor following
     // use only the unobscured region. Panning remains owned by UIScrollView.
@@ -1136,13 +1138,17 @@
                        MAX(minY, MIN(MAX(minY, self.canvas.contentSize.height - self.canvas.bounds.size.height + inset.bottom), offset.y)));
 }
 - (void)scrollViewDidZoom:(UIScrollView *)scrollView {
+    if (scrollView != self.canvas) return;
     CGSize visible = [self canvasViewportBounds].size;
     CGFloat x = MAX(0, (visible.width - self.image.frame.size.width) / 2);
     CGFloat y = MAX(0, (visible.height - self.image.frame.size.height) / 2);
     self.image.center = CGPointMake(self.image.frame.size.width / 2 + x, self.image.frame.size.height / 2 + y);
     [self updateCursor]; [self rememberLayoutViewport];
 }
-- (void)scrollViewDidScroll:(UIScrollView *)scrollView { [self updateCursor]; [self rememberLayoutViewport]; }
+- (void)scrollViewDidScroll:(UIScrollView *)scrollView {
+    if (scrollView != self.canvas) return;
+    [self updateCursor]; [self rememberLayoutViewport];
+}
 - (void)scrollViewWillBeginDragging:(UIScrollView *)scrollView { if (scrollView == self.canvas) self.cursorFollowingSuspended = YES; }
 - (void)scrollViewWillBeginZooming:(UIScrollView *)scrollView withView:(UIView *)view { if (scrollView == self.canvas) self.cursorFollowingSuspended = YES; }
 - (void)fitDesktop {

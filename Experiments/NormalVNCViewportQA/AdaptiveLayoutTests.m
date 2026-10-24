@@ -34,6 +34,9 @@
 - (void)fitDesktop;
 - (void)releasePointer;
 - (void)keyboardFrame:(NSNotification *)notification;
+- (void)scrollViewDidScroll:(UIScrollView *)scrollView;
+- (void)scrollViewDidZoom:(UIScrollView *)scrollView;
+- (UIView *)viewForZoomingInScrollView:(UIScrollView *)scrollView;
 - (void)applyViewportRatio:(CGFloat)ratio center:(CGPoint)center;
 - (CGPoint)viewportCenter;
 - (void)holdAt:(UILongPressGestureRecognizer *)gesture;
@@ -616,6 +619,63 @@ static char keyboardDuringScaleUpdateKey;
 - (void)verifyKeyboardFoldSequenceWithUserZoom:(CGFloat)userZoom {
     [self verifyKeyboardFoldSequenceWithUserZoom:userZoom interleavesKeyboard:KeyboardLayoutBoundaryNone];
 }
+// Native first-responder restoration can scroll the hidden UITextView while
+// UIKit has temporarily reset the separate canvas transform during unfolding.
+// Its delegate callback must not record that canvas state as a user viewport.
+- (void)verifyTextInputRestorationKeepsViewportWithUserZoom:(CGFloat)userZoom {
+    AdaptiveViewer *viewer = [AdaptiveViewer new];
+    viewer.preventsAutomaticConnection = YES; viewer.division = CGRectNull;
+    [viewer loadViewIfNeeded]; viewer.view.frame = CGRectMake(0,0,678,466);
+    [viewer.view layoutIfNeeded];
+    AdaptiveSession *session = [AdaptiveSession new]; session.events = [NSMutableArray new]; viewer.session = session;
+    [viewer frame:[self frame]]; [[viewer valueForKey:@"login"] setHidden:YES];
+    [viewer updateConnectionChrome]; [viewer.view layoutIfNeeded];
+    [viewer fitDesktop]; [viewer applyViewportRatio:userZoom center:CGPointMake(.55,.5)];
+    UIScrollView *canvas = [viewer valueForKey:@"canvas"];
+    UITextView *input = [viewer valueForKey:@"input"];
+    UIImageView *image = [viewer valueForKey:@"image"];
+    CGPoint intended = [viewer viewportCenter];
+    XCTAssertEqual((id)input.delegate, viewer); XCTAssertNotEqual((id)input, canvas);
+    XCTAssertEqual([viewer viewForZoomingInScrollView:canvas],image);
+    XCTAssertNil([viewer viewForZoomingInScrollView:input], @"Text restoration cannot use the desktop as its zoom target");
+    XCTAssertFalse(canvas.tracking || canvas.dragging || canvas.decelerating || canvas.zooming);
+    // Isolate the observed native ordering: no canvas gesture/callback has yet
+    // occurred; only the restored text input notifies its shared delegate.
+    // The native trace shows identity image transform with the canvas content
+    // size still at its fitted dimensions. UITextView restoration obtained the
+    // wrong zoom view before sending its own scroll callback.
+    CGSize retainedContent = canvas.contentSize;
+    image.transform = CGAffineTransformIdentity;
+    XCTAssertEqualWithAccuracy(canvas.zoomScale,1,.0001, @"Reproduce the native transient scale before testing restoration");
+    XCTAssertTrue(CGSizeEqualToSize(canvas.contentSize,retainedContent));
+    CGRect transientImage = image.frame;
+    [viewer scrollViewDidScroll:input];
+    [viewer scrollViewDidZoom:input];
+    XCTAssertEqualWithAccuracy([[viewer valueForKey:@"layoutZoomRatio"] doubleValue],userZoom,.01,
+                              @"Text-input scrolling cannot overwrite desktop intent");
+    XCTAssertTrue(CGRectEqualToRect(image.frame,transientImage), @"A foreign zoom callback cannot reposition the desktop");
+    // The following layout pass must use the existing intent, not the
+    // temporarily unscaled image, for both Fit and deliberate zoom/pan.
+    viewer.view.frame = CGRectMake(0,0,669,951);
+    [viewer.view setNeedsLayout]; [viewer.view layoutIfNeeded];
+    XCTAssertEqualWithAccuracy(canvas.zoomScale/canvas.minimumZoomScale,userZoom,.01);
+    if (userZoom <= 1.01) {
+        CGRect visible = UIEdgeInsetsInsetRect(canvas.bounds,canvas.contentInset);
+        XCTAssertTrue(CGRectContainsRect(CGRectInset(visible,-1,-1),[image convertRect:image.bounds toView:canvas]));
+    } else {
+        CGPoint restored = [viewer viewportCenter];
+        XCTAssertEqualWithAccuracy(restored.x,intended.x,.01); XCTAssertEqualWithAccuracy(restored.y,intended.y,.01);
+    }
+    XCTAssertEqual(viewer.session,session); XCTAssertEqual(session.stops,0);
+    [viewer stopViewer];
+}
+- (void)testTextInputRestorationCannotTurnFitIntoZoom {
+    [self verifyTextInputRestorationKeepsViewportWithUserZoom:1];
+}
+- (void)testTextInputRestorationCannotOverwriteDeliberateCanvasZoomAndPan {
+    [self verifyTextInputRestorationKeepsViewportWithUserZoom:4];
+}
+
 - (void)testKeyboardNotificationDuringScaleUpdateDoesNotTurnFitIntoZoom {
     [self verifyKeyboardFoldSequenceWithUserZoom:1 interleavesKeyboard:KeyboardLayoutBoundaryMinimumScale];
 }
