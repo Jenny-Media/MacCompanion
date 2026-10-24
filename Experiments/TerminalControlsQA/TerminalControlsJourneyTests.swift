@@ -3,6 +3,50 @@ import StoreKitTest
 import UIKit
 
 @MainActor final class TerminalControlsJourneyTests: XCTestCase {
+    func testTimedSequenceExecutionOverlaySingleRowAndRotation() async throws { try await dockedToolbar(rows: 1, rotate: true) }
+    func testTimedSequenceExecutionOverlayFourRowsDark() async throws { try await dockedToolbar(rows: 4) }
+    func testTimedSequenceExecutionOverlayAccessibilitySingleRow() async throws { try await dockedToolbar(rows: 1) }
+    private func dockedToolbar(rows: Int, rotate: Bool = false) async throws {
+        let (app, store) = try await launchPro(dockRows: rows); defer { app.terminate(); store.clearTransactions(); XCUIDevice.shared.orientation = .portrait }
+        startSequenceProbe(app)
+        let keyboard = app.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Show Keyboard", "Hide Keyboard")).firstMatch
+        if keyboard.label == "Hide Keyboard" { keyboard.tap() }
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 4))
+        let original = app.otherElements["terminal-keyboard-bar"].firstMatch.frame
+        let surface = app.descendants(matching: .any).matching(identifier: "terminal-surface").firstMatch
+        XCTAssertTrue(surface.exists)
+        let originalSurface = surface.frame
+        capture("dock-\(rows)-rows-before-" + (name.contains("Accessibility") ? "large-text" : "normal-text"), app: app)
+        let action = app.buttons["terminal-row-action-00000000-0000-0000-0000-00000000C013"]
+        // At accessibility sizes the label can be wider than a scroll gesture.
+        // This journey needs its reachable tap target, not full-label exposure.
+        if !action.isHittable { revealHorizontal(action, scroll: app.scrollViews["terminal-modifier-keys"]) }
+        action.tap()
+        let cancel = app.buttons["shortcut-running-cancel"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5)); XCTAssertTrue(cancel.isHittable)
+        let cover = app.otherElements["shortcut-execution-blocker"].firstMatch
+        XCTAssertEqual(cover.frame.minX, original.minX); XCTAssertEqual(cover.frame.width, original.width)
+        XCTAssertGreaterThanOrEqual(cancel.frame.height, 44)
+        XCTAssertTrue(cover.frame.insetBy(dx: -1, dy: -1).contains(cancel.frame), "Cancel must fit inside the dock")
+        if !name.contains("Accessibility") { XCTAssertEqual(cover.frame.height, 64) }
+        XCTAssertLessThanOrEqual(surface.frame.maxY, cover.frame.minY + 1, "Terminal content must reflow above the dock")
+        if rows > 1 && !name.contains("Accessibility") { XCTAssertGreaterThan(surface.frame.height, originalSurface.height) }
+        XCTAssertFalse(action.exists, "Keyboard rows must be absent from accessibility while docked")
+        await assertInput("740d", app: app)
+        capture("dock-\(rows)-rows-running-" + (name.contains("Accessibility") ? "large-text" : "normal-text"), app: app)
+        if rotate {
+            XCUIDevice.shared.orientation = .landscapeLeft
+            XCTAssertTrue(cancel.waitForExistence(timeout: 5)); XCTAssertTrue(cancel.isHittable)
+            XCTAssertTrue(cover.frame.insetBy(dx: -1, dy: -1).contains(cancel.frame))
+            capture("dock-single-row-landscape", app: app)
+        }
+        cancel.tap(); XCTAssertTrue(cancel.waitForNonExistence(timeout: 2))
+        XCTAssertTrue(app.otherElements["terminal-keyboard-bar"].firstMatch.waitForExistence(timeout: 3))
+        XCTAssertEqual(app.otherElements["terminal-keyboard-bar"].firstMatch.frame.height, original.height, "Restore the configured rows after Cancel")
+        if !rotate { XCTAssertEqual(surface.frame, originalSurface, "Restore the terminal viewport after Cancel") }
+        await assertInput("740d", app: app)
+        capture("dock-\(rows)-rows-restored", app: app)
+    }
     func testTimedSequenceExecutionOverlayCoversExpandedRowsAndKeyboard() async throws {
         let (app, store) = try await launchPro(); defer { app.terminate(); store.clearTransactions() }
         startSequenceProbe(app)
@@ -15,15 +59,16 @@ import UIKit
         runSequenceProbe("C013", review: false, app: app)
         let cancel = app.buttons["shortcut-running-cancel"]
         XCTAssertTrue(cancel.waitForExistence(timeout: 5))
+        XCTAssertGreaterThanOrEqual(cancel.frame.height, 44)
         let overlay = app.otherElements["shortcut-execution-blocker"].firstMatch
         XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 4))
         XCTAssertFalse(bar.exists, "Covered rows must be hidden from accessibility during execution")
         XCTAssertEqual(overlay.frame.minX, original.minX)
         XCTAssertEqual(overlay.frame.width, original.width)
-        XCTAssertEqual(overlay.frame.height, original.height)
+        XCTAssertEqual(overlay.frame.height, 64)
         XCTAssertFalse(keyboard.exists)
         await assertInput("740d", app: app)
-        capture("terminal-glass-over-rows-keyboard-temporarily-hidden", app: app)
+        capture("terminal-dock-over-rows-keyboard-temporarily-hidden", app: app)
         cancel.tap(); XCTAssertTrue(cancel.waitForNonExistence(timeout: 2))
         try await waitForSoftwareKeyboard(app)
         capture("terminal-keyboard-restored-after-cancel", app: app)
@@ -33,8 +78,9 @@ import UIKit
         capture("terminal-rows-restored-keyboard-hidden", app: app)
         runSequenceProbe("C013", review: false, app: app)
         XCTAssertTrue(cancel.waitForExistence(timeout: 5))
-        XCTAssertEqual(overlay.frame, hiddenKeyboardRows, "Progress occupies the existing rows without covering terminal output")
-        capture("terminal-glass-over-rows-keyboard-already-hidden", app: app)
+        XCTAssertEqual(overlay.frame.maxY, hiddenKeyboardRows.maxY)
+        XCTAssertEqual(overlay.frame.height, 64, "Expanded rows collapse to a compact dock")
+        capture("terminal-dock-over-rows-keyboard-already-hidden", app: app)
         cancel.tap(); XCTAssertTrue(cancel.waitForNonExistence(timeout: 2))
         XCTAssertFalse(app.keyboards.firstMatch.exists)
     }
@@ -72,7 +118,8 @@ import UIKit
         let keyboard = app.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Show Keyboard", "Hide Keyboard")).firstMatch
         action.tap()
         let cancel = app.buttons["shortcut-running-cancel"]
-        XCTAssertTrue(cancel.waitForExistence(timeout: 5)); XCTAssertFalse(action.isHittable); XCTAssertFalse(quick.isHittable)
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5)); XCTAssertGreaterThanOrEqual(cancel.frame.height, 44)
+        XCTAssertFalse(action.isHittable); XCTAssertFalse(quick.isHittable)
         XCTAssertEqual(app.staticTexts["remote-qa-events"].label, "Remote events: 2")
         capture(mode + "-progress-covers-rows-keyboard-hidden", app: app)
         cancel.tap(); XCTAssertTrue(cancel.waitForNonExistence(timeout: 2)); XCTAssertTrue(action.isHittable)
@@ -80,7 +127,7 @@ import UIKit
         capture(mode + "-keyboard-before-shortcut", app: app)
         action.tap(); XCTAssertTrue(cancel.waitForExistence(timeout: 5))
         XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 4))
-        capture(mode + "-glass-over-rows-keyboard-temporarily-hidden", app: app)
+        capture(mode + "-dock-over-rows-keyboard-temporarily-hidden", app: app)
         cancel.tap(); XCTAssertTrue(cancel.waitForNonExistence(timeout: 2))
         try await waitForSoftwareKeyboard(app)
         capture(mode + "-keyboard-restored-after-cancel", app: app)
@@ -684,7 +731,7 @@ import UIKit
         try await waitForSoftwareKeyboard(app)
     }
     private func launchPro(failWriteOnce: Bool = false, remoteMode: String? = nil, failRead: Bool = false,
-                           futureFormat: Bool = false, executionOverlay: Bool = false) async throws -> (XCUIApplication, SKTestSession) {
+                           futureFormat: Bool = false, executionOverlay: Bool = false, dockRows: Int? = nil) async throws -> (XCUIApplication, SKTestSession) {
         continueAfterFailure = false
         XCUIDevice.shared.orientation = .portrait
         let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.controlsqa.ios")
@@ -692,7 +739,9 @@ import UIKit
         if let remoteMode { app.launchEnvironment["MACCOMPANION_CONTROLS_REMOTE_MODE"] = remoteMode }
         if failRead { app.launchEnvironment["MACCOMPANION_CONTROLS_FAIL_READ"] = "1" }
         if futureFormat { app.launchEnvironment["MACCOMPANION_CONTROLS_FUTURE_FORMAT"] = "1" }
-        app.launchArguments = ["-UIPreferredContentSizeCategoryName", (name.contains("testAccessibility") ? UIContentSizeCategory.accessibilityExtraExtraExtraLarge : .large).rawValue]
+        if let dockRows { app.launchEnvironment["MACCOMPANION_DOCK_ROWS_QA"] = String(dockRows) }
+        app.launchArguments = ["-UIPreferredContentSizeCategoryName", (name.contains("Accessibility") ? UIContentSizeCategory.accessibilityExtraExtraExtraLarge : .large).rawValue]
+        if name.contains("FourRowsDark") { app.launchEnvironment["MACCOMPANION_DOCK_DARK_QA"] = "1" }
         if name.contains("testInteractiveReview"), ProcessInfo.processInfo.environment["MACCOMPANION_TERMINAL_CONTROLS_REVIEW"] == "1" { app.launchEnvironment["MACCOMPANION_TERMINAL_CONTROLS_REVIEW"] = "1" }
         if name.contains("testCommand") { app.launchEnvironment["MACCOMPANION_COMMAND_QA"] = "1" }
         if executionOverlay || name.contains("ExecutionOverlay") { app.launchEnvironment["MACCOMPANION_EXECUTION_OVERLAY_QA"] = "1" }

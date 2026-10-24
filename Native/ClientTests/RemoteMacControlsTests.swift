@@ -303,7 +303,7 @@ private final class RemoteAnchorSession: CompanionVNCSession {
         }
     }
 
-    func testProgressOverlayCoversExistingRowsAndRestoresInteractionForBothTextSizes() async throws {
+    func testDockedProgressRestoresRowsAndInteractionForBothTextSizes() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previous = scene.windows.first(where: \.isKeyWindow)
         for category in [UIContentSizeCategory.large, .accessibilityExtraExtraExtraLarge] {
@@ -318,45 +318,99 @@ private final class RemoteAnchorSession: CompanionVNCSession {
             let progress = TerminalSequenceProgress(action: action)
             progress.move(to: 1)
             let panel = TerminalSequenceBannerController(progress: progress, cancel: {})
+            let floating = UIButton(); floating.alpha = 0.7; viewer.view.addSubview(floating)
             let original = bar.frame
-            panel.attach(to: viewer, covering: bar)
+            panel.attach(to: viewer, covering: bar, blocking: [floating])
             viewer.view.layoutIfNeeded()
             XCTAssertTrue(bar.executionActive); XCTAssertFalse(bar.isUserInteractionEnabled); XCTAssertTrue(bar.accessibilityElementsHidden)
-            XCTAssertFalse(panel.progressVisible); XCTAssertTrue(panel.children.isEmpty, "Quick shortcuts must not build a hidden glass/SwiftUI graph")
+            XCTAssertFalse(panel.progressVisible); XCTAssertTrue(panel.children.isEmpty, "Quick shortcuts must not build a hidden SwiftUI graph")
+            XCTAssertEqual(bar.frame, original); XCTAssertEqual(floating.alpha, 0.7, accuracy: 0.0001)
             let point = bar.convert(CGPoint(x: bar.bounds.midX, y: bar.bounds.midY), to: viewer.view)
             let hit = try XCTUnwrap(viewer.view.hitTest(point, with: nil))
             XCTAssertTrue(hit === panel.view || hit.isDescendant(of: panel.view), "Even before progress appears, touches cannot reach the rows")
             try await Task.sleep(for: .milliseconds(230)); window.layoutIfNeeded(); viewer.view.layoutIfNeeded()
             XCTAssertTrue(panel.progressVisible)
-            XCTAssertGreaterThanOrEqual(bar.bounds.height, bar.executionMinimumHeight - 0.5)
+            floating.isHidden = false // Model a keyboard-driven visibility update.
+            XCTAssertEqual(floating.alpha, 0, "Floating controls remain concealed outside the collapsed dock")
+            XCTAssertEqual(bar.bounds.height, bar.executionToolbarHeight)
             XCTAssertEqual(panel.view.convert(panel.view.bounds, to: viewer.view), bar.frame, "Progress must occupy the rows, not terminal content above them")
-            if category == .large { XCTAssertEqual(bar.frame, original, "Normal text must not resize the terminal") }
+            if category == .large { XCTAssertEqual(bar.bounds.height, 64) }
             let screenshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
-            let attachment = XCTAttachment(image: screenshot); attachment.name = category == .large ? "in-place-progress-overlay" : "accessible-in-place-progress-overlay"; attachment.lifetime = .keepAlways; add(attachment)
-            if category == .large, #available(iOS 26, *), !UIAccessibility.isReduceTransparencyEnabled,
-               let backdrop = panel.view.subviews.compactMap({ $0 as? UIVisualEffectView }).first {
-                backdrop.effect = UIGlassEffect(style: .clear)
-                try await Task.sleep(for: .milliseconds(150))
-                let comparison = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
-                let capture = XCTAttachment(image: comparison); capture.name = "native-clear-glass-comparison"; capture.lifetime = .keepAlways; add(capture)
-            }
+            let attachment = XCTAttachment(image: screenshot); attachment.name = category == .large ? "docked-progress-toolbar" : "accessible-docked-progress-toolbar"; attachment.lifetime = .keepAlways; add(attachment)
             if category.isAccessibilityCategory {
                 // Model limited space above a landscape or floating keyboard.
                 viewer.additionalSafeAreaInsets.top = max(0, window.bounds.height - 220)
                 viewer.view.layoutIfNeeded(); panel.view.setNeedsLayout(); panel.view.layoutIfNeeded(); viewer.view.layoutIfNeeded()
                 XCTAssertGreaterThanOrEqual(bar.frame.minY, viewer.view.safeAreaLayoutGuide.layoutFrame.minY)
-                XCTAssertLessThan(bar.executionMinimumHeight, 200)
+                XCTAssertLessThan(bar.executionToolbarHeight, 200)
                 viewer.additionalSafeAreaInsets.top = 0
             }
             panel.close(); viewer.view.layoutIfNeeded()
             XCTAssertFalse(bar.executionActive); XCTAssertTrue(bar.isUserInteractionEnabled); XCTAssertFalse(bar.accessibilityElementsHidden)
-            XCTAssertEqual(bar.executionMinimumHeight, 0); XCTAssertNil(panel.parent); XCTAssertEqual(bar.frame, original)
+            XCTAssertEqual(bar.executionToolbarHeight, 0); XCTAssertNil(panel.parent); XCTAssertEqual(bar.frame, original)
+            XCTAssertEqual(floating.alpha, 0.7, accuracy: 0.0001); XCTAssertTrue(floating.isUserInteractionEnabled)
             let quick = TerminalSequenceBannerController(progress: progress, cancel: {})
             quick.attach(to: viewer, covering: bar); quick.close()
             try await Task.sleep(for: .milliseconds(200))
             XCTAssertFalse(quick.progressVisible, "A completed fast shortcut must not show late progress")
             XCTAssertTrue(quick.children.isEmpty)
             XCTAssertTrue(bar.isUserInteractionEnabled)
+        }
+    }
+
+    func testDockedToolbarCollapsesOneTwoAndFourRowsAcrossWidthsAndAppearance() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        func scrolls(in view: UIView) -> [UIScrollView] {
+            (view as? UIScrollView).map { [$0] } ?? view.subviews.flatMap { scrolls(in: $0) }
+        }
+        for count in [1, 2, 4] {
+            var profile = TerminalControlsProfile.remoteDefaults; profile.freezeKeyboardLayout()
+            profile.keyboardRows = (0..<(count - 1)).map { _ in
+                TerminalKeyboardRow(kind: .custom, title: "Synthetic row", items: TerminalRowPreset.numbers.items, expandedOnly: false)
+            } + [.init(id: TerminalKeyboardRow.mainID, kind: .main, title: "Main", items: [.control(.keyboard), .control(.ctrl), .control(.keypad)])]
+            profile.rowsExpanded = true; XCTAssertTrue(profile.valid)
+            let owner = UIViewController(), viewer = RemoteControlsTestViewer()
+            let window = UIWindow(windowScene: scene); window.rootViewController = owner; window.makeKeyAndVisible()
+            owner.addChild(viewer); owner.view.addSubview(viewer.view); viewer.didMove(toParent: owner)
+            viewer.view.frame = .init(x: 0, y: 80, width: min(430, window.bounds.width), height: window.bounds.height - 160)
+            let host = controls(viewer, data: try JSONEncoder().encode(profile)), bar = try XCTUnwrap(host.bar as? TerminalKeyboardBar)
+            window.layoutIfNeeded(); viewer.view.layoutIfNeeded()
+            let restingHeight = bar.bounds.height
+            let scrollers = scrolls(in: bar)
+            XCTAssertFalse(scrollers.isEmpty)
+            for scroll in scrollers { scroll.contentOffset.x = max(0, scroll.contentSize.width - scroll.bounds.width) / 2 }
+            let initialOffsets = scrollers.map(\.contentOffset)
+            var action = TerminalControlAction(title: "Synthetic row geometry", kind: .shortcut)
+            action.steps = [.init(kind: .wait, waitMilliseconds: 1000), .init(character: 97)]
+            let panel = TerminalSequenceBannerController(progress: .init(action: action), cancel: {})
+            panel.attach(to: viewer, covering: bar, delay: .zero)
+            try await Task.sleep(for: .milliseconds(80))
+            viewer.view.layoutIfNeeded()
+            XCTAssertEqual(scrollers.map(\.contentOffset), initialOffsets, "Presenting the dock must preserve existing manual scrolling")
+            for width in [CGFloat(320), min(430, window.bounds.width)] {
+                for appearance in [UIUserInterfaceStyle.light, .dark] {
+                    owner.overrideUserInterfaceStyle = appearance
+                    viewer.view.frame.size.width = width
+                    viewer.view.setNeedsLayout(); viewer.view.layoutIfNeeded(); panel.view.setNeedsLayout(); panel.view.layoutIfNeeded(); viewer.view.layoutIfNeeded()
+                    XCTAssertEqual(panel.view.convert(panel.view.bounds, to: viewer.view), bar.frame)
+                    XCTAssertEqual(bar.bounds.width, width)
+                    XCTAssertEqual(bar.bounds.height, 64, "The dock height must be independent of the configured row count")
+                    XCTAssertEqual(panel.view.backgroundColor, .systemBackground)
+                    XCTAssertFalse(panel.view.subviews.contains { $0 is UIVisualEffectView }, "The dock must have no glass backdrop")
+                    XCTAssertTrue(bar.subviews.compactMap { $0 as? UIStackView }.allSatisfy(\.isHidden), "Actual key rows must be visually hidden")
+                    let hit = viewer.view.hitTest(bar.center, with: nil)
+                    XCTAssertTrue(hit === panel.view || hit?.isDescendant(of: panel.view) == true)
+                }
+            }
+            for scroll in scrollers { scroll.contentOffset.x = max(0, scroll.contentSize.width - scroll.bounds.width) / 2 }
+            let offsets = scrollers.map(\.contentOffset)
+            panel.close(); viewer.view.layoutIfNeeded()
+            XCTAssertTrue(bar.isUserInteractionEnabled); XCTAssertFalse(bar.accessibilityElementsHidden)
+            XCTAssertEqual(bar.bounds.height, restingHeight)
+            XCTAssertEqual(scrollers.map(\.contentOffset), offsets, "Restoring rows must not reset manual scrolling")
+            XCTAssertTrue(bar.subviews.compactMap { $0 as? UIStackView }.allSatisfy { !$0.isHidden })
+            window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible()
         }
     }
 

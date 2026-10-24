@@ -3,6 +3,22 @@ import XCTest
 @testable import Mac_Companion
 
 @MainActor final class ShortcutSequenceTests: XCTestCase {
+    func testProgressShowsCompletedStepsAndNeverPredictsWaitOrBatchCompletion() throws {
+        let action = shortcut([.init(kind: .typeText, text: "t"), .init(character: 0xff0d),
+                               .init(kind: .wait, waitMilliseconds: 1000), .init(kind: .typeText, text: "1"), .init(character: 0xff0d)])
+        let progress = TerminalSequenceProgress(action: action)
+        XCTAssertEqual(progress.completedStepFraction, 0)
+        progress.move(to: 2)
+        XCTAssertEqual(try XCTUnwrap(progress.completedStepFraction), 0.4, accuracy: 0.0001)
+        XCTAssertEqual(progress.symbol, "hourglass")
+        XCTAssertTrue(progress.status(at: Date.now.addingTimeInterval(5)).contains("0 s"))
+        XCTAssertEqual(progress.completedStepFraction, 0.4, "An elapsed wait does not acknowledge the following input steps")
+        progress.move(to: 4)
+        XCTAssertEqual(progress.completedStepFraction, 0.8, "The current write is still in progress")
+        let batch = TerminalSequenceProgress(action: action, batching: true)
+        XCTAssertNil(batch.completedStepFraction, "A single admitted batch cannot claim intermediate receipts")
+        XCTAssertEqual(batch.symbol, "paperplane")
+    }
     func testConfirmationDefaultsOffAndConnectionExceptionsMatchOnlyUnchangedShortcut() throws {
         var action = shortcut([.init(kind: .typeText, text: "t"), .init(character: 0xff0d)])
         var policy = TerminalShortcutConfirmations()
