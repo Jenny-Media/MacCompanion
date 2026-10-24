@@ -181,6 +181,7 @@
 @property(nonatomic, copy) NSDictionary *lastConnectionFailure;
 - (BOOL)composedTextAvailable;
 - (BOOL)sessionKeyInputAvailable;
+- (BOOL)remotePointerInputAvailable;
 - (void)retireSessionMenu;
 @end
 
@@ -1329,13 +1330,13 @@
     for (CompanionVNCTrackpadFeedback *feedback in @[self.trackpadFeedback, self.tabletopFeedback]) {
         feedback.touchesAllowed = ^BOOL {
             CompanionVNCViewer *viewer = weak;
-            return viewer && viewer.foreground && !viewer.exited && !viewer.inputInactive && !viewer.restoreViewportPending && !viewer.checkingResume && viewer.session.connected
+            return viewer && [viewer remotePointerInputAvailable]
                 && viewer.login.hidden && !viewer.recoveryController && !viewer.presentedViewController;
         };
     }
     self.trackpadFeedback.touchActivityChanged = self.tabletopFeedback.touchActivityChanged = ^{
         CompanionVNCViewer *viewer = weak;
-        if ((viewer.trackpadFeedback.hasTouches || viewer.tabletopFeedback.hasTouches)
+        if ([viewer remotePointerInputAvailable] && (viewer.trackpadFeedback.hasTouches || viewer.tabletopFeedback.hasTouches)
             && (viewer.trackpadMode || !viewer.tabletopPad.hidden) && !CGRectIsEmpty(viewer.activeCrop) && !CGRectIsNull(viewer.activeCrop)) {
             [viewer recordLocalPointer:[viewer trackpadPointer]];
         }
@@ -1461,9 +1462,7 @@
     return p;
 }
 - (BOOL)pointerForGesture:(UIGestureRecognizer *)gesture point:(CGPoint *)p {
-    if (self.retiringPointerGestures || self.controls.menuOpen || self.presentedViewController) {
-        self.session.localPointerInteractionActive = NO; return NO;
-    }
+    if (![self remotePointerInputAvailable]) return NO;
     if (CGRectIsNull(self.activeCrop) || CGRectIsEmpty(self.activeCrop)) { self.session.localPointerInteractionActive = NO; return NO; }
     self.session.localPointerInteractionActive = gesture.state == UIGestureRecognizerStateBegan || gesture.state == UIGestureRecognizerStateChanged;
     if (!self.trackpadMode && gesture.view != self.tabletopPad) return CompanionVNCPointerPoint(self.activeCrop, [gesture locationInView:self.image], self.pointerHeld, p);
@@ -1503,6 +1502,7 @@
     [self clickAt:gesture mask:4];
 }
 - (void)clickAt:(UIGestureRecognizer *)gesture mask:(NSInteger)mask {
+    if (![self remotePointerInputAvailable]) return;
     CGPoint p;
     if (self.trackpadMode || gesture.view == self.tabletopPad) { if (CGRectIsNull(self.activeCrop) || CGRectIsEmpty(self.activeCrop)) return; p = [self trackpadPointer]; }
     else if (!CompanionVNCPointerPoint(self.activeCrop, [gesture locationInView:self.image], false, &p)) return;
@@ -1512,6 +1512,7 @@
     }
 }
 - (BOOL)clickPointer:(CGPoint)p mask:(NSInteger)mask {
+    if (!self.session.ordinaryControlInputAvailable) return NO;
     if (!self.foreground || self.exited || self.inputInactive || self.restoreViewportPending || self.checkingResume || ![self.session tryClickX:p.x y:p.y mask:mask]) {
         self.status.hidden = NO; self.status.text = @"Click not sent. Wait for your Mac to resume."; [self updateStatusPresentation]; return NO;
     }
@@ -1519,11 +1520,13 @@
     return YES;
 }
 - (void)dragAt:(UIPanGestureRecognizer *)gesture {
+    if (![self remotePointerInputAvailable]) return;
     CGPoint p; if (![self pointerForGesture:gesture point:&p]) { [self releasePointer]; return; }
     if (gesture.state == UIGestureRecognizerStateBegan || gesture.state == UIGestureRecognizerStateChanged) [self followTrackpadPointer:p];
     [self sendPointer:p mask:0];
 }
 - (void)holdAt:(UILongPressGestureRecognizer *)gesture {
+    if (![self remotePointerInputAvailable]) return;
     CGPoint p; if (![self pointerForGesture:gesture point:&p]) { [self releasePointer]; return; }
     BOOL held = gesture.state == UIGestureRecognizerStateBegan || gesture.state == UIGestureRecognizerStateChanged;
     if (held) [self followTrackpadPointer:p];
@@ -1531,7 +1534,7 @@
     [[self feedbackForGesture:gesture] setDragging:held && self.foreground && !self.exited && !self.inputInactive && !self.restoreViewportPending && !self.checkingResume && self.session.connected];
 }
 - (void)pinchRemote:(UIPinchGestureRecognizer *)gesture {
-    if (self.preservingAcceptedGestures) return;
+    if (self.preservingAcceptedGestures || ![self remotePointerInputAvailable]) return;
     if (gesture.state == UIGestureRecognizerStateEnded) {
         if (self.magnificationActive) [self.session endMagnification];
         self.magnificationActive = NO; return;
@@ -1559,7 +1562,7 @@
     }
 }
 - (void)scrollRemote:(UIPanGestureRecognizer *)gesture {
-    if (self.preservingAcceptedGestures) return;
+    if (self.preservingAcceptedGestures || ![self remotePointerInputAvailable]) return;
     BOOL ended = gesture.state == UIGestureRecognizerStateEnded;
     if (gesture.state == UIGestureRecognizerStateCancelled || gesture.state == UIGestureRecognizerStateFailed
         || CGRectIsNull(self.activeCrop) || CGRectIsEmpty(self.activeCrop)
@@ -1605,13 +1608,12 @@
     if (ended) { self.scrollRemainder = 0; self.scrollGestureActive = NO; }
 }
 - (void)sendPointer:(CGPoint)point mask:(NSInteger)mask {
-    if (!self.foreground || self.exited || self.inputInactive || self.restoreViewportPending || self.checkingResume) return;
-    if (!self.session.connected) return;
+    if (![self remotePointerInputAvailable]) return;
     [self recordLocalPointer:point]; [self updateCursor];
     [self.session pointerX:point.x y:point.y mask:mask];
 }
 - (void)followTrackpadPointer:(CGPoint)point {
-    if (self.inputOnly || !self.followCursorEnabled || (!self.trackpadMode && !self.tabletop) || self.cursorFollowingSuspended
+    if (![self remotePointerInputAvailable] || self.inputOnly || !self.followCursorEnabled || (!self.trackpadMode && !self.tabletop) || self.cursorFollowingSuspended
         || !self.foreground || self.exited || self.inputInactive || self.restoreViewportPending || self.checkingResume || !self.login.hidden
         || self.presentedViewController || self.canvas.dragging || self.canvas.decelerating || self.canvas.zooming
         || self.canvas.zoomScale <= self.canvas.minimumZoomScale * 1.01) return;
@@ -2268,6 +2270,13 @@
 - (BOOL)sessionKeyInputAvailable {
     return self.foreground && !self.exited && !self.inputInactive && !self.restoreViewportPending
         && !self.checkingResume && !self.textReview && !self.controlsCustomization && self.session.connected;
+}
+- (BOOL)remotePointerInputAvailable {
+    // The session owns the reservation, including cancellation and lifecycle
+    // retirement. Reject gestures before cursor, origin, feedback or viewport
+    // mutation; keep accepted input and worker-owned releases independent.
+    return !self.retiringPointerGestures && !self.controls.menuOpen && !self.presentedViewController
+        && [self sessionKeyInputAvailable] && self.session.ordinaryControlInputAvailable;
 }
 - (void)updateRemoteKeyAvailability {
     [self.remoteControls refresh];

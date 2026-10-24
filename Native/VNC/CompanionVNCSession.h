@@ -73,6 +73,9 @@ typedef UIImage CompanionVNCImage;
 @property(nonatomic, readonly) NSString *connectionIdentifier;
 /// Mode-specific input admission, including the current Desktop baseline.
 @property(nonatomic, readonly) BOOL composedTextReady;
+/// Connection/input readiness plus the current shortcut reservation. UI gesture
+/// handlers must check this before changing local input state; cleanup is separate.
+@property(nonatomic, readonly) BOOL ordinaryControlInputAvailable;
 /// Completion acknowledges local writes only, never remote application consumption.
 - (BOOL)tryComposedTextEvents:(NSArray<NSDictionary *> *)events completion:(void (^)(BOOL written))completion;
 /// A local reservation keeps other input out while a timed shortcut yields.

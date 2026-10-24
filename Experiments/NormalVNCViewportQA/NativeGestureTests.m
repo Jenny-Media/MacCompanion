@@ -1,6 +1,7 @@
 #import <XCTest/XCTest.h>
 #import "CompanionVNCSession.h"
 #import "CompanionVNCViewer.h"
+#import "CompanionVNCTrackpadFeedback.h"
 #import <rfb/rfbclient.h>
 #import <sys/socket.h>
 #import <unistd.h>
@@ -25,6 +26,10 @@
 - (void)secondaryClickAt:(UITapGestureRecognizer *)gesture;
 - (void)setTrackpadModeEnabled:(BOOL)enabled;
 - (void)becameInactive;
+- (void)dragAt:(UIPanGestureRecognizer *)gesture;
+- (void)holdAt:(UILongPressGestureRecognizer *)gesture;
+- (void)clickAt:(UIGestureRecognizer *)gesture;
+- (void)receivedCursor:(UIImage *)image hotspot:(CGPoint)hotspot position:(CGPoint)position known:(BOOL)known;
 @end
 @interface SyntheticPinch : UIPinchGestureRecognizer
 @property UIGestureRecognizerState syntheticState;
@@ -40,6 +45,20 @@
 - (UIGestureRecognizerState)state { return self.syntheticState; }
 - (CGPoint)translationInView:(UIView *)view { return self.delta; }
 - (void)setTranslation:(CGPoint)translation inView:(UIView *)view { self.delta = translation; }
+@end
+@interface ReservedPointerPan : SyntheticScroll
+@property CGPoint point;
+@end
+@implementation ReservedPointerPan
+- (CGPoint)locationInView:(UIView *)view { return self.point; }
+@end
+@interface ReservedPointerHold : UILongPressGestureRecognizer
+@property UIGestureRecognizerState sampleState;
+@property CGPoint point;
+@end
+@implementation ReservedPointerHold
+- (UIGestureRecognizerState)state { return self.sampleState; }
+- (CGPoint)locationInView:(UIView *)view { return self.point; }
 @end
 @interface SecondaryTapSample : UITapGestureRecognizer
 @property UIGestureRecognizerState sampleState;
@@ -71,7 +90,7 @@
 }
 - (CompanionVNCSession *)sessionWithInputOnly:(BOOL)inputOnly {
     CompanionVNCSession *s = [CompanionVNCSession new]; s.inputOnly = inputOnly;
-    for (NSString *key in @[@"running", @"established", @"inputReady", @"appleGestureServer", @"nativeGestureLayout"]) [s setValue:@YES forKey:key];
+    for (NSString *key in @[@"running", @"established", @"inputReady", @"baselinePresented", @"appleGestureServer", @"nativeGestureLayout"]) [s setValue:@YES forKey:key];
     [s setValue:@3024 forKey:@"framebufferWidth"]; [s setValue:@1964 forKey:@"framebufferHeight"];
     return s;
 }
@@ -109,6 +128,56 @@
     XCTAssertEqualObjects([self takeEvents:s].firstObject[@"scrollPhase"],@1);
     [s stop];
 }
+- (void)testShortcutWaitCannotChangePointerStateOrTheNextClickTarget {
+    for (NSString *mode in @[@"pointer", @"trackpad", @"inputOnly", @"tabletop"]) for (NSNumber *cancel in @[@NO, @YES]) {
+        CompanionVNCViewer *viewer=[CompanionVNCViewer new]; viewer.inputOnly=[mode isEqual:@"inputOnly"]; [viewer loadViewIfNeeded];
+        CompanionVNCSession *s=[self sessionWithInputOnly:viewer.inputOnly]; viewer.session=s;
+        CGPoint original=CGPointMake(100,200), touch=CGPointMake(300,250);
+        [viewer setValue:[NSValue valueWithCGRect:CGRectMake(0,0,800,600)] forKey:@"activeCrop"];
+        [viewer setValue:[NSValue valueWithCGPoint:original] forKey:@"cursorPosition"]; [viewer setValue:@YES forKey:@"cursorPositionKnown"];
+        ((UIView *)[viewer valueForKey:@"image"]).frame=CGRectMake(0,0,800,600);
+        ((UIView *)[viewer valueForKey:@"login"]).hidden=YES;
+        [viewer setTrackpadModeEnabled:[mode isEqual:@"trackpad"] || viewer.inputOnly];
+        [viewer setValue:@([mode isEqual:@"tabletop"]) forKey:@"tabletop"];
+        [s keyEvents:@[@{@"key":@0x61,@"down":@YES},@{@"key":@0x61,@"down":@NO}]];
+        NSString *owner=[viewer beginControlSequence]; XCTAssertNotNil(owner);
+        NSArray *pending=[[s valueForKey:@"events"] copy];
+        [viewer setValue:@YES forKey:@"cursorFollowingSuspended"];
+        NSArray *keys=@[@"cursorPosition",@"lastLocalPointerInputAt",@"trackpadOrigin",@"trackpadTranslation",@"cursorFollowingSuspended",
+                        @"lastPointer",@"pointerHeld",@"magnificationActive",@"scrollingActive",@"scrollGestureActive",@"scrollRemainder",@"scrollFraction"];
+        NSDictionary *before=[viewer dictionaryWithValuesForKeys:keys];
+        NSString *statusBefore=[(UILabel *)[viewer valueForKey:@"status"] text];
+        UIView *surface=[viewer valueForKey:[mode isEqual:@"tabletop"] ? @"tabletopPad" : @"canvas"];
+        ReservedPointerPan *pan=[ReservedPointerPan new]; pan.point=touch; [surface addGestureRecognizer:pan];
+        ReservedPointerHold *hold=[ReservedPointerHold new]; hold.point=touch; [surface addGestureRecognizer:hold];
+        SyntheticScroll *scroll=[SyntheticScroll new]; [surface addGestureRecognizer:scroll];
+        SyntheticPinch *pinch=[SyntheticPinch new];
+        for (NSNumber *state in @[@(UIGestureRecognizerStateBegan),@(UIGestureRecognizerStateChanged),@(UIGestureRecognizerStateEnded),@(UIGestureRecognizerStateCancelled)]) {
+            pan.syntheticState=state.integerValue; pan.delta=CGPointMake(40,20); [viewer dragAt:pan];
+            hold.sampleState=state.integerValue; hold.point=CGPointMake(350,275); [viewer holdAt:hold];
+            scroll.syntheticState=state.integerValue; scroll.delta=CGPointMake(2,5); [viewer scrollRemote:scroll];
+            pinch.syntheticState=state.integerValue; pinch.scale=1.1; [viewer pinchRemote:pinch];
+        }
+        SecondaryTapSample *tap=[SecondaryTapSample new]; tap.point=touch; tap.sampleState=UIGestureRecognizerStateRecognized; [surface addGestureRecognizer:tap];
+        [viewer clickAt:tap]; [viewer secondaryClickAt:tap];
+        for (NSString *name in @[@"trackpadFeedback",@"tabletopFeedback"]) {
+            CompanionVNCTrackpadFeedback *feedback=[viewer valueForKey:name]; XCTAssertFalse(feedback.touchesAllowed());
+        }
+        XCTAssertEqualObjects([viewer dictionaryWithValuesForKeys:keys],before,@"%@ cancel=%@",mode,cancel);
+        XCTAssertEqualObjects([(UILabel *)[viewer valueForKey:@"status"] text],statusBefore);
+        XCTAssertEqualObjects([s valueForKey:@"events"],pending,@"Previously accepted input and its cleanup stay ordered.");
+        if (cancel.boolValue) [viewer cancelControlSequence:owner]; else [viewer endControlSequence:owner];
+        XCTAssertEqualObjects([self takeEvents:s],pending);
+        [viewer clickAt:tap]; NSArray *clicks=[self takeEvents:s]; XCTAssertEqual(clicks.count,2);
+        CGPoint expected=[mode isEqual:@"pointer"] ? touch : original;
+        XCTAssertEqualObjects(clicks.firstObject[@"x"],@((NSInteger)expected.x)); XCTAssertEqualObjects(clicks.firstObject[@"y"],@((NSInteger)expected.y));
+        pan.syntheticState=UIGestureRecognizerStateBegan; pan.delta=CGPointZero; [viewer dragAt:pan];
+        pan.syntheticState=UIGestureRecognizerStateChanged; pan.delta=CGPointMake(40,20); [viewer dragAt:pan];
+        XCTAssertFalse(CGPointEqualToPoint([[viewer valueForKey:@"cursorPosition"] CGPointValue],original));
+        XCTAssertGreaterThan([self takeEvents:s].count,0,@"Fresh gestures resume immediately.");
+        [s stop];
+    }
+}
 - (void)testReservedRecognizerCallbacksCannotRetireTheAcceptedGesturePrefix {
     CompanionVNCSession *s=[self session]; XCTAssertTrue([s beginScrollX:1000 y:600]);
     NSUInteger epoch=[[s valueForKey:@"gestureLifecycleEpoch"] unsignedIntegerValue];
@@ -118,6 +187,45 @@
     XCTAssertEqual([[s valueForKey:@"gestureLifecycleEpoch"] unsignedIntegerValue],epoch);
     XCTAssertEqualObjects([self takeEvents:s].firstObject[@"scrollPhase"],@1);
     [s cancelControlSequence:owner]; [s stop];
+}
+- (void)testOrdinaryInputGateFollowsTheCurrentOwnerAndIndependentLifecycleGates {
+    for (NSNumber *only in @[@NO,@YES]) {
+        CompanionVNCSession *s=[self sessionWithInputOnly:only.boolValue]; XCTAssertTrue(s.ordinaryControlInputAvailable);
+        NSString *first=[s beginControlSequence]; XCTAssertFalse(s.ordinaryControlInputAvailable);
+        [s cancelControlSequence:first]; XCTAssertTrue(s.ordinaryControlInputAvailable);
+        NSString *second=[s beginControlSequence]; XCTAssertFalse(s.ordinaryControlInputAvailable);
+        [s endControlSequence:first]; [s cancelControlSequence:first]; XCTAssertFalse(s.ordinaryControlInputAvailable);
+        [s endControlSequence:second]; XCTAssertTrue(s.ordinaryControlInputAvailable);
+        NSString *third=[s beginControlSequence]; [s suspendInputForInterruption];
+        [s cancelControlSequence:third]; XCTAssertFalse(s.ordinaryControlInputAvailable);
+        XCTAssertNil([s beginControlSequence]);
+        [s resumeInputAfterInterruption]; XCTAssertTrue(s.ordinaryControlInputAvailable);
+        s.displayHandoffInputBlocked=YES; XCTAssertFalse(s.ordinaryControlInputAvailable);
+        s.displayHandoffInputBlocked=NO; XCTAssertTrue(s.ordinaryControlInputAvailable);
+        [s setValue:@NO forKey:@"baselinePresented"]; XCTAssertEqual(s.ordinaryControlInputAvailable,only.boolValue);
+        [s setValue:@YES forKey:@"baselinePresented"];
+        [s stop]; XCTAssertFalse(s.ordinaryControlInputAvailable);
+    }
+}
+- (void)testShortcutReservationKeepsReceivingHostCursorObservations {
+    for (NSNumber *only in @[@NO,@YES]) {
+        CompanionVNCViewer *viewer=[CompanionVNCViewer new]; viewer.inputOnly=only.boolValue; [viewer loadViewIfNeeded];
+        CompanionVNCSession *s=[self sessionWithInputOnly:only.boolValue]; viewer.session=s;
+        [viewer setValue:[NSValue valueWithCGRect:CGRectMake(0,0,800,600)] forKey:@"activeCrop"];
+        ((UIView *)[viewer valueForKey:@"login"]).hidden=YES;
+        [viewer setTrackpadModeEnabled:YES];
+        NSString *owner=[viewer beginControlSequence]; XCTAssertNotNil(owner);
+        CGPoint hostPosition=CGPointMake(350,250);
+        [viewer receivedCursor:nil hotspot:CGPointZero position:hostPosition known:YES];
+        XCTAssertTrue(CGPointEqualToPoint([[viewer valueForKey:@"cursorPosition"] CGPointValue],hostPosition));
+        XCTAssertFalse(s.ordinaryControlInputAvailable);
+        [viewer cancelControlSequence:owner]; [self takeEvents:s];
+        SecondaryTapSample *tap=[SecondaryTapSample new]; [[viewer valueForKey:@"canvas"] addGestureRecognizer:tap];
+        tap.sampleState=UIGestureRecognizerStateRecognized; [viewer clickAt:tap];
+        NSArray *clicks=[self takeEvents:s]; XCTAssertEqual(clicks.count,2);
+        XCTAssertEqualObjects(clicks.firstObject[@"x"],@350); XCTAssertEqualObjects(clicks.firstObject[@"y"],@250);
+        [s stop];
+    }
 }
 - (void)testShortcutPreservesQueuedNativeScrollThroughTheViewer {
     [self checkShortcutGestureBoundary:NO copied:NO cancel:NO];

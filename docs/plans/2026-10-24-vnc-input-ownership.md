@@ -30,15 +30,39 @@ Use Xcode.app and managed build/QA workspaces. Run focused native regressions,
 the related lifecycle/shortcut suites, and scripts/validate.sh. Keep test evidence
 outside Git. No wire/authentication, signing identity or persistence changes.
 
+## Viewer gesture admission
+
+Expose ordinary-input availability from the session's existing reservation and
+readiness gates, sampled under its queue lock. Share a viewer admission predicate
+across pointer movement, clicks, holds, scrolling, pinch, cursor-follow and touch
+feedback. Check before changing local cursor targets, origins or gesture state;
+rejecting a packet at the transport alone leaves a latent target for the next tap.
+Keep lifecycle cleanup and previously accepted queued/copied input independent.
+Do not gate incoming host cursor observations or introduce a second reservation
+flag in the viewer. Cancel/completion opens admission immediately unless another
+connection or presentation gate remains closed.
+
+Regressions cover pointer, trackpad and tabletop surfaces with both Cancel and
+completion, the first subsequent click and fresh gesture, independent lifecycle
+gates, stale owner callbacks, host cursor reception, and retained prefix ordering.
+
 ## Verification
 
 The three targeted native regressions failed against the unchanged previous
-production source, then passed after the structural change. All 102 selected
-native cases passed (101 in the gesture/lifecycle/shortcut/controls batch, plus
-the added global-retirement compaction case). They include eight user-input
-producers at capacity, eight queued/copied and scroll/pinch combinations, failed
+production source, then passed after the structural change. All 105 selected
+native cases passed across gestures, lifecycle, shortcut sequences and remote
+controls, including global-retirement compaction and the viewer admission cases.
+They include eight user-input producers at capacity, eight queued/copied and
+scroll/pinch combinations, failed
 recognizers, true overflow and 1,000 cancellation cycles. Golden packet checks
 run through the production socket worker with a held write.
+
+The wrong-click regression also failed against d483162 before the viewer gate,
+then passed for all eight pointer/trackpad/input-only/tabletop and
+Cancel/completion cases.
+While reserved, gesture callbacks cannot change local targets or touch feedback,
+and the first subsequent click uses the unchanged target. Independent lifecycle
+and stale-owner gates remain closed; incoming host cursor observations continue.
 
 The normal Simulator app matches all 634 production source fingerprints.
 scripts/validate.sh passed with stable Xcode.app 27.1 (27A9275). Earlier full UI

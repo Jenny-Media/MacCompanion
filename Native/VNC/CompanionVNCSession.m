@@ -1809,6 +1809,9 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 - (BOOL)composedTextReady {
     [_lock lock]; BOOL ready = [self composedTextReadyLocked]; [_lock unlock]; return ready;
 }
+- (BOOL)ordinaryControlInputAvailable {
+    [_lock lock]; BOOL ready = [self ordinaryControlInputAllowedLocked] && [self composedTextReadyLocked]; [_lock unlock]; return ready;
+}
 - (BOOL)tryComposedTextEvents:(NSArray<NSDictionary *> *)events completion:(void (^)(BOOL))completion {
     [_lock lock];
     BOOL allowed = !_controlSequenceID && completion && [self composedTextReadyLocked]
