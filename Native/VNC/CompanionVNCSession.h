@@ -44,6 +44,7 @@ typedef UIImage CompanionVNCImage;
 - (BOOL)beginMagnificationX:(NSInteger)x y:(NSInteger)y;
 - (BOOL)changeMagnification:(double)delta;
 - (void)endMagnification;
+/// Cancel the active local gesture only; lifecycle retirement remains global.
 - (void)cancelNativeGestures;
 @property(nonatomic, readonly) BOOL nativeScrollingSupported;
 - (BOOL)beginScrollX:(NSInteger)x y:(NSInteger)y;
