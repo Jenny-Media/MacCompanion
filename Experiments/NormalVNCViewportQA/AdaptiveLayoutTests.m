@@ -65,6 +65,9 @@
 @implementation AdaptiveSession
 - (BOOL)connected { return YES; }
 - (BOOL)running { return YES; }
+// This local event sink models a ready ordinary-control session. Production
+// admission still requires the transport's full readiness and ownership gate.
+- (BOOL)ordinaryControlInputAvailable { return self.connected && self.running; }
 - (void)stop { self.stops++; }
 - (void)pointerX:(NSInteger)x y:(NSInteger)y mask:(NSInteger)mask { [self.events addObject:@[@(x), @(y), @(mask)]]; }
 - (BOOL)tryClickX:(NSInteger)x y:(NSInteger)y mask:(NSInteger)mask { [self pointerX:x y:y mask:mask]; [self pointerX:x y:y mask:0]; return YES; }
@@ -450,7 +453,10 @@ static char keyboardDuringScaleUpdateKey;
     [viewer frame:[self frame]]; [[viewer valueForKey:@"login"] setHidden:YES]; [viewer updateConnectionChrome]; [viewer.view layoutIfNeeded];
     [viewer applyViewportRatio:3 center:CGPointMake(.55,.5)]; CGPoint focus = [viewer viewportCenter];
     UIScrollView *canvas = [viewer valueForKey:@"canvas"]; UIView *toolbar = [viewer valueForKey:@"toolbar"], *pad = [viewer valueForKey:@"tabletopPad"];
-    AdaptiveHold *hold = [AdaptiveHold new]; [viewer holdAt:hold]; XCTAssertEqualObjects(session.events.lastObject[2],@1);
+    XCTAssertTrue(session.ordinaryControlInputAvailable);
+    NSUInteger beforeHold = session.events.count;
+    AdaptiveHold *hold = [AdaptiveHold new]; [viewer holdAt:hold];
+    XCTAssertEqual(session.events.count,beforeHold+1); XCTAssertEqualObjects(session.events.lastObject[2],@1);
     for (NSValue *division in @[[NSValue valueWithCGRect:CGRectMake(465,0,20,669)], [NSValue valueWithCGRect:CGRectNull], [NSValue valueWithCGRect:CGRectMake(465,0,20,669)]]) {
         viewer.division = division.CGRectValue; [viewer.view setNeedsLayout]; [viewer.view layoutIfNeeded];
         XCTAssertEqual(viewer.session,session); XCTAssertEqual(session.stops,0); XCTAssertEqualObjects(session.events.lastObject[2],@0);
@@ -463,8 +469,13 @@ static char keyboardDuringScaleUpdateKey;
         } else { XCTAssertTrue(pad.hidden); XCTAssertGreaterThan(canvas.frame.size.width,900); }
     }
     [viewer receivedCursor:nil hotspot:CGPointZero position:CGPointMake(800,500) known:YES];
+    NSUInteger beforeClick = session.events.count;
     UITapGestureRecognizer *tap = [UITapGestureRecognizer new]; [pad addGestureRecognizer:tap]; [viewer clickAt:tap];
-    XCTAssertEqualObjects(session.events[session.events.count-2][2],@1); XCTAssertEqualObjects(session.events.lastObject[2],@0);
+    XCTAssertEqual(session.events.count,beforeClick+2, @"A click must admit a balanced down/up pair");
+    if (session.events.count >= beforeClick+2) {
+        XCTAssertEqualObjects(session.events[beforeClick][2],@1); XCTAssertEqualObjects(session.events[beforeClick+1][2],@0);
+    }
+    XCTAssertEqualObjects(session.events.lastObject[2],@0);
     [viewer setValue:@280 forKey:@"keyboardOverlap"]; ((NSLayoutConstraint *)[viewer valueForKey:@"toolbarBottom"]).constant = -284;
     [viewer.view setNeedsLayout]; [viewer.view layoutIfNeeded];
     XCTAssertLessThanOrEqual(CGRectGetMaxY(canvas.frame),389); XCTAssertLessThanOrEqual(CGRectGetMaxY(pad.frame),389);

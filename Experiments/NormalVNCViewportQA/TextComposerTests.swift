@@ -37,6 +37,138 @@ import StoreKitTest
         return try XCTUnwrap(root.presentedViewController as? DirectTextComposerPanel)
     }
 
+    func testDuoComposerRegionPolicyKeepsInputPageAndOnlyYieldsInactiveStrip() {
+        let book = CGRect(x: 465, y: 0, width: 20, height: 669)
+        let tabletop = CGRect(x: 0, y: 465, width: 669, height: 20)
+        let cases: [(CGRect, CGRect, CGRect, CGRect)] = [
+            (.init(x: 0, y: 0, width: 951, height: 669), book, .zero, .init(x: 485, y: 617, width: 466, height: 52)),
+            (.init(x: 0, y: 0, width: 951, height: 669), book, .init(x: 0, y: 401, width: 951, height: 268), .init(x: 485, y: 349, width: 466, height: 52)),
+            (.init(x: 0, y: 0, width: 669, height: 951), tabletop, .init(x: 0, y: 601, width: 669, height: 350), .init(x: 0, y: 549, width: 669, height: 52)),
+            (.init(x: 0, y: 0, width: 669, height: 951), tabletop, .init(x: 0, y: 450, width: 669, height: 501), .init(x: 0, y: 398, width: 669, height: 52)),
+            // Reverse configurations use their actual local division coordinates.
+            (.init(x: 0, y: 0, width: 951, height: 669), .init(x: 450, y: 0, width: 20, height: 669), .init(x: 0, y: 365, width: 951, height: 304), .init(x: 470, y: 293, width: 481, height: 72)),
+            (.init(x: 0, y: 0, width: 669, height: 951), .init(x: 0, y: 450, width: 669, height: 20), .init(x: 0, y: 610, width: 669, height: 341), .init(x: 0, y: 538, width: 669, height: 72))
+        ]
+        for (safe, division, keyboard, bar) in cases {
+            for active in [false, true] {
+                let decision = DirectComposerPlacement.region(safe: safe, division: division, keyboard: keyboard,
+                    shortcutBar: bar, mayYieldShortcutBar: !active)
+                XCTAssertTrue(decision.fitsEditor); XCTAssertGreaterThanOrEqual(decision.area.height, 112)
+                XCTAssertTrue(safe.contains(decision.area)); XCTAssertFalse(decision.area.intersects(division))
+                XCTAssertFalse(decision.area.intersects(keyboard))
+                if active { XCTAssertFalse(decision.yieldsShortcutBar) }
+                if !decision.yieldsShortcutBar { XCTAssertFalse(decision.area.intersects(bar)) }
+            }
+        }
+        let safe = CGRect(x: 0, y: 0, width: 669, height: 951)
+        let keyboard = CGRect(x: 0, y: 625, width: 669, height: 326), bar = CGRect(x: 0, y: 573, width: 669, height: 52)
+        let inactive = DirectComposerPlacement.region(safe: safe, division: tabletop, keyboard: keyboard, shortcutBar: bar, mayYieldShortcutBar: true)
+        XCTAssertTrue(inactive.yieldsShortcutBar); XCTAssertGreaterThanOrEqual(inactive.area.minY, tabletop.maxY)
+        let active = DirectComposerPlacement.region(safe: safe, division: tabletop, keyboard: keyboard, shortcutBar: bar, mayYieldShortcutBar: false)
+        XCTAssertFalse(active.yieldsShortcutBar); XCTAssertLessThanOrEqual(active.area.maxY, tabletop.minY)
+        let covered = DirectComposerPlacement.region(safe: safe, division: tabletop, keyboard: safe, shortcutBar: bar, mayYieldShortcutBar: true)
+        XCTAssertFalse(covered.fitsEditor, "A fully covered window must not claim a reachable editor")
+        for keyboard in [CGRect.zero, keyboard, CGRect(x: 120, y: 250, width: 400, height: 240)] {
+            XCTAssertEqual(DirectComposerPlacement.region(safe: safe, division: .null, keyboard: keyboard, shortcutBar: bar,
+                mayYieldShortcutBar: true).area, DirectComposerPlacement.area(safe: safe, keyboard: keyboard, shortcutBar: bar))
+        }
+    }
+
+    func testDuoComposerRestoresStripAndKeepsActiveExecutionControlsVisible() throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        let root = UIViewController(); window.rootViewController = root; window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        root.view.frame.size = .init(width: 669, height: 951)
+        let bar = TerminalKeyboardBar(terminal: nil, preferences: .init()); root.view.addSubview(bar)
+        bar.frame = .init(x: 0, y: 573, width: 669, height: 52); bar.alpha = 0.8
+        let originalAlpha = bar.alpha
+        let draft = DirectTextComposerDraft(macName: "Synthetic", mode: .desktop)
+        let panel = DirectTextComposerPanel(draft: draft); panel.shortcutBar = bar
+        root.addChild(panel); root.view.addSubview(panel.view); panel.didMove(toParent: root); panel.view.frame = root.view.bounds
+        panel.simulatedKeyboardFrame = .init(x: 0, y: 625, width: 669, height: 326)
+        panel.setDivisionForComposerTesting(NSValue(cgRect: .init(x: 0, y: 465, width: 669, height: 20)))
+        _ = panel.placementArea; XCTAssertEqual(bar.alpha, 0)
+        bar.executionActive = true; _ = panel.placementArea
+        XCTAssertEqual(bar.alpha, originalAlpha); XCTAssertLessThanOrEqual(panel.placementArea.maxY, 465)
+        bar.executionActive = false; _ = panel.placementArea; XCTAssertEqual(bar.alpha, 0)
+        panel.viewDidDisappear(false); XCTAssertEqual(bar.alpha, originalAlpha)
+    }
+
+    func testDuoComposerRenderedRegionsRetainDraftEditorAndReachableActions() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        let root = UIViewController(); root.view.backgroundColor = .systemIndigo
+        window.rootViewController = root; window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        let bar = UIView(); bar.backgroundColor = .systemGray; root.view.addSubview(bar)
+        let band = UIView(); band.backgroundColor = .systemPink; root.view.addSubview(band)
+        let draft = DirectTextComposerDraft(macName: "Synthetic Duo", mode: .desktop)
+        draft.configure(available: { true }, send: { _, _ in XCTFail("A geometry check must never send") })
+        let panel = DirectTextComposerPanel(draft: draft); panel.shortcutBar = bar
+        root.addChild(panel); root.view.addSubview(panel.view); panel.didMove(toParent: root)
+        func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+        for _ in 0..<150 {
+            if descendants(panel.view).contains(where: { ($0 as? UITextView)?.isFirstResponder == true }) { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let editor = try XCTUnwrap(descendants(panel.view).compactMap { $0 as? UITextView }.first)
+        // This fixture supplies keyboard rectangles explicitly. Suppress the
+        // ordinary phone's separate keyboard window while retaining the same
+        // first responder, so its unrelated inset cannot alter these fixtures.
+        editor.inputView = UIView(frame: .zero); editor.reloadInputViews()
+        try await Task.sleep(for: .milliseconds(250))
+        draft.edit("Local Duo draft")
+        try await Task.sleep(for: .milliseconds(80)); editor.selectedRange = NSRange(location: 3, length: 4)
+        let selection = editor.selectedRange, epoch = draft.presentationEpoch
+        let cases: [(String, CGSize, CGRect, CGRect, CGRect)] = [
+            ("book", .init(width: 951, height: 669), .init(x: 465, y: 0, width: 20, height: 669), .zero, .init(x: 485, y: 617, width: 466, height: 52)),
+            ("book-keyboard", .init(width: 951, height: 669), .init(x: 465, y: 0, width: 20, height: 669), .init(x: 0, y: 401, width: 951, height: 268), .init(x: 485, y: 349, width: 466, height: 52)),
+            ("tabletop-keyboard", .init(width: 669, height: 951), .init(x: 0, y: 465, width: 669, height: 20), .init(x: 0, y: 601, width: 669, height: 350), .init(x: 0, y: 549, width: 669, height: 52)),
+            ("tabletop-yield-strip", .init(width: 669, height: 951), .init(x: 0, y: 465, width: 669, height: 20), .init(x: 0, y: 625, width: 669, height: 326), .init(x: 0, y: 573, width: 669, height: 52)),
+            ("tabletop-covered-input", .init(width: 669, height: 951), .init(x: 0, y: 465, width: 669, height: 20), .init(x: 0, y: 450, width: 669, height: 501), .init(x: 0, y: 398, width: 669, height: 52)),
+            ("flat-return", .init(width: 669, height: 951), .null, .init(x: 0, y: 650, width: 669, height: 301), .init(x: 0, y: 598, width: 669, height: 52)),
+            ("book-return", .init(width: 951, height: 669), .init(x: 465, y: 0, width: 20, height: 669), .init(x: 0, y: 401, width: 951, height: 268), .init(x: 485, y: 349, width: 466, height: 52))
+        ]
+        for (name, size, division, keyboard, shortcut) in cases {
+            root.view.frame.size = size; panel.view.frame = root.view.bounds
+            band.frame = division.isNull ? .zero : division; bar.frame = shortcut
+            panel.simulatedKeyboardFrame = keyboard
+            // The same capture harness also compiles against the preserved before
+            // implementation, which does not yet expose the region fixture hook.
+            let setter = NSSelectorFromString("setDivisionForComposerTesting:")
+            if panel.responds(to: setter) { panel.perform(setter, with: NSValue(cgRect: division)) }
+            for mode in ["floating", "expanded", "docked"] {
+                draft.docked = mode == "docked"; draft.expanded = mode == "expanded"
+                panel.view.setNeedsLayout(); panel.view.layoutIfNeeded()
+                try await Task.sleep(for: .milliseconds(100)); panel.view.setNeedsLayout(); panel.view.layoutIfNeeded(); panel.view.layoutIfNeeded()
+                let card = panel.panelFrame, send = panel.deliveryActionFrame, close = panel.closeActionFrame
+                let image = UIGraphicsImageRenderer(bounds: panel.view.bounds).image { _ in
+                    root.view.drawHierarchy(in: root.view.bounds, afterScreenUpdates: true)
+                }
+                let proof = XCTAttachment(image: image); proof.name = "duo-composer-" + name + "-" + mode; proof.lifetime = .keepAlways; add(proof)
+                let geometry: [String: Any] = ["case": name, "mode": mode, "card": NSCoder.string(for: card),
+                    "division": NSCoder.string(for: division), "keyboard": NSCoder.string(for: keyboard), "bar": NSCoder.string(for: shortcut),
+                    "send": NSCoder.string(for: send), "close": NSCoder.string(for: close), "editorFirstResponder": editor.isFirstResponder,
+                    "regionHook": panel.responds(to: setter), "barAlpha": bar.alpha]
+                let data = try JSONSerialization.data(withJSONObject: geometry, options: [.sortedKeys])
+                let metrics = XCTAttachment(data: data, uniformTypeIdentifier: "public.json"); metrics.name = (proof.name ?? name) + "-geometry"; metrics.lifetime = .keepAlways; add(metrics)
+                XCTAssertFalse(card.intersects(division), "The mounted editor must stay on one side of the division")
+                XCTAssertFalse(card.intersects(keyboard), "The editor must avoid the keyboard")
+                if bar.alpha > 0 { XCTAssertFalse(card.intersects(shortcut), "A visible shortcut strip must remain clear") }
+                XCTAssertTrue(card.contains(send)); XCTAssertTrue(card.contains(close))
+                XCTAssertGreaterThanOrEqual(send.width, 44); XCTAssertGreaterThanOrEqual(send.height, 44)
+                XCTAssertGreaterThanOrEqual(close.width, 44); XCTAssertGreaterThanOrEqual(close.height, 44)
+                XCTAssertGreaterThanOrEqual(editor.bounds.height, 36)
+                XCTAssertTrue(panel.view.bounds.contains(card)); XCTAssertTrue(panel.draft === draft)
+                XCTAssertTrue(descendants(panel.view).contains { $0 === editor }); XCTAssertTrue(editor.isFirstResponder)
+                XCTAssertEqual(editor.selectedRange, selection); XCTAssertEqual(draft.text, "Local Duo draft")
+                XCTAssertEqual(draft.presentationEpoch, epoch)
+            }
+        }
+        XCTAssertEqual(bar.alpha, 1, "Returning to a roomy layout restores the temporarily yielded strip")
+    }
+
     func testSyntheticBackgroundRestoresForegroundAdmissionAfterThrowing() async throws {
         enum SyntheticFailure: Error { case expected }
         let lock = DirectAppLockV1.shared
