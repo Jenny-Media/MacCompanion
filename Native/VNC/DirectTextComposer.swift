@@ -325,6 +325,9 @@ struct DirectComposerPlacement {
     private var placementConstraints: [NSLayoutConstraint] = []
     private var keyboardBottom: NSLayoutConstraint?
     private var safeBottom: NSLayoutConstraint?
+    private var paneTop: NSLayoutConstraint?
+    private var usesPanePosition = false
+    private var keyboardObservations: [NSObjectProtocol] = []
     private var peek: NSLayoutConstraint?
     private var grabberHeight: NSLayoutConstraint?
     private var grabberWidth: NSLayoutConstraint?
@@ -417,6 +420,7 @@ struct DirectComposerPlacement {
         }
     }
     isolated deinit {
+        for token in keyboardObservations { NotificationCenter.default.removeObserver(token) }
         if let appearancePresenter, let appearanceObservation {
             appearancePresenter.unregisterForTraitChanges(appearanceObservation)
         }
@@ -426,6 +430,11 @@ struct DirectComposerPlacement {
         view.backgroundColor = .clear; view.accessibilityViewIsModal = true
         CompanionVNCObserveDivision(view)
         view.keyboardLayoutGuide.followsUndockedKeyboard = true
+        for name in [UIResponder.keyboardWillChangeFrameNotification, UIResponder.keyboardDidChangeFrameNotification] {
+            keyboardObservations.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshPlacementAfterSystemUpdate() }
+            })
+        }
         let backdrop = UIControl(); backdrop.backgroundColor = UIColor.black.withAlphaComponent(0.12)
         backdrop.translatesAutoresizingMaskIntoConstraints = false
         backdrop.addTarget(self, action: #selector(back), for: .touchUpInside)
@@ -476,6 +485,9 @@ struct DirectComposerPlacement {
         let bottom = card.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: -8)
         let safeBottom = card.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -8)
         self.keyboardBottom = bottom; self.safeBottom = safeBottom
+        let paneTop = card.topAnchor.constraint(equalTo: view.topAnchor); self.paneTop = paneTop
+        paneTop.identifier = "compose-pane-top"; bottom.identifier = "compose-keyboard-bottom"
+        safeBottom.identifier = "compose-safe-bottom"
         // A top-edge keyboard cannot force the editor above the safe area.
         // UIKit switches these before layout; both offsets follow the selected free region.
         view.keyboardLayoutGuide.setConstraints([bottom], activeWhenAwayFrom: .top)
@@ -578,6 +590,44 @@ struct DirectComposerPlacement {
         default: break
         }
     }
+    private var hasUsableDivision: Bool {
+        var content = CGRect.null, input = CGRect.null
+        let safe = view.safeAreaLayoutGuide.layoutFrame
+        return CompanionVNCTabletopRegions(safe, division, &content, &input)
+            || CompanionVNCBookRegions(safe, division, &content, &input)
+    }
+    private func refreshPlacementAfterSystemUpdate() {
+        guard isViewLoaded else { return }
+        view.setNeedsLayout()
+        // The guide can commit its final frame after the controller's layout
+        // callback. Reconcile after that commit without remounting the editor.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.viewIfLoaded?.window != nil else { return }
+            self.view.setNeedsLayout(); self.view.layoutIfNeeded()
+        }
+    }
+    override func viewWillTransition(to size: CGSize, with coordinator: any UIViewControllerTransitionCoordinator) {
+        super.viewWillTransition(to: size, with: coordinator)
+        coordinator.animate(alongsideTransition: nil) { [weak self] _ in self?.refreshPlacementAfterSystemUpdate() }
+    }
+    private func usePanePosition(_ divided: Bool) {
+        guard usesPanePosition != divided, let keyboardBottom, let safeBottom, let paneTop else { return }
+        usesPanePosition = divided
+        if divided {
+            // A pane solver already chooses the unobscured rectangle. Tracking
+            // a separate keyboard bottom can otherwise compress that rectangle
+            // to zero when the keyboard changes between layout callbacks.
+            view.keyboardLayoutGuide.removeAllTrackedConstraints()
+            NSLayoutConstraint.deactivate([keyboardBottom, safeBottom])
+            peek?.isActive = false; paneTop.isActive = true
+        } else {
+            paneTop.isActive = false; peek?.isActive = true
+            view.keyboardLayoutGuide.setConstraints([keyboardBottom], activeWhenAwayFrom: .top)
+            view.keyboardLayoutGuide.setConstraints([safeBottom], activeWhenNearEdge: .top)
+        }
+        let height = placementConstraints[2]
+        height.isActive = false; height.priority = divided ? .required : .defaultHigh; height.isActive = true
+    }
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated); visibilityChanged?(true)
     }
@@ -599,7 +649,9 @@ struct DirectComposerPlacement {
                           height: min(area.height, draggingHeight ?? (expanded ? area.height : compactHeight)))
         if draft.narrowLayout != (size.width < 360) { draft.narrowLayout = size.width < 360 }
         let target = DirectComposerPlacement.frame(area: area, size: size, anchor: draft.docked || expanded ? DirectComposerPlacement.dockedAnchor(area: area, keyboard: keyboardFrame) : draft.floatingAnchor)
+        paneTop?.constant = target.minY
         peek?.constant = area.minY - view.safeAreaInsets.top
+        usePanePosition(hasUsableDivision)
         let values = [target.minX - view.safeAreaInsets.left, target.width, target.height]
         let keyboardOffset = target.maxY - view.keyboardLayoutGuide.layoutFrame.minY
         if keyboardBottom?.constant != keyboardOffset { keyboardBottom?.constant = keyboardOffset }

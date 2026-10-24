@@ -169,6 +169,59 @@ import StoreKitTest
         XCTAssertEqual(bar.alpha, 1, "Returning to a roomy layout restores the temporarily yielded strip")
     }
 
+    func testOpenDuoComposerKeepsActionsAndFocusAcrossActualKeyboardRotations() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        let root = UIViewController(); root.view.backgroundColor = .systemBlue
+        window.rootViewController = root; window.makeKeyAndVisible()
+        defer {
+            root.dismiss(animated: false); window.isHidden = true; window.rootViewController = nil
+            previous?.makeKeyAndVisible(); scene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
+        }
+        scene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
+        try await waitForComposerUI("portrait test window") { scene.interfaceOrientation == .portrait && window.bounds.height > window.bounds.width }
+        let bar = UIView(); bar.translatesAutoresizingMaskIntoConstraints = false; root.view.addSubview(bar)
+        NSLayoutConstraint.activate([bar.leadingAnchor.constraint(equalTo: root.view.leadingAnchor),
+            bar.trailingAnchor.constraint(equalTo: root.view.trailingAnchor), bar.heightAnchor.constraint(equalToConstant: 52),
+            bar.bottomAnchor.constraint(equalTo: root.view.keyboardLayoutGuide.topAnchor)])
+        let composer = DirectTextComposer(macName: "Synthetic Mac", mode: "desktop"); composer.shortcutBar = bar
+        composer.present(from: root, available: { true }, send: { _, _ in XCTFail("Rotation must never send") })
+        let panel = try await presentedPanel(for: composer, from: root)
+        func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+        let editor = try XCTUnwrap(descendants(panel.view).compactMap { $0 as? UITextView }.first)
+        try await waitForComposerUI("actual keyboard and initial editor focus") { editor.isFirstResponder && panel.view.keyboardLayoutGuide.layoutFrame.height > 120 }
+        editor.insertText("Native rotation draft"); editor.selectedRange = NSRange(location: 3, length: 4)
+        let selection = editor.selectedRange, epoch = composer.draft.presentationEpoch
+        for orientation: UIInterfaceOrientationMask in [.portrait, .landscapeRight, .landscapeLeft, .portrait] {
+            scene.requestGeometryUpdate(.iOS(interfaceOrientations: orientation))
+            let expected: UIInterfaceOrientation = orientation == .portrait ? .portrait : orientation == .landscapeRight ? .landscapeRight : .landscapeLeft
+            try await waitForComposerUI("the rotated native window") {
+                scene.interfaceOrientation == expected && (expected.isPortrait ? window.bounds.height > window.bounds.width : window.bounds.width > window.bounds.height)
+            }
+            let bounds = panel.view.bounds
+            let division = bounds.width > bounds.height
+                ? CGRect(x: bounds.midX - 10, y: 0, width: 20, height: bounds.height)
+                : CGRect(x: 0, y: bounds.midY - 10, width: bounds.width, height: 20)
+            panel.setDivisionForComposerTesting(NSValue(cgRect: division))
+            composer.draft.expanded = true
+            try await waitForComposerUI("reachable composer after native keyboard rotation") {
+                let card = panel.panelFrame, keyboard = panel.view.keyboardLayoutGuide.layoutFrame
+                return card.height >= 112 && keyboard.height > 120 && panel.view.bounds.contains(card)
+                    && !card.intersects(division) && !card.intersects(keyboard)
+                    && card.contains(panel.deliveryActionFrame) && card.contains(panel.closeActionFrame)
+            }
+            try await Task.sleep(for: .milliseconds(350))
+            let card = panel.panelFrame
+            XCTAssertGreaterThanOrEqual(card.height, 112)
+            XCTAssertFalse(card.intersects(panel.view.keyboardLayoutGuide.layoutFrame)); XCTAssertFalse(card.intersects(division))
+            XCTAssertTrue(card.contains(panel.deliveryActionFrame)); XCTAssertTrue(card.contains(panel.closeActionFrame))
+            XCTAssertGreaterThanOrEqual(panel.deliveryActionFrame.height, 44); XCTAssertGreaterThanOrEqual(panel.closeActionFrame.height, 44)
+            XCTAssertTrue(editor.isFirstResponder); XCTAssertEqual(editor.selectedRange, selection)
+            XCTAssertTrue(descendants(panel.view).contains { $0 === editor }); XCTAssertTrue(root.presentedViewController === panel)
+            XCTAssertEqual(composer.draft.presentationEpoch, epoch); XCTAssertEqual(composer.draft.text, "Native rotation draft")
+        }
+    }
+
     func testSyntheticBackgroundRestoresForegroundAdmissionAfterThrowing() async throws {
         enum SyntheticFailure: Error { case expected }
         let lock = DirectAppLockV1.shared
