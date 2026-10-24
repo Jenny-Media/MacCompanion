@@ -618,14 +618,14 @@ private enum TerminalPTY {
     }
     /// Reserve user input while allowing terminal protocol replies during waits.
     /// Resolve each input again after waits because terminal modes can change.
-    @discardableResult func sendSequencePlan(_ operations: [TerminalSequenceOperation<[UInt8]>], epoch expected: UUID,
+    @discardableResult func sendSequencePlan(_ operations: [TerminalSequenceOperation<Int>], epoch expected: UUID,
         resolve: @escaping @MainActor (Int) -> [UInt8]?, stillValid: @escaping @MainActor () -> Bool,
         progress: @escaping @MainActor (Int) -> Void, completion: @escaping @MainActor (String?) -> Void) -> Bool {
         let inputs = operations.compactMap(\.input)
         let waits = operations.compactMap { if case .wait(let value) = $0 { return value }; return nil }
         guard customInputEpoch == expected, !isSendingCustomSequence, stillValid(), let writer,
-              (1...32).contains(operations.count), !inputs.isEmpty, inputs.allSatisfy({ !$0.isEmpty }),
-              inputs.reduce(0, { $0 + $1.count }) <= 16384,
+              (1...32).contains(operations.count), !inputs.isEmpty,
+              operations.enumerated().allSatisfy({ index, operation in operation.input.map { $0 == index } ?? true }),
               waits.allSatisfy({ (100...30_000).contains($0) }), waits.reduce(0, +) <= 60_000,
               queuedBytes + 16384 <= Self.maximumQueuedInputBytes else {
             completion("Input changed or is busy. Nothing was queued."); return false
@@ -655,8 +655,11 @@ private enum TerminalPTY {
                             guard self.generation == id && self.writeGeneration == writeID && self.customSequenceOwner?.id == owner && self.canSendUserInput && stillValid() && !Task.isCancelled else {
                                 reply.resume(throwing: CancellationError()); return
                             }
-                            guard let bytes = resolve(index), !bytes.isEmpty, sentBytes + bytes.count <= 16384 else {
+                            guard let bytes = resolve(index), !bytes.isEmpty else {
                                 reply.resume(throwing: TerminalSequenceFailure.unsupported); return
+                            }
+                            guard bytes.count <= 16384 - sentBytes else {
+                                reply.resume(throwing: TerminalSequenceFailure.tooLarge); return
                             }
                             sentBytes += bytes.count
                             do { try await self.writeInput(bytes, using: writer); reply.resume() }
@@ -666,6 +669,7 @@ private enum TerminalPTY {
                 }
                 finish(nil)
             } catch is CancellationError { finish("Shortcut canceled. Remaining steps were not sent and will not be replayed.") }
+            catch TerminalSequenceFailure.tooLarge { finish("The shortcut reached its input size limit. Remaining steps were not sent and will not be replayed.") }
             catch is TerminalSequenceFailure { finish("The terminal input mode changed. Remaining shortcut steps were not sent.") }
             catch {
                 let current = customSequenceOwner?.id == owner

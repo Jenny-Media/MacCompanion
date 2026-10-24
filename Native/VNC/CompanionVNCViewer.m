@@ -82,6 +82,7 @@
 @property(weak) UINavigationController *sessionMenu;
 @property NSUInteger sessionMenuGeneration;
 @property BOOL retiringPointerGestures;
+@property BOOL preservingAcceptedGestures;
 @property NSUInteger displaySelectionRejections, displaySelectionRejectMask;
 @property BOOL initialDisplayApplied;
 @property BOOL desktopSizeRestored;
@@ -1371,6 +1372,11 @@
     }
     self.retiringPointerGestures = NO;
 }
+- (void)retirePointerForControlSequence {
+    self.preservingAcceptedGestures = YES;
+    [self retirePointerForMenu];
+    self.preservingAcceptedGestures = NO;
+}
 - (void)presentViewController:(UIViewController *)controller animated:(BOOL)animated completion:(void (^)(void))completion {
     [self retirePointerForMenu]; [super presentViewController:controller animated:animated completion:completion];
 }
@@ -1525,6 +1531,7 @@
     [[self feedbackForGesture:gesture] setDragging:held && self.foreground && !self.exited && !self.inputInactive && !self.restoreViewportPending && !self.checkingResume && self.session.connected];
 }
 - (void)pinchRemote:(UIPinchGestureRecognizer *)gesture {
+    if (self.preservingAcceptedGestures) return;
     if (gesture.state == UIGestureRecognizerStateEnded) {
         if (self.magnificationActive) [self.session endMagnification];
         self.magnificationActive = NO; return;
@@ -1552,6 +1559,7 @@
     }
 }
 - (void)scrollRemote:(UIPanGestureRecognizer *)gesture {
+    if (self.preservingAcceptedGestures) return;
     BOOL ended = gesture.state == UIGestureRecognizerStateEnded;
     if (gesture.state == UIGestureRecognizerStateCancelled || gesture.state == UIGestureRecognizerStateFailed
         || CGRectIsNull(self.activeCrop) || CGRectIsEmpty(self.activeCrop)
@@ -1740,7 +1748,10 @@
     self.session.localPointerInteractionActive = NO;
     [self cancelPendingTaps];
     [self.trackpadFeedback setDragging:NO]; [self.tabletopFeedback setDragging:NO];
-    [self.session cancelNativeGestures]; self.magnificationActive = NO;
+    // Completed gestures can still have accepted deltas/End awaiting transport.
+    // A new gesture must not discard that prefix after a shortcut was canceled.
+    if (!self.preservingAcceptedGestures && (self.magnificationActive || self.scrollingActive || self.scrollGestureActive)) [self.session cancelNativeGestures];
+    self.magnificationActive = NO;
     self.scrollingActive = NO; self.scrollUsesNative = NO; self.scrollGestureActive = NO; self.scrollRemainder = 0; self.scrollFraction = CGPointZero;
     if (self.pointerHeld) [self.session pointerX:self.lastPointer.x y:self.lastPointer.y mask:0];
     self.pointerHeld = NO;
@@ -2181,18 +2192,20 @@
     return [self.session tryComposedTextEvents:events completion:completion];
 }
 - (NSString *)beginControlSequence {
-    [self retirePointerForMenu];
-    return [self sessionKeyInputAvailable] ? [self.session beginControlSequence] : nil;
+    if (![self sessionKeyInputAvailable]) return nil;
+    NSString *identifier = [self.session beginControlSequence];
+    if (identifier) [self retirePointerForControlSequence];
+    return identifier;
 }
 - (BOOL)sendControlSequenceEvents:(NSArray<NSDictionary *> *)events identifier:(NSString *)identifier completion:(void (^)(BOOL))completion {
     return [self sessionKeyInputAvailable] && [self.session tryControlSequenceEvents:events identifier:identifier completion:completion];
 }
 - (void)endControlSequence:(NSString *)identifier {
-    if ([self.session ownsControlSequence:identifier]) [self retirePointerForMenu];
+    if ([self.session ownsControlSequence:identifier]) [self retirePointerForControlSequence];
     [self.session endControlSequence:identifier];
 }
 - (void)cancelControlSequence:(NSString *)identifier {
-    if ([self.session ownsControlSequence:identifier]) [self retirePointerForMenu];
+    if ([self.session ownsControlSequence:identifier]) [self retirePointerForControlSequence];
     [self.session cancelControlSequence:identifier];
 }
 - (void)sendOrdinaryControlEvents:(NSArray<NSDictionary *> *)events {

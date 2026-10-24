@@ -513,7 +513,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     var admitCustomSequence: ([[UInt8]], @escaping @MainActor () -> Bool, @escaping @MainActor (Int) -> Void, @escaping @MainActor (String?) -> Void) -> Bool = { _, _, _, complete in
         complete("The input owner is unavailable. Nothing was queued."); return false
     }
-    var admitCustomPlan: ([TerminalSequenceOperation<[UInt8]>], @escaping @MainActor (Int) -> [UInt8]?, @escaping @MainActor () -> Bool, @escaping @MainActor (Int) -> Void, @escaping @MainActor (String?) -> Void) -> Bool = { _, _, _, _, complete in
+    var admitCustomPlan: ([TerminalSequenceOperation<Int>], @escaping @MainActor (Int) -> [UInt8]?, @escaping @MainActor () -> Bool, @escaping @MainActor (Int) -> Void, @escaping @MainActor (String?) -> Void) -> Bool = { _, _, _, _, complete in
         complete("The input owner is unavailable. Nothing was queued."); return false
     }
     var cancelCustomPlan: (UUID) -> Void = { _ in }
@@ -832,9 +832,16 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     private var runningShortcut: TerminalSequenceBannerController?
     private var executionKeyboardChange = false
     private func runShortcut(_ item: TerminalControlAction, feedback: String?) {
-        guard runningShortcut == nil, let epoch = terminal.customInputEpoch(),
-              let plan = try? item.terminalPlan(encoding: terminal.keyEncoding, bracketedPaste: terminal.getTerminal().bracketedPasteMode) else { return }
-        let packets = plan.compactMap(\.input)
+        guard runningShortcut == nil, let epoch = terminal.customInputEpoch() else { return }
+        let schedule: [TerminalSequenceOperation<Int>]
+        let packets: [[UInt8]]
+        do {
+            schedule = try item.terminalSchedule()
+            packets = item.hasSequenceWait ? [] : try item.terminalSequence(encoding: terminal.keyEncoding, bracketedPaste: terminal.getTerminal().bracketedPasteMode)
+        } catch {
+            session.textSendNotice = .init(reason: .inputPaused, title: "Shortcut unavailable", message: "This shortcut is too large or contains an unsupported step. Nothing was sent.")
+            return
+        }
         let revision = controlProfile.revision
         let connectionID = session.outputGeneration.uuidString
         let keyboardEpoch = session.keyboardPresentationEpoch
@@ -880,7 +887,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
             }
             let accepted: Bool
             if item.hasSequenceWait {
-                accepted = terminal.admitCustomPlan(plan, { [weak self] index in
+                accepted = terminal.admitCustomPlan(schedule, { [weak self] index in
                     guard let self, item.resolvedSteps.indices.contains(index) else { return nil }
                     return try? item.resolvedSteps[index].terminalBytes(encoding: terminal.keyEncoding, bracketedPaste: terminal.getTerminal().bracketedPasteMode)
                 }, current, { progress.move(to: $0) }, completed)

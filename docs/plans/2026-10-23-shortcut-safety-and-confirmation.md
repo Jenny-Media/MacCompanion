@@ -61,3 +61,21 @@ builds match all 634 production inputs. Build 1.0 (153) was installed, read back
 launched, and captured with Mac Companion visible on the iPhone 18 Pro Max.
 Evidence is outside Git under maccompanion-stalled-cancel-20261023. The UI stall
 uses a controlled held writer with a real loopback SSH peer.
+
+## Timed admission and native gesture ordering follow-up
+
+Validate timed shortcuts structurally, retaining step indices instead of initial
+encoded bytes in their schedule. Resolve only the current input step against
+live terminal modes, retaining the 16 KiB queue reservation and enforcing the
+actual cumulative byte limit before each write. Explain a size-limit stop.
+Immediate shortcuts retain their compact pre-encoded path.
+
+Separate local recognizer retirement from transport gesture retirement at a
+shortcut boundary. Preserve accepted queued and copied native gesture events;
+release their sent state at the socket-owner cleanup marker. Reject ordinary
+recognizer callbacks while reserved without retiring that prefix. Keep fresh
+input after Cancel ordered after the marker, and preserve independent lifecycle
+retirement. Cover controller admission under shrinking/growing encodings, queued
+scroll and copied pinch with a stalled worker, fresh gestures after Cancel,
+existing lifecycle paths and simulator screenshots. Validate with Xcode.app,
+update PR #46 and install the resulting development build on iPhone 18 Pro Max.

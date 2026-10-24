@@ -476,10 +476,20 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     [_events removeObjectsAtIndexes:gestures];
 }
 - (void)cancelNativeGestures {
-    [_lock lock]; [self cancelNativeGesturesLocked]; [_lock unlock]; dispatch_semaphore_signal(_wake);
+    [_lock lock];
+#if TARGET_OS_IOS
+    // Ordinary recognizer callbacks cannot retire accepted input owned by a shortcut.
+    if (!_controlSequenceID) [self cancelNativeGesturesLocked];
+#else
+    [self cancelNativeGesturesLocked];
+#endif
+    [_lock unlock]; dispatch_semaphore_signal(_wake);
 }
 - (BOOL)queueMagnification:(unsigned)phase delta:(double)delta x:(NSInteger)x y:(NSInteger)y {
     [_lock lock];
+#if TARGET_OS_IOS
+    if (_controlSequenceID) { [_lock unlock]; return NO; }
+#endif
     BOOL ready = [self ordinaryControlInputAllowedLocked] && _running && _inputReady && _inputOnly && !_reviewInputSuspended && !_displayHandoffInputBlocked && !_interruptionInputSuspended && !_paused && !_stopping && !_overflow
         && _appleGestureServer && _nativeGestureLayout;
     BOOL valid = isfinite(delta) && fabs(delta) <= .5 && (phase == 2 || delta == 0)
@@ -520,6 +530,9 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (BOOL)queueScroll:(unsigned)phase dx:(double)dx dy:(double)dy x:(NSInteger)x y:(NSInteger)y {
     [_lock lock];
+#if TARGET_OS_IOS
+    if (_controlSequenceID) { [_lock unlock]; return NO; }
+#endif
     BOOL ready = [self ordinaryControlInputAllowedLocked] && _running && _inputReady && !_reviewInputSuspended && !_displayHandoffInputBlocked && !_interruptionInputSuspended && !_paused && !_stopping && !_overflow
         && _appleGestureServer && _nativeGestureLayout;
     BOOL valid = (phase == 1 || phase == 2 || phase == 4) && isfinite(dx) && isfinite(dy)
@@ -1813,7 +1826,10 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     for (void (^reply)(BOOL) in replies) dispatch_async(dispatch_get_main_queue(), ^{ reply(NO); });
 }
 - (void)enqueueControlCleanupLocked {
-    [self retirePointerInteractionLocked]; [self cancelNativeGesturesLocked];
+    [self retirePointerInteractionLocked];
+    // Retire local admission without invalidating queued/copied native events.
+    // The socket worker releases their sent state when it reaches this marker.
+    _queuedMagnification = NO; _queuedScroll = NO;
     if (![_events.lastObject[@"controlCleanup"] boolValue]) [_events addObject:@{@"controlCleanup": @YES}];
     _queuedPointerMask = 0;
 }

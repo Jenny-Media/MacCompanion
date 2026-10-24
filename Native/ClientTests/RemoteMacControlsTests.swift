@@ -88,8 +88,10 @@ private final class RemoteAnchorSession: CompanionVNCSession {
         embedded.willMove(toParent: nil); embedded.view.removeFromSuperview(); embedded.removeFromParent()
         let keyboard = TerminalSequenceKeyboard(visible: { input.isFirstResponder }, current: { TerminalSequenceKeyboard.presentationCurrent(in: owner, responder: input) },
             hide: { input.resignFirstResponder() }, restore: { _ = input.becomeFirstResponder() })
-        keyboard.start(delay: .milliseconds(20)); try await Task.sleep(for: .milliseconds(60))
-        XCTAssertFalse(input.isFirstResponder); keyboard.finish()
+        keyboard.start(delay: .milliseconds(20))
+        // Wait for the hide event, then reverse its animation immediately.
+        for _ in 0..<100 where !keyboard.didHide { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(keyboard.didHide); XCTAssertFalse(input.isFirstResponder); keyboard.finish()
         XCTAssertTrue(input.isFirstResponder, "Cancel during native dismissal must reverse the keyboard transition")
         try await Task.sleep(for: .milliseconds(400))
         XCTAssertTrue(TerminalSequenceKeyboard.softwareVisible(in: owner.view, responder: input))

@@ -28,6 +28,18 @@ import XCTest
         let decoded = try JSONDecoder().decode(TerminalControlAction.self, from: JSONSerialization.data(withJSONObject: legacy))
         XCTAssertFalse(policy.requiresReview(decoded, connectionID: "two"))
     }
+    func testTimedScheduleValidatesDefinitionsWithoutForecastingFutureModes() throws {
+        let action = shortcut([.init(character: 0x63, modifiers: [0xffe3]), .init(kind: .wait, waitMilliseconds: 1000), .init(kind: .typeText, text: String(repeating: "a", count: 4000))])
+        XCTAssertTrue(action.valid)
+        XCTAssertThrowsError(try action.terminalPlan(encoding: .init(flags: .reportAllKeys), bracketedPaste: false))
+        let plan = try action.terminalSchedule()
+        XCTAssertEqual(plan.count, 3); XCTAssertEqual(plan[0].input, 0); XCTAssertEqual(plan[2].input, 2)
+        if case .wait(let value) = plan[1] { XCTAssertEqual(value, 1000) } else { XCTFail("Wait must remain explicit") }
+        var invalid = action; invalid.steps![2].text += String(repeating: "a", count: 97)
+        XCTAssertThrowsError(try invalid.terminalSchedule())
+        invalid = action; invalid.steps![1].waitMilliseconds = 30_001
+        XCTAssertThrowsError(try invalid.terminalSchedule())
+    }
     func testCurrentStepEncodingDoesNotRevalidateTheCompletedPrefix() throws {
         let action = shortcut([.init(kind: .typeText, text: String(repeating: "a", count: 4000)),
                                .init(kind: .wait, waitMilliseconds: 1000), .init(kind: .typeText, text: "b")])

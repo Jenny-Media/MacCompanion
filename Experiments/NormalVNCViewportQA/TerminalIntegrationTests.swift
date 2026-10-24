@@ -67,6 +67,21 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
 }
 
 @MainActor final class TerminalIntegrationTests:XCTestCase {
+    private func sequencePro() async throws -> SKTestSession {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "LifetimePro", withExtension: "storekit"))
+        let purchases = try SKTestSession(contentsOf: url); purchases.disableDialogs = true; purchases.clearTransactions()
+        DirectProAccess.shared.start(); _ = try await purchases.buyProduct(identifier: DirectProAccess.productID)
+        await DirectProAccess.shared.refresh(); try await wait { DirectProAccess.shared.hasPro }
+        return purchases
+    }
+    /// Synthetic packets exercise the same index-only schedule as production.
+    private func schedule(_ packets: [TerminalSequenceOperation<[UInt8]>]) -> [TerminalSequenceOperation<Int>] {
+        packets.enumerated().map { index, packet in
+            if case .wait(let duration) = packet { return .wait(duration) }
+            return .input(index)
+        }
+    }
+
     func testSavedTerminalLoginDoesNotRevealCredentialFieldsBeforeOrAfterProgress() async throws {
         let record = SSHTestRecord(), hostKey = NIOSSHPrivateKey(ed25519Key: .init())
         let peer = try await server(record: record, key: hostKey)
@@ -850,7 +865,7 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         try await wait { held != nil }
         XCTAssertFalse(session.sendSequence([[120]], epoch: epoch, completion: { XCTAssertNotNil($0); rejected += 1 }))
         let competing: [TerminalSequenceOperation<[UInt8]>] = [.input([120]), .wait(100), .input([121])]
-        XCTAssertFalse(session.sendSequencePlan(competing, epoch: epoch, resolve: { competing[$0].input }, stillValid: { true }, progress: { _ in }, completion: { XCTAssertNotNil($0); rejected += 1 }))
+        XCTAssertFalse(session.sendSequencePlan(schedule(competing), epoch: epoch, resolve: { competing[$0].input }, stillValid: { true }, progress: { _ in }, completion: { XCTAssertNotNil($0); rejected += 1 }))
         XCTAssertFalse(session.trySend([122])); XCTAssertEqual(rejected, 2)
         session.cancelSequence(epoch: epoch)
         XCTAssertEqual(firstCompletions, 1); XCTAssertFalse(session.isSendingCustomSequence)
@@ -880,7 +895,7 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         var encoding = TerminalKeyEncoding(flags: .reportAllKeys), finished = false
         let plan = try action.terminalPlan(encoding: encoding, bracketedPaste: true)
         let epoch = try XCTUnwrap(session.customInputEpoch)
-        XCTAssertTrue(session.sendSequencePlan(plan, epoch: epoch, resolve: { index in
+        XCTAssertTrue(session.sendSequencePlan(schedule(plan), epoch: epoch, resolve: { index in
             (try? action.terminalPlan(encoding: encoding, bracketedPaste: true))?[index].input
         }, stillValid: { true }, progress: { index in
             if index == 1 {
@@ -910,7 +925,7 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         record.clearReceived()
         let plan: [TerminalSequenceOperation<[UInt8]>] = [.input([116]), .wait(2000), .input([49])]
         var waiting = false, finished = false
-        XCTAssertTrue(session.sendSequencePlan(plan, epoch: try XCTUnwrap(session.customInputEpoch), resolve: { plan[$0].input }, stillValid: { true }, progress: { if $0 == 1 { waiting = true } }, completion: { XCTAssertNil($0); finished = true }))
+        XCTAssertTrue(session.sendSequencePlan(schedule(plan), epoch: try XCTUnwrap(session.customInputEpoch), resolve: { plan[$0].input }, stillValid: { true }, progress: { if $0 == 1 { waiting = true } }, completion: { XCTAssertNil($0); finished = true }))
         try await wait { waiting }
         controller.terminal.insertText("should-not-interleave")
         try await record.emit("Intermediate output is visible\r\n\u{1b}[5n\u{1b}[6n\u{1b}[?u")
@@ -920,6 +935,57 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         XCTAssertFalse(String(decoding: record.received, as: UTF8.self).contains("should-not-interleave"))
         try await wait { finished }
         XCTAssertEqual(record.received.last, 49)
+    }
+
+    func testControllerAdmitsLongTimedSuffixUsingTheModeAtItsStep() async throws {
+        try await checkControllerModeTransition(shrinks: true)
+    }
+    func testControllerStopsBeforeAnExpandedStepExceedsItsActualByteBudget() async throws {
+        try await checkControllerModeTransition(shrinks: false)
+    }
+    private func checkControllerModeTransition(shrinks: Bool) async throws {
+        let purchases = try await sequencePro(); defer { purchases.clearTransactions() }
+        let record = SSHTestRecord(echoInput: false, inputLimit: 8192), key = NIOSSHPrivateKey(ed25519Key: .init())
+        let peer = try await server(record: record, key: key); defer { _ = peer.close() }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic mode transition", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(peer.localAddress?.port))
+        try TerminalSecretStore.approveHostKey(String(openSSHPublicKey: key.publicKey), id: mac.id)
+        let session = DirectTerminalSession(mac: mac)
+        var action = TerminalControlAction(title: "Exit then type", kind: .shortcut)
+        action.steps = [.init(character: 0x63, modifiers: [0xffe3]), .init(kind: .wait, waitMilliseconds: 1000), .init(kind: .typeText, text: String(repeating: "a", count: 4000))]
+        var data: Data? = try JSONEncoder().encode(TerminalControlsProfile(actions: [action]))
+        let controls = TerminalControlsStore(read: { data }, write: { data = $0 }, legacyIDs: { [] }, legacyActions: { [] })
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        let controller = TerminalController(session: session, customize: {}, controlsStore: controls)
+        window.rootViewController = controller; window.makeKeyAndVisible()
+        defer { session.stop(); window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible(); try? TerminalSecretStore.remove(mac.id) }
+        session.connect(username: "synthetic", password: "synthetic-only", remember: false)
+        try await wait { session.canSendUserInput && controller.terminal.customInputEpoch() != nil }
+        try await record.emit((shrinks ? "\u{1b}[>8u" : "") + "Mode-aware shortcut probe\r\n")
+        try await wait { shrinks == controller.terminal.keyEncoding.flags.contains(.reportAllKeys) }
+        controller.performControlAction(action.id)
+        XCTAssertTrue(session.isSendingCustomSequence, "A future step must not be rejected using the initial encoding")
+        // Fails immediately on the old frontend, instead of waiting for bytes it never sends.
+        guard session.isSendingCustomSequence else { return }
+        let prefix: [UInt8] = shrinks ? Array("\u{1b}[99;5u".utf8) : [3]
+        try await wait { record.received == prefix }
+        try await record.emit(shrinks ? "\u{1b}[<uProgram exited; normal typing restored\r\n" : "\u{1b}[>8uProgram enabled enhanced input\r\n")
+        try await wait { shrinks == controller.terminal.keyEncoding.flags.isEmpty }
+        try await Task.sleep(for: .milliseconds(250))
+        let waiting = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
+        let shot = XCTAttachment(image: waiting); shot.name = shrinks ? "terminal-mode-change-wait" : "terminal-budget-wait"; shot.lifetime = .keepAlways; add(shot)
+        try await wait { !session.isSendingCustomSequence }
+        if shrinks {
+            try await wait { record.received.count == 4007 }
+            XCTAssertEqual(record.received, prefix + Array(repeating: 97, count: 4000))
+            XCTAssertNil(session.textSendNotice)
+        } else {
+            XCTAssertEqual(record.received, prefix, "The oversized current step is rejected before its first byte")
+            XCTAssertTrue(session.textSendNotice?.message.contains("size limit") == true)
+        }
+        XCTAssertTrue(session.canSendUserInput)
+        let finished = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
+        let result = XCTAttachment(image: finished); result.name = shrinks ? "terminal-mode-change-completed" : "terminal-budget-stopped"; result.lifetime = .keepAlways; add(result)
     }
 
     func testTimedWriterCountsActualBytesAfterCompletedPrefixModeChange() async throws {
@@ -933,7 +999,7 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         action.steps = [.init(kind: .typeText, text: String(repeating: "a", count: 4000)), .init(kind: .wait, waitMilliseconds: 100), .init(kind: .typeText, text: "b")]
         var encoding = TerminalKeyEncoding(), finished = false
         let plan = try action.terminalPlan(encoding: encoding, bracketedPaste: false)
-        XCTAssertTrue(session.sendSequencePlan(plan, epoch: try XCTUnwrap(session.customInputEpoch), resolve: { try? action.resolvedSteps[$0].terminalBytes(encoding: encoding, bracketedPaste: false) }, stillValid: { true }, progress: { if $0 == 1 { encoding.flags = .reportAllKeys } }, completion: { XCTAssertNil($0); finished = true }))
+        XCTAssertTrue(session.sendSequencePlan(schedule(plan), epoch: try XCTUnwrap(session.customInputEpoch), resolve: { try? action.resolvedSteps[$0].terminalBytes(encoding: encoding, bracketedPaste: false) }, stillValid: { true }, progress: { if $0 == 1 { encoding.flags = .reportAllKeys } }, completion: { XCTAssertNil($0); finished = true }))
         try await wait("4005 captured input bytes after mode change") { finished && record.received.count == 4005 }
         XCTAssertEqual(Array(record.received.prefix(4000)), Array(repeating: 97, count: 4000))
         XCTAssertEqual(Array(record.received.suffix(5)), Array("\u{1b}[98u".utf8))
@@ -953,7 +1019,7 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         let plan: [TerminalSequenceOperation<[UInt8]>] = [.input([116, 13]), .wait(30_000), .input([49, 13])]
         let keyboardEpoch = session.keyboardPresentationEpoch
         var finished = false
-        XCTAssertTrue(session.sendSequencePlan(plan, epoch: epoch, resolve: { plan[$0].input }, stillValid: { true }, progress: { index in
+        XCTAssertTrue(session.sendSequencePlan(schedule(plan), epoch: epoch, resolve: { plan[$0].input }, stillValid: { true }, progress: { index in
             if index == 1 { session.cancelSequence(epoch: epoch) }
         }, completion: { XCTAssertNotNil($0); finished = true }))
         try await wait { finished }
@@ -989,7 +1055,7 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         let first: [TerminalSequenceOperation<[UInt8]>] = [.input([97]), .wait(100), .input([120])]
         let epoch = try XCTUnwrap(session.customInputEpoch)
         var firstCompletions = 0, secondCompletions = 0, secondWaiting = false
-        XCTAssertTrue(session.sendSequencePlan(first, epoch: epoch, resolve: { first[$0].input }, stillValid: { true }, progress: { _ in }, completion: {
+        XCTAssertTrue(session.sendSequencePlan(schedule(first), epoch: epoch, resolve: { first[$0].input }, stillValid: { true }, progress: { _ in }, completion: {
             XCTAssertNotNil($0); firstCompletions += 1
         }))
         try await wait { held != nil }
@@ -999,7 +1065,7 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         XCTAssertNotEqual(session.customInputEpoch, epoch)
         let second: [TerminalSequenceOperation<[UInt8]>] = [.input([98]), .wait(500), .input([99])]
         let freshEpoch = try XCTUnwrap(session.customInputEpoch)
-        XCTAssertTrue(session.sendSequencePlan(second, epoch: freshEpoch, resolve: { second[$0].input }, stillValid: { true }, progress: { if $0 == 1 { secondWaiting = true } }, completion: { XCTAssertNil($0); secondCompletions += 1 }))
+        XCTAssertTrue(session.sendSequencePlan(schedule(second), epoch: freshEpoch, resolve: { second[$0].input }, stillValid: { true }, progress: { if $0 == 1 { secondWaiting = true } }, completion: { XCTAssertNil($0); secondCompletions += 1 }))
         session.cancelSequence(epoch: epoch)
         XCTAssertTrue(session.isSendingCustomSequence, "An old Cancel cannot retire the new run")
         XCTAssertTrue(record.received.isEmpty, "New input cannot overtake the accepted blocked write")
@@ -1025,11 +1091,11 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         let old: [TerminalSequenceOperation<[UInt8]>] = [.input([97]), .wait(100), .input([120])]
         var completed = 0, fresh = false
         let epoch = try XCTUnwrap(session.customInputEpoch)
-        XCTAssertTrue(session.sendSequencePlan(old, epoch: epoch, resolve: { old[$0].input }, stillValid: { true }, progress: { _ in }, completion: { XCTAssertNotNil($0); completed += 1 }))
+        XCTAssertTrue(session.sendSequencePlan(schedule(old), epoch: epoch, resolve: { old[$0].input }, stillValid: { true }, progress: { _ in }, completion: { XCTAssertNotNil($0); completed += 1 }))
         try await wait { held != nil }; session.cancelSequence(epoch: epoch)
         XCTAssertEqual(completed, 1)
         let next: [TerminalSequenceOperation<[UInt8]>] = [.input([98]), .wait(100), .input([99])]
-        XCTAssertTrue(session.sendSequencePlan(next, epoch: try XCTUnwrap(session.customInputEpoch), resolve: { next[$0].input }, stillValid: { true }, progress: { _ in }, completion: { XCTAssertNil($0); fresh = true }))
+        XCTAssertTrue(session.sendSequencePlan(schedule(next), epoch: try XCTUnwrap(session.customInputEpoch), resolve: { next[$0].input }, stillValid: { true }, progress: { _ in }, completion: { XCTAssertNil($0); fresh = true }))
         let pending = held; held = nil; pending?.resume(throwing: CocoaError(.fileWriteUnknown))
         try await wait { fresh && record.received == [98, 99] }
         XCTAssertTrue(session.connected, "The retired writer failure must not stop the newer run")
@@ -1051,18 +1117,18 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         var completed = 0
         for _ in 0..<3 {
             let epoch = try XCTUnwrap(session.customInputEpoch)
-            XCTAssertTrue(session.sendSequencePlan(plan, epoch: epoch, resolve: { plan[$0].input }, stillValid: { true }, progress: { _ in }, completion: { XCTAssertNotNil($0); completed += 1 }))
+            XCTAssertTrue(session.sendSequencePlan(schedule(plan), epoch: epoch, resolve: { plan[$0].input }, stillValid: { true }, progress: { _ in }, completion: { XCTAssertNotNil($0); completed += 1 }))
             session.cancelSequence(epoch: epoch)
         }
         XCTAssertEqual(completed, 3, "Cancel also completes runners still awaiting their predecessor")
-        XCTAssertFalse(session.sendSequencePlan(plan, epoch: try XCTUnwrap(session.customInputEpoch), resolve: { plan[$0].input }, stillValid: { true }, progress: { _ in }, completion: { XCTAssertNotNil($0) }), "Canceled but undrained tasks stay within the queue budget")
+        XCTAssertFalse(session.sendSequencePlan(schedule(plan), epoch: try XCTUnwrap(session.customInputEpoch), resolve: { plan[$0].input }, stillValid: { true }, progress: { _ in }, completion: { XCTAssertNotNil($0) }), "Canceled but undrained tasks stay within the queue budget")
         XCTAssertTrue(session.trySend([113]))
         let pending = held; held = nil; pending?.resume()
         try await wait { record.received == [112, 113] }
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertEqual(completed, 3)
         var fresh = false
-        XCTAssertTrue(session.sendSequencePlan(plan, epoch: try XCTUnwrap(session.customInputEpoch), resolve: { plan[$0].input }, stillValid: { true }, progress: { _ in }, completion: { XCTAssertNil($0); fresh = true }))
+        XCTAssertTrue(session.sendSequencePlan(schedule(plan), epoch: try XCTUnwrap(session.customInputEpoch), resolve: { plan[$0].input }, stillValid: { true }, progress: { _ in }, completion: { XCTAssertNil($0); fresh = true }))
         try await wait { fresh && record.received == [112, 113, 120, 121] }
     }
 

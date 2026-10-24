@@ -141,6 +141,13 @@ extension TerminalControlAction {
     var hasSequenceText: Bool { kind == .shortcut && resolvedSteps.contains( where: \.isText) }
     var hasSequenceWait: Bool { kind == .shortcut && resolvedSteps.contains { $0.kind == .wait } }
     var sequencePreview: String { resolvedSteps.map(\.label).joined(separator: " → ") }
+    /// Timed plans retain step indices, never a forecast of future mode-dependent bytes.
+    func terminalSchedule() throws -> [TerminalSequenceOperation<Int>] {
+        guard kind == .shortcut, valid else { throw TerminalSequenceFailure.invalid }
+        return resolvedSteps.enumerated().map { index, step in
+            step.kind == .wait ? .wait(step.waitMilliseconds!) : .input(index)
+        }
+    }
     func terminalPlan(encoding: TerminalKeyEncoding, bracketedPaste: Bool) throws -> [TerminalSequenceOperation<[UInt8]>] {
         guard kind == .shortcut, valid else { throw TerminalSequenceFailure.invalid }
         var operations: [TerminalSequenceOperation<[UInt8]>] = []
