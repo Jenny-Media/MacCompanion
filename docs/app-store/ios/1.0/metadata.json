@@ -1,0 +1,21 @@
+{
+  "platform": "IOS",
+  "marketingVersion": "1.0",
+  "appId": "6819496840",
+  "bundleId": "media.jenny.maccompanion.ios",
+  "primaryLocale": "en-US",
+  "locales": [
+    "en-US"
+  ],
+  "supportUrl": "https://mac.jenny.media/support/",
+  "marketingUrl": "https://mac.jenny.media/",
+  "privacyPolicyUrl": "https://mac.jenny.media/privacy/",
+  "copyright": "2026 Jenny Media LLC",
+  "releaseType": "MANUAL",
+  "whatsNew": null,
+  "whatsNewReason": "First App Store version; Apple does not offer this field for an initial release.",
+  "signInRequired": false,
+  "reviewContact": "Preserve the existing authorized App Store Connect contact; do not commit personal contact records.",
+  "baseRevision": "9a9fbfbcef809ed31be1ee48accaf3873ef24801",
+  "screenshotManifest": "External evidence only; see screenshots.md."
+}

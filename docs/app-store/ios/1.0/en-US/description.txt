@@ -1,0 +1,24 @@
+Your Mac, from your iPhone or iPad. Mac Companion brings remote desktop, SSH Terminal, and Trackpad & Keyboard together using the services built into macOS. No Mac Companion app or helper needs to be installed on your Mac.
+
+YOUR DESKTOP, WITHIN REACH
+See and control your Mac through built-in Screen Sharing, with the desktop and input stream encrypted through Remote Login (SSH). Use Pointer or Trackpad, zoom the view, and choose a display when your Mac provides supported display information.
+
+A TERMINAL FOR YOUR MAC
+Open an independent SSH shell using a Mac account password or a named Ed25519 key. Keep scrollback, numbers, modifiers, navigation keys, and familiar shortcuts close at hand.
+
+TRACKPAD & KEYBOARD
+Control a Mac you can already see, such as one connected to a TV. Move the pointer, tap to click, hold to drag, and scroll with two fingers. Adjust pointer and scroll speed and choose touch feedback.
+
+ROOM TO WORK
+Use portrait or landscape on iPhone and iPad. On iPhone Duo, Book places desktop or Terminal content beside the input controls. Tabletop separates content and input around the active fold. Compose Text keeps its draft and editing controls in an available pane as the layout changes.
+
+FREE ESSENTIALS, OPTIONAL PRO
+The free version includes one saved Mac, one SSH key, the core connection modes, and Files over SFTP. Lifetime Pro adds multiple Macs and named keys, custom shortcuts and Terminal controls, saved text snippets, and SSH key installation. An optional 14-day Pro trial does not renew or charge automatically. Files supports individual-file uploads and downloads; folder transfers are not supported.
+
+YOUR CONNECTION, YOUR CHOICE
+Save local and private VPN addresses for a Mac. Verify its SSH server fingerprint before trusting it. Saved passwords and private keys stay in this device's Keychain. Optional iCloud sync is off by default and covers saved Mac settings, excluding passwords, private keys, server trust, and saved text.
+
+REQUIREMENTS
+Requires iOS or iPadOS 26 or later and an awake, reachable Mac with an account you are allowed to use. Enable Remote Login for every mode, and also enable Screen Sharing for Desktop and Trackpad & Keyboard. For a Mac notebook, keep the lid open; closed-lid capture compatibility varies.
+
+Use a trusted local network or your own private VPN. Mac Companion does not provide a VPN or public relay. Audio streaming and individual app/window capture are not included.

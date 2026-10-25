@@ -18,6 +18,7 @@ if [[ "$maccompanion_validation_scratch_root" != /* ]]; then
 fi
 
 python3 scripts/verify_build_cache.py
+python3 scripts/validate_ios_store_materials.py
 python3 scripts/verify_direct_app_naming.py
 python3 scripts/validate_fixtures.py
 python3 scripts/verify_vnc_framebuffer_bounds.py

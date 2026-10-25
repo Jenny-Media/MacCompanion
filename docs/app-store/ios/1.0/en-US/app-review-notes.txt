@@ -1,0 +1,22 @@
+Mac Companion is a generic remote-desktop and SSH client for a reviewer-owned Mac. No Mac Companion account, server, helper, hosted Mac, or app catalog is required. Mirrored software executes and renders on the Mac.
+
+Review setup (iPhone or iPad, iOS/iPadOS 26+):
+1. Keep a Mac awake, unlocked and on the same trusted local network. Leave a notebook lid open. Current physical host checks used macOS 27; closed-lid capture can stall in some configurations.
+2. On the Mac open System Settings > General > Sharing. Enable Remote Login AND Screen Sharing, allowing the reviewer-controlled Mac account in both. Screen Sharing and Remote Management cannot be enabled together. Note the Mac's local address or hostname.
+3. In Mac Companion choose Add Mac, enter a name and address (without a URL prefix), and Save. Allow Local Network access if asked. Tap the Mac, enter its short account username and password, then Connect. Saving the login is optional.
+4. Before trusting the first SSH server key, independently compare the displayed SHA256 fingerprint with the matching host public key on that Mac. For an Ed25519 key, run this read-only command in Mac Terminal: ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256. If the displayed algorithm differs, compare that algorithm's host public key instead. Stop on an unexplained mismatch.
+5. Test desktop updates and pointer input. In a blank test document, use Keyboard or Compose Text to send harmless test text. The floating controls menu provides input, view/display, settings and Done. Done disconnects and returns to My Macs. Display selection changes the local view; it does not capture individual applications or windows.
+6. Open the saved Mac's menu and choose Trackpad & Keyboard to control the Mac without showing its desktop on the iOS device. It also needs both Sharing services.
+7. Open Terminal from that menu. It needs Remote Login, independently of a desktop session. Use a password or an installed Ed25519 key. SSH server trust is shared across modes; saved Desktop and Terminal logins are separate. Test a harmless command such as pwd and exit normally.
+
+Desktop and input use Screen Sharing (RFB/VNC) inside a verified SSH tunnel to the Mac's loopback Screen Sharing port. Terminal uses SSH. There is no plaintext desktop fallback. A private VPN is optional; the review path needs only a trusted LAN. No vendor demo login is needed; Mac account authentication is required to reach that Mac.
+
+One Mac, core connections and Files over SFTP are free. Lifetime Pro optionally adds multiple Macs/keys, custom controls, snippets and key installation. The optional 14-day trial does not renew or charge automatically. Restore Purchases is in App Settings > Pro. Review purchase behavior with Apple's review environment; TestFlight purchases use the sandbox.
+
+Saved passwords and SSH private keys stay in the device Keychain. Optional app unlock and iCloud settings sync are off by default. Sync excludes passwords, private keys, trusted server fingerprints and saved text.
+
+Duo Book and Tabletop adapt content and input to the active system division. They do not change host authentication or install anything on the Mac.
+
+Support: https://mac.jenny.media/support/
+Privacy: https://mac.jenny.media/privacy/
+Support email: hijennytv@gmail.com
