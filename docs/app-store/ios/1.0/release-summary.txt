@@ -1,0 +1,3 @@
+Initial iOS 1.0 release candidate: direct Screen Sharing over SSH, independent SSH Terminal, Trackpad & Keyboard, SFTP Files and optional Lifetime Pro, and adaptive iPhone/iPad layouts including Duo Book and Tabletop. Compose Text and the desktop viewport adapt as available space changes.
+
+Internal candidate summary only. Do not paste into What's New: that field is unavailable for this first App Store version. No new marketing version or build number is created by this materials change.

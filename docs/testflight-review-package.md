@@ -15,7 +15,7 @@ authorization does not close the separate production release gates.
 
 ## Beta app description
 
-Your Mac, from your iPhone. Mac Companion connects directly to your Mac's
+Your Mac, from your iPhone or iPad. Mac Companion connects directly to your Mac's
 built-in Screen Sharing for remote desktop and to Remote Login for an SSH
 Terminal. No Mac Companion app or helper needs to be installed on the Mac.
 
@@ -31,12 +31,12 @@ modes and also Screen Sharing for Desktop and Trackpad & Keyboard.
 The Mac must be awake and accessible,
 and you must have permission to access its account. During this beta, keep a
 Mac notebook's lid open; virtual-display-only closed-lid capture remains under
-investigation. iOS 26 or later is required.
+investigation. iOS or iPadOS 26 or later is required.
 
 Basic desktop and Terminal functions remain free. Optional Pro features use
 Apple's TestFlight sandbox; beta purchases do not charge real money.
 
-## What to test — 1.0 (26)
+## What to test — next 1.0 candidate
 
 1. Enable Remote Login and Screen Sharing for your Mac account in System
    Settings > General > Sharing. Keep a Mac notebook's lid open.
@@ -49,7 +49,13 @@ Apple's TestFlight sandbox; beta purchases do not charge real money.
 4. Switch apps briefly and return in all three modes. Try Cancel during setup,
    a wrong password and an unreachable Mac, then verify recovery is useful.
 5. Check Terminal password/key login and normal shell exit. Try light/dark
-   appearance, landscape and larger text. Report app/build and OS versions.
+   appearance, portrait/landscape on iPhone and iPad, resized iPad windows and
+   larger text. Check Files over SFTP using disposable individual files.
+6. On a TestFlight candidate on iPhone Duo, check Book and both Tabletop directions,
+   keyboard controls and Compose Text Send/Close through layout changes. Record
+   actual remote text consumption separately from synthetic layout evidence.
+   Future physical Duo tests use TestFlight; do not use a development install.
+   Report app/build and OS versions.
 
 Send the app/build and OS versions plus the exact issue. Remove passwords,
 private keys, sensitive screen content, and private network details from feedback.
@@ -61,6 +67,10 @@ There is no Mac Companion account, vendor relay, hosted Mac, software catalog,
 remote app installation, or Mac Companion helper. Mirrored software runs on
 the reviewer's Mac. This build uses built-in macOS Screen Sharing (RFB/VNC)
 through Remote Login (SSH). Terminal uses a separate SSH session.
+
+For the production iOS 1.0 release, the authoritative paste-ready metadata and
+reviewer rehearsal are in [app-store/ios/1.0/README.md](app-store/ios/1.0/README.md).
+This document remains the beta package.
 
 Review setup:
 1. Keep a reviewer-owned Mac awake on the same trusted local network as the
