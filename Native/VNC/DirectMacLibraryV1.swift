@@ -452,14 +452,24 @@ struct DirectMacLibraryRootV1: View {
                     Section { Text("Saved Macs are unavailable. Adding and editing are paused to protect the existing file.").foregroundStyle(.secondary) }
                 } else if library.macs.isEmpty {
                     Section {
-                        VStack(spacing: 16) {
-                            Image(systemName: "desktopcomputer").font(.system(size: 48)).foregroundStyle(.blue)
-                            Text("Your Macs, within reach").font(.title3.bold())
-                            Text("Add a Mac on your local network or private VPN. The setup guide shows which services to enable.")
-                                .foregroundStyle(.secondary).multilineTextAlignment(.center)
-                            Button("Add your first Mac", systemImage: "plus") { beginQuickConnect() }
-                                .buttonStyle(.borderedProminent).disabled(!library.readable)
-                        }.frame(maxWidth: .infinity).padding(.vertical, 28)
+                        VStack(spacing: 24) {
+                            VStack(spacing: 16) {
+                                Image(systemName: "desktopcomputer").font(.system(size: 48)).foregroundStyle(.blue)
+                                VStack(spacing: 8) {
+                                    Text("Your Macs, within reach").font(.title3.bold())
+                                    Text("Add a Mac on your local network or private VPN. The setup guide shows which services to enable.")
+                                        .foregroundStyle(.secondary)
+                                }.multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                            }
+                            Button { beginQuickConnect() } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "plus")
+                                    Text("Add your first Mac").multilineTextAlignment(.center)
+                                }.font(.body.weight(.semibold))
+                            }
+                            .buttonStyle(.borderedProminent).controlSize(.large).disabled(!library.readable)
+                            .accessibilityIdentifier("macs-add-first")
+                        }.frame(maxWidth: 480).frame(maxWidth: .infinity).padding(.horizontal, 8).padding(.vertical, 28)
                     }
                 } else {
                     Section {
