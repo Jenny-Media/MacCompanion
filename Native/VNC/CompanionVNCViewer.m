@@ -121,6 +121,7 @@
 @property CompanionRemoteTextInput *input;
 @property NSLayoutConstraint *toolbarBottom, *canvasToolbarBottom, *canvasFullscreenBottom;
 @property NSLayoutConstraint *canvasTop;
+@property NSLayoutConstraint *canvasLeading, *canvasTrailing, *toolbarLeading, *toolbarTrailing, *loginLeading, *loginTrailing, *statusCenter;
 @property UIEdgeInsets previousCanvasInset;
 @property UILabel *trackpadHelp;
 @property CompanionVNCTrackpadFeedback *trackpadFeedback, *tabletopFeedback;
@@ -472,17 +473,22 @@
     self.canvasFullscreenBottom = [self.canvas.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor];
     self.tabletopCanvasBottom = [self.canvas.bottomAnchor constraintEqualToAnchor:self.view.topAnchor];
     self.canvasTop = [self.canvas.topAnchor constraintEqualToAnchor:self.view.topAnchor constant:8];
+    self.canvasLeading = [self.canvas.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor];
+    self.canvasTrailing = [self.canvas.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor];
+    self.toolbarLeading = [toolbar.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor constant:6];
+    self.toolbarTrailing = [toolbar.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-6];
+    self.loginLeading = [self.loginScroll.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor];
+    self.loginTrailing = [self.loginScroll.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor];
+    self.statusCenter = [self.statusBackdrop.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor];
     [NSLayoutConstraint activateConstraints:@[
         [self.statusBackdrop.topAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:8],
-        [self.statusBackdrop.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
+        self.statusCenter,
         [self.statusBackdrop.leadingAnchor constraintGreaterThanOrEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor constant:16],
         [self.statusBackdrop.trailingAnchor constraintLessThanOrEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-16],
-        [toolbar.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor constant:6],
-        [toolbar.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-6], self.toolbarBottom,
+        self.toolbarLeading, self.toolbarTrailing, self.toolbarBottom,
         self.canvasTop,
         self.canvasToolbarBottom,
-        [self.canvas.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor],
-        [self.canvas.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor],
+        self.canvasLeading, self.canvasTrailing,
         [self.cursorOverlay.leadingAnchor constraintEqualToAnchor:self.canvas.leadingAnchor],
         [self.cursorOverlay.trailingAnchor constraintEqualToAnchor:self.canvas.trailingAnchor],
         [self.cursorOverlay.topAnchor constraintEqualToAnchor:self.canvas.topAnchor],
@@ -490,7 +496,7 @@
         [self.controls.topAnchor constraintEqualToAnchor:self.view.topAnchor], [self.controls.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor],
         [self.controls.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor], [self.controls.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
         self.loginTop, self.loginBottom,
-        [self.loginScroll.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor], [self.loginScroll.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor],
+        self.loginLeading, self.loginTrailing,
         self.loginContentTop,
         [self.login.bottomAnchor constraintEqualToAnchor:self.loginScroll.contentLayoutGuide.bottomAnchor constant:self.connectionPanelHost ? -4 : -12],
         [self.login.centerXAnchor constraintEqualToAnchor:self.loginScroll.centerXAnchor],
@@ -1119,7 +1125,9 @@
     self.views.accessibilityValue = display ? display[@"title"] : @"All Displays";
     [self.session viewChanged]; [self renderFramebuffer:YES];
 }
-- (UIView *)viewForZoomingInScrollView:(UIScrollView *)scrollView { return self.image; }
+// The hidden keyboard UITextView shares this delegate. Its first-responder
+// restoration must never zoom the desktop image or record a desktop viewport.
+- (UIView *)viewForZoomingInScrollView:(UIScrollView *)scrollView { return scrollView == self.canvas ? self.image : nil; }
 - (CGRect)canvasViewportBounds {
     // The canvas reaches behind system chrome; Fit and automatic cursor following
     // use only the unobscured region. Panning remains owned by UIScrollView.
@@ -1132,13 +1140,17 @@
                        MAX(minY, MIN(MAX(minY, self.canvas.contentSize.height - self.canvas.bounds.size.height + inset.bottom), offset.y)));
 }
 - (void)scrollViewDidZoom:(UIScrollView *)scrollView {
+    if (scrollView != self.canvas) return;
     CGSize visible = [self canvasViewportBounds].size;
     CGFloat x = MAX(0, (visible.width - self.image.frame.size.width) / 2);
     CGFloat y = MAX(0, (visible.height - self.image.frame.size.height) / 2);
     self.image.center = CGPointMake(self.image.frame.size.width / 2 + x, self.image.frame.size.height / 2 + y);
     [self updateCursor]; [self rememberLayoutViewport];
 }
-- (void)scrollViewDidScroll:(UIScrollView *)scrollView { [self updateCursor]; [self rememberLayoutViewport]; }
+- (void)scrollViewDidScroll:(UIScrollView *)scrollView {
+    if (scrollView != self.canvas) return;
+    [self updateCursor]; [self rememberLayoutViewport];
+}
 - (void)scrollViewWillBeginDragging:(UIScrollView *)scrollView { if (scrollView == self.canvas) self.cursorFollowingSuspended = YES; }
 - (void)scrollViewWillBeginZooming:(UIScrollView *)scrollView withView:(UIView *)view { if (scrollView == self.canvas) self.cursorFollowingSuspended = YES; }
 - (void)fitDesktop {
@@ -1185,21 +1197,32 @@
         leading = window ? MAX(0, window.safeAreaInsets.top - [self.view convertPoint:CGPointZero toView:window].y) + 8 : CGRectGetMinY(safe) + 8;
     }
     if (self.canvas.contentInset.top != leading) {
+        BOOL wasAdapting = self.adaptingViewport;
         self.adaptingViewport = YES;
         self.canvas.contentInset = UIEdgeInsetsMake(leading, 0, 0, 0);
         self.canvas.verticalScrollIndicatorInsets = self.canvas.contentInset;
-        self.adaptingViewport = NO;
+        self.adaptingViewport = wasAdapting;
     }
     // Both Screen Sharing modes use the same login layout. Only the connected
-    // desktop needs a separate tabletop video region and input surface.
-    BOOL divided = CompanionVNCTabletopRegions(safe, [self activeDivision], &content, &input);
+    // desktop needs separate video and input regions.
+    CGRect division = [self activeDivision];
+    BOOL horizontal = CompanionVNCTabletopRegions(safe, division, &content, &input);
+    BOOL book = !horizontal && CompanionVNCBookRegions(safe, division, &content, &input);
+    BOOL divided = horizontal || book;
     BOOL tabletop = !self.inputOnly && divided;
+    self.canvasLeading.constant = book && !self.inputOnly ? content.origin.x - safe.origin.x : 0;
+    self.canvasTrailing.constant = book && !self.inputOnly ? CGRectGetMaxX(content) - CGRectGetMaxX(safe) : 0;
+    self.toolbarLeading.constant = book ? input.origin.x - safe.origin.x + 6 : 6;
+    self.toolbarTrailing.constant = book ? CGRectGetMaxX(input) - CGRectGetMaxX(safe) - 6 : -6;
+    self.statusCenter.constant = book ? CGRectGetMidX(content) - CGRectGetMidX(self.view.bounds) : 0;
     CGRect loginRegion = self.connectionPanelHost ? self.loginPanelContent.view.bounds : safe;
     if (!self.connectionPanelHost) loginRegion.size.height = MAX(0, loginRegion.size.height - self.keyboardOverlap);
-    BOOL lowerLogin = !self.connectionPanelHost && divided && CGRectGetMaxY(loginRegion) - input.origin.y >= 240;
+    BOOL lowerLogin = !self.connectionPanelHost && divided && (book || CGRectGetMaxY(loginRegion) - input.origin.y >= 240);
     if (divided && !self.connectionPanelHost) {
         loginRegion = lowerLogin ? CGRectIntersection(loginRegion, input) : CGRectIntersection(loginRegion, content);
     }
+    self.loginLeading.constant = book && !self.connectionPanelHost ? loginRegion.origin.x - safe.origin.x : 0;
+    self.loginTrailing.constant = book && !self.connectionPanelHost ? CGRectGetMaxX(loginRegion) - CGRectGetMaxX(safe) : 0;
     self.loginTop.constant = CGRectGetMinY(loginRegion);
     self.loginBottom.constant = CGRectGetMaxY(loginRegion);
     BOOL compact = !self.connectionPanelHost && (divided || loginRegion.size.height < 520) && !UIContentSizeCategoryIsAccessibilityCategory(self.traitCollection.preferredContentSizeCategory);
@@ -1239,8 +1262,8 @@
     }
     self.tabletop = tabletop; self.tabletopInputRegion = tabletop ? input : CGRectNull;
     CGFloat keyboardCeiling = CGRectGetMaxY(safe) - self.keyboardOverlap;
-    if (!self.fullscreen) keyboardCeiling -= MAX(44, self.toolbar.bounds.size.height) + 12;
-    self.tabletopCanvasBottom.constant = tabletop ? MIN(CGRectGetMaxY(content) - 8, keyboardCeiling) : 0;
+    if (!self.fullscreen && !book) keyboardCeiling -= MAX(44, self.toolbar.bounds.size.height) + 12;
+    self.tabletopCanvasBottom.constant = tabletop ? MAX(CGRectGetMinY(safe), MIN(CGRectGetMaxY(content) - 8, keyboardCeiling)) : 0;
     self.canvasToolbarBottom.active = !tabletop && !self.fullscreen;
     self.canvasFullscreenBottom.active = !tabletop && self.fullscreen;
     self.tabletopCanvasBottom.active = tabletop;
@@ -1268,11 +1291,13 @@
     if (size.width <= 0 || size.height <= 0) return;
     BOOL resized = !CGSizeEqualToSize(size, self.previousCanvasSize)
         || !UIEdgeInsetsEqualToEdgeInsets(self.canvas.contentInset, self.previousCanvasInset);
-    CGFloat ratio = self.layoutZoomRatio > 0 && CGRectEqualToRect(self.layoutCrop, self.activeCrop) ? self.layoutZoomRatio : 1;
-    CGPoint center = self.layoutCenter;
+    BOOL savedViewportValid = self.layoutZoomRatio > 0 && CGRectEqualToRect(self.layoutCrop, self.activeCrop);
+    CGFloat ratio = savedViewportValid ? self.layoutZoomRatio : 1;
+    CGPoint center = savedViewportValid ? self.layoutCenter : CGPointMake(.5, .5);
+    BOOL wasAdapting = self.adaptingViewport;
     self.adaptingViewport = YES;
     CGSize visible = [self canvasViewportBounds].size;
-    if (visible.width <= 0 || visible.height <= 0) { self.adaptingViewport = NO; return; }
+    if (visible.width <= 0 || visible.height <= 0) { self.adaptingViewport = wasAdapting; return; }
     self.canvas.minimumZoomScale = MIN(visible.width / self.activeCrop.size.width, visible.height / self.activeCrop.size.height);
     if (resized) {
         self.previousCanvasSize = size; self.zoomGeneration++; self.smartZoomPending = NO;
@@ -1284,14 +1309,24 @@
         }
         [self.controls cancelSlideForLayoutChange];
     }
-    if (self.keyboardLayoutPending) {
+    BOOL restoringKeyboard = self.keyboardLayoutPending;
+    if (restoringKeyboard) {
         self.keyboardLayoutPending = NO;
-        [self applyViewportRatio:self.keyboardLayoutRatio center:self.keyboardLayoutCenter];
+        ratio = self.keyboardLayoutRatio; center = self.keyboardLayoutCenter;
+        [self applyViewportRatio:ratio center:center];
     } else if (resized) {
         if (self.smartZoomed) [self.canvas zoomToRect:self.smartWindow animated:NO];
         else [self applyViewportRatio:ratio center:center];
     }
-    self.adaptingViewport = NO; [self rememberLayoutViewport];
+    self.adaptingViewport = wasAdapting;
+    if (!wasAdapting) {
+        if ((resized || restoringKeyboard) && !self.smartZoomed) {
+            // An intermediate keyboard/rotation size can make the intended
+            // center unreachable. Keep that anchor rather than saving the
+            // temporarily clamped offset as a new user pan.
+            self.layoutZoomRatio = ratio; self.layoutCenter = center; self.layoutCrop = self.activeCrop;
+        } else if (!savedViewportValid || self.smartZoomed) [self rememberLayoutViewport];
+    }
     [self updateCursor];
 }
 - (void)prepareTabletopPad {
@@ -1804,6 +1839,13 @@
 - (void)keyboardFrame:(NSNotification *)notification {
     if (self.textReview) return;
     if (!self.view.window) return;
+    // A fold/rotation may already have changed the canvas bounds when UIKit
+    // delivers this notification. Flushing layout can clamp its live offset or
+    // change the fit scale before zoom restoration finishes. Keep the last
+    // stable semantic viewport, including genuine user zoom/pan, for this crop.
+    CGRect savedCrop = self.layoutCrop;
+    CGFloat savedRatio = self.layoutZoomRatio;
+    CGPoint savedCenter = self.layoutCenter;
     [self.view layoutIfNeeded];
     CGRect keyboard = [self.view convertRect:[notification.userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue] fromView:nil];
     CGRect intersection = CGRectIntersection(self.view.bounds, keyboard);
@@ -1812,7 +1854,9 @@
     CGFloat overlap = docked ? MAX(0, intersection.size.height - self.view.safeAreaInsets.bottom) : 0;
     BOOL valid = self.login.hidden && !CGRectIsNull(self.activeCrop) && !CGRectIsEmpty(self.activeCrop) && self.canvas.minimumZoomScale > 0;
     if (valid && overlap != self.keyboardOverlap) {
-        CGFloat ratio = self.canvas.zoomScale / self.canvas.minimumZoomScale; CGPoint center = [self viewportCenter];
+        BOOL savedViewportValid = savedRatio > 0 && CGRectEqualToRect(savedCrop, self.activeCrop);
+        CGFloat ratio = savedViewportValid ? savedRatio : self.canvas.zoomScale / self.canvas.minimumZoomScale;
+        CGPoint center = savedViewportValid ? savedCenter : [self viewportCenter];
         if (overlap > 0 && self.keyboardOverlap == 0) {
             self.keyboardViewportSaved = YES; self.keyboardSavedCrop = self.activeCrop;
             self.keyboardSavedRatio = ratio; self.keyboardSavedCenter = center;

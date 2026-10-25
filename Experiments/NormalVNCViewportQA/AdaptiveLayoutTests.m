@@ -6,6 +6,7 @@
 #import <sys/socket.h>
 #import <unistd.h>
 #import <zlib.h>
+#import <objc/runtime.h>
 
 @interface CompanionVNCSession (AdaptiveFrameTesting)
 - (void)configureClient:(rfbClient *)client;
@@ -22,8 +23,20 @@
 - (CGRect)activeDivision { return CGRectMake(0,465,669,20); }
 @end
 
+@interface BookAdaptiveControls : CompanionVNCControls
+@end
+@implementation BookAdaptiveControls
+- (CGRect)activeDivision { return CGRectMake(465,0,20,669); }
+@end
+
 @interface CompanionVNCViewer (AdaptiveTesting)
 - (void)frame:(UIImage *)frame;
+- (void)fitDesktop;
+- (void)releasePointer;
+- (void)keyboardFrame:(NSNotification *)notification;
+- (void)scrollViewDidScroll:(UIScrollView *)scrollView;
+- (void)scrollViewDidZoom:(UIScrollView *)scrollView;
+- (UIView *)viewForZoomingInScrollView:(UIScrollView *)scrollView;
 - (void)applyViewportRatio:(CGFloat)ratio center:(CGPoint)center;
 - (CGPoint)viewportCenter;
 - (void)holdAt:(UILongPressGestureRecognizer *)gesture;
@@ -34,9 +47,16 @@
 @end
 @interface AdaptiveViewer : CompanionVNCViewer
 @property CGRect division;
+@property (copy) void (^viewportLayoutCallback)(void);
 @end
 @implementation AdaptiveViewer
 - (CGRect)activeDivision { return self.division; }
+- (void)releasePointer {
+    [super releasePointer];
+    void (^callback)(void) = self.viewportLayoutCallback;
+    self.viewportLayoutCallback = nil;
+    if (callback) callback();
+}
 @end
 @interface AdaptiveSession : CompanionVNCSession
 @property NSUInteger stops;
@@ -45,6 +65,9 @@
 @implementation AdaptiveSession
 - (BOOL)connected { return YES; }
 - (BOOL)running { return YES; }
+// This local event sink models a ready ordinary-control session. Production
+// admission still requires the transport's full readiness and ownership gate.
+- (BOOL)ordinaryControlInputAvailable { return self.connected && self.running; }
 - (void)stop { self.stops++; }
 - (void)pointerX:(NSInteger)x y:(NSInteger)y mask:(NSInteger)mask { [self.events addObject:@[@(x), @(y), @(mask)]]; }
 - (BOOL)tryClickX:(NSInteger)x y:(NSInteger)y mask:(NSInteger)mask { [self pointerX:x y:y mask:mask]; [self pointerX:x y:y mask:0]; return YES; }
@@ -61,6 +84,25 @@
 @implementation AdaptiveHold
 - (UIGestureRecognizerState)state { return UIGestureRecognizerStateBegan; }
 - (CGPoint)locationInView:(UIView *)view { return CGPointMake(100,100); }
+@end
+// UIKit delivers keyboard and layout callbacks synchronously on the main
+// thread. Exercise notification delivery at the scale-limit mutation boundary,
+// before the viewer finishes restoring its semantic viewport.
+typedef NS_ENUM(NSUInteger, KeyboardLayoutBoundary) {
+    KeyboardLayoutBoundaryNone,
+    KeyboardLayoutBoundaryMinimumScale,
+    KeyboardLayoutBoundaryGeometryCommitted,
+};
+static char keyboardDuringScaleUpdateKey;
+@interface KeyboardInterleavingCanvas : UIScrollView
+@end
+@implementation KeyboardInterleavingCanvas
+- (void)setMinimumZoomScale:(CGFloat)scale {
+    void (^notification)(void) = objc_getAssociatedObject(self, &keyboardDuringScaleUpdateKey);
+    objc_setAssociatedObject(self, &keyboardDuringScaleUpdateKey, nil, OBJC_ASSOCIATION_COPY_NONATOMIC);
+    [super setMinimumZoomScale:scale];
+    if (notification) notification();
+}
 @end
 @interface AdaptiveLayoutTests : XCTestCase
 @end
@@ -394,4 +436,268 @@
     XCTAssertNil([controls valueForKey:@"panel"]); XCTAssertEqual(actions,0);
     [viewer stopViewer];
 }
+- (void)testBookRegionsUseReservedFrameOnceAndRequireUsablePages {
+    CGRect safe = CGRectMake(20,40,911,600), content = CGRectNull, input = CGRectNull;
+    XCTAssertTrue(CompanionVNCBookRegions(safe,CGRectMake(465,0,20,669),&content,&input));
+    XCTAssertTrue(CGRectEqualToRect(content,CGRectMake(20,40,445,600)));
+    XCTAssertTrue(CGRectEqualToRect(input,CGRectMake(485,40,446,600)));
+    XCTAssertFalse(CompanionVNCBookRegions(safe,CGRectNull,&content,&input));
+    XCTAssertFalse(CompanionVNCBookRegions(safe,CGRectMake(0,320,951,20),&content,&input));
+    XCTAssertFalse(CompanionVNCBookRegions(safe,CGRectMake(200,0,20,669),&content,&input));
+    XCTAssertFalse(CompanionVNCBookRegions(safe,CGRectMake(465,0,20,100),&content,&input));
+}
+- (void)testBookKeepsVideoAndInputOnTheirPagesAndRestoresZoomWithoutReplacingSession {
+    AdaptiveViewer *viewer = [AdaptiveViewer new]; viewer.division = CGRectNull; viewer.preventsAutomaticConnection = YES;
+    [viewer loadViewIfNeeded]; viewer.view.frame = CGRectMake(0,0,951,669); [viewer.view layoutIfNeeded];
+    AdaptiveSession *session = [AdaptiveSession new]; session.events = [NSMutableArray new]; viewer.session = session;
+    [viewer frame:[self frame]]; [[viewer valueForKey:@"login"] setHidden:YES]; [viewer updateConnectionChrome]; [viewer.view layoutIfNeeded];
+    [viewer applyViewportRatio:3 center:CGPointMake(.55,.5)]; CGPoint focus = [viewer viewportCenter];
+    UIScrollView *canvas = [viewer valueForKey:@"canvas"]; UIView *toolbar = [viewer valueForKey:@"toolbar"], *pad = [viewer valueForKey:@"tabletopPad"];
+    XCTAssertTrue(session.ordinaryControlInputAvailable);
+    NSUInteger beforeHold = session.events.count;
+    AdaptiveHold *hold = [AdaptiveHold new]; [viewer holdAt:hold];
+    XCTAssertEqual(session.events.count,beforeHold+1); XCTAssertEqualObjects(session.events.lastObject[2],@1);
+    for (NSValue *division in @[[NSValue valueWithCGRect:CGRectMake(465,0,20,669)], [NSValue valueWithCGRect:CGRectNull], [NSValue valueWithCGRect:CGRectMake(465,0,20,669)]]) {
+        viewer.division = division.CGRectValue; [viewer.view setNeedsLayout]; [viewer.view layoutIfNeeded];
+        XCTAssertEqual(viewer.session,session); XCTAssertEqual(session.stops,0); XCTAssertEqualObjects(session.events.lastObject[2],@0);
+        XCTAssertEqualWithAccuracy(canvas.zoomScale/canvas.minimumZoomScale,3,.01);
+        CGPoint center = [viewer viewportCenter]; XCTAssertEqualWithAccuracy(center.x,focus.x,.01); XCTAssertEqualWithAccuracy(center.y,focus.y,.01);
+        if (!CGRectIsNull(viewer.division)) {
+            XCTAssertLessThanOrEqual(CGRectGetMaxX(canvas.frame),465);
+            XCTAssertGreaterThanOrEqual(CGRectGetMinX(toolbar.frame),485); XCTAssertGreaterThanOrEqual(CGRectGetMinX(pad.frame),485);
+            XCTAssertFalse(pad.hidden); XCTAssertGreaterThanOrEqual(pad.bounds.size.height,44);
+        } else { XCTAssertTrue(pad.hidden); XCTAssertGreaterThan(canvas.frame.size.width,900); }
+    }
+    [viewer receivedCursor:nil hotspot:CGPointZero position:CGPointMake(800,500) known:YES];
+    NSUInteger beforeClick = session.events.count;
+    UITapGestureRecognizer *tap = [UITapGestureRecognizer new]; [pad addGestureRecognizer:tap]; [viewer clickAt:tap];
+    XCTAssertEqual(session.events.count,beforeClick+2, @"A click must admit a balanced down/up pair");
+    if (session.events.count >= beforeClick+2) {
+        XCTAssertEqualObjects(session.events[beforeClick][2],@1); XCTAssertEqualObjects(session.events[beforeClick+1][2],@0);
+    }
+    XCTAssertEqualObjects(session.events.lastObject[2],@0);
+    [viewer setValue:@280 forKey:@"keyboardOverlap"]; ((NSLayoutConstraint *)[viewer valueForKey:@"toolbarBottom"]).constant = -284;
+    [viewer.view setNeedsLayout]; [viewer.view layoutIfNeeded];
+    XCTAssertLessThanOrEqual(CGRectGetMaxY(canvas.frame),389); XCTAssertLessThanOrEqual(CGRectGetMaxY(pad.frame),389);
+    XCTAssertEqual(viewer.session,session); XCTAssertEqual(session.stops,0); [viewer stopViewer];
+}
+- (void)testBookLoginKeepsSameDraftFieldsOnInputPage {
+    AdaptiveViewer *viewer = [AdaptiveViewer new]; viewer.division = CGRectNull; viewer.preventsAutomaticConnection = YES;
+    [viewer loadViewIfNeeded]; viewer.view.frame = CGRectMake(0,0,951,669); [viewer.view layoutIfNeeded];
+    UITextField *account = [viewer valueForKey:@"username"], *password = [viewer valueForKey:@"password"];
+    NSString *oldAccount = account.text, *oldPassword = password.text; CompanionVNCSession *owner = viewer.session;
+    viewer.division = CGRectMake(465,0,20,669); [viewer.view setNeedsLayout]; [viewer.view layoutIfNeeded];
+    UIScrollView *login = [viewer valueForKey:@"loginScroll"];
+    XCTAssertGreaterThanOrEqual(login.frame.origin.x,485); XCTAssertLessThanOrEqual(CGRectGetMaxX(login.frame),951);
+    XCTAssertEqual([viewer valueForKey:@"username"],account); XCTAssertEqual([viewer valueForKey:@"password"],password);
+    XCTAssertEqualObjects(account.text,oldAccount); XCTAssertEqualObjects(password.text,oldPassword); XCTAssertEqual(viewer.session,owner);
+    [viewer setValue:@460 forKey:@"keyboardOverlap"]; [viewer.view setNeedsLayout]; [viewer.view layoutIfNeeded];
+    XCTAssertGreaterThanOrEqual(login.frame.origin.x,485, @"A tall keyboard must not move the Book form onto the content page");
+    XCTAssertEqual([viewer valueForKey:@"username"],account); XCTAssertEqual(viewer.session,owner);
+    [viewer stopViewer];
+}
+- (void)testBookMenuStaysOnInputPageWithKeyboardAndLargeText {
+    BookAdaptiveControls *controls = [[BookAdaptiveControls alloc] initWithFrame:CGRectMake(0,0,951,669)];
+    controls.quickActions = @[@{@"kind":@"fit",@"title":@"Fit Display",@"enabled":@YES}];
+    controls.traitOverrides.preferredContentSizeCategory = UIContentSizeCategoryAccessibilityExtraLarge;
+    [controls open];
+    for (NSNumber *bottom in @[@0,@280,@0]) {
+        controls.bottomInset = bottom.doubleValue; [controls setNeedsLayout]; [controls layoutIfNeeded];
+        UIView *panel = [controls valueForKey:@"panel"];
+        XCTAssertGreaterThanOrEqual(controls.button.frame.origin.x,485); XCTAssertGreaterThanOrEqual(panel.frame.origin.x,485);
+        XCTAssertLessThanOrEqual(CGRectGetMaxX(panel.frame),951); XCTAssertLessThanOrEqual(CGRectGetMaxY(panel.frame),669-bottom.doubleValue);
+        XCTAssertGreaterThan(panel.bounds.size.height,0);
+    }
+    [controls close];
+}
+
+- (void)verifyKeyboardFoldSequenceWithUserZoom:(CGFloat)userZoom interleavesKeyboard:(KeyboardLayoutBoundary)keyboardBoundary {
+    UIWindowScene *scene = (id)UIApplication.sharedApplication.connectedScenes.anyObject;
+    UIWindow *previous = nil;
+    for (UIWindow *candidate in scene.windows) if (candidate.isKeyWindow) previous = candidate;
+    UIViewController *host = [UIViewController new];
+    UIWindow *window = [[UIWindow alloc] initWithWindowScene:scene];
+    window.rootViewController = host;
+    AdaptiveViewer *viewer = [AdaptiveViewer new];
+    viewer.preventsAutomaticConnection = YES;
+    viewer.division = CGRectNull;
+    [host addChildViewController:viewer];
+    [host.view addSubview:viewer.view];
+    viewer.view.frame = CGRectMake(0, 0, 678, 466);
+    [viewer didMoveToParentViewController:host];
+    [window makeKeyAndVisible];
+    [window layoutIfNeeded];
+    AdaptiveSession *session = [AdaptiveSession new];
+    session.events = [NSMutableArray new];
+    viewer.session = session;
+    [viewer frame:[self frame]];
+    [(UIView *)[viewer valueForKey:@"login"] setHidden:YES];
+    [viewer updateConnectionChrome];
+    [viewer.view layoutIfNeeded];
+    [viewer fitDesktop];
+    [viewer applyViewportRatio:userZoom center:CGPointMake(.55, .5)];
+    CGPoint userCenter = [viewer viewportCenter];
+    UIScrollView *canvas = [viewer valueForKey:@"canvas"];
+    UIImageView *image = [viewer valueForKey:@"image"];
+    Class originalCanvasClass = object_getClass(canvas);
+    if (keyboardBoundary == KeyboardLayoutBoundaryMinimumScale) object_setClass(canvas, KeyboardInterleavingCanvas.class);
+
+    void (^keyboard)(CGFloat, NSTimeInterval) = ^(CGFloat height, NSTimeInterval duration) {
+        CGRect local = CGRectMake(0, viewer.view.bounds.size.height - height,
+                                  viewer.view.bounds.size.width, height);
+        CGRect screen = [viewer.view convertRect:local toView:nil];
+        [viewer keyboardFrame:[NSNotification notificationWithName:UIKeyboardWillChangeFrameNotification object:nil userInfo:@{
+            UIKeyboardFrameEndUserInfoKey:[NSValue valueWithCGRect:screen],
+            UIKeyboardAnimationDurationUserInfoKey:@(duration),
+            UIKeyboardAnimationCurveUserInfoKey:@(UIViewAnimationCurveEaseInOut)}]];
+    };
+    void (^check)(NSString *) = ^(NSString *phase) {
+        [viewer.view layoutIfNeeded];
+        CGFloat ratio = canvas.zoomScale / canvas.minimumZoomScale;
+        NSLog(@"DuoViewport %@ requested=%.4f zoom=%.6f min=%.6f ratio=%.4f saved=%@ pending=%@ canvas=%@ image=%@", phase, userZoom,
+              canvas.zoomScale, canvas.minimumZoomScale, ratio,
+              [viewer valueForKey:@"layoutZoomRatio"], [viewer valueForKey:@"keyboardLayoutRatio"],
+              NSStringFromCGRect(canvas.bounds), NSStringFromCGRect(image.frame));
+        XCTAssertEqualWithAccuracy(ratio, userZoom, .01, @"%@ preserves deliberate relative zoom", phase);
+        XCTAssertEqual(viewer.session, session);
+        XCTAssertEqual(session.stops, 0);
+        if (userZoom <= 1.01) {
+            CGRect visible = UIEdgeInsetsInsetRect(canvas.bounds, canvas.contentInset);
+            CGRect displayed = [image convertRect:image.bounds toView:canvas];
+            XCTAssertTrue(CGRectContainsRect(CGRectInset(visible, -1, -1), displayed),
+                          @"%@ keeps the entire fitted desktop visible: %@ in %@", phase,
+                          NSStringFromCGRect(displayed), NSStringFromCGRect(visible));
+        } else {
+            CGPoint center = [viewer viewportCenter];
+            XCTAssertEqualWithAccuracy(center.x, userCenter.x, .01, @"%@ retains horizontal pan", phase);
+            XCTAssertEqualWithAccuracy(center.y, userCenter.y, .01, @"%@ retains vertical focus", phase);
+        }
+    };
+
+    @try {
+        check(@"closed initial");
+        keyboard(214, .2);
+        [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.25]];
+        check(@"closed keyboard");
+        for (NSUInteger cycle = 0; cycle < 2; cycle++) {
+            NSArray<NSDictionary *> *steps = @[
+                @{@"name":@"open portrait", @"size":[NSValue valueWithCGSize:CGSizeMake(669,951)], @"division":[NSValue valueWithCGRect:CGRectNull], @"keyboard":@350},
+                @{@"name":@"open landscape", @"size":[NSValue valueWithCGSize:CGSizeMake(951,669)], @"division":[NSValue valueWithCGRect:CGRectNull], @"keyboard":@267},
+                @{@"name":@"book", @"size":[NSValue valueWithCGSize:CGSizeMake(951,669)], @"division":[NSValue valueWithCGRect:CGRectMake(465,0,20,669)], @"keyboard":@267},
+                @{@"name":@"tabletop", @"size":[NSValue valueWithCGSize:CGSizeMake(669,951)], @"division":[NSValue valueWithCGRect:CGRectMake(0,465,669,20)], @"keyboard":@350},
+                @{@"name":@"closed", @"size":[NSValue valueWithCGSize:CGSizeMake(678,466)], @"division":[NSValue valueWithCGRect:CGRectNull], @"keyboard":@214}
+            ];
+            for (NSDictionary *step in steps) {
+                // Exercise both notification orders with animation in flight,
+                // rather than only synchronous final-size assignments.
+                if (cycle == 0) keyboard([step[@"keyboard"] doubleValue], .2);
+                if (keyboardBoundary) {
+                    void (^notification)(void) = ^{
+                        NSLog(@"DuoViewport interleaved keyboard: zoom=%.6f min=%.6f stable=%@", canvas.zoomScale,
+                              canvas.minimumZoomScale, [viewer valueForKey:@"layoutZoomRatio"]);
+                        keyboard([step[@"keyboard"] doubleValue] + 20, .2);
+                    };
+                    if (keyboardBoundary == KeyboardLayoutBoundaryMinimumScale) objc_setAssociatedObject(canvas, &keyboardDuringScaleUpdateKey, notification, OBJC_ASSOCIATION_COPY_NONATOMIC);
+                    // releasePointer is the first callback after the viewer
+                    // commits the new canvas geometry but before restoring zoom.
+                    // Inject a one-shot keyboard notification at that boundary.
+                    else viewer.viewportLayoutCallback = notification;
+                }
+                [UIView animateWithDuration:.2 delay:0 options:UIViewAnimationOptionBeginFromCurrentState animations:^{
+                    viewer.division = [step[@"division"] CGRectValue];
+                    viewer.view.frame = (CGRect){CGPointZero, [step[@"size"] CGSizeValue]};
+                    [viewer.view setNeedsLayout];
+                    [viewer.view layoutIfNeeded];
+                } completion:nil];
+                keyboard([step[@"keyboard"] doubleValue], .2);
+                [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.25]];
+                check([NSString stringWithFormat:@"cycle%lu %@", (unsigned long)cycle, step[@"name"]]);
+            }
+        }
+        keyboard(0, .2);
+        [[NSRunLoop mainRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:.25]];
+        check(@"closed keyboard dismissed");
+    } @finally {
+        objc_setAssociatedObject(canvas, &keyboardDuringScaleUpdateKey, nil, OBJC_ASSOCIATION_COPY_NONATOMIC);
+        object_setClass(canvas, originalCanvasClass);
+        viewer.viewportLayoutCallback = nil;
+        [viewer stopViewer];
+        window.hidden = YES;
+        window.rootViewController = nil;
+        [previous makeKeyAndVisible];
+    }
+}
+- (void)verifyKeyboardFoldSequenceWithUserZoom:(CGFloat)userZoom {
+    [self verifyKeyboardFoldSequenceWithUserZoom:userZoom interleavesKeyboard:KeyboardLayoutBoundaryNone];
+}
+// Native first-responder restoration can scroll the hidden UITextView while
+// UIKit has temporarily reset the separate canvas transform during unfolding.
+// Its delegate callback must not record that canvas state as a user viewport.
+- (void)verifyTextInputRestorationKeepsViewportWithUserZoom:(CGFloat)userZoom {
+    AdaptiveViewer *viewer = [AdaptiveViewer new];
+    viewer.preventsAutomaticConnection = YES; viewer.division = CGRectNull;
+    [viewer loadViewIfNeeded]; viewer.view.frame = CGRectMake(0,0,678,466);
+    [viewer.view layoutIfNeeded];
+    AdaptiveSession *session = [AdaptiveSession new]; session.events = [NSMutableArray new]; viewer.session = session;
+    [viewer frame:[self frame]]; [[viewer valueForKey:@"login"] setHidden:YES];
+    [viewer updateConnectionChrome]; [viewer.view layoutIfNeeded];
+    [viewer fitDesktop]; [viewer applyViewportRatio:userZoom center:CGPointMake(.55,.5)];
+    UIScrollView *canvas = [viewer valueForKey:@"canvas"];
+    UITextView *input = [viewer valueForKey:@"input"];
+    UIImageView *image = [viewer valueForKey:@"image"];
+    CGPoint intended = [viewer viewportCenter];
+    XCTAssertEqual((id)input.delegate, viewer); XCTAssertNotEqual((id)input, canvas);
+    XCTAssertEqual([viewer viewForZoomingInScrollView:canvas],image);
+    XCTAssertNil([viewer viewForZoomingInScrollView:input], @"Text restoration cannot use the desktop as its zoom target");
+    XCTAssertFalse(canvas.tracking || canvas.dragging || canvas.decelerating || canvas.zooming);
+    // Isolate the observed native ordering: no canvas gesture/callback has yet
+    // occurred; only the restored text input notifies its shared delegate.
+    // The native trace shows identity image transform with the canvas content
+    // size still at its fitted dimensions. UITextView restoration obtained the
+    // wrong zoom view before sending its own scroll callback.
+    CGSize retainedContent = canvas.contentSize;
+    image.transform = CGAffineTransformIdentity;
+    XCTAssertEqualWithAccuracy(canvas.zoomScale,1,.0001, @"Reproduce the native transient scale before testing restoration");
+    XCTAssertTrue(CGSizeEqualToSize(canvas.contentSize,retainedContent));
+    CGRect transientImage = image.frame;
+    [viewer scrollViewDidScroll:input];
+    [viewer scrollViewDidZoom:input];
+    XCTAssertEqualWithAccuracy([[viewer valueForKey:@"layoutZoomRatio"] doubleValue],userZoom,.01,
+                              @"Text-input scrolling cannot overwrite desktop intent");
+    XCTAssertTrue(CGRectEqualToRect(image.frame,transientImage), @"A foreign zoom callback cannot reposition the desktop");
+    // The following layout pass must use the existing intent, not the
+    // temporarily unscaled image, for both Fit and deliberate zoom/pan.
+    viewer.view.frame = CGRectMake(0,0,669,951);
+    [viewer.view setNeedsLayout]; [viewer.view layoutIfNeeded];
+    XCTAssertEqualWithAccuracy(canvas.zoomScale/canvas.minimumZoomScale,userZoom,.01);
+    if (userZoom <= 1.01) {
+        CGRect visible = UIEdgeInsetsInsetRect(canvas.bounds,canvas.contentInset);
+        XCTAssertTrue(CGRectContainsRect(CGRectInset(visible,-1,-1),[image convertRect:image.bounds toView:canvas]));
+    } else {
+        CGPoint restored = [viewer viewportCenter];
+        XCTAssertEqualWithAccuracy(restored.x,intended.x,.01); XCTAssertEqualWithAccuracy(restored.y,intended.y,.01);
+    }
+    XCTAssertEqual(viewer.session,session); XCTAssertEqual(session.stops,0);
+    [viewer stopViewer];
+}
+- (void)testTextInputRestorationCannotTurnFitIntoZoom {
+    [self verifyTextInputRestorationKeepsViewportWithUserZoom:1];
+}
+- (void)testTextInputRestorationCannotOverwriteDeliberateCanvasZoomAndPan {
+    [self verifyTextInputRestorationKeepsViewportWithUserZoom:4];
+}
+
+- (void)testKeyboardNotificationDuringScaleUpdateDoesNotTurnFitIntoZoom {
+    [self verifyKeyboardFoldSequenceWithUserZoom:1 interleavesKeyboard:KeyboardLayoutBoundaryMinimumScale];
+}
+- (void)testKeyboardNotificationAfterGeometryUpdateDoesNotTurnFitIntoZoom {
+    [self verifyKeyboardFoldSequenceWithUserZoom:1 interleavesKeyboard:KeyboardLayoutBoundaryGeometryCommitted];
+}
+- (void)testFittedDesktopStaysFitAcrossKeyboardAndFoldResizeSequence {
+    [self verifyKeyboardFoldSequenceWithUserZoom:1];
+}
+- (void)testUserZoomAndPanStayStableAcrossKeyboardAndFoldResizeSequence {
+    [self verifyKeyboardFoldSequenceWithUserZoom:4];
+}
+
 @end

@@ -2,6 +2,7 @@
 #import "CompanionVNCControls.h"
 #import "CompanionVNCMenu.h"
 #import "CompanionVNCViewer.h"
+#import "CompanionVNCDuoSample.h"
 #import "CompanionVNCDisplayPicker.h"
 #import "CompanionVNCAdaptiveLayout.h"
 

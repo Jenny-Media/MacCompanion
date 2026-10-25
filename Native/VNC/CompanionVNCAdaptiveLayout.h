@@ -14,6 +14,20 @@ static inline BOOL CompanionVNCTabletopRegions(CGRect safe, CGRect division, CGR
     return YES;
 }
 
+/// A vertical system division creates a Book workspace: remote content on the
+/// left and controls on the right. Frames already include interactive margins.
+static inline BOOL CompanionVNCBookRegions(CGRect safe, CGRect division, CGRect *content, CGRect *input) {
+    if (CGRectIsNull(division) || CGRectIsEmpty(division) || CGRectIsEmpty(safe)) return NO;
+    CGRect overlap = CGRectIntersection(safe, division);
+    if (CGRectIsNull(overlap) || overlap.size.height < safe.size.height * .6 || overlap.size.height <= overlap.size.width) return NO;
+    CGFloat left = CGRectGetMinX(overlap) - CGRectGetMinX(safe);
+    CGFloat right = CGRectGetMaxX(safe) - CGRectGetMaxX(overlap);
+    if (left < 280 || right < 280) return NO;
+    *content = CGRectMake(safe.origin.x, safe.origin.y, left, safe.size.height);
+    *input = CGRectMake(CGRectGetMaxX(overlap), safe.origin.y, right, safe.size.height);
+    return YES;
+}
+
 static inline CGRect CompanionVNCActiveDivision(UIView *view) {
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 270100
     if (@available(iOS 27.1, *)) {

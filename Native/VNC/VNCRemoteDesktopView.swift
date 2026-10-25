@@ -2,6 +2,14 @@
 import SwiftUI
 import UIKit
 
+// UIKit owns keyboard occlusion and restores the desktop viewport. Keep its
+// controller at the container size instead of also shrinking it in SwiftUI.
+extension View {
+    func directDesktopSafeArea() -> some View {
+        ignoresSafeArea(.container, edges: .top).ignoresSafeArea(.keyboard)
+    }
+}
+
 /// Let the native backdrop cover the status area as well as the canvas. The
 /// native controller keeps its login card and controls inside the safe area.
 /// SwiftUI's presenting controller also gets the matching status text style.
@@ -28,7 +36,7 @@ struct DirectDesktopSessionView: View {
             if !files.macRemoved {
                 VNCRemoteDesktopView(mac: mac, inputOnly: inputOnly, autoConnect: autoConnect, connectionMacNames: connectionMacNames, files: files,
                                      showMacs: showMacs, connectionPanel: connectionPanel, loginRetentionAllowed: loginRetentionAllowed, connectionEstablished: connectionEstablished, chromeChanged: { immersive = $0 })
-                    .ignoresSafeArea(.container, edges: .top)
+                    .directDesktopSafeArea()
             }
             if files.macRemoved, files.hasUnsavedDownloads {
                 DirectFilesView(mac: mac, session: files, closeOwnerWindow: showMacs)
