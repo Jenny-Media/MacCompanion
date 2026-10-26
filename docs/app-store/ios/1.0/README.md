@@ -8,7 +8,8 @@ this change.
 ## Screenshot refresh — October 26, 2026
 
 The current screenshot handoff contains 28 designed preview images using official bezels
-and the approved Focused layout. See [screenshots.md](screenshots.md) for the
+and the approved Focused layout, with genuine macOS windows, configured keyboard
+rows, clearer Compose Text and Tabletop leading the Duo sequence. See [screenshots.md](screenshots.md) for the
 gallery and provenance, [screenshot-copy.json](screenshot-copy.json) for canonical
 headlines and order, and [capture-recipe.md](capture-recipe.md) for reproduction.
 The dated store snapshot and original submission checklist below are historical;

@@ -224,10 +224,10 @@
     ],
     "duo": [
       {
-        "id": "01-book-desktop",
-        "copyKey": "book-screen-sharing",
-        "width": 2853,
-        "height": 2007
+        "id": "01-tabletop",
+        "copyKey": "tabletop-screen-sharing",
+        "width": 2007,
+        "height": 2853
       },
       {
         "id": "02-book-terminal",
@@ -254,10 +254,10 @@
         "height": 2007
       },
       {
-        "id": "06-tabletop",
-        "copyKey": "tabletop-screen-sharing",
-        "width": 2007,
-        "height": 2853
+        "id": "06-book-desktop",
+        "copyKey": "book-screen-sharing",
+        "width": 2853,
+        "height": 2007
       },
       {
         "id": "07-setup",
