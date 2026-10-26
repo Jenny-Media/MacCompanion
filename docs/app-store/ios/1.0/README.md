@@ -1,9 +1,56 @@
 # Mac Companion iOS App Store materials — 1.0
 
-Prepared locally on October 24, 2026. No App Store Connect write, build/media
-upload, App Review submission, release or website deployment is authorized by
-this preparation. macOS and visionOS release materials/packaging are outside
-this change.
+Originally prepared locally on October 24, 2026. Subsequent owner-authorized
+App Store Connect and website updates are recorded below. App Review submission
+and app publication remain held. macOS and visionOS release materials/packaging
+are outside this change.
+
+## Screenshot refresh — October 26, 2026
+
+The current screenshot handoff contains 28 designed preview images using official bezels
+and the approved Focused layout, with genuine macOS windows, configured keyboard
+rows, clearer Compose Text and Tabletop leading the Duo sequence. The latest
+revision makes the iPhone opening benefit explicit and expands Duo Compose in
+its available input pane. Previous readability fixes and no-helper setup copy
+are preserved. See [screenshots.md](screenshots.md) for the
+gallery and provenance, [screenshot-copy.json](screenshot-copy.json) for canonical
+headlines and order, and [capture-recipe.md](capture-recipe.md) for reproduction.
+The dated store snapshot and original submission checklist below are historical;
+re-read live App Store Connect state before any later submission. The preview preparation itself did not change store fields. The later authorized
+application is recorded below.
+
+## Authorized store and support refresh — October 26, 2026
+
+The owner authorized applying the final metadata and artwork while explicitly
+holding App Review submission. iOS 1.0 now selects source-verified **build 157**
+(commit `35a060ed36b7e2a7d77570a07d7e044d24d2a2fb`), with manual release retained.
+The App Review notes correctly explain the shared saved Mac login and optional
+separate SSH password/key. Marketing version 1.0 remains unchanged.
+
+The main page retains the approved 28 v10 screenshots. Remote Desktop, SSH
+Terminal, and Trackpad & Keyboard custom pages reuse those exact assets across
+both iPhone sizes, iPad and Duo, with feature-specific order. Their authoritative
+promotional text, orders, and eight matching Header/Search Results compositions
+are in [custom-product-pages.json](custom-product-pages.json). Old screenshot and
+video selections are removed from these drafts and retained in Asset Library.
+Images, native captures, rendered previews and upload receipts remain outside Git.
+
+The corrected home and support pages are deployed at <https://mac.jenny.media/>.
+The production deployment is `dpl_9PwveHqLavVGtRfW5qRhsv7EWfqq`; only the generated
+home and support HTML changed. Existing privacy, beta, assets, scripts and security
+headers are byte-identical to the prior deployment. Website source remains under
+`Website/source/`; the support page no longer denies SFTP file transfer or claims
+user-facing rename support, and describes iPad/Duo and shared saved login accurately.
+
+Final persisted-state evidence is outside application Git under
+`mac-companion-store-design-v10/asc-refresh-20261026/` in the existing visualization
+archive. Adding items to an unsubmitted draft does not constitute submission.
+The separate **Submit for Review** action remains outside authorization.
+
+Required repository validation passed on Xcode 27.1 (27A9275), with evidence at
+`/private/tmp/maccompanion-asc-refresh-20261026/validation-unrestricted/runs/20261026T215453Z-70d6d9a0e70d`.
+The initial sandbox-limited attempt could not inspect processes; its evidence is retained.
+No application code, simulator state, physical acceptance evidence or macOS package changed.
 
 ## Authoritative copy
 
@@ -36,7 +83,7 @@ App Store marketing version in `Native/iOSCloud/project.json` remains **1.0** fo
 both app and session-status extension; build number 142 is unchanged. The legacy
 `project.yml` development version is not a production version change.
 
-## Live record inspected before editing
+## Historical live record inspected October 24 before editing
 
 The authenticated GET-only snapshot is retained outside Git at
 `/private/tmp/maccompanion-ios-1.0-release-20261024/asc-before.json`.
@@ -87,7 +134,7 @@ The branch was created from freshly fetched `origin/main`
 `9a9fbfbcef809ed31be1ee48accaf3873ef24801`, GitHub's confirmed merge commit for
 PR #45. Reviewed `26ebeb2` is included. Existing checkouts were preserved.
 
-## Remaining submission gates
+## Original submission gates recorded October 24
 
 1. Review and explicitly authorize the final metadata/media application. Replace
    selected build 25 with a source-verified **1.0** release candidate covering

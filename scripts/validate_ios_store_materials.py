@@ -32,4 +32,23 @@ for locale in manifest['locales']:
         print(f'{locale}/{field}: {count}/{limit} {"UTF-8 bytes" if bytes_limit else "characters"}')
 for field in ['supportUrl', 'marketingUrl', 'privacyPolicyUrl']:
     assert urlsplit(manifest[field]).scheme == 'https' and urlsplit(manifest[field]).netloc
+copy = json.loads((BASE / 'screenshot-copy.json').read_text())
+assert copy['marketingVersion'] == '1.0' and copy['locale'] in manifest['locales']
+assert copy['design'] == 'Focused'
+for variant in copy['variants'].values():
+    assert 1 <= len(variant['headline']) <= 2
+    assert all(isinstance(line, str) and line and line == line.strip() and '\n' not in line
+               for line in variant['headline'])
+accepted_sizes = {
+    'iphone18-pro': {(1206, 2622)}, 'iphone18': {(1320, 2868)},
+    'ipad': {(2064, 2752)}, 'duo': {(2853, 2007), (2007, 2853)},
+}
+assert set(copy['sets']) == set(accepted_sizes)
+for family, shots in copy['sets'].items():
+    assert 1 <= len(shots) <= 10, family
+    assert len({shot['id'] for shot in shots}) == len(shots), family
+    for shot in shots:
+        assert shot['copyKey'] in copy['variants'], family
+        assert (shot['width'], shot['height']) in accepted_sizes[family], family
+print(f'Screenshot copy: {sum(len(shots) for shots in copy["sets"].values())} ordered compositions across {len(copy["sets"])} display families validated.')
 print('iOS 1.0 materials validated; no App Store Connect mutation performed.')

@@ -1,0 +1,270 @@
+{
+  "marketingVersion": "1.0",
+  "locale": "en-US",
+  "design": "Focused",
+  "variants": {
+    "screen-sharing": {
+      "title": "Screen Sharing",
+      "headline": [
+        "Control your Mac.",
+        "From your iPhone."
+      ]
+    },
+    "terminal": {
+      "title": "Terminal",
+      "headline": [
+        "Your commands.",
+        "Your Mac."
+      ]
+    },
+    "trackpad-and-keyboard": {
+      "title": "Trackpad & Keyboard",
+      "headline": [
+        "Point. Type.",
+        "Stay in control."
+      ]
+    },
+    "mac-setup": {
+      "title": "Mac setup",
+      "headline": [
+        "Your Mac.",
+        "No helper needed."
+      ]
+    },
+    "ipad-desktop": {
+      "title": "Screen Sharing",
+      "headline": [
+        "A bigger view.",
+        "A familiar Mac."
+      ]
+    },
+    "book-screen-sharing": {
+      "title": "Book · Screen Sharing",
+      "headline": [
+        "Your Mac.",
+        "Your controls."
+      ]
+    },
+    "book-terminal": {
+      "title": "Book · Terminal",
+      "headline": [
+        "Your commands.",
+        "Your Mac."
+      ]
+    },
+    "book-compose-text": {
+      "title": "Book · Compose Text",
+      "headline": [
+        "Compose here.",
+        "Send to your Mac."
+      ]
+    },
+    "tabletop-screen-sharing": {
+      "title": "Tabletop · Screen Sharing",
+      "headline": [
+        "Set it down.",
+        "Keep going."
+      ]
+    },
+    "compose-text": {
+      "title": "Compose Text",
+      "headline": [
+        "Compose here.",
+        "Send to your Mac."
+      ]
+    },
+    "custom-keyboard": {
+      "title": "Customizable keyboard rows",
+      "headline": [
+        "Your keys.",
+        "Your way."
+      ],
+      "badge": "Pro"
+    },
+    "files": {
+      "title": "Files over SFTP",
+      "headline": [
+        "Move files.",
+        "Keep working."
+      ]
+    }
+  },
+  "sets": {
+    "iphone18": [
+      {
+        "id": "01-desktop",
+        "copyKey": "screen-sharing",
+        "width": 1320,
+        "height": 2868
+      },
+      {
+        "id": "02-terminal",
+        "copyKey": "terminal",
+        "width": 1320,
+        "height": 2868
+      },
+      {
+        "id": "03-compose",
+        "copyKey": "compose-text",
+        "width": 1320,
+        "height": 2868
+      },
+      {
+        "id": "04-keyboard",
+        "copyKey": "custom-keyboard",
+        "width": 1320,
+        "height": 2868
+      },
+      {
+        "id": "05-files",
+        "copyKey": "files",
+        "width": 1320,
+        "height": 2868
+      },
+      {
+        "id": "06-trackpad",
+        "copyKey": "trackpad-and-keyboard",
+        "width": 1320,
+        "height": 2868
+      },
+      {
+        "id": "07-setup",
+        "copyKey": "mac-setup",
+        "width": 1320,
+        "height": 2868
+      }
+    ],
+    "iphone18-pro": [
+      {
+        "id": "01-desktop",
+        "copyKey": "screen-sharing",
+        "width": 1206,
+        "height": 2622
+      },
+      {
+        "id": "02-terminal",
+        "copyKey": "terminal",
+        "width": 1206,
+        "height": 2622
+      },
+      {
+        "id": "03-compose",
+        "copyKey": "compose-text",
+        "width": 1206,
+        "height": 2622
+      },
+      {
+        "id": "04-keyboard",
+        "copyKey": "custom-keyboard",
+        "width": 1206,
+        "height": 2622
+      },
+      {
+        "id": "05-files",
+        "copyKey": "files",
+        "width": 1206,
+        "height": 2622
+      },
+      {
+        "id": "06-trackpad",
+        "copyKey": "trackpad-and-keyboard",
+        "width": 1206,
+        "height": 2622
+      },
+      {
+        "id": "07-setup",
+        "copyKey": "mac-setup",
+        "width": 1206,
+        "height": 2622
+      }
+    ],
+    "ipad": [
+      {
+        "id": "01-desktop",
+        "copyKey": "ipad-desktop",
+        "width": 2064,
+        "height": 2752
+      },
+      {
+        "id": "02-terminal",
+        "copyKey": "terminal",
+        "width": 2064,
+        "height": 2752
+      },
+      {
+        "id": "03-compose",
+        "copyKey": "compose-text",
+        "width": 2064,
+        "height": 2752
+      },
+      {
+        "id": "04-keyboard",
+        "copyKey": "custom-keyboard",
+        "width": 2064,
+        "height": 2752
+      },
+      {
+        "id": "05-files",
+        "copyKey": "files",
+        "width": 2064,
+        "height": 2752
+      },
+      {
+        "id": "06-trackpad",
+        "copyKey": "trackpad-and-keyboard",
+        "width": 2064,
+        "height": 2752
+      },
+      {
+        "id": "07-setup",
+        "copyKey": "mac-setup",
+        "width": 2064,
+        "height": 2752
+      }
+    ],
+    "duo": [
+      {
+        "id": "01-tabletop",
+        "copyKey": "tabletop-screen-sharing",
+        "width": 2007,
+        "height": 2853
+      },
+      {
+        "id": "02-book-terminal",
+        "copyKey": "book-terminal",
+        "width": 2853,
+        "height": 2007
+      },
+      {
+        "id": "03-book-compose",
+        "copyKey": "book-compose-text",
+        "width": 2853,
+        "height": 2007
+      },
+      {
+        "id": "04-keyboard",
+        "copyKey": "custom-keyboard",
+        "width": 2853,
+        "height": 2007
+      },
+      {
+        "id": "05-files",
+        "copyKey": "files",
+        "width": 2853,
+        "height": 2007
+      },
+      {
+        "id": "06-book-desktop",
+        "copyKey": "book-screen-sharing",
+        "width": 2853,
+        "height": 2007
+      },
+      {
+        "id": "07-setup",
+        "copyKey": "mac-setup",
+        "width": 2853,
+        "height": 2007
+      }
+    ]
+  }
+}
