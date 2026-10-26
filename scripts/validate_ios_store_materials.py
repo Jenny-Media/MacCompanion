@@ -50,5 +50,5 @@ for family, shots in copy['sets'].items():
     for shot in shots:
         assert shot['copyKey'] in copy['variants'], family
         assert (shot['width'], shot['height']) in accepted_sizes[family], family
-print('Screenshot copy: 21 ordered compositions across 4 display families validated.')
+print(f'Screenshot copy: {sum(len(shots) for shots in copy["sets"].values())} ordered compositions across {len(copy["sets"])} display families validated.')
 print('iOS 1.0 materials validated; no App Store Connect mutation performed.')

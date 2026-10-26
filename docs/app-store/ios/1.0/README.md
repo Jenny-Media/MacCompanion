@@ -7,7 +7,7 @@ this change.
 
 ## Screenshot refresh — October 26, 2026
 
-The current screenshot handoff contains 21 designed images using official bezels
+The current screenshot handoff contains 28 designed preview images using official bezels
 and the approved Focused layout. See [screenshots.md](screenshots.md) for the
 gallery and provenance, [screenshot-copy.json](screenshot-copy.json) for canonical
 headlines and order, and [capture-recipe.md](capture-recipe.md) for reproduction.

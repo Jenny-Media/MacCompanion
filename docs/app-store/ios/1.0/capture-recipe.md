@@ -1,7 +1,7 @@
 # Reproducing the designed screenshot set
 
 The current external capture workspace is
-`/private/tmp/maccompanion-store-design-v5/`; durable copies of the drivers and
+`/private/tmp/maccompanion-store-design-v6/`; durable copies of the drivers and
 logs are in the handoff's `sources/` and `evidence/` folders. Image and typed
 fixture content stay outside Git. [screenshots.md](screenshots.md) lists the
 current gallery, build provenance, device coverage and acceptance limits.
@@ -11,8 +11,8 @@ current gallery, build provenance, device coverage and acceptance limits.
    hashes against the capture checkout. Never substitute an arbitrary old app.
 2. Generate the private `DirectClientQA` project using the repository workflow.
    While holding the compiler lease, save its exact original configuration and
-   replace only the hosted test source with the external
-   `StoreDesignCaptureTests.swift`. Keep app and extension **1.0 (142)** metadata,
+   replace the hosted test source with the external
+   `StoreDesignCaptureTests.swift` and apply only the v6 capture adapters below. Keep app and extension **1.0 (142)** metadata,
    the private QA bundle ID, `MACCOMPANION_STORE_CAPTURE=1`, language `en`, region
    `US`, Light appearance and Large text. Build for testing with XcodeGen and
    the managed DerivedData path. No capture fixture enters a release target.
@@ -20,8 +20,7 @@ current gallery, build provenance, device coverage and acceptance limits.
    before boot, install or capture, and retain the compiler lease throughout
    the native test. Run destinations sequentially with
    `-parallel-testing-enabled NO` and
-   `-maximum-concurrent-test-simulator-destinations 1`. The only new device is
-   the missing iPhone 18 Pro model required for the medium display family.
+   `-maximum-concurrent-test-simulator-destinations 1`. Reuse all four existing materials devices; do not create another device.
 4. Launch the opt-in
    `DirectClientTests/StoreDesignCaptureTests/testCaptureReleaseMaterials`
    through test-without-building. XCTest can reinstall the host: re-resolve
@@ -31,7 +30,7 @@ current gallery, build provenance, device coverage and acceptance limits.
 5. Wait for `Documents/AppStoreCapture/ready`, then supply the approved fictional
    workspace as `remote-workspace.png`. Requests select `desktop`,
    `desktop-keyboard`, `terminal`, `trackpad-keyboard`, `library`, `setup`, or
-   `composer`. Terminal optionally shows its native keyboard. The temporary Mac
+   `composer`. The v6 additions also select `keyboard-editor` and `files`. Terminal optionally shows its native keyboard. The temporary Mac
    library and Terminal output are synthetic; `autoConnect: false` and the
    sample viewer's discarded input keep all remote transport inactive.
 6. For desktop framing, wait until the native keyboard completes its layout,
@@ -66,3 +65,20 @@ The external manifest distinguishes reused approved hero captures, newly
 captured feature screens and excluded probes. Simulator rendering and saved
 text fixtures do not establish live remote input or physical Duo acceptance.
 No upload, selected-build change or review submission is part of reproduction.
+
+## v6 feature additions
+
+Keep three capture-only source adapters outside Git. Each is the exact shipping
+source followed by a gated fixture entry point: `DirectFilesSession.swift` seeds
+a synthetic ready directory, `TerminalControlsSettings.swift` opens the native
+keyboard editor and sheet, and `TerminalFocusedEditors.swift` exposes the native
+Add Row picker at its supported large detent. Their unchanged production prefixes
+and hashes are recorded in `evidence/fixture-adapters.json`. Exclude the original
+three files only in the temporary QA project and compile these external copies
+in their place. Restore the exact project and original test bundle afterward.
+No shipping control, label, entitlement behavior or application source is edited.
+
+The seeded Files state demonstrates native browsing and individual-file transfer
+controls, not completed transfers. The keyboard fixture demonstrates Pro UI and
+is marked Pro in the artwork. Keep optional Copy Text from Screen out of the
+current seven-image set until a separate useful native preview is approved.
