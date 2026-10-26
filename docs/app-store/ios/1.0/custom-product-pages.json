@@ -1,0 +1,109 @@
+{
+  "locale": "en-US",
+  "status": "prepared, not submitted",
+  "pages": [
+    {
+      "name": "Remote Desktop",
+      "pageVersionId": "187f560b-14d2-4d47-a87a-d5d5657a6c22",
+      "creative": "desktop",
+      "promotionalText": "See and control your Mac from iPhone or iPad through built-in Screen Sharing and Remote Login. Use pointer controls, Compose Text and SFTP files. No Mac helper.",
+      "phoneAndIPadOrder": [
+        "01-desktop",
+        "03-compose",
+        "06-trackpad",
+        "04-keyboard",
+        "05-files",
+        "02-terminal",
+        "07-setup"
+      ],
+      "duoOrder": [
+        "01-tabletop",
+        "06-book-desktop",
+        "03-book-compose",
+        "04-keyboard",
+        "05-files",
+        "02-book-terminal",
+        "07-setup"
+      ]
+    },
+    {
+      "name": "SSH Terminal",
+      "pageVersionId": "b1411475-9702-45d7-923a-39a758f7a267",
+      "creative": "terminal",
+      "promotionalText": "Open your Mac’s SSH Terminal on iPhone or iPad. Use a password or Ed25519 key, scrollback, Compose Text, and familiar controls. Built-in Remote Login; no helper.",
+      "phoneAndIPadOrder": [
+        "02-terminal",
+        "04-keyboard",
+        "03-compose",
+        "05-files",
+        "01-desktop",
+        "06-trackpad",
+        "07-setup"
+      ],
+      "duoOrder": [
+        "02-book-terminal",
+        "04-keyboard",
+        "03-book-compose",
+        "05-files",
+        "01-tabletop",
+        "06-book-desktop",
+        "07-setup"
+      ]
+    },
+    {
+      "name": "Trackpad & Keyboard",
+      "pageVersionId": "3cc39d0d-876c-444c-b122-461e727c5a21",
+      "creative": "trackpad",
+      "promotionalText": "Turn iPhone or iPad into a trackpad and keyboard for a Mac you can see. Tap, drag, scroll, and Compose Text. Uses Screen Sharing over SSH; no Mac helper.",
+      "phoneAndIPadOrder": [
+        "06-trackpad",
+        "04-keyboard",
+        "03-compose",
+        "01-desktop",
+        "05-files",
+        "02-terminal",
+        "07-setup"
+      ],
+      "duoOrder": [
+        "06-book-desktop",
+        "04-keyboard",
+        "03-book-compose",
+        "01-tabletop",
+        "02-book-terminal",
+        "05-files",
+        "07-setup"
+      ]
+    }
+  ],
+  "creativeAssets": {
+    "headerSize": [
+      5244,
+      2950
+    ],
+    "searchSize": [
+      5244,
+      2950
+    ],
+    "headlines": {
+      "main": [
+        "Your Mac.",
+        "Within reach."
+      ],
+      "desktop": [
+        "Your Mac.",
+        "Your controls."
+      ],
+      "terminal": [
+        "Your commands.",
+        "Your Mac."
+      ],
+      "trackpad": [
+        "Point. Type.",
+        "Stay in control."
+      ]
+    },
+    "strategy": "Light v10 palette, official iPhone and iPad bezels; same unaltered synthetic current-source captures. Header pairs iPad and iPhone; Search uses iPhone. All binaries and artboards remain outside application Git.",
+    "format": "8-bit RGB PNG with sRGB ICC profile, no alpha; universal 16:9 placement",
+    "specification": "https://developer.apple.com/help/app-store-connect/reference/app-information/creative-assets-specifications"
+  }
+}

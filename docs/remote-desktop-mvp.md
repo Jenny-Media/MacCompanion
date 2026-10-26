@@ -75,8 +75,9 @@ validated numeric addresses, verifies the Mac's SSH host key, and opens one
 the full desktop and input stream. No plaintext fallback or local TCP listener
 is permitted. Desktop and Trackpad & Keyboard need both built-in Remote Login
 and Screen Sharing; Terminal needs Remote Login. They share the Mac UUID's SSH
-server trust but keep their saved logins separate. Desktop authenticates SSH and
-ARD with its entered Mac account/password; Terminal keys are not silently reused.
+server trust. On iOS, Terminal uses the saved Mac login by default, with an
+optional separate SSH password or key. Desktop authenticates SSH and ARD with
+the saved or entered Mac account/password; Terminal keys are not silently reused.
 The app does not provide a public relay or direct public endpoint connection.
 Production Simulator, physical-device, licensing and distribution acceptance
 remain separate gates; a passing standalone tunnel probe is not release admission.
