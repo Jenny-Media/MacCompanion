@@ -10,9 +10,9 @@ this change.
 The current screenshot handoff contains 28 designed preview images using official bezels
 and the approved Focused layout, with genuine macOS windows, configured keyboard
 rows, clearer Compose Text and Tabletop leading the Duo sequence. The latest
-revision keeps normal Mac title-bar controls, fixes the Pro keyboard label and
-Duo Terminal corner clearance, enlarges iPad feature details, and clarifies the
-no-helper setup headline. See [screenshots.md](screenshots.md) for the
+revision makes the iPhone opening benefit explicit and expands Duo Compose in
+its available input pane. Previous readability fixes and no-helper setup copy
+are preserved. See [screenshots.md](screenshots.md) for the
 gallery and provenance, [screenshot-copy.json](screenshot-copy.json) for canonical
 headlines and order, and [capture-recipe.md](capture-recipe.md) for reproduction.
 The dated store snapshot and original submission checklist below are historical;

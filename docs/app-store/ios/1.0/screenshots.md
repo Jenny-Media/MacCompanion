@@ -3,7 +3,7 @@
 All image files and native input fixtures remain outside application Git. The
 current local handoff is:
 
-`/Users/yihong/.codex/visualizations/2026/10/25/01a17109-d76e-7d41-8c62-d77d9b3f58e1/mac-companion-store-design-v9/`
+`/Users/yihong/.codex/visualizations/2026/10/25/01a17109-d76e-7d41-8c62-d77d9b3f58e1/mac-companion-store-design-v10/`
 
 - `index.html`: review gallery for the complete **28-image English preview set**.
 - `exports/en-US/`: composed RGB JPEG exports, without transparency.
@@ -83,6 +83,11 @@ in their original external folders.
   Compose Text fully visible; Duo Terminal sample output begins clear of the
   rounded corner. Two proportional iPad detail insets improve readability.
   Setup now reads “Your Mac. / No helper needed.” No native control is retouched.
+- The v10 revision changes three exports: both iPhone hero headlines now read
+  “Control your Mac. / From your iPhone.”, and Duo Book Compose uses the native
+  expanded composer in the available input pane. Twenty-five exports match v9
+  byte for byte. The iPad close-ups, Pro labels, no-helper setup copy, and order
+  are preserved; Trackpad remains sixth on phone and iPad.
 - Mac content combines genuine Finder and TextEdit window captures containing
   only synthetic local files, placed on a bundled macOS wallpaper. It is a
   composition of real native windows, not an unmodified full-display capture or
@@ -125,9 +130,8 @@ Simulator screenshots and fold evidence. Future physical Duo acceptance uses
 **TestFlight**. Historical evidence under
 `/Users/yihong/work/iphone-duo-compatibility/reports/` remains untouched.
 
-The two affected iPhone Pro and Duo QA Simulators are reused for v9. The
-other 26 native captures retain their validated device provenance; the iPad
-Terminal and Compose images enlarge details from their unchanged raw captures. No new
+The existing Duo QA Simulator is reused for the v10 Compose capture. The
+other 27 raw captures retain their validated device provenance. No new
 Simulator is created for this revision, and none is erased or deleted. Exact
 UUIDs, final states, result bundles and rejected attempts are recorded in the external handoff.
 
@@ -135,9 +139,9 @@ This work stops before any App Store Connect field/build change, media upload,
 App Review submission or publication. macOS materials and packaging are outside
 scope. See [capture-recipe.md](capture-recipe.md) for reproduction.
 
-The prior 21-image v5 set was uploaded and verified separately. This v9 set is
+The prior 21-image v5 set was uploaded and verified separately. This v10 set is
 a local preview and has not been uploaded. The App Store version/build and
-pending review confirmation are outside this revision. Final v9 validation,
+pending review confirmation are outside this revision. Final v10 validation,
 sequential native capture journeys and rendering results are recorded in the
 external `verification.json`; stable-toolchain and physical acceptance gates
 remain distinct.

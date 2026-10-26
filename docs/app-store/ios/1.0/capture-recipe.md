@@ -1,7 +1,7 @@
 # Reproducing the designed screenshot set
 
 The current external capture workspace is
-`/private/tmp/maccompanion-store-design-v9/`; durable copies of the drivers and
+`/private/tmp/maccompanion-store-design-v10/`; durable copies of the drivers and
 logs are in the handoff's `sources/` and `evidence/` folders. Image and typed
 fixture content stay outside Git. [screenshots.md](screenshots.md) lists the
 current gallery, build provenance, device coverage and acceptance limits.
@@ -12,7 +12,7 @@ current gallery, build provenance, device coverage and acceptance limits.
 2. Generate the private `DirectClientQA` project using the repository workflow.
    While holding the compiler lease, save its exact original configuration and
    replace the hosted test source with the external
-   `StoreDesignCaptureTests.swift`, the repository's hosted `SSHTestServer.swift`, and apply only the v9 capture adapters below. Keep app and extension **1.0 (142)** metadata,
+   `StoreDesignCaptureTests.swift`, the repository's hosted `SSHTestServer.swift`, and apply only the v10 capture adapters below. Keep app and extension **1.0 (142)** metadata,
    the private QA bundle ID, `MACCOMPANION_STORE_CAPTURE=1`, language `en`, region
    `US`, Light appearance and Large text. Build for testing with XcodeGen and
    the managed DerivedData path. No capture fixture enters a release target.
@@ -128,3 +128,19 @@ enlarged details. Keep each complete native screen proportionally in its bezel;
 never repaint labels or stretch controls. Four setup images use the canonical
 “Your Mac. / No helper needed.” headline. Preserve order and Pro badges. Only
 eight exports change; the other twenty must match v8 byte for byte.
+
+## Explicit iPhone benefit and expanded Duo composer (v10)
+
+Keep the v9 files and selected raw captures intact. Recapture only Duo Book
+Compose on the existing owned Duo QA Simulator with native Book posture and
+inner display3. Use the same native zoom/pan, synthetic draft, keyboard and Mac
+window composition. After presenting the composer, invoke its existing
+`toggleExpansion()` action and record the resulting `draft.expanded` state and
+`panelFrame`. Do not inject pane geometry or modify shipping views. Inspect the
+result to ensure the expanded panel covers the competing trackpad instructions.
+Restore the exact normal QA configuration and rebuild its original test bundle.
+
+Both iPhone hero artboards use “Control your Mac. / From your iPhone.” from
+canonical copy; their raw captures stay unchanged. All other copy, Pro labels,
+iPad detail crops and sequence remain intact. Three exports change; the other
+25 must match v9 byte for byte. This revision makes no App Store Connect change.
