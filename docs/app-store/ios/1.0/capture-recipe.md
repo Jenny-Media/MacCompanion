@@ -1,7 +1,7 @@
 # Reproducing the designed screenshot set
 
 The current external capture workspace is
-`/private/tmp/maccompanion-store-design-v8/`; durable copies of the drivers and
+`/private/tmp/maccompanion-store-design-v9/`; durable copies of the drivers and
 logs are in the handoff's `sources/` and `evidence/` folders. Image and typed
 fixture content stay outside Git. [screenshots.md](screenshots.md) lists the
 current gallery, build provenance, device coverage and acceptance limits.
@@ -12,7 +12,7 @@ current gallery, build provenance, device coverage and acceptance limits.
 2. Generate the private `DirectClientQA` project using the repository workflow.
    While holding the compiler lease, save its exact original configuration and
    replace the hosted test source with the external
-   `StoreDesignCaptureTests.swift`, the repository's hosted `SSHTestServer.swift`, and apply only the v8 capture adapters below. Keep app and extension **1.0 (142)** metadata,
+   `StoreDesignCaptureTests.swift`, the repository's hosted `SSHTestServer.swift`, and apply only the v9 capture adapters below. Keep app and extension **1.0 (142)** metadata,
    the private QA bundle ID, `MACCOMPANION_STORE_CAPTURE=1`, language `en`, region
    `US`, Light appearance and Large text. Build for testing with XcodeGen and
    the managed DerivedData path. No capture fixture enters a release target.
@@ -20,7 +20,10 @@ current gallery, build provenance, device coverage and acceptance limits.
    before boot, install or capture, and retain the compiler lease throughout
    the native test. Run destinations sequentially with
    `-parallel-testing-enabled NO` and
-   `-maximum-concurrent-test-simulator-destinations 1`. Reuse all four existing materials devices; do not create another device.
+   `-maximum-concurrent-test-simulator-destinations 1`. Full-set captures reuse
+   the four existing materials devices; incremental revisions recapture only
+   affected devices and retain the other images with their original provenance.
+   Do not create another device.
 4. Launch the opt-in
    `DirectClientTests/StoreDesignCaptureTests/testCaptureReleaseMaterials`
    through test-without-building. XCTest can reinstall the host: re-resolve
@@ -108,3 +111,20 @@ keyboard artwork includes a proportional enlargement of two unchanged native
 configured rows outside the device frame; the full original screen stays in the
 bezel. Keep the Pro label legible. Duo leads with native Tabletop, then Book
 Terminal and Compose Text. Preserve every earlier raw capture and rejected probe.
+
+## Final readability polish (v9)
+
+Recapture only iPhone Pro keyboard customization and Duo Book Terminal. Keep
+v8 and every rejected fixture attempt. The keyboard profile places Compose Text,
+Copy and Paste in its first row and Save/Find with the modifiers; every row's
+saved-action index must match its item placements and pass shipping validation.
+Duo Terminal synthetic output starts two lines below the top with two leading
+spaces, so its first prompt clears the native rounded corner. Preserve the
+normal QA configuration and rebuild its original test bundle after both captures.
+
+Use the v8 iPad Terminal and Compose raw files unchanged. The manifest records
+pixel crop rectangles, uniform scale and native source hashes for separate
+enlarged details. Keep each complete native screen proportionally in its bezel;
+never repaint labels or stretch controls. Four setup images use the canonical
+“Your Mac. / No helper needed.” headline. Preserve order and Pro badges. Only
+eight exports change; the other twenty must match v8 byte for byte.

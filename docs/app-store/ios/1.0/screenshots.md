@@ -3,7 +3,7 @@
 All image files and native input fixtures remain outside application Git. The
 current local handoff is:
 
-`/Users/yihong/.codex/visualizations/2026/10/25/01a17109-d76e-7d41-8c62-d77d9b3f58e1/mac-companion-store-design-v8/`
+`/Users/yihong/.codex/visualizations/2026/10/25/01a17109-d76e-7d41-8c62-d77d9b3f58e1/mac-companion-store-design-v9/`
 
 - `index.html`: review gallery for the complete **28-image English preview set**.
 - `exports/en-US/`: composed RGB JPEG exports, without transparency.
@@ -15,7 +15,7 @@ current local handoff is:
 
 The selected visual direction is **Focused**: an official Apple bezel, a small
 Mac Companion brand label and a one- or two-line headline. The native phone
-keyboard is visible where useful. The phone hero focuses the genuine TextEdit itinerary above the keyboard. Compose Text uses the native docked panel; iPad Compose and keyboard customization use portrait devices for a larger view. Customization includes a proportionally enlarged crop of the same native configured rows, outside the device.
+keyboard is visible where useful. The phone hero focuses the genuine TextEdit itinerary above the keyboard. Compose Text uses the native docked panel; iPad Compose and keyboard customization use portrait devices for a larger view. Customization includes a proportionally enlarged crop of the same native configured rows, outside the device. The iPad Terminal and Compose images also enlarge unmodified native details while preserving the complete screen in its bezel.
 [screenshot-copy.json](screenshot-copy.json) is the authoritative headline and
 ordering source. Native interface labels are never replaced by marketing text.
 
@@ -76,7 +76,13 @@ in their original external folders.
 - The v8 revision replaces the nine desktop/Compose images with clean native
   window captures. TextEdit retains its normal red, yellow and green buttons;
   the background Finder window retains native inactive controls. No controls
-  are painted, retouched or substituted. Other image exports are unchanged.
+  are painted, retouched or substituted. The v9 revision retains these clean window sources.
+- The v9 final polish changes eight exports: iPhone Pro keyboard customization,
+  Duo Terminal, iPad Terminal/Compose, and four setup headlines. Twenty exports
+  match v8 byte for byte. The Pro keyboard uses a valid shorter first row with
+  Compose Text fully visible; Duo Terminal sample output begins clear of the
+  rounded corner. Two proportional iPad detail insets improve readability.
+  Setup now reads “Your Mac. / No helper needed.” No native control is retouched.
 - Mac content combines genuine Finder and TextEdit window captures containing
   only synthetic local files, placed on a bundled macOS wallpaper. It is a
   composition of real native windows, not an unmodified full-display capture or
@@ -119,7 +125,9 @@ Simulator screenshots and fold evidence. Future physical Duo acceptance uses
 **TestFlight**. Historical evidence under
 `/Users/yihong/work/iphone-duo-compatibility/reports/` remains untouched.
 
-All four existing Mac Companion materials QA Simulators are reused. No new
+The two affected iPhone Pro and Duo QA Simulators are reused for v9. The
+other 26 native captures retain their validated device provenance; the iPad
+Terminal and Compose images enlarge details from their unchanged raw captures. No new
 Simulator is created for this revision, and none is erased or deleted. Exact
 UUIDs, final states, result bundles and rejected attempts are recorded in the external handoff.
 
@@ -127,9 +135,9 @@ This work stops before any App Store Connect field/build change, media upload,
 App Review submission or publication. macOS materials and packaging are outside
 scope. See [capture-recipe.md](capture-recipe.md) for reproduction.
 
-The prior 21-image v5 set was uploaded and verified separately. This v8 set is
+The prior 21-image v5 set was uploaded and verified separately. This v9 set is
 a local preview and has not been uploaded. The App Store version/build and
-pending review confirmation are outside this revision. Final v8 validation,
+pending review confirmation are outside this revision. Final v9 validation,
 sequential native capture journeys and rendering results are recorded in the
 external `verification.json`; stable-toolchain and physical acceptance gates
 remain distinct.
