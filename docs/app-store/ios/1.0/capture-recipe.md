@@ -1,7 +1,7 @@
 # Reproducing the designed screenshot set
 
 The current external capture workspace is
-`/private/tmp/maccompanion-store-design-v7/`; durable copies of the drivers and
+`/private/tmp/maccompanion-store-design-v8/`; durable copies of the drivers and
 logs are in the handoff's `sources/` and `evidence/` folders. Image and typed
 fixture content stay outside Git. [screenshots.md](screenshots.md) lists the
 current gallery, build provenance, device coverage and acceptance limits.
@@ -12,7 +12,7 @@ current gallery, build provenance, device coverage and acceptance limits.
 2. Generate the private `DirectClientQA` project using the repository workflow.
    While holding the compiler lease, save its exact original configuration and
    replace the hosted test source with the external
-   `StoreDesignCaptureTests.swift`, the repository's hosted `SSHTestServer.swift`, and apply only the v7 capture adapters below. Keep app and extension **1.0 (142)** metadata,
+   `StoreDesignCaptureTests.swift`, the repository's hosted `SSHTestServer.swift`, and apply only the v8 capture adapters below. Keep app and extension **1.0 (142)** metadata,
    the private QA bundle ID, `MACCOMPANION_STORE_CAPTURE=1`, language `en`, region
    `US`, Light appearance and Large text. Build for testing with XcodeGen and
    the managed DerivedData path. No capture fixture enters a release target.
@@ -73,7 +73,7 @@ acceptance. The loopback SSH fixture is QA infrastructure and is not a required
 Mac Companion service.
 No upload, selected-build change or review submission is part of reproduction.
 
-## v7 content and feature fixtures
+## Capture-only content and feature fixtures
 
 Keep three capture-only source adapters outside Git. Each is the exact shipping
 source followed by a gated fixture entry point: `DirectFilesSession.swift` seeds
@@ -94,7 +94,11 @@ is marked Pro in the artwork. Keep optional Copy Text from Screen out of the
 current seven-image set until a separate useful native preview is approved.
 
 For the Mac content, create synthetic files outside Git, open them in Finder and
-TextEdit, and capture only those native windows. Keep account and unrelated
+TextEdit, and capture only those native windows. For a clean title bar, close
+the staged TextEdit session, reopen the document from Finder, and capture it
+without attaching computer-use window inspection to TextEdit again. Resolve
+the exact synthetic window IDs, then use macOS `screencapture -x -o -l<id>`.
+Check the saved pixels for normal controls before composing them. Keep account and unrelated
 sidebar content out of the captured windows. Place the unchanged window captures
 proportionally over the bundled macOS wallpaper, recording source hashes in
 `evidence/macos-content-provenance.json`. Do not select the preserved AI workspace.

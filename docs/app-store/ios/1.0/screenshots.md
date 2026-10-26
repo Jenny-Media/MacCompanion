@@ -3,7 +3,7 @@
 All image files and native input fixtures remain outside application Git. The
 current local handoff is:
 
-`/Users/yihong/.codex/visualizations/2026/10/25/01a17109-d76e-7d41-8c62-d77d9b3f58e1/mac-companion-store-design-v7/`
+`/Users/yihong/.codex/visualizations/2026/10/25/01a17109-d76e-7d41-8c62-d77d9b3f58e1/mac-companion-store-design-v8/`
 
 - `index.html`: review gallery for the complete **28-image English preview set**.
 - `exports/en-US/`: composed RGB JPEG exports, without transparency.
@@ -73,6 +73,10 @@ in their original external folders.
   experiment enters a release target. Files uses a seeded synthetic directory;
   no file transfer is performed. Customization demonstrates Pro UI and is labeled
   **Pro** in the artwork.
+- The v8 revision replaces the nine desktop/Compose images with clean native
+  window captures. TextEdit retains its normal red, yellow and green buttons;
+  the background Finder window retains native inactive controls. No controls
+  are painted, retouched or substituted. Other image exports are unchanged.
 - Mac content combines genuine Finder and TextEdit window captures containing
   only synthetic local files, placed on a bundled macOS wallpaper. It is a
   composition of real native windows, not an unmodified full-display capture or
@@ -123,9 +127,9 @@ This work stops before any App Store Connect field/build change, media upload,
 App Review submission or publication. macOS materials and packaging are outside
 scope. See [capture-recipe.md](capture-recipe.md) for reproduction.
 
-The prior 21-image v5 set was uploaded and verified separately. This v7 set is
+The prior 21-image v5 set was uploaded and verified separately. This v8 set is
 a local preview and has not been uploaded. The App Store version/build and
-pending review confirmation are outside this revision. Final v7 validation,
+pending review confirmation are outside this revision. Final v8 validation,
 sequential native capture journeys and rendering results are recorded in the
 external `verification.json`; stable-toolchain and physical acceptance gates
 remain distinct.
