@@ -1,0 +1,213 @@
+{
+  "marketingVersion": "1.0",
+  "locale": "en-US",
+  "design": "Focused",
+  "variants": {
+    "screen-sharing": {
+      "title": "Screen Sharing",
+      "headline": [
+        "Your Mac.",
+        "Right here."
+      ]
+    },
+    "terminal": {
+      "title": "Terminal",
+      "headline": [
+        "Your commands.",
+        "Your Mac."
+      ]
+    },
+    "trackpad-and-keyboard": {
+      "title": "Trackpad & Keyboard",
+      "headline": [
+        "Point. Type.",
+        "Stay in control."
+      ]
+    },
+    "my-macs": {
+      "title": "My Macs",
+      "headline": [
+        "Your Mac.",
+        "Ready to connect."
+      ]
+    },
+    "mac-setup": {
+      "title": "Mac setup",
+      "headline": [
+        "Built-in access.",
+        "Simple setup."
+      ]
+    },
+    "ipad-desktop": {
+      "title": "Screen Sharing",
+      "headline": [
+        "A bigger view.",
+        "A familiar Mac."
+      ]
+    },
+    "book-screen-sharing": {
+      "title": "Book \u00b7 Screen Sharing",
+      "headline": [
+        "Your Mac.",
+        "Your controls."
+      ]
+    },
+    "book-terminal": {
+      "title": "Book \u00b7 Terminal",
+      "headline": [
+        "Your commands.",
+        "Your Mac."
+      ]
+    },
+    "book-compose-text": {
+      "title": "Book \u00b7 Compose Text",
+      "headline": [
+        "Compose here.",
+        "Send to your Mac."
+      ]
+    },
+    "tabletop-screen-sharing": {
+      "title": "Tabletop \u00b7 Screen Sharing",
+      "headline": [
+        "Set it down.",
+        "Keep going."
+      ]
+    }
+  },
+  "sets": {
+    "iphone18": [
+      {
+        "id": "01-desktop",
+        "copyKey": "screen-sharing",
+        "width": 1320,
+        "height": 2868
+      },
+      {
+        "id": "02-terminal",
+        "copyKey": "terminal",
+        "width": 1320,
+        "height": 2868
+      },
+      {
+        "id": "03-trackpad",
+        "copyKey": "trackpad-and-keyboard",
+        "width": 1320,
+        "height": 2868
+      },
+      {
+        "id": "04-macs",
+        "copyKey": "my-macs",
+        "width": 1320,
+        "height": 2868
+      },
+      {
+        "id": "05-setup",
+        "copyKey": "mac-setup",
+        "width": 1320,
+        "height": 2868
+      }
+    ],
+    "iphone18-pro": [
+      {
+        "id": "01-desktop",
+        "copyKey": "screen-sharing",
+        "width": 1206,
+        "height": 2622
+      },
+      {
+        "id": "02-terminal",
+        "copyKey": "terminal",
+        "width": 1206,
+        "height": 2622
+      },
+      {
+        "id": "03-trackpad",
+        "copyKey": "trackpad-and-keyboard",
+        "width": 1206,
+        "height": 2622
+      },
+      {
+        "id": "04-macs",
+        "copyKey": "my-macs",
+        "width": 1206,
+        "height": 2622
+      },
+      {
+        "id": "05-setup",
+        "copyKey": "mac-setup",
+        "width": 1206,
+        "height": 2622
+      }
+    ],
+    "ipad": [
+      {
+        "id": "01-desktop",
+        "copyKey": "ipad-desktop",
+        "width": 2064,
+        "height": 2752
+      },
+      {
+        "id": "02-terminal",
+        "copyKey": "terminal",
+        "width": 2064,
+        "height": 2752
+      },
+      {
+        "id": "03-trackpad",
+        "copyKey": "trackpad-and-keyboard",
+        "width": 2064,
+        "height": 2752
+      },
+      {
+        "id": "04-macs",
+        "copyKey": "my-macs",
+        "width": 2064,
+        "height": 2752
+      },
+      {
+        "id": "05-setup",
+        "copyKey": "mac-setup",
+        "width": 2064,
+        "height": 2752
+      }
+    ],
+    "duo": [
+      {
+        "id": "01-book-desktop",
+        "copyKey": "book-screen-sharing",
+        "width": 2853,
+        "height": 2007
+      },
+      {
+        "id": "02-book-terminal",
+        "copyKey": "book-terminal",
+        "width": 2853,
+        "height": 2007
+      },
+      {
+        "id": "03-book-compose",
+        "copyKey": "book-compose-text",
+        "width": 2853,
+        "height": 2007
+      },
+      {
+        "id": "04-tabletop",
+        "copyKey": "tabletop-screen-sharing",
+        "width": 2007,
+        "height": 2853
+      },
+      {
+        "id": "05-macs",
+        "copyKey": "my-macs",
+        "width": 2853,
+        "height": 2007
+      },
+      {
+        "id": "06-setup",
+        "copyKey": "mac-setup",
+        "width": 2853,
+        "height": 2007
+      }
+    ]
+  }
+}

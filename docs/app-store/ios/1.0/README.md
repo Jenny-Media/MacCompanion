@@ -5,6 +5,16 @@ upload, App Review submission, release or website deployment is authorized by
 this preparation. macOS and visionOS release materials/packaging are outside
 this change.
 
+## Screenshot refresh — October 26, 2026
+
+The current screenshot handoff contains 21 designed images using official bezels
+and the approved Focused layout. See [screenshots.md](screenshots.md) for the
+gallery and provenance, [screenshot-copy.json](screenshot-copy.json) for canonical
+headlines and order, and [capture-recipe.md](capture-recipe.md) for reproduction.
+The dated store snapshot and original submission checklist below are historical;
+re-read live App Store Connect state before any later submission. This refresh
+changes no store fields, selected build, release metadata or localizations.
+
 ## Authoritative copy
 
 Paste each UTF-8 text file without its final file newline. Existing `en-US` is
@@ -36,7 +46,7 @@ App Store marketing version in `Native/iOSCloud/project.json` remains **1.0** fo
 both app and session-status extension; build number 142 is unchanged. The legacy
 `project.yml` development version is not a production version change.
 
-## Live record inspected before editing
+## Historical live record inspected October 24 before editing
 
 The authenticated GET-only snapshot is retained outside Git at
 `/private/tmp/maccompanion-ios-1.0-release-20261024/asc-before.json`.
@@ -87,7 +97,7 @@ The branch was created from freshly fetched `origin/main`
 `9a9fbfbcef809ed31be1ee48accaf3873ef24801`, GitHub's confirmed merge commit for
 PR #45. Reviewed `26ebeb2` is included. Existing checkouts were preserved.
 
-## Remaining submission gates
+## Original submission gates recorded October 24
 
 1. Review and explicitly authorize the final metadata/media application. Replace
    selected build 25 with a source-verified **1.0** release candidate covering

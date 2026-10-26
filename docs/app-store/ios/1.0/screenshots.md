@@ -1,96 +1,116 @@
-# iOS 1.0 screenshot handoff
+# iOS 1.0 designed screenshot handoff
 
-All media remains outside application Git. The local handoff package is:
+All image files and native input fixtures remain outside application Git. The
+current local handoff is:
 
-`/Users/yihong/.codex/visualizations/2026/10/25/01a17109-d76e-7d41-8c62-d77d9b3f58e1/mac-companion-ios-1.0/`
+`/Users/yihong/.codex/visualizations/2026/10/25/01a17109-d76e-7d41-8c62-d77d9b3f58e1/mac-companion-store-design-v5/`
 
-- `index.html`: copy and screenshot review gallery.
-- `app-store-connect/en-US/`: **26 selected JPEG exports**, native dimensions,
-  no alpha channel. No upload has been attempted.
-- `originals/en-US/`: unchanged PNG originals of those selected images.
-- `manifest.json`: per-file SHA-256, source attempt, device set, locale, dimensions,
-  actual geometry and division, synthetic/no-transport scope, and executable/test
-  provenance. `validation-summary.json` retains the required validation result.
-- `copy/`: paste-ready local text and metadata. Repository sources remain
-  authoritative; compare them again before any later ASC edit.
+- `index.html`: review gallery for the complete **21-image English set**.
+- `exports/en-US/`: composed RGB JPEG exports, without transparency.
+- `raw/`: unchanged native Simulator captures, geometry and capture manifests.
+- `artwork-manifest.json` and `verification.json`: selected source, copy, build,
+  device, locale, hashes and validation provenance.
+- `artboards/` and `design.css`: editable composition sources.
+- `sources/` and `evidence/`: external native capture/reproduction drivers and logs.
 
-## Devices and sizes
+The selected visual direction is **Focused**: an official Apple bezel, a small
+Mac Companion brand label and a one- or two-line headline. The native phone
+keyboard is visible where useful. The phone hero centers the complete Notes window above the keyboard. Duo
+Compose Text shows a closer Notes view beside the native draft panel.
+[screenshot-copy.json](screenshot-copy.json) is the authoritative headline and
+ordering source. Native interface labels are never replaced by marketing text.
 
-| Folder under `app-store-connect/en-US/` | Simulator / runtime | Native exported dimensions | Images |
+## Curated device sets
+
+| Export subfolder | Simulator / runtime | Composed export dimensions | Images |
 | --- | --- | --- | --- |
-| `iphone/` | iPhone 17 Pro / iOS 27.0 | 1206×2622 portrait; 2622×1206 landscape | 7 |
-| `iphone-large/` | iPhone 17 Pro Max / iOS 27.0 | 1320×2868 portrait | 5 |
-| `ipad/` | iPad Pro 13-inch (M5) / iPadOS 27.0 | 2064×2752 portrait; 2752×2064 landscape | 7 |
-| `duo/` | iPhone Duo / iOS 27.1 | 1398×2034 outer; 2853×2007 open/Book; 2007×2853 Tabletop | 7 |
+| `iphone18-pro/` | iPhone 18 Pro / iOS 27.0 | 1206×2622 portrait | 5 |
+| `iphone18/` | iPhone 18 Pro Max / iOS 27.0 | 1320×2868 portrait | 5 |
+| `ipad/` | iPad Pro 13-inch (M5) / iPadOS 27.0 | 2064×2752 portrait artboard with a landscape device | 5 |
+| `duo/` | iPhone Duo / iOS 27.1 | 2853×2007 landscape; 2007×2853 portrait | 6 |
 
-The ordinary portrait sets show Desktop, Terminal, Trackpad & Keyboard, My Macs,
-and the session menu. iPhone/iPad landscape examples show Desktop and Terminal.
-Duo includes outer Desktop, fully open Desktop, Tabletop Desktop and Compose Text,
-and Book Desktop, Terminal and Compose Text. Separate outer/inner slots must be
-selected in ASC at the later authorized media application step.
+Both phone sizes and iPad cover Screen Sharing, Terminal, Trackpad & Keyboard,
+My Macs and setup. Duo covers Book Screen Sharing, Book Terminal, Book Compose
+Text, Tabletop Screen Sharing, and My Macs and setup on the inner display. The iPad raw
+captures are 2752×2064 landscape; they are placed without distortion inside the
+matching landscape bezel on a portrait artboard. Duo Tabletop uses the unchanged
+open-device bezel rotated into portrait, with the native portrait capture.
 
 Apple's [screenshot specifications](https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications)
-were checked October 24, 2026: the selected dimensions are listed, JPEG is
-accepted, images cannot have alpha, and each device-size set can contain 1–10
-images. The medium iPhone and 13-inch iPad required families are covered.
-Recheck the live media editor and requirements before upload; a local size check
-is not an ASC acceptance receipt. Raw Simulator PNGs have an alpha channel, so
-they are retained as originals and are **not** the upload set. macOS `sips`
-created separate quality-100 JPEG format conversions without resizing, cropping,
-retouching or synthesizing UI.
+were rechecked October 26, 2026: the required iPhone family is Dynamic Island
+**medium**, and the required iPad family is **13-inch**. The large Pro Max and Duo
+sets are additional coverage. Each family stays below the ten-image maximum;
+JPEG is accepted and transparency is excluded. Recheck the live media editor
+before any future upload. Local dimension validation is not an ASC receipt.
 
-## Build and localization provenance
+Apple's [screenshot guidance](https://developer.apple.com/help/app-review/guideline-reference/2-3-3-screenshots)
+allows framing and explanatory artwork while requiring the app in use to remain
+clear. Every composition preserves actual native controls, device geometry and
+screen aspect ratio. The complete redesigned set supersedes the earlier raw
+upload candidates; all 26 earlier images and the v2–v4 previews remain preserved
+in their original external folders.
 
-- Application source: freshly fetched main at merged PR #45 commit
-  `9a9fbfbcef809ed31be1ee48accaf3873ef24801`. All **642** declared normal-app
-  build inputs match current source.
-- Build: normal managed iOS Simulator builder, followed by an isolated hosted
-  capture target. No Experiments code is linked into a release target.
-- Capture app: **1.0 (142)**, using the app/extension version metadata from the
-  unchanged production cloud project. It uses a private QA bundle ID,
-  `dev.maccompanion.proqa.ios`, and is not a distributable build. The original
-  normal development report remains **0.1.0 (1)** and is recorded separately.
-- Xcode **27.1 (27A9275)**, Simulator SDK **27.1**; runtime per table above.
-- Capture executable SHA-256:
-  `53203425f6639a1f233ca4e6b515a58363e01b0fdf9e687bdce76941b116e79a`.
-- Capture test source SHA-256:
-  `a798ca571da7e1d43c44a66766f10cb850e62b3a5ca14fdf7c0b4e1d5f898562`.
+## Source and content provenance
+
+- Latest fetched `origin/main`: `35a060ed36b7e2a7d77570a07d7e044d24d2a2fb`.
+  Its application tree matches reviewed capture revision
+  `3cede88ffe967095a73ad8acdbbd38a4c90b40f1` exactly. Merged PR #45 commit
+  `9a9fbfbcef809ed31be1ee48accaf3873ef24801` is included.
+- All 642 declared application build inputs are rechecked. The screenshot work
+  does not change shipping code, dependency pins, version or packaging.
+- Capture host: **1.0 (142)**, private QA bundle `dev.maccompanion.proqa.ios`,
+  Xcode **27.1 (27A9275)** and Simulator SDK **27.1**. This is local Simulator
+  provenance, not an uploaded TestFlight or App Store build.
 - Language `en`, locale `en_US`, ASC locale **en-US**, Light appearance and Large
-  Dynamic Type. Keyboard text is native English. There are no other existing
-  ASC iOS localizations to replace or fabricate.
-- Each final selected capture journey passed its opt-in XCTest. The three
-  ordinary portrait runs, Duo native run, and iPhone/iPad landscape runs are six
-  successful capture journeys. This is capture validation, not a full native
-  application suite or live transport test.
+  Dynamic Type. The audited existing iOS localization set remains unchanged.
+- The three approved v4 hero captures are reused unchanged. The remaining
+  feature captures use current native views through the external opt-in test
+  fixture. No experiment is linked to a release target.
+- Mac content is the previously approved AI-generated fictional Finder/Notes
+  workspace. Terminal output and the single `Studio Mac` record are synthetic;
+  no shell command is executed and no Mac transport is opened. One saved Mac
+  keeps the library example within the free feature boundary.
+- Native Terminal controls that require a live SSH input owner remain inactive
+  in the no-transport fixture. They are not painted over or presented as tested
+  input delivery. The keyboard and Terminal surface are native.
+- Setup uses built-in Remote Login for all modes, plus Screen Sharing for the
+  desktop and trackpad. There is no required Mac Companion helper or server.
+  No prototype virtual-display feature is advertised.
+- Official Apple bezel assets are reused under the user's existing approval of
+  the iPhone 18, Duo and iPad resource licenses. The matching medium iPhone 18
+  Pro PNG comes from that same approved archive. Assets remain unmodified;
+  composition uses placement, proportional sizing and portrait orientation.
 
-## Visual review and acceptance limits
+## Validation and acceptance boundary
 
-The selected rendered images were inspected for content, localization, cropping,
-control placement and accidental real data. They show labelled synthetic desktop
-and Terminal content, one fake `Studio Mac` record, and current controls. The
-library uses Mirror Mac Screen rather than advertising virtual-display behavior.
-No credentials, real saved Mac, personal desktop, Mac helper or prototype screen
-is included. The session menu may truncate the deliberately long local-sample
-name; this is the current compact control rendering. Terminal input keys that
-require a live SSH session remain inactive in the no-transport sample.
+The handoff records each successful native capture journey and rendered-image
+check. Review native geometry, keyboard/tutorial state, text legibility, bounds,
+bezel aperture fit and per-file hashes before promoting any image. Full
+`bash scripts/validate.sh` is required for the materials branch; local
+beta-toolchain results remain provisional until the stable Xcode lane passes.
 
-Native Duo controls, rather than geometry overrides, selected Closed, Open and
-Partially Open plus rotation. Measured Book is **951×669 pt** with a **40×669 pt**
-vertical division at x=455.5. Measured Tabletop is **669×951 pt** with a
-**669×40 pt** horizontal division at y=455.5. Compose Text stays visible above the
-native keyboard in the selected Book and Tabletop images. These are synthetic
-layout screenshots; no Send or live input delivery is claimed.
+Duo uses native hinge and rotation controls, not injected geometry.
+Book measures **951×669 pt**, with a vertical **40×669 pt** division at x=455.5;
+Tabletop measures **669×951 pt**, with a horizontal **669×40 pt** division at
+y=455.5. The flat open marketing bezel is not a physical folded-device photo. Library
+and setup are native inner-display layouts; no separate fully open posture
+acceptance is claimed for those captures. Native slider angle alone did not
+clear the observed Book division, so it is not treated as posture proof.
 
-Original attempts remain under
-`/private/tmp/maccompanion-ios-1.0-release-20261024/`: an interrupted initial
-phone run, the old synthetic library preference, two native files whose requested
-Book label actually measured Tabletop, a first-use keyboard tutorial image, and
-empty landscape setup attempts. None is silently overwritten or included in the
-selected export set. Historical comparison/physical evidence under
-`/Users/yihong/work/iphone-duo-compatibility/reports/` is untouched.
+Owner-confirmed ordinary iPhone live-input checks remain separate from synthetic
+Simulator screenshots and fold evidence. Future physical Duo acceptance uses
+**TestFlight**. Historical evidence under
+`/Users/yihong/work/iphone-duo-compatibility/reports/` remains untouched.
 
-Owner-confirmed ordinary iPhone live-input checks remain separate, as detailed
-in [README.md](README.md). Further physical Duo acceptance uses **TestFlight**.
-No physical device, real Mac connection, upload or release was used for capture.
+The existing Pro Max, iPad and Duo QA Simulators are reused. The missing medium
+18 Pro model is created as a reusable materials QA device and retained. No
+existing Simulator is erased or deleted. Exact UUIDs, final states, result
+bundles and rejected attempts are recorded in the external handoff.
 
-See [capture-recipe.md](capture-recipe.md) for reproduction and local driver paths.
+This work stops before any App Store Connect field/build change, media upload,
+App Review submission or publication. macOS materials and packaging are outside
+scope. See [capture-recipe.md](capture-recipe.md) for reproduction.
+
+The final materials-branch validation passed on October 26 with Xcode 27.1
+(27A9275), and all four sequential native capture journeys passed. The external
+`verification.json` records successful checks and excluded probes.
