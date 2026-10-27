@@ -79,10 +79,13 @@ Review setup:
    and Screen Sharing, and allow your reviewer-controlled Mac account in both.
    Use its local
    address or hostname shown in Sharing.
-3. In the iOS app choose Add Mac, enter a name and that address, and Save.
-   Tap the saved Mac, enter the allowed Mac account credentials directly in
-   the app, and Connect. Independently verify the SSH fingerprint on the Mac
-   before approving first-use trust. No vendor account or supplied demo login is needed.
+3. In the iOS app tap Add Mac (or Add your first Mac). In Connect to Mac,
+   enter that address in Hostname or IP address, without a URL prefix, then
+   tap Connect. Leave Save to My Macs enabled to keep it after a successful
+   connection. Enter the allowed Mac account credentials directly in the app
+   when prompted. Independently verify the SSH fingerprint on the Mac before
+   approving first-use trust. Saving the login is optional. No vendor account
+   or supplied demo login is needed.
 4. Test generic desktop control. The floating controls menu includes display,
    input, view, connection details, and Done actions. Display selection crops
    the shared desktop locally; there is no individual app/window capture.
