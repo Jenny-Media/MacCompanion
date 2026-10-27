@@ -308,6 +308,11 @@ private struct TerminalRemoteControlsHost: UIViewControllerRepresentable {
     private var data: Data
     private var activeSequence: String?
     private let overlayProbe = ProcessInfo.processInfo.environment["MACCOMPANION_EXECUTION_OVERLAY_QA"] == "1"
+    private let previewProbe = ProcessInfo.processInfo.environment["MACCOMPANION_KEY_PREVIEW_QA"] == "1"
+    private let previewStatus = UILabel()
+    private var previewLink: CADisplayLink?
+    private var previewFrames = 0, maximumPreviews = 0
+    private var previewCaptureSaved = false
     init(close: @escaping () -> Void) {
         self.close = close
         var profile = TerminalControlsProfile.remoteDefaults; profile.freezeKeyboardLayout()
@@ -321,6 +326,9 @@ private struct TerminalRemoteControlsHost: UIViewControllerRepresentable {
                                     .init(id: TerminalKeyboardRow.mainID, kind: .main, title: "Main", actionIDs: [wait.id, quick.id], items: [.control(.keyboard), .control(.expand), .saved(wait.id), .saved(quick.id), .control(.ctrl)])]
             profile.rowsExpanded = true
             precondition(profile.valid, "Remote overlay probes must use valid shipping profiles")
+        }
+        if ProcessInfo.processInfo.environment["MACCOMPANION_KEY_PREVIEW_QA"] == "1" {
+            profile.keyboardRows = [.init(id: TerminalKeyboardRow.mainID, kind: .main, title: "Functions", items: TerminalRowPreset.functions.items)]
         }
         data = try! JSONEncoder().encode(profile)
         super.init(nibName: nil, bundle: nil)
@@ -341,6 +349,19 @@ private struct TerminalRemoteControlsHost: UIViewControllerRepresentable {
         output.text = "Remote events: 0"; output.accessibilityIdentifier = "remote-qa-events"; output.textAlignment = .center
         let stack = UIStackView(arrangedSubviews: [edit, output, done]); stack.axis = .vertical; stack.spacing = 16
         stack.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(stack)
+        if previewProbe {
+            previewStatus.text = "frames=0; visible=0; max=0"
+            previewStatus.accessibilityIdentifier = "remote-qa-preview"
+            previewStatus.textAlignment = .center; stack.addArrangedSubview(previewStatus)
+            let reset = UIButton(type: .system); reset.setTitle("Reset Preview Probe", for: .normal)
+            reset.accessibilityIdentifier = "remote-qa-preview-reset"
+            reset.addAction(.init { [weak self] _ in
+                guard let self else { return }
+                previewFrames = 0; maximumPreviews = 0; sent = 0
+                output.text = "Remote events: 0"; sampleKeyPreview()
+            }, for: .touchUpInside)
+            stack.addArrangedSubview(reset)
+        }
         if overlayProbe {
             let heading = UILabel(); heading.text = inputOnly ? "Trackpad & Keyboard" : "Screen Sharing"; heading.textAlignment = .center
             heading.font = .preferredFont(forTextStyle: .title2); stack.insertArrangedSubview(heading, at: 0)
@@ -359,6 +380,30 @@ private struct TerminalRemoteControlsHost: UIViewControllerRepresentable {
     }
     override func viewWillLayoutSubviews() {}
     override func viewDidLayoutSubviews() {}
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        if previewProbe, previewLink == nil {
+            let link = CADisplayLink(target: self, selector: #selector(sampleKeyPreview))
+            previewLink = link; link.add(to: .main, forMode: .common)
+        }
+    }
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        previewLink?.invalidate(); previewLink = nil
+    }
+    @objc private func sampleKeyPreview() {
+        func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+        let visible = descendants(controlsHost.bar).compactMap { $0 as? TerminalKeyPreviewButton }.filter(\.keyPreviewVisible).count
+        if visible > 0 { previewFrames += 1 }
+        maximumPreviews = max(maximumPreviews, visible)
+        previewStatus.text = "frames=\(previewFrames); visible=\(visible); max=\(maximumPreviews)"
+        if visible > 0, !previewCaptureSaved, let window = view.window {
+            previewCaptureSaved = true
+            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: false) }
+            let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            try? image.pngData()?.write(to: folder.appending(path: "keyboard-quick-tap.png"))
+        }
+    }
     override func beginControlSequence() -> String? {
         guard available, activeSequence == nil else { return nil }
         let id = UUID().uuidString; activeSequence = id; return id

@@ -679,7 +679,12 @@ private final class RemoteAnchorSession: CompanionVNCSession {
         key.sendActions(for: .touchDragEnter); XCTAssertTrue(key.keyPreviewVisible)
         key.sendActions(for: .touchCancel); XCTAssertFalse(key.keyPreviewVisible); XCTAssertTrue(viewer.events.isEmpty)
         key.sendActions(for: .touchDown); key.sendActions(for: .touchUpInside)
-        XCTAssertFalse(key.keyPreviewVisible); XCTAssertEqual(viewer.events.count, 2, "One balanced remote key only")
+        XCTAssertTrue(key.keyPreviewVisible, "A quick tap must survive until a rendered frame"); XCTAssertEqual(viewer.events.count, 2, "One balanced remote key only")
+        let scrolls = descendants(host.bar).compactMap { $0 as? UIScrollView }
+        XCTAssertFalse(scrolls.isEmpty)
+        XCTAssertTrue(scrolls.allSatisfy { !$0.delaysContentTouches && $0.canCancelContentTouches },
+                      "Key feedback starts on touch-down, while a pan can still cancel")
+        XCTAssertTrue(scrolls.allSatisfy { $0.touchesShouldCancel(in: key) })
         viewer.events = []
         key.sendActions(for: .touchDown); host.keyboardBar.showsExtraRows.toggle()
         XCTAssertFalse(key.keyPreviewVisible); XCTAssertTrue(viewer.events.isEmpty)
@@ -710,6 +715,46 @@ private final class RemoteAnchorSession: CompanionVNCSession {
         XCTAssertFalse(key.keyPreviewVisible)
         key.sendActions(for: .touchDown); key.removeFromSuperview()
         XCTAssertFalse(key.keyPreviewVisible); XCTAssertTrue(viewer.events.isEmpty)
+    }
+    func testQuickKeyPreviewExpiresAndReplacedPressSurvivesOldDismissal() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let viewer = RemoteControlsTestViewer()
+        var profile = TerminalControlsProfile.remoteDefaults
+        profile.freezeKeyboardLayout()
+        let main = try XCTUnwrap(profile.keyboardRows?.firstIndex { $0.kind == .main })
+        profile.keyboardRows![main].placements.insert(contentsOf: [.init(item: .key("key-f1")), .init(item: .key("key-f2"))], at: 0)
+        let host = controls(viewer, data: try JSONEncoder().encode(profile))
+        let window = UIWindow(windowScene: scene); window.rootViewController = viewer; window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        window.layoutIfNeeded(); viewer.view.layoutIfNeeded()
+        let keys = descendants(host.bar).compactMap { $0 as? TerminalKeyPreviewButton }
+        let first = try XCTUnwrap(keys.first { $0.configuration?.title == "F1" })
+        let second = try XCTUnwrap(keys.first { $0.configuration?.title == "F2" })
+
+        first.sendActions(for: .touchDown); first.sendActions(for: .touchUpInside)
+        XCTAssertTrue(first.keyPreviewVisible)
+        XCTAssertEqual(viewer.events.count, 2, "The key sends on release without waiting for visual dismissal")
+        for _ in 0..<100 where first.keyPreviewVisible { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertFalse(first.keyPreviewVisible, "A successful quick-tap echo expires")
+
+        first.sendActions(for: .touchDown); first.sendActions(for: .touchUpInside)
+        first.sendActions(for: .touchDown)
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertTrue(first.keyPreviewVisible, "A stale release timer cannot dismiss the next held press")
+        second.sendActions(for: .touchDown)
+        XCTAssertFalse(first.keyPreviewVisible, "Only the newest key has a bubble")
+        XCTAssertTrue(second.keyPreviewVisible)
+        second.sendActions(for: .touchCancel)
+        XCTAssertFalse(second.keyPreviewVisible)
+        XCTAssertEqual(viewer.events.count, 4, "The held and cancelled keys send nothing")
+
+        first.sendActions(for: .touchDown); first.sendActions(for: .touchUpInside)
+        first.sendActions(for: .touchDragExit)
+        XCTAssertFalse(first.keyPreviewVisible, "Slide-away also retires a lingering echo")
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertFalse(first.keyPreviewVisible)
+        XCTAssertEqual(viewer.events.count, 6)
     }
     func testOneShotLockedAndModifierAloneHaveSeparateBalancedBehavior() throws {
         let viewer = RemoteControlsTestViewer(), host = controls(viewer)

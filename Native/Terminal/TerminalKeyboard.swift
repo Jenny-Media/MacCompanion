@@ -322,6 +322,8 @@ private final class TerminalKeyScrollView: UIScrollView {
     }
     func install(_ stack: UIStackView) {
         keyStack = stack
+        // Start key feedback on finger-down; pans still cancel UIButton tracking.
+        delaysContentTouches = false; canCancelContentTouches = true
         showsHorizontalScrollIndicator = true; alwaysBounceHorizontal = true
         canvas.translatesAutoresizingMaskIntoConstraints = false; addSubview(canvas)
         stack.translatesAutoresizingMaskIntoConstraints = false; canvas.addSubview(stack)
@@ -1002,8 +1004,11 @@ private final class TerminalKeyScrollView: UIScrollView {
         }
         updateKeyMetrics()
     }
-    private func updateVisibility() {
+    func dismissKeyPreviews() {
         generated.compactMap { $0 as? TerminalKeyPreviewButton }.forEach { $0.dismissKeyPreview() }
+    }
+    private func updateVisibility() {
+        dismissKeyPreviews()
         let all = editingPreview && previewShowsAllRows
         for definition in profileRows {
             let hidden = !all && (definition.hidden == true || definition.extra && !showsExtraRows)

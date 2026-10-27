@@ -9,13 +9,16 @@ class TerminalKeyPreviewButton: UIButton {
     private var bubble: UIView?
     private var anchor: CGRect?
     private var paneAnchor: CGRect?
+    private var shownAt: TimeInterval?
+    private var dismissal: Task<Void, Never>?
     var keyPreviewVisible: Bool { bubble?.superview != nil }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         addAction(UIAction { [weak self] _ in self?.showKeyPreview() }, for: [.touchDown, .touchDragEnter])
+        addAction(UIAction { [weak self] _ in self?.finishKeyPreview() }, for: .touchUpInside)
         addAction(UIAction { [weak self] _ in self?.dismissKeyPreview() },
-                  for: [.touchUpInside, .touchUpOutside, .touchCancel, .touchDragExit])
+                  for: [.touchUpOutside, .touchCancel, .touchDragExit])
         NotificationCenter.default.addObserver(self, selector: #selector(dismissKeyPreview),
             name: UIApplication.willResignActiveNotification, object: nil)
     }
@@ -33,11 +36,15 @@ class TerminalKeyPreviewButton: UIButton {
             dismissKeyPreview(); return
         }
     }
+    private var keyBar: TerminalKeyboardBar? {
+        sequence(first: superview, next: { $0?.superview }).compactMap({ $0 as? TerminalKeyboardBar }).first
+    }
     private func previewPane(in window: UIWindow) -> CGRect? {
-        guard let bar = sequence(first: superview, next: { $0?.superview }).compactMap({ $0 as? TerminalKeyboardBar }).first else { return nil }
+        guard let bar = keyBar else { return nil }
         return bar.convert(bar.bounds, to: window).intersection(window.bounds.inset(by: window.safeAreaInsets)).insetBy(dx: 4, dy: 0)
     }
     func showKeyPreview() {
+        keyBar?.dismissKeyPreviews()
         dismissKeyPreview()
         guard previewsKey, isEnabled, previewAllowed?() == true, let window,
               let pane = previewPane(in: window), !UIAccessibility.isVoiceOverRunning else { return }
@@ -64,7 +71,25 @@ class TerminalKeyPreviewButton: UIButton {
             icon.frame = content.bounds.insetBy(dx: 10, dy: 6); content.addSubview(icon)
         } else { label.frame = content.bounds.insetBy(dx: 10, dy: 6); content.addSubview(label) }
         window.addSubview(content); bubble = content; anchor = key; paneAnchor = pane
+        shownAt = ProcessInfo.processInfo.systemUptime
     }
-    @objc func dismissKeyPreview() { bubble?.removeFromSuperview(); bubble = nil; anchor = nil; paneAnchor = nil }
+    private func finishKeyPreview() {
+        guard let bubble, let shownAt else { return }
+        guard previewAllowed?() == true else { dismissKeyPreview(); return }
+        // Give even a tap that ends within one display frame a visible echo.
+        // Input still sends immediately on touch-up; only the passive visual waits.
+        let remaining = 0.12 - (ProcessInfo.processInfo.systemUptime - shownAt)
+        guard remaining > 0 else { dismissKeyPreview(); return }
+        dismissal?.cancel()
+        dismissal = Task { @MainActor [weak self, weak bubble] in
+            do { try await Task.sleep(for: .seconds(remaining)) } catch { return }
+            guard let self, let bubble, self.bubble === bubble else { return }
+            self.dismissKeyPreview()
+        }
+    }
+    @objc func dismissKeyPreview() {
+        dismissal?.cancel(); dismissal = nil
+        bubble?.removeFromSuperview(); bubble = nil; anchor = nil; paneAnchor = nil; shownAt = nil
+    }
 }
 #endif
