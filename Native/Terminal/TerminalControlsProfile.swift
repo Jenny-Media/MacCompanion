@@ -880,7 +880,7 @@ struct TerminalControlsProfile: Codable, Equatable {
         guard draft.valid, draft.importedMacs == current.importedMacs else { throw Failure.unreadable }
         var result = draft; result.freezeKeyboardLayout(); result.captureRemoteMenu(); result.revision = UUID()
         try persist(result)
-        NotificationCenter.default.post(name: Self.changed, object: nil)
+        NotificationCenter.default.post(name: Self.changed, object: family.rawValue)
         return result
     }
     private func persist(_ profile: TerminalControlsProfile) throws {

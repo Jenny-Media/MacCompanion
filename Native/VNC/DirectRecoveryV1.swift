@@ -204,7 +204,8 @@ private struct DirectCloudSettingsSection: View {
                 })
             } else {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Sync saved Macs across your devices.")
+                    Text("Sync saved Macs and keyboard layouts across your devices.")
+                    if let keyboardStatus = cloud.keyboardSyncStatus { Text(keyboardStatus) }
                     Text(cloud.status)
                 }.font(.footnote).foregroundStyle(.secondary)
             }
@@ -212,15 +213,16 @@ private struct DirectCloudSettingsSection: View {
                 VStack(alignment: .leading, spacing: 12) {
                     DirectInformationGroup(title: "Across devices", symbol: "icloud", items: [
                         "Saved Macs, names and models", "Addresses and service ports", "My Macs tap and swipe shortcuts",
-                        "Display selection and fullscreen", "Pointer speed, input mode and cursor following"])
+                        "Display selection and fullscreen", "Pointer speed, input mode and cursor following",
+                        "Keyboard row order, appearance and built-in key choices"])
                     Divider()
                     DirectInformationGroup(title: "On this device", symbol: "lock.shield", items: [
-                        "Passwords and SSH keys", "Trusted Mac identities", "Session quick actions and saved text", "Appearance and app-lock settings"])
+                        "Passwords and SSH keys", "Trusted Mac identities", "Saved shortcuts, text and their keyboard buttons", "Appearance and app-lock settings"])
                 }
             }
             DisclosureGroup("Manage Sync") {
                 if cloud.enabled {
-                    Button("Refresh iCloud", systemImage: "arrow.triangle.2.circlepath") { if lock.canAccess { cloud.refresh() } }.disabled(cloud.busy)
+                    Button("Refresh iCloud", systemImage: "arrow.triangle.2.circlepath") { if lock.canAccess { cloud.retry() } }.disabled(cloud.busy)
                 }
                 if cloud.busy { ProgressView("Updating iCloud data…") }
                 Button("Delete Mac Data from iCloud…", systemImage: "icloud.slash", role: .destructive) { present(.deleteData) }
@@ -271,8 +273,13 @@ struct DirectCloudInformationSheet: View {
                             "Enable iCloud Keychain on every device you want to sync."])
                         Link("About iCloud Keychain security", destination: URL(string: "https://support.apple.com/en-us/102651")!)
                     } else {
+                        #if os(iOS)
+                        DirectInformationGroup(title: "Delete from iCloud", symbol: "icloud.slash", items: [
+                            "Saved Mac entries, synced desktop preferences and keyboard layouts."])
+                        #else
                         DirectInformationGroup(title: "Delete from iCloud", symbol: "icloud.slash", items: [
                             "Saved Mac entries and their synced desktop preferences."])
+                        #endif
                         DirectInformationGroup(title: "Keep on this device", symbol: "internaldrive", items: [
                             "Your saved Macs, passwords, SSH keys and local preferences."])
                         DirectInformationGroup(title: "Before you continue", symbol: "exclamationmark.triangle", items: [

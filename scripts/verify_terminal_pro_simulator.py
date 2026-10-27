@@ -267,7 +267,7 @@ def execute(args, parser, compiler):
     with (evidence / 'test.log').open('w') as log:
         run('xcodebuild', '-project', qa / 'DirectClientQA.xcodeproj', '-scheme', 'TerminalControlsQA' if args.terminal_controls_ui else 'DirectClientQA',
             '-destination', 'platform=iOS Simulator,id=' + args.simulator, '-derivedDataPath', compiler / 'DerivedData',
-            '-onlyUsePackageVersionsFromResolvedFile', '-skipPackagePluginValidation', '-parallel-testing-enabled', 'NO',
+            '-onlyUsePackageVersionsFromResolvedFile', '-skipPackagePluginValidation', '-parallel-testing-enabled', 'NO', '-maximum-concurrent-test-simulator-destinations', '1',
             *(['-only-testing:DirectClientTests/DuoComparisonTests/testInteractiveCapture'] if args.duo_review else []),
             *['-only-testing:' + identifier for identifier in args.only_testing],
             '-collect-test-diagnostics', args.test_diagnostics, '-resultBundlePath', result, 'test', stdout=log, stderr=subprocess.STDOUT)

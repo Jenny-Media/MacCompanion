@@ -14,7 +14,7 @@ assert manifest['whatsNew'] is None, 'Initial App Store release has no What\'s N
 assert manifest['releaseType'] == 'MANUAL'
 for target in ['MacCompanionIOS', 'MacCompanionSessionActivity']:
     release = json.loads((ROOT / 'Native/iOSCloud/project.json').read_text())
-    assert release['targets'][target]['settings']['base']['MARKETING_VERSION'] == '1.0'
+    assert release['targets'][target]['settings']['base']['MARKETING_VERSION'] == '1.1'
 limits = {'name': (30, False), 'subtitle': (30, False), 'description': (4000, False),
           'keywords': (100, True), 'promotional-text': (170, False), 'app-review-notes': (4000, True)}
 for locale in manifest['locales']:

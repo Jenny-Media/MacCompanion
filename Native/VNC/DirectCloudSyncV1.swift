@@ -111,7 +111,11 @@ struct DirectCloudKeychain: DirectCloudTransport {
     static let shared = DirectCloudSyncV1()
     static let enabledKey = "direct-cloud-library-enabled-v1"
     static let preferenceChanged = Notification.Name("DirectCloudLocalPreferencesChangedV1")
-    static let disclosure = "Across your devices: Mac names and models, addresses, ports, My Macs tap and swipe shortcuts, and desktop preferences. These details describe your Macs and network.\n\nPasswords, private keys, trusted Mac identities, session quick actions and saved text don’t sync.\n\nUses iCloud Keychain with your Apple Account and trusted devices; there is no separate cloud password. Enable iCloud Keychain on each device.\n\nTurning sync off keeps existing iCloud data. Use Delete Mac Data from iCloud to remove it."
+    static let disclosure = "Across your devices: Mac names and models, addresses, ports, My Macs tap and swipe shortcuts, and desktop preferences. On iPhone and iPad, keyboard row layouts and built-in key choices also sync. These details describe your Macs and network.\n\nPasswords, private keys, trusted Mac identities, session quick actions and saved text don’t sync.\n\nUses iCloud Keychain with your Apple Account and trusted devices; there is no separate cloud password. Enable iCloud Keychain on each device.\n\nTurning sync off keeps existing iCloud data. Use Delete Mac Data from iCloud to remove it."
+    #if os(iOS)
+    private var keyboardCloud: DirectKeyboardCloudSync?
+    var keyboardSyncStatus: String? { keyboardCloud?.status }
+    #endif
     private struct Journal: Codable { var schema = 1; var versions: [DirectCloudVersion] }
     private let defaults: UserDefaults
     private let url: URL
@@ -158,9 +162,17 @@ struct DirectCloudKeychain: DirectCloudTransport {
             }
         } catch { readable = false; recovery = .make(.cloudUnavailable, message: "Sync history couldn’t be read. Existing history and local Macs are kept. Retry when device storage is available.") }
         if !identityReadable { readable = false; recovery = .make(.cloudUnavailable, message: "This device’s sync identity couldn’t be read. Existing data is kept. Retry when device storage is available.") }
+        #if os(iOS)
+        if writerID == nil && readable {
+            keyboardCloud = DirectKeyboardCloudSync(url: DirectClientPlatformV1.dataURL("direct-cloud-keyboards-v1.json"), writer: writer)
+        }
+        #endif
     }
     func retry() {
         guard !busy, DirectAppLockV1.shared.canAccess else { return }
+        #if os(iOS)
+        keyboardCloud?.retry()
+        #endif
         if !readable {
             do {
                 let identity = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
@@ -181,9 +193,18 @@ struct DirectCloudKeychain: DirectCloudTransport {
                 if let library { for mac in library.macs where !versions.contains(where: { $0.id == mac.id && $0.writer == writer }) { localChange(mac.id) } }
             } catch { recovery = .make(.cloudUnavailable, message: "Sync data is still unavailable. Local Macs and the existing history are kept."); return }
         }
+        #if os(iOS)
+        if keyboardCloud == nil && injectedWriter == nil {
+            keyboardCloud = DirectKeyboardCloudSync(url: DirectClientPlatformV1.dataURL("direct-cloud-keyboards-v1.json"), writer: writer)
+            keyboardCloud?.setEnabled(enabled)
+        }
+        #endif
         recovery = nil; refresh()
     }
     func attach(_ library: DirectMacLibraryV1) {
+        #if os(iOS)
+        keyboardCloud?.setEnabled(enabled)
+        #endif
         let firstAttachment = self.library == nil
         self.library = library
         library.localChange = { [weak self] id in self?.localChange(id) }
@@ -204,6 +225,9 @@ struct DirectCloudKeychain: DirectCloudTransport {
         guard DirectAppLockV1.shared.canAccess else { return }
         generation = UUID(); refreshTask?.cancel(); refreshTask = nil; busy = false
         enabled = value; defaults.set(value, forKey: Self.enabledKey)
+        #if os(iOS)
+        keyboardCloud?.setEnabled(value)
+        #endif
         if value {
             if let library { for mac in library.macs where !versions.contains(where: { $0.id == mac.id }) { localChange(mac.id) } }
             refresh()
@@ -227,6 +251,9 @@ struct DirectCloudKeychain: DirectCloudTransport {
         } catch { recovery = .make(.cloudUnavailable, message: "The sync change couldn’t be saved. Local Macs are kept. Retry after checking device storage.") }
     }
     func refresh() {
+        #if os(iOS)
+        if enabled { keyboardCloud?.refresh() }
+        #endif
         guard enabled, !busy, readable, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable, let library, library.readable else { return }
         busy = true; generation = UUID(); let id = generation, transport = self.transport
         refreshTask = Task {
@@ -267,6 +294,9 @@ struct DirectCloudKeychain: DirectCloudTransport {
             defer { busy = false }
             do {
                 try await Task.detached { try transport.removeAll() }.value
+                #if os(iOS)
+                try await keyboardCloud?.removeCloudCopies()
+                #endif
                 try persist([])
                 recovery = nil; status = "Deletion requested. Sync is off; your local Macs are kept. Other devices may take a moment to update."
             } catch { recovery = .make(.cloudRemoval) }

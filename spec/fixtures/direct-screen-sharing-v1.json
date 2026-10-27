@@ -1004,7 +1004,36 @@
           "remoteDeleted": false,
           "winner": "remote"
         }
-      ]
+      ],
+      "keyboardLayouts": {
+        "introducedVersion": "1.1",
+        "platforms": [
+          "iOS",
+          "iPadOS"
+        ],
+        "service": "media.jenny.maccompanion.cloud-keyboard-layouts.v1",
+        "enabledBy": "existing iCloud Sync setting",
+        "maximumVersionBytes": 4096,
+        "includes": [
+          "row order",
+          "row appearance",
+          "built-in key choices"
+        ],
+        "excludes": [
+          "saved shortcut definitions",
+          "saved text",
+          "saved-item placements",
+          "credentials",
+          "trusted host keys"
+        ],
+        "preserveDeviceLocalSavedButtons": true,
+        "newDeviceReadsBeforeSeedingDefaults": true,
+        "conflictOrder": [
+          "revision",
+          "writer UUID"
+        ],
+        "deletionUsesExistingCloudDataRemoval": true
+      }
     },
     "terminalKeyboard": {
       "numberRow": "always-when-keyboard-open",
