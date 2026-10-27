@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check built routes, metadata, assets, and internal links before publishing."""
 from html.parser import HTMLParser
+import hashlib
 import json
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -14,6 +15,7 @@ class Page(HTMLParser):
         self.path = path
         self.ids = set()
         self.links = []
+        self.images = []
         self.h1 = 0
         self.title = False
         self.description = False
@@ -40,6 +42,8 @@ class Page(HTMLParser):
             self.robots = attrs.get("content", "").lower()
         if tag == "img" and "alt" not in attrs:
             self.errors.append("Image missing alt attribute")
+        if tag == "img":
+            self.images.append(attrs)
         attribute = "href" if tag in {"a", "link"} else "src" if tag in {"img", "script"} else None
         if attribute and attrs.get(attribute):
             self.links.append(attrs[attribute])
@@ -107,6 +111,36 @@ if not any(
 ):
     errors.append("beta route: missing X-Robots-Tag deployment header")
 
+# Verify public image bytes and dimensions against the prepared source handoff.
+# This catches missing exports, accidental replacements, and distorted markup.
+manifest = json.loads((ROOT.parent / "source/assets/screens/manifest.json").read_text())
+exports = {entry["file"]: entry for entry in manifest["exports"]}
+for name, entry in exports.items():
+    path = ROOT / "assets/screens" / name
+    if not path.is_file():
+        errors.append(f"Missing screenshot export: {name}")
+        continue
+    data = path.read_bytes()
+    if len(data) != entry["bytes"] or hashlib.sha256(data).hexdigest() != entry["sha256"]:
+        errors.append(f"Screenshot differs from its provenance manifest: {name}")
+    # Transparent WebP exports have an extended header with canvas dimensions.
+    if data[:4] != b"RIFF" or data[8:16] != b"WEBPVP8X":
+        errors.append(f"Screenshot missing extended WebP header: {name}")
+    else:
+        size = (1 + int.from_bytes(data[24:27], "little"),
+                1 + int.from_bytes(data[27:30], "little"))
+        if size != (entry["width"], entry["height"]):
+            errors.append(f"Screenshot dimensions differ from manifest: {name}")
+for path, page in pages.items():
+    for attrs in page.images:
+        src = attrs.get("src", "")
+        if src.startswith("/assets/screens/"):
+            entry = exports.get(src.removeprefix("/assets/screens/"))
+            if entry is None or (attrs.get("width"), attrs.get("height")) != (
+                str(entry["width"]), str(entry["height"])
+            ):
+                errors.append(f"{path.relative_to(ROOT)}: screenshot aspect ratio missing or incorrect: {src}")
+
 if errors:
     raise SystemExit("\n".join(errors))
-print(f"Website checks passed: {len(pages)} pages, metadata, local assets, and internal links")
+print(f"Website checks passed: {len(pages)} pages, metadata, local assets, internal links, and {len(exports)} verified screenshot exports")
