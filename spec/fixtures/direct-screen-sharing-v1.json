@@ -1017,7 +1017,8 @@
         "includes": [
           "row order",
           "row appearance",
-          "built-in key choices"
+          "built-in key choices",
+          "row restore presets"
         ],
         "excludes": [
           "saved shortcut definitions",

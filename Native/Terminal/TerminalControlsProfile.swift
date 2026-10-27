@@ -779,7 +779,9 @@ struct TerminalControlsProfile: Codable, Equatable {
 @MainActor struct TerminalControlsStore {
     static let account = DirectControlMode.terminal.profileID
     static let kind = "terminal-controls-v2"
+    static let willChange = Notification.Name("TerminalControlsWillChangeV2")
     static let changed = Notification.Name("TerminalControlsChangedV2")
+    static let prepared = Notification.Name("TerminalControlsPreparedV2")
     enum Failure: Error, Equatable { case unreadable, staleDraft, newerFormat }
     static let newerFormatMessage = "These controls were saved by a newer version of Mac Companion. Update the app to edit them. Your saved controls have been kept."
     private struct Format: Decodable {
@@ -823,7 +825,20 @@ struct TerminalControlsProfile: Codable, Equatable {
         Dictionary(uniqueKeysWithValues: [DirectControlMode.desktop, .trackpad].map { ($0.rawValue, $0.defaults) })
     }
 
-    func load() throws -> TerminalControlsProfile {
+    /// Remote layouts must wait for the existing context-aware menu migration.
+    /// A context-free sync reader cannot create that shared local profile.
+    func keyboardCloudReady() throws -> Bool {
+        guard family == .remoteMac else { return true }
+        guard let stored = try read() else { return false }
+        guard stored.count <= 20 * 1024 * 1024 else { throw Failure.unreadable }
+        try JSONDecoder().decode(Format.self, from: stored).checkSupported()
+        struct Readiness: Decodable { let remoteMenus: [String: [TerminalMenuPlacement]]? }
+        return try JSONDecoder().decode(Readiness.self, from: stored).remoteMenus != nil
+    }
+    func load() throws -> TerminalControlsProfile { try load(persistMigrations: true) }
+    /// Baseline projections can normalize a snapshot without committing a
+    /// migration that still needs the UI's legacy Mac context.
+    func load(persistMigrations: Bool) throws -> TerminalControlsProfile {
         guard DirectAppLockV1.shared.canAccess else { throw TerminalSecretStore.Failure.locked }
         let stored = try read()
         var profile: TerminalControlsProfile
@@ -865,9 +880,10 @@ struct TerminalControlsProfile: Codable, Equatable {
         else { profile.freezeKeyboardLayout() }
         profile.captureRemoteMenu()
         guard profile.valid else { throw Failure.unreadable }
-        if stored == nil || profile != before {
+        if persistMigrations && (stored == nil || profile != before) {
             profile.revision = UUID()
             try persist(profile)
+            NotificationCenter.default.post(name: Self.prepared, object: family.rawValue)
         }
         if family == .remoteMac { profile.selectRemoteMenu(remoteMode) }
         return profile
@@ -879,6 +895,7 @@ struct TerminalControlsProfile: Codable, Equatable {
         guard current.revision == draft.revision else { throw Failure.staleDraft }
         guard draft.valid, draft.importedMacs == current.importedMacs else { throw Failure.unreadable }
         var result = draft; result.freezeKeyboardLayout(); result.captureRemoteMenu(); result.revision = UUID()
+        NotificationCenter.default.post(name: Self.willChange, object: family.rawValue)
         try persist(result)
         NotificationCenter.default.post(name: Self.changed, object: family.rawValue)
         return result

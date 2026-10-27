@@ -192,6 +192,14 @@ private struct DirectCloudSettingsSection: View {
     let enable: () -> Void
     let present: (DirectCloudSheet) -> Void
     @State private var lock = DirectAppLockV1.shared
+    private var syncedItems: [String] {
+        var items = ["Saved Macs, names and models", "Addresses and service ports", "My Macs tap and swipe shortcuts",
+                     "Display selection and fullscreen", "Pointer speed, input mode and cursor following"]
+        #if os(iOS)
+        items.append("Keyboard row names, order, appearance and built-in key choices")
+        #endif
+        return items
+    }
     var body: some View {
         Section {
             Toggle("iCloud Sync", isOn: Binding(get: { cloud.enabled }, set: {
@@ -204,17 +212,18 @@ private struct DirectCloudSettingsSection: View {
                 })
             } else {
                 VStack(alignment: .leading, spacing: 4) {
+                    #if os(iOS)
                     Text("Sync saved Macs and keyboard layouts across your devices.")
                     if let keyboardStatus = cloud.keyboardSyncStatus { Text(keyboardStatus) }
+                    #else
+                    Text("Sync saved Macs across your devices.")
+                    #endif
                     Text(cloud.status)
                 }.font(.footnote).foregroundStyle(.secondary)
             }
             DisclosureGroup("What Syncs") {
                 VStack(alignment: .leading, spacing: 12) {
-                    DirectInformationGroup(title: "Across devices", symbol: "icloud", items: [
-                        "Saved Macs, names and models", "Addresses and service ports", "My Macs tap and swipe shortcuts",
-                        "Display selection and fullscreen", "Pointer speed, input mode and cursor following",
-                        "Keyboard row order, appearance and built-in key choices"])
+                    DirectInformationGroup(title: "Across devices", symbol: "icloud", items: syncedItems)
                     Divider()
                     DirectInformationGroup(title: "On this device", symbol: "lock.shield", items: [
                         "Passwords and SSH keys", "Trusted Mac identities", "Saved shortcuts, text and their keyboard buttons", "Appearance and app-lock settings"])

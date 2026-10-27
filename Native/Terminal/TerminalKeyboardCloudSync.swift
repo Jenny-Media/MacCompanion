@@ -1,11 +1,12 @@
 #if os(iOS) && MACCOMPANION_VNC_DEVELOPMENT
 import Foundation
 import Observation
+import CryptoKit
 
 private final class KeyboardLayoutObserver: @unchecked Sendable {
-    let token: NSObjectProtocol
-    init(_ token: NSObjectProtocol) { self.token = token }
-    deinit { NotificationCenter.default.removeObserver(token) }
+    let tokens: [NSObjectProtocol]
+    init(_ tokens: [NSObjectProtocol]) { self.tokens = tokens }
+    deinit { tokens.forEach { NotificationCenter.default.removeObserver($0) } }
 }
 
 /// Only layout metadata crosses devices. Saved definitions and their placements
@@ -14,6 +15,7 @@ struct DirectCloudKeyboardLayout: Codable, Equatable {
     struct Row: Codable, Equatable {
         var id: UUID
         var kind: TerminalKeyboardRow.Kind
+        var preset: TerminalRowPreset?
         var title: String
         var keys: [TerminalBarItem]
         var visibility: String
@@ -23,7 +25,7 @@ struct DirectCloudKeyboardLayout: Codable, Equatable {
     var rows: [Row]
     init(_ profile: TerminalControlsProfile) {
         rows = profile.resolvedRows.map { row in
-            Row(id: row.id, kind: row.kind, title: row.title,
+            Row(id: row.id, kind: row.kind, preset: row.preset, title: row.title,
                 keys: profile.barItems(in: row).filter { $0.savedID == nil },
                 visibility: row.visibility.rawValue, alignment: row.resolvedAlignment,
                 scrollStart: row.scrollStart ?? .automatic)
@@ -53,12 +55,18 @@ struct DirectCloudKeyboardLayout: Codable, Equatable {
         var result = source
         let oldRows = source.resolvedRows
         var retained = oldRows.map { ($0.id, source.barPlacements(in: $0).filter { $0.item.savedID != nil }) }
+        var occupied = Set(retained.flatMap { $0.1.map(\.id) })
         var next = rows.map { value -> TerminalKeyboardRow in
             var row = TerminalKeyboardRow(id: value.id, kind: value.kind, title: value.title,
+                preset: value.preset ?? oldRows.first(where: { $0.id == value.id })?.preset
+                    ?? (value.id == TerminalKeyboardRow.numbersID ? .numbers : nil),
                 alignment: value.alignment, scrollStart: value.scrollStart)
             row.visibility = TerminalKeyboardRow.Visibility(rawValue: value.visibility)!
-            var placements = value.keys.enumerated().map {
-                TerminalBarPlacement(id: "cloud-\(value.id.uuidString)-\($0.offset)", item: $0.element)
+            var placements = value.keys.enumerated().map { index, item in
+                let base = "cloud-\(value.id.uuidString)-\(index)"
+                var id = base, suffix = 0
+                while !occupied.insert(id).inserted { suffix += 1; id = base + "-\(suffix)" }
+                return TerminalBarPlacement(id: id, item: item)
             }
             if let index = retained.firstIndex(where: { $0.0 == value.id }) {
                 placements += retained[index].1
@@ -121,12 +129,23 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
 /// Separate service/journal keeps 1.0's Mac metadata protocol unchanged.
 @MainActor @Observable final class DirectKeyboardCloudSync {
     static let service = "media.jenny.maccompanion.cloud-keyboard-layouts.v1"
-    private struct Journal: Codable { var schema = 1; var versions: [DirectCloudKeyboardVersion] }
+    private struct Journal: Codable {
+        var schema = 1
+        var versions: [DirectCloudKeyboardVersion]
+        // Hashes identify projected changes without duplicating private definitions.
+        var observed: [String: String]?
+        var pending: [String]?
+    }
+    private static let maximumJournalBytes = 3_145_728
     private let url: URL
     private let writer: UUID
     private let transport: any DirectCloudTransport
     private let stores: [String: TerminalControlsStore]
+    private let writeJournal: @MainActor (Data, URL) throws -> Void
+    private let canAccess: @MainActor () -> Bool
     private var versions: [DirectCloudKeyboardVersion] = []
+    private var observed: [String: String] = [:]
+    private var pending: Set<String> = []
     private var readable = true
     private var enabled = false
     private var applying = false
@@ -140,23 +159,70 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
          stores: [String: TerminalControlsStore] = [
             TerminalControlsFamily.terminal.rawValue: .init(),
             TerminalControlsFamily.remoteMac.rawValue: .remoteMac()
-         ], observeChanges: Bool = true) {
+         ], observeChanges: Bool = true,
+         canAccess: @escaping @MainActor () -> Bool = { DirectAppLockV1.shared.canAccess },
+         writeJournal: @escaping @MainActor (Data, URL) throws -> Void = { try DirectClientPlatformV1.write($0, to: $1) }) {
         self.url = url; self.writer = writer; self.transport = transport; self.stores = stores
+        self.writeJournal = writeJournal; self.canAccess = canAccess
         do {
-            if FileManager.default.fileExists(atPath: url.path) {
-                let handle = try FileHandle(forReadingFrom: url)
-                defer { try? handle.close() }
-                let data = try handle.read(upToCount: 2_097_153) ?? Data()
-                guard data.count <= 2_097_152 else { throw DirectCloudError.invalid }
-                let journal = try JSONDecoder().decode(Journal.self, from: data)
-                guard journal.schema == 1 else { throw DirectCloudError.invalid }
-                versions = try DirectCloudKeyboardVersion.merge([], journal.versions)
-            }
+            if FileManager.default.fileExists(atPath: url.path) { try readJournal() }
+            if canAccess(), try captureBaselines() { try persist(versions) }
         } catch { readable = false; status = "Keyboard sync history is unavailable. Local layouts are kept." }
-        if observeChanges { observer = KeyboardLayoutObserver(NotificationCenter.default.addObserver(forName: TerminalControlsStore.changed, object: nil, queue: .main) { [weak self] note in
-            guard let raw = note.object as? String, let family = TerminalControlsFamily(rawValue: raw) else { return }
-            MainActor.assumeIsolated { self?.localChange(family) }
-        }) }
+        if observeChanges {
+            let willChange = NotificationCenter.default.addObserver(forName: TerminalControlsStore.willChange, object: nil, queue: .main) { [weak self] note in
+                guard let raw = note.object as? String else { return }
+                MainActor.assumeIsolated {
+                    guard let self, self.stores[raw] != nil else { return }
+                    self.prepareForLocalSave()
+                }
+            }
+            let changed = NotificationCenter.default.addObserver(forName: TerminalControlsStore.changed, object: nil, queue: .main) { [weak self] note in
+                guard let raw = note.object as? String, let family = TerminalControlsFamily(rawValue: raw) else { return }
+                MainActor.assumeIsolated { self?.localChange(family) }
+            }
+            let prepared = NotificationCenter.default.addObserver(forName: TerminalControlsStore.prepared, object: nil, queue: .main) { [weak self] note in
+                guard let raw = note.object as? String else { return }
+                MainActor.assumeIsolated {
+                    guard let self, self.stores[raw] != nil, self.enabled, self.readable, !self.applying else { return }
+                    if self.busy { self.rerun = true } else { self.refresh() }
+                }
+            }
+            observer = KeyboardLayoutObserver([willChange, changed, prepared])
+        }
+    }
+    private static func fingerprint(_ layout: DirectCloudKeyboardLayout) throws -> String {
+        let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+        return SHA256.hash(data: try encoder.encode(layout)).map { String(format: "%02x", $0) }.joined()
+    }
+    private func readJournal() throws {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        let data = try handle.read(upToCount: Self.maximumJournalBytes + 1) ?? Data()
+        guard data.count <= Self.maximumJournalBytes else { throw DirectCloudError.invalid }
+        let journal = try JSONDecoder().decode(Journal.self, from: data)
+        let families = Set([TerminalControlsFamily.terminal.rawValue, TerminalControlsFamily.remoteMac.rawValue])
+        let hashes = journal.observed ?? [:], waiting = journal.pending ?? []
+        guard journal.schema == 1, Set(hashes.keys).isSubset(of: families),
+              hashes.values.allSatisfy({ $0.count == 64 && $0.allSatisfy { "0123456789abcdef".contains($0) } }),
+              waiting.count == Set(waiting).count, Set(waiting).isSubset(of: Set(hashes.keys)) else { throw DirectCloudError.invalid }
+        let checked = try DirectCloudKeyboardVersion.merge([], journal.versions)
+        versions = checked; observed = hashes; pending = Set(waiting)
+    }
+    /// Establish a baseline before the first save, including when sync is off.
+    /// Old journals use their last known winner so a crash before notification
+    /// or a failed write cannot turn a later local edit into an untouched default.
+    private func captureBaselines() throws -> Bool {
+        var changed = false
+        for (name, store) in stores {
+            guard let family = TerminalControlsFamily(rawValue: name), observed[name] == nil else { continue }
+            let layout = DirectCloudKeyboardLayout(try store.load(persistMigrations: false))
+            let previous = try store.keyboardCloudReady() ? DirectCloudKeyboardVersion.winner(versions, family: family)?.layout : nil
+            observed[name] = try Self.fingerprint(previous ?? layout)
+            let value = DirectCloudKeyboardVersion(family: family, writer: writer, revision: 1, layout: layout)
+            if (try? value.validate()) == nil { pending.insert(name) }
+            changed = true
+        }
+        return changed
     }
     func setEnabled(_ value: Bool) {
         if enabled == value { if value { refresh() }; return }
@@ -168,13 +234,8 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
     func retry() {
         if !readable {
             do {
-                let handle = try FileHandle(forReadingFrom: url)
-                defer { try? handle.close() }
-                let data = try handle.read(upToCount: 2_097_153) ?? Data()
-                guard data.count <= 2_097_152 else { throw DirectCloudError.invalid }
-                let journal = try JSONDecoder().decode(Journal.self, from: data)
-                guard journal.schema == 1 else { throw DirectCloudError.invalid }
-                versions = try DirectCloudKeyboardVersion.merge([], journal.versions)
+                if FileManager.default.fileExists(atPath: url.path) { try readJournal() }
+                if canAccess(), try captureBaselines() { try persist(versions) }
                 readable = true
             } catch { return }
         }
@@ -182,24 +243,62 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
     }
     private func persist(_ next: [DirectCloudKeyboardVersion]) throws {
         let checked = try DirectCloudKeyboardVersion.merge([], next)
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try DirectClientPlatformV1.write(JSONEncoder().encode(Journal(versions: checked)), to: url)
+        let data = try JSONEncoder().encode(Journal(versions: checked, observed: observed, pending: pending.sorted()))
+        guard data.count <= Self.maximumJournalBytes else { throw DirectCloudError.invalid }
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try writeJournal(data, url)
+        } catch { readable = false; throw error }
         versions = checked
     }
+    /// A locked startup cannot read local controls. Capture their still-stored
+    /// projection before the first later save, including while cloud sync is off.
+    private func prepareForLocalSave() {
+        guard !applying, readable, canAccess() else { return }
+        do { if try captureBaselines() { try persist(versions) } }
+        catch {
+            readable = false
+            status = "Keyboard sync history couldn’t be saved. Local controls are kept. Retry with Refresh iCloud."
+        }
+    }
     func localChange(_ family: TerminalControlsFamily) {
-        guard !applying, readable, DirectAppLockV1.shared.canAccess, let store = stores[family.rawValue] else { return }
+        recordLocalChange(family, scheduleRefresh: true)
+    }
+    private func recordLocalChange(_ family: TerminalControlsFamily, scheduleRefresh: Bool) {
+        guard !applying, readable, canAccess(), let store = stores[family.rawValue] else { return }
         do {
-            let layout = DirectCloudKeyboardLayout(try store.load())
-            if DirectCloudKeyboardVersion.winner(versions, family: family)?.layout == layout { return }
+            guard try store.keyboardCloudReady() else { return }
+            let layout = DirectCloudKeyboardLayout(try store.load()), name = family.rawValue
+            let hash = try Self.fingerprint(layout)
+            guard observed[name] != hash || pending.contains(name) else { return }
+            observed[name] = hash; pending.insert(name)
+            if DirectCloudKeyboardVersion.winner(versions, family: family)?.layout == layout {
+                pending.remove(name); try persist(versions); return
+            }
             let record = DirectCloudKeyboardVersion(family: family, writer: writer,
                 revision: (versions.map(\.revision).max() ?? 0) + 1, layout: layout)
-            try record.validate()
-            try persist(versions.filter { $0.account != record.account } + [record])
-            if busy { rerun = true } else { refresh() }
-        } catch { status = "This keyboard layout couldn’t sync. Local controls are kept; large layouts may exceed the sync limit." }
+            do { try record.validate() }
+            catch {
+                // Publication limits never authorize replacing this local edit.
+                try persist(versions)
+                status = "This keyboard layout couldn’t sync. Local controls are kept; large layouts may exceed the sync limit."
+                return
+            }
+            pending.remove(name)
+            do { try persist(versions.filter { $0.account != record.account } + [record]) }
+            catch { pending.insert(name); throw error }
+            if scheduleRefresh { if busy { rerun = true } else { refresh() } }
+        } catch {
+            // Retry reads the last durable baseline and compares the current
+            // profile again before any cloud value can be applied.
+            readable = false
+            status = "Keyboard sync history couldn’t be saved. Local controls are kept. Retry with Refresh iCloud."
+        }
     }
     func refresh() {
-        guard enabled, readable, !busy, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { return }
+        guard enabled, readable, !busy, canAccess(), DirectClientPlatformV1.sessionAvailable else { return }
+        do { if try captureBaselines() { try persist(versions) } }
+        catch { readable = false; status = "Keyboard sync history is unavailable. Local layouts are kept."; return }
         busy = true; generation = UUID(); let epoch = generation, transport = self.transport, prior = task
         task = Task { [weak self] in
             guard let self else { return }
@@ -217,10 +316,20 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
                 guard data.count <= 512, data.allSatisfy({ $0.count <= 4096 }) else { throw DirectCloudError.invalid }
                 let incoming = try data.map { try JSONDecoder().decode(DirectCloudKeyboardVersion.self, from: $0) }
                 var next = try DirectCloudKeyboardVersion.merge(self.versions, incoming)
+                // Persist observed clocks before importing any profile. Recover
+                // unjournaled edits against fetched history, not an older clock.
+                try self.persist(next)
+                for name in self.stores.keys {
+                    if let family = TerminalControlsFamily(rawValue: name) { self.recordLocalChange(family, scheduleRefresh: false) }
+                }
+                guard self.current(epoch) else { return }
+                next = self.versions
+                var waitingForControls = false
                 // Read cloud first. A new device's untouched default must never
                 // overwrite an existing customized keyboard.
                 for (name, store) in self.stores {
-                    guard let family = TerminalControlsFamily(rawValue: name) else { continue }
+                    guard let family = TerminalControlsFamily(rawValue: name), !self.pending.contains(name) else { continue }
+                    guard try store.keyboardCloudReady() else { waitingForControls = true; continue }
                     if DirectCloudKeyboardVersion.winner(next, family: family) == nil {
                         let value = DirectCloudKeyboardVersion(family: family, writer: self.writer,
                             revision: (next.map(\.revision).max() ?? 0) + 1,
@@ -229,35 +338,47 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
                     }
                 }
                 // Validate every local result before applying either family.
-                var changes: [(TerminalControlsStore, TerminalControlsProfile)] = []
+                var changes: [(String, TerminalControlsStore, TerminalControlsProfile)] = []
                 for (name, store) in self.stores {
-                    guard let family = TerminalControlsFamily(rawValue: name),
+                    guard let family = TerminalControlsFamily(rawValue: name), !self.pending.contains(name),
                           let winner = DirectCloudKeyboardVersion.winner(next, family: family) else { continue }
+                    guard try store.keyboardCloudReady() else { waitingForControls = true; continue }
                     let local = try store.load()
                     if DirectCloudKeyboardLayout(local) != winner.layout {
-                        changes.append((store, try winner.layout.applying(to: local)))
+                        changes.append((name, store, try winner.layout.applying(to: local)))
                     }
                 }
                 do {
                     self.applying = true
                     defer { self.applying = false }
-                    for (store, profile) in changes { _ = try store.save(profile) }
+                    for (name, store, profile) in changes {
+                        let saved = try store.save(profile)
+                        self.observed[name] = try Self.fingerprint(DirectCloudKeyboardLayout(saved))
+                    }
                 }
                 try self.persist(next)
-                for value in next where value.writer == self.writer {
+                for value in next where value.writer == self.writer && !self.pending.contains(value.family.rawValue) {
                     guard self.current(epoch) else { return }
                     let bytes = try JSONEncoder().encode(value), account = value.account
                     try await Task.detached { try transport.write(bytes, account: account) }.value
                 }
-                if self.current(epoch) { self.status = "Keyboard rows and built-in key choices sync. Saved shortcuts and text stay on this device." }
+                if self.current(epoch) {
+                    if !self.pending.isEmpty {
+                        self.status = "Some keyboard layouts couldn’t sync. Local controls are kept on this device; large layouts may exceed the sync limit."
+                    } else if waitingForControls {
+                        self.status = "Some keyboard rows are waiting for you to open their controls. Saved shortcuts and text stay on this device."
+                    } else {
+                        self.status = "Keyboard rows and built-in key choices sync. Saved shortcuts and text stay on this device."
+                    }
+                }
             } catch {
                 if self.generation == epoch { self.status = "Keyboard layouts couldn’t sync. Local controls are kept. Retry with Refresh iCloud." }
             }
         }
     }
     private func current(_ epoch: UUID) -> Bool {
-        enabled && generation == epoch && !Task.isCancelled
-            && DirectAppLockV1.shared.canAccess && DirectClientPlatformV1.sessionAvailable
+        enabled && readable && generation == epoch && !Task.isCancelled
+            && canAccess() && DirectClientPlatformV1.sessionAvailable
     }
     func removeCloudCopies() async throws {
         setEnabled(false)
