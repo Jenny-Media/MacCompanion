@@ -5,6 +5,7 @@ import UIKit
 /// existing touch-up action; cancelling or scrolling never sends a key.
 class TerminalKeyPreviewButton: UIButton {
     var previewsKey = false
+    var previewTitle: String?
     var previewAllowed: (() -> Bool)?
     private var bubble: UIView?
     private var anchor: CGRect?
@@ -60,12 +61,12 @@ class TerminalKeyPreviewButton: UIButton {
         label.textAlignment = .center; label.textColor = .label
         label.font = .systemFont(ofSize: 29, weight: .medium)
         label.adjustsFontSizeToFitWidth = true; label.minimumScaleFactor = 0.55
-        label.text = configuration?.title ?? accessibilityLabel
+        label.text = previewTitle ?? configuration?.title ?? accessibilityLabel
         let width = min(pane.width, max(62, min(144, label.intrinsicContentSize.width + 24)))
         let x = min(max(key.midX - width / 2, pane.minX), pane.maxX - width)
         let top = max(window.safeAreaInsets.top + 4, key.minY - 66)
         content.frame = CGRect(x: x, y: top, width: width, height: 58)
-        if let image = configuration?.image {
+        if let image = configuration?.image, previewTitle == nil {
             let icon = UIImageView(image: image.withConfiguration(UIImage.SymbolConfiguration(pointSize: 29, weight: .medium)))
             icon.contentMode = .center; icon.tintColor = .label
             icon.frame = content.bounds.insetBy(dx: 10, dy: 6); content.addSubview(icon)

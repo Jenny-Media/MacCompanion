@@ -13,8 +13,11 @@ including narrow Duo panes.
 
 The existing touch-up action remains the only input action. Showing a preview
 does not send input or consume an armed modifier. Modifier one-shot and long
-press locking behavior remains unchanged. Keyboard visibility, keypad / row
-expansion and layout-editor controls retain their normal pressed appearance.
+press locking behavior remains unchanged. Keyboard visibility, keypad and row
+expansion buttons also show previews while pressed, including when remote input
+is paused and those local controls remain available. Changing keyboard focus or
+row visibility clears the old echo. Escape uses a readable “Esc” label.
+Layout-editor controls retain their normal pressed appearance without a popup.
 VoiceOver uses the existing key accessibility labels without a visual echo.
 
 `RemoteMacControlsTests/testKeyPreviewIsPassiveCancelsAndKeepsExistingInputAdmission`

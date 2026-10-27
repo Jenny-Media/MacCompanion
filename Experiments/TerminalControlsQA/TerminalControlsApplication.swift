@@ -312,7 +312,8 @@ private struct TerminalRemoteControlsHost: UIViewControllerRepresentable {
     private let previewStatus = UILabel()
     private var previewLink: CADisplayLink?
     private var previewFrames = 0, maximumPreviews = 0
-    private var previewCaptureSaved = false
+    private let previewUtilitiesProbe = ProcessInfo.processInfo.environment["MACCOMPANION_KEY_PREVIEW_UTILITIES_QA"] == "1"
+    private var previewCaptures: Set<String> = []
     init(close: @escaping () -> Void) {
         self.close = close
         var profile = TerminalControlsProfile.remoteDefaults; profile.freezeKeyboardLayout()
@@ -329,6 +330,13 @@ private struct TerminalRemoteControlsHost: UIViewControllerRepresentable {
         }
         if ProcessInfo.processInfo.environment["MACCOMPANION_KEY_PREVIEW_QA"] == "1" {
             profile.keyboardRows = [.init(id: TerminalKeyboardRow.mainID, kind: .main, title: "Functions", items: TerminalRowPreset.functions.items)]
+            if ProcessInfo.processInfo.environment["MACCOMPANION_KEY_PREVIEW_UTILITIES_QA"] == "1" {
+                profile.keyboardRows = [
+                    .init(kind: .custom, title: "Numbers", items: TerminalRowPreset.numbers.items, expandedOnly: true),
+                    .init(id: TerminalKeyboardRow.mainID, kind: .main, title: "Main",
+                          items: [.key("key-escape"), .control(.keyboard), .control(.expand)] + TerminalRowPreset.functions.items)]
+                profile.rowsExpanded = false
+            }
         }
         data = try! JSONEncoder().encode(profile)
         super.init(nibName: nil, bundle: nil)
@@ -393,15 +401,17 @@ private struct TerminalRemoteControlsHost: UIViewControllerRepresentable {
     }
     @objc private func sampleKeyPreview() {
         func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
-        let visible = descendants(controlsHost.bar).compactMap { $0 as? TerminalKeyPreviewButton }.filter(\.keyPreviewVisible).count
+        let previews = descendants(controlsHost.bar).compactMap { $0 as? TerminalKeyPreviewButton }.filter(\.keyPreviewVisible)
+        let visible = previews.count
         if visible > 0 { previewFrames += 1 }
         maximumPreviews = max(maximumPreviews, visible)
         previewStatus.text = "frames=\(previewFrames); visible=\(visible); max=\(maximumPreviews)"
-        if visible > 0, !previewCaptureSaved, let window = view.window {
-            previewCaptureSaved = true
-            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: false) }
+        let capture = !previewUtilitiesProbe ? "keyboard-quick-tap" : previews.first?.tag == 0xff1b ? "keyboard-preview-escape"
+            : previews.first?.accessibilityIdentifier == "terminal-keyboard-toggle" ? "keyboard-preview-keyboard" : "keyboard-preview-rows"
+        if visible > 0, previewCaptures.insert(capture).inserted, let window = view.window {
+            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
             let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            try? image.pngData()?.write(to: folder.appending(path: "keyboard-quick-tap.png"))
+            try? image.pngData()?.write(to: folder.appending(path: capture + ".png"))
         }
     }
     override func beginControlSequence() -> String? {

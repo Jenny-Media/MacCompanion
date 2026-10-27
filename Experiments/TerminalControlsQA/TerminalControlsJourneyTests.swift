@@ -3,6 +3,42 @@ import StoreKitTest
 import UIKit
 
 @MainActor final class TerminalControlsJourneyTests: XCTestCase {
+    func testEscapeKeyboardAndExpansionHaveRealTouchPreviews() async throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.controlsqa.ios")
+        app.launchEnvironment["MACCOMPANION_CONTROLS_FUNCTIONAL_TEST"] = "1"
+        app.launchEnvironment["MACCOMPANION_KEY_PREVIEW_QA"] = "1"
+        app.launchEnvironment["MACCOMPANION_KEY_PREVIEW_UTILITIES_QA"] = "1"
+        app.launchEnvironment["MACCOMPANION_CONTROLS_REMOTE_MODE"] = "desktop"
+        app.terminate(); app.launch(); defer { app.terminate() }
+        XCTAssertTrue(app.buttons["controls-qa-remote"].waitForExistence(timeout: 5))
+        app.buttons["controls-qa-remote"].tap()
+        let reset = app.buttons["remote-qa-preview-reset"]
+        XCTAssertTrue(reset.waitForExistence(timeout: 5))
+        func frames() -> Int {
+            let field = app.staticTexts["remote-qa-preview"].label.components(separatedBy: "; ").first ?? ""
+            return Int(field.replacingOccurrences(of: "frames=", with: "")) ?? 0
+        }
+        app.buttons["Escape"].press(forDuration: 0.03)
+        XCTAssertTrue(app.staticTexts["Remote events: 2"].waitForExistence(timeout: 3))
+        XCTAssertGreaterThan(frames(), 0, "Escape visibly echoes on a short tap")
+        reset.tap()
+        app.buttons["terminal-keyboard-toggle"].press(forDuration: 0.05)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(frames(), 0, "The shared keyboard toggle previews")
+        XCTAssertTrue(app.staticTexts["Remote events: 0"].exists)
+        app.buttons["terminal-keyboard-toggle"].press(forDuration: 0.05)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        reset.tap()
+        let bar = app.otherElements["terminal-keyboard-bar"].firstMatch
+        let collapsedHeight = bar.frame.height
+        app.buttons["terminal-row-expand"].press(forDuration: 0.05)
+        XCTAssertGreaterThan(bar.frame.height, collapsedHeight)
+        XCTAssertGreaterThan(frames(), 0, "The shared expansion toggle previews")
+        XCTAssertTrue(app.staticTexts["Remote events: 0"].exists)
+        XCTAssertTrue(app.staticTexts["remote-qa-preview"].label.contains("visible=0"), "Changed rows clear the old echo")
+        capture("escape-and-utility-previews-with-no-remote-utility-input", app: app)
+    }
     func testQuickKeyPreviewRealTouchesAndScrollCancellation() async throws {
         XCUIDevice.shared.orientation = .portrait
         let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.controlsqa.ios")

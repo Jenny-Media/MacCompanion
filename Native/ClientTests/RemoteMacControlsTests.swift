@@ -716,6 +716,57 @@ private final class RemoteAnchorSession: CompanionVNCSession {
         key.sendActions(for: .touchDown); key.removeFromSuperview()
         XCTAssertFalse(key.keyPreviewVisible); XCTAssertTrue(viewer.events.isEmpty)
     }
+    func testEscapeAndLocalRowControlsPreviewWithoutSendingInput() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let viewer = RemoteControlsTestViewer()
+        var profile = TerminalControlsProfile.remoteDefaults
+        profile.freezeKeyboardLayout()
+        profile.keyboardRows = [
+            .init(kind: .custom, title: "Numbers", items: TerminalRowPreset.numbers.items, expandedOnly: true),
+            .init(id: TerminalKeyboardRow.mainID, kind: .main, title: "Main", items: [
+                .key("key-escape"), .control(.keyboard), .control(.expand), .control(.keypad), .key("key-f1")])]
+        let host = controls(viewer, data: try JSONEncoder().encode(profile))
+        let window = UIWindow(windowScene: scene); window.rootViewController = viewer; window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        window.layoutIfNeeded(); viewer.view.layoutIfNeeded()
+        let escape = try XCTUnwrap(descendants(host.bar).compactMap { $0 as? TerminalKeyPreviewButton }.first { $0.tag == 0xff1b })
+        escape.sendActions(for: .touchDown)
+        XCTAssertTrue(escape.keyPreviewVisible)
+        XCTAssertTrue(descendants(window).compactMap { $0 as? UILabel }.contains { $0.text == "Esc" },
+                      "Escape has an unmistakable text echo")
+        let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
+        let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        try image.pngData()?.write(to: folder.appending(path: "keyboard-escape-preview.png"))
+        escape.sendActions(for: .touchUpInside)
+        XCTAssertEqual(viewer.events.count, 2)
+        viewer.events = []
+        let keyboard = try XCTUnwrap(host.keyboardBar.keyboardButton as? TerminalKeyPreviewButton)
+        let expand = try XCTUnwrap(host.keyboardBar.expandButton as? TerminalKeyPreviewButton)
+        let keypad = try XCTUnwrap(descendants(host.bar).compactMap { $0 as? TerminalKeyPreviewButton }.first { $0.accessibilityLabel == "Keypad" })
+
+        keyboard.sendActions(for: .touchDown); XCTAssertTrue(keyboard.keyPreviewVisible)
+        XCTAssertFalse(escape.keyPreviewVisible, "A shared utility replaces an input-key echo")
+        keyboard.sendActions(for: .touchUpInside); XCTAssertEqual(viewer.keyboardToggles, 1)
+        host.keyboardFocused(true); XCTAssertFalse(keyboard.keyPreviewVisible, "Changed keyboard state retires its old echo")
+        expand.sendActions(for: .touchDown); XCTAssertTrue(expand.keyPreviewVisible)
+        expand.sendActions(for: .touchUpInside)
+        XCTAssertTrue(host.keyboardBar.showsExtraRows); XCTAssertFalse(expand.keyPreviewVisible)
+
+        viewer.available = false; host.refresh()
+        XCTAssertFalse(escape.isEnabled)
+        for control in [keyboard, expand, keypad] {
+            XCTAssertTrue(control.isEnabled)
+            control.sendActions(for: .touchDown)
+            XCTAssertTrue(control.keyPreviewVisible, "Available local controls preview while remote input is paused")
+            host.refresh()
+            XCTAssertTrue(control.keyPreviewVisible, "Refresh must not transiently disable an available local control")
+            control.sendActions(for: .touchCancel); XCTAssertFalse(control.keyPreviewVisible)
+        }
+        XCTAssertTrue(viewer.events.isEmpty, "Local feedback and cancelled utilities never send remote keys")
+        host.keyboardBar.executionActive = true
+        keyboard.sendActions(for: .touchDown); XCTAssertFalse(keyboard.keyPreviewVisible)
+    }
     func testQuickKeyPreviewExpiresAndReplacedPressSurvivesOldDismissal() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previous = scene.windows.first(where: \.isKeyWindow)
