@@ -8,7 +8,7 @@ SOURCE = ROOT / "source"
 OUTPUT = ROOT / "dist"
 OUTPUT.mkdir(exist_ok=True)
 for path in SOURCE.rglob("*"):
-    if path.is_file() and path.name not in {"header.html", "footer.html"}:
+    if path.is_file() and path.name not in {"header.html", "footer.html", "README.md", "manifest.json"}:
         target = OUTPUT / path.relative_to(SOURCE)
         target.parent.mkdir(parents=True, exist_ok=True)
         if path.suffix == ".html":

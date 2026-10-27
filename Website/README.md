@@ -21,10 +21,27 @@ python3 -m http.server 4173 --bind 127.0.0.1 --directory dist
 
 Open <http://127.0.0.1:4173/>. Stop the server with Control-C.
 
+The homepage uses prepared native app captures in matching device frames for
+iPhone, iPad, and iPhone Duo. Desktop, Compose Text, Terminal, Trackpad & Keyboard,
+and Files have screenshot-led showcases. Duo has dedicated Book and Tabletop
+examples, and is represented in navigation, pricing, and FAQ.
+
+The hero and pricing lead with **One Mac. Free forever.** The free limit refers to
+one saved remote Mac, not one client device. Lifetime Pro is a planned $9.99 U.S.
+one-time upgrade; the optional 14-day trial does not renew or charge. Availability
+remains TestFlight-only until the actual App Store release is verified. Do not
+add a download badge or purchase link before that release.
+
+Only the explicitly requested, sanitized website marketing exports are tracked
+under `source/assets/screens/`. Raw captures, capture adapters, input fixtures,
+and review evidence stay outside application Git. No private device screenshots
+are published. See [the asset notes](source/assets/screens/README.md) for source,
+sample-content disclosure, and proportional export details. The app's native
+catalogs and signing configuration are independent.
+
 App artwork originates in `../Branding/app-icon.png`; the website retains its
-approved exported icon. The original hero illustration was generated for this
-site and is labeled as artwork, not an app screen. No private device screenshots
-are published. The app's native catalogs and signing configuration are independent.
+approved exported icon. Light, dark, and system appearance are supported on every
+route. Public navigation does not expose the unlisted beta invitation.
 
 Fonts use the system stack; artwork, styles and scripts are served from the site.
 The only browser storage is appearance preference. Product privacy disclosures

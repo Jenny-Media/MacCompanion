@@ -1,0 +1,117 @@
+{
+  "sourceSet": "iOS 1.0 screenshot preview v10",
+  "applicationRevision": "35a060ed36b7e2a7d77570a07d7e044d24d2a2fb",
+  "locale": "en-US",
+  "capture": "Native Simulator app UI with prepared sample content. Mac desktops compose genuine Finder and TextEdit sample windows. Terminal output and Files directory are synthetic fixtures. Images do not establish physical Duo acceptance, a live remote connection or a completed file transfer.",
+  "processing": "Unmodified native screen clipped to the enclosed matching bezel aperture; frame rotated for Tabletop; proportional downscale and WebP compression.",
+  "exports": [
+    {
+      "file": "iphone-desktop.webp",
+      "width": 650,
+      "height": 1327,
+      "bytes": 64258,
+      "sha256": "2d2acb11613a96735ccfe7163732330cd8dced2964c935d1b9bb33d2f50d6eda",
+      "source": "raw/iphone18/v8-desktop.png",
+      "sourceSha256": "3522d6a55294da23f0ca5639f26040ba75b275ed05599fac9de8c83a69e92ee9",
+      "frame": "iphone18-bezel.png",
+      "frameSha256": "6cb9e72efb88c172710d0388f63f51fad883c86895ee382fb402559c0315343d",
+      "rotatedFrame": false
+    },
+    {
+      "file": "iphone-compose.webp",
+      "width": 650,
+      "height": 1327,
+      "bytes": 63512,
+      "sha256": "eab69a49a9678fd1c2d95e5472fb7285c910db6d55c89891422a33d4fa38a4ba",
+      "source": "raw/iphone18/v8-compose.png",
+      "sourceSha256": "17052359c91ab57e596d5e95120c0bcbd4e631f6cf0db69e41ed94abb759e716",
+      "frame": "iphone18-bezel.png",
+      "frameSha256": "6cb9e72efb88c172710d0388f63f51fad883c86895ee382fb402559c0315343d",
+      "rotatedFrame": false
+    },
+    {
+      "file": "iphone-terminal.webp",
+      "width": 600,
+      "height": 1224,
+      "bytes": 54444,
+      "sha256": "0abaa2f1fce8950b2f57207f8ad24d17319081ffd838ee0794cf4ecfe12de930",
+      "source": "raw/iphone18/v7-terminal-r2.png",
+      "sourceSha256": "ed7a9b2af25dfc308b900aefc708717aa4066244f7f7364d5fde024cb1f24e26",
+      "frame": "iphone18-bezel.png",
+      "frameSha256": "6cb9e72efb88c172710d0388f63f51fad883c86895ee382fb402559c0315343d",
+      "rotatedFrame": false
+    },
+    {
+      "file": "iphone-files.webp",
+      "width": 600,
+      "height": 1224,
+      "bytes": 40140,
+      "sha256": "9d1130d3af652e56e058d93a133269a7ef9cfae2ef0440a30a002fa66a0034be",
+      "source": "raw/iphone18/new-files.png",
+      "sourceSha256": "7ed788557bd93f46d3c5e706484e7be6b99f967956516ed623ce59ec539f7d42",
+      "frame": "iphone18-bezel.png",
+      "frameSha256": "6cb9e72efb88c172710d0388f63f51fad883c86895ee382fb402559c0315343d",
+      "rotatedFrame": false
+    },
+    {
+      "file": "iphone-trackpad.webp",
+      "width": 600,
+      "height": 1224,
+      "bytes": 35838,
+      "sha256": "488bfd6976cef596b04cc5e763ff5a8c5b00c9aadf8c9aa498df30a94e6c4b9f",
+      "source": "raw/iphone18/03-trackpad.png",
+      "sourceSha256": "57b7e876c952ce7ff06779e460517c4def92b4b714a90a0e99594f57cb468c63",
+      "frame": "iphone18-bezel.png",
+      "frameSha256": "6cb9e72efb88c172710d0388f63f51fad883c86895ee382fb402559c0315343d",
+      "rotatedFrame": false
+    },
+    {
+      "file": "duo-book.webp",
+      "width": 1100,
+      "height": 799,
+      "bytes": 53202,
+      "sha256": "11466aedd2d537175cef5ee42a2a7230e1a62af600feaa2acccd42be149c1d5a",
+      "source": "raw/duo/v8-desktop.png",
+      "sourceSha256": "34287ac50f1af08bd11ada209756d4281be91cad966f97e48a2ffcf26ba0931a",
+      "frame": "duo-bezel.png",
+      "frameSha256": "bd684d4cd2b68756ca008c158b9c0cbfeeb134bf3b5e481b3d0dd02d783211f1",
+      "rotatedFrame": false
+    },
+    {
+      "file": "duo-compose.webp",
+      "width": 1100,
+      "height": 799,
+      "bytes": 57496,
+      "sha256": "31aeb352a5b2ec5f107f666069d4e60853c700a21c8bcb85e78dfa5737672197",
+      "source": "raw/duo/v10-compose-expanded.png",
+      "sourceSha256": "8c9fc0fb8eae1b0b76c17fdd318acf6d62735b77713145692aa4098bce451ce2",
+      "frame": "duo-bezel.png",
+      "frameSha256": "bd684d4cd2b68756ca008c158b9c0cbfeeb134bf3b5e481b3d0dd02d783211f1",
+      "rotatedFrame": false
+    },
+    {
+      "file": "duo-tabletop.webp",
+      "width": 700,
+      "height": 964,
+      "bytes": 45154,
+      "sha256": "52edf71cecfd43c15fb50471de373a61186c86ab891dd2a7e8f40e5a510b3300",
+      "source": "raw/duo/v8-tabletop.png",
+      "sourceSha256": "e09f245056ba278448064151be5281d2ef32b8a53f27adbb5bb5cf57b561e589",
+      "frame": "duo-bezel.png",
+      "frameSha256": "bd684d4cd2b68756ca008c158b9c0cbfeeb134bf3b5e481b3d0dd02d783211f1",
+      "rotatedFrame": true
+    },
+    {
+      "file": "ipad-desktop.webp",
+      "width": 1400,
+      "height": 1073,
+      "bytes": 70498,
+      "sha256": "56fa0d7c95d78da9288fd7e1c911dc92a0c7f285d2ead1578debe769e47d03de",
+      "source": "raw/ipad/v8-desktop.png",
+      "sourceSha256": "2b1a96125f8759e7dae82e4275d7908a10b6cc81639c20347e7b683f797fde48",
+      "frame": "ipad-bezel.png",
+      "frameSha256": "1baa558379ab9e0d7e43089927fe9c7f4a16cc020d0675bc21a8c1c898ca619e",
+      "rotatedFrame": false
+    }
+  ]
+}
