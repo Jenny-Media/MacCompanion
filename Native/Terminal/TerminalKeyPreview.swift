@@ -8,6 +8,7 @@ class TerminalKeyPreviewButton: UIButton {
     var previewAllowed: (() -> Bool)?
     private var bubble: UIView?
     private var anchor: CGRect?
+    private var paneAnchor: CGRect?
     var keyPreviewVisible: Bool { bubble?.superview != nil }
 
     override init(frame: CGRect) {
@@ -26,15 +27,21 @@ class TerminalKeyPreviewButton: UIButton {
         dismissMovedKeyPreview()
     }
     func dismissMovedKeyPreview() {
-        if let window, let anchor, convert(bounds, to: window) != anchor { dismissKeyPreview() }
+        guard keyPreviewVisible else { return }
+        guard let window, let anchor, let paneAnchor,
+              convert(bounds, to: window) == anchor, previewPane(in: window) == paneAnchor else {
+            dismissKeyPreview(); return
+        }
+    }
+    private func previewPane(in window: UIWindow) -> CGRect? {
+        guard let bar = sequence(first: superview, next: { $0?.superview }).compactMap({ $0 as? TerminalKeyboardBar }).first else { return nil }
+        return bar.convert(bar.bounds, to: window).intersection(window.bounds.inset(by: window.safeAreaInsets)).insetBy(dx: 4, dy: 0)
     }
     func showKeyPreview() {
         dismissKeyPreview()
         guard previewsKey, isEnabled, previewAllowed?() == true, let window,
-              let bar = sequence(first: superview, next: { $0?.superview }).compactMap({ $0 as? TerminalKeyboardBar }).first,
-              !UIAccessibility.isVoiceOverRunning else { return }
+              let pane = previewPane(in: window), !UIAccessibility.isVoiceOverRunning else { return }
         let key = convert(bounds, to: window)
-        let pane = bar.convert(bar.bounds, to: window).intersection(window.bounds.inset(by: window.safeAreaInsets)).insetBy(dx: 4, dy: 0)
         guard pane.width >= 44, pane.intersects(key) else { return }
         let content = UIView()
         content.isUserInteractionEnabled = false; content.accessibilityElementsHidden = true
@@ -56,8 +63,8 @@ class TerminalKeyPreviewButton: UIButton {
             icon.contentMode = .center; icon.tintColor = .label
             icon.frame = content.bounds.insetBy(dx: 10, dy: 6); content.addSubview(icon)
         } else { label.frame = content.bounds.insetBy(dx: 10, dy: 6); content.addSubview(label) }
-        window.addSubview(content); bubble = content; anchor = key
+        window.addSubview(content); bubble = content; anchor = key; paneAnchor = pane
     }
-    @objc func dismissKeyPreview() { bubble?.removeFromSuperview(); bubble = nil; anchor = nil }
+    @objc func dismissKeyPreview() { bubble?.removeFromSuperview(); bubble = nil; anchor = nil; paneAnchor = nil }
 }
 #endif

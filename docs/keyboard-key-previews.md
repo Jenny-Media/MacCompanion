@@ -20,3 +20,7 @@ The existing modifier, rejected-admission, toolbar and layout regression tests
 remain applicable. Synthetic Simulator screenshots are test evidence outside
 application Git. They are not physical iPhone, iPad or Duo acceptance; physical
 Duo evaluation uses a future TestFlight candidate.
+
+Active previews also dismiss when their containing pane’s usable bounds change,
+even if the pressed key keeps the same window rectangle. The native regression
+checks a narrower pane with a fixed key and verifies that no input is sent.

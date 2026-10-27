@@ -687,6 +687,19 @@ private final class RemoteAnchorSession: CompanionVNCSession {
         key.sendActions(for: .touchDown); XCTAssertTrue(key.keyPreviewVisible)
         let originalFrame = key.frame; key.frame.origin.x += 2
         key.dismissMovedKeyPreview(); XCTAssertFalse(key.keyPreviewVisible); key.frame = originalFrame
+        key.sendActions(for: .touchDown); XCTAssertTrue(key.keyPreviewVisible)
+        let fixedKey = key.convert(key.bounds, to: window), originalPane = host.bar.frame
+        let safeBounds = window.bounds.inset(by: window.safeAreaInsets)
+        let usablePane = host.bar.convert(host.bar.bounds, to: window).intersection(safeBounds)
+        let parent = try XCTUnwrap(host.bar.superview)
+        let paneInParent = parent.convert(usablePane, from: window)
+        host.bar.frame.size.width = paneInParent.midX - originalPane.minX
+        let narrowerPane = host.bar.convert(host.bar.bounds, to: window).intersection(safeBounds)
+        XCTAssertLessThan(narrowerPane.width, usablePane.width, "Resize the usable pane, including on Duo")
+        XCTAssertEqual(key.convert(key.bounds, to: window), fixedKey, "Only the pane changes, not the pressed key")
+        key.dismissMovedKeyPreview()
+        XCTAssertFalse(key.keyPreviewVisible); XCTAssertTrue(viewer.events.isEmpty)
+        host.bar.frame = originalPane
         key.sendActions(for: .touchDown); key.isEnabled = false
         XCTAssertFalse(key.keyPreviewVisible); XCTAssertTrue(viewer.events.isEmpty)
         host.refresh(); key.sendActions(for: .touchDown)
