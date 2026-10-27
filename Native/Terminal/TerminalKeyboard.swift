@@ -245,7 +245,7 @@ enum TerminalModifierAppearance {
     }
 }
 
-private final class TerminalModifierKeyButton: UIButton {
+private final class TerminalModifierKeyButton: TerminalKeyPreviewButton {
     private let heldMark = UIView()
     private var active = false
     private var modifierHeld = false
@@ -628,6 +628,11 @@ private final class TerminalKeyScrollView: UIScrollView {
                     else { expandToggles.append(key) }
                 }
                 if let savedAction { remoteActionButtons.append((key, savedAction)) }
+                if let preview = key as? TerminalKeyPreviewButton {
+                    preview.previewsKey = !editingPreview && savedAction?.isLocalKeyboardControl != true
+                        && (item.control == nil || item.modifier != nil)
+                    preview.previewAllowed = { [weak self] in self?.inputReady == true && self?.executionActive == false }
+                }
                 if editingPreview, item.control == .expand { expandToggles.append(key) }
                 key.accessibilityLabel = title
                 key.tag = Int(item.palette?.shortcutCode ?? (item.modifier == .ctrl ? 0xffe3 : item.modifier == .alt ? 0xffe9 : item.modifier == .shift ? 0xffe1 : item.modifier == .command ? 0xffeb : 0))
@@ -998,6 +1003,7 @@ private final class TerminalKeyScrollView: UIScrollView {
         updateKeyMetrics()
     }
     private func updateVisibility() {
+        generated.compactMap { $0 as? TerminalKeyPreviewButton }.forEach { $0.dismissKeyPreview() }
         let all = editingPreview && previewShowsAllRows
         for definition in profileRows {
             let hidden = !all && (definition.hidden == true || definition.extra && !showsExtraRows)
@@ -1033,7 +1039,10 @@ private final class TerminalKeyScrollView: UIScrollView {
             scroll.scrollRectToVisible(key.convert(key.bounds, to: scroll), animated: false)
         }
     }
-    override func layoutSubviews() { super.layoutSubviews(); layoutRows() }
+    override func layoutSubviews() {
+        super.layoutSubviews(); layoutRows()
+        generated.compactMap { $0 as? TerminalKeyPreviewButton }.forEach { $0.dismissMovedKeyPreview() }
+    }
     override func didMoveToWindow() { super.didMoveToWindow(); updateKeyMetrics(); prioritizeRowPans(); if window == nil { finishRowReorder(commit: false) } }
     private var keyFont: UIFont { UIFontMetrics(forTextStyle: .body).scaledFont(for: .systemFont(ofSize: 17, weight: .medium), compatibleWith: traitCollection) }
     private var allKeys: [UIButton] { generated + [keyboardButton, keypadButton, expandButton] }
@@ -1067,7 +1076,7 @@ private final class TerminalKeyScrollView: UIScrollView {
         width.isActive = true; keyWidths[ObjectIdentifier(key)] = width
     }
     private func button(_ title: String, symbol: String? = nil, modifier: Bool = false, action: @escaping () -> Void) -> UIButton {
-        let key: UIButton = modifier ? TerminalModifierKeyButton(type: .system) : UIButton(type: .system)
+        let key: UIButton = modifier ? TerminalModifierKeyButton(type: .system) : TerminalKeyPreviewButton(type: .system)
         configureButton(key, title: title, symbol: symbol); generated.append(key)
         let generation = layoutGeneration
         key.addAction(UIAction { [weak self] _ in guard self?.layoutGeneration == generation else { return }; action() }, for: .touchUpInside)

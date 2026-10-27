@@ -40,7 +40,7 @@
         "base": {
           "INFOPLIST_FILE": "DirectScreenSharing-Info.plist",
           "GENERATE_INFOPLIST_FILE": false,
-          "MARKETING_VERSION": "1.0",
+          "MARKETING_VERSION": "1.1",
           "SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD": false,
           "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon",
           "PRODUCT_BUNDLE_IDENTIFIER": "media.jenny.maccompanion.ios",
@@ -179,7 +179,7 @@
           "SWIFT_VERSION": "6.0",
           "IPHONEOS_DEPLOYMENT_TARGET": "26.0",
           "TARGETED_DEVICE_FAMILY": "1,2",
-          "MARKETING_VERSION": "1.0",
+          "MARKETING_VERSION": "1.1",
           "CURRENT_PROJECT_VERSION": "142",
           "CODE_SIGNING_ALLOWED": "YES",
           "APPLICATION_EXTENSION_API_ONLY": "YES",

@@ -649,6 +649,55 @@ private final class RemoteAnchorSession: CompanionVNCSession {
         key.sendActions(for: .touchUpInside)
         XCTAssertEqual(viewer.events.count, 2); XCTAssertTrue(feedback.events.isEmpty, "The shared haptic preference still applies")
     }
+    func testKeyPreviewIsPassiveCancelsAndKeepsExistingInputAdmission() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let viewer = RemoteControlsTestViewer()
+        var profile = TerminalControlsProfile.remoteDefaults
+        profile.freezeKeyboardLayout()
+        let main = try XCTUnwrap(profile.keyboardRows?.firstIndex { $0.kind == .main })
+        profile.keyboardRows![main].placements.insert(.init(item: .key("key-f1")), at: 0)
+        let host = controls(viewer, data: try JSONEncoder().encode(profile))
+        let window = UIWindow(windowScene: scene); window.rootViewController = viewer; window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        viewer.view.backgroundColor = .systemBackground
+        let explanation = UILabel()
+        explanation.text = "Key preview\nLift to send. Slide away to cancel."
+        explanation.numberOfLines = 0; explanation.font = .preferredFont(forTextStyle: .title2)
+        explanation.frame = CGRect(x: 28, y: 100, width: window.bounds.width - 56, height: 100)
+        viewer.view.addSubview(explanation)
+        window.layoutIfNeeded(); viewer.view.layoutIfNeeded()
+        let key = try XCTUnwrap(descendants(host.bar).compactMap { $0 as? TerminalKeyPreviewButton }.first { $0.configuration?.title == "F1" })
+        key.sendActions(for: .touchDown)
+        XCTAssertTrue(key.keyPreviewVisible); XCTAssertTrue(viewer.events.isEmpty)
+        let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
+        let attachment = XCTAttachment(image: image); attachment.name = "keyboard-key-preview"; attachment.lifetime = .keepAlways; add(attachment)
+        let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        try image.pngData()?.write(to: folder.appending(path: "keyboard-key-preview.png"))
+        key.sendActions(for: .touchDragExit)
+        XCTAssertFalse(key.keyPreviewVisible); XCTAssertTrue(viewer.events.isEmpty)
+        key.sendActions(for: .touchDragEnter); XCTAssertTrue(key.keyPreviewVisible)
+        key.sendActions(for: .touchCancel); XCTAssertFalse(key.keyPreviewVisible); XCTAssertTrue(viewer.events.isEmpty)
+        key.sendActions(for: .touchDown); key.sendActions(for: .touchUpInside)
+        XCTAssertFalse(key.keyPreviewVisible); XCTAssertEqual(viewer.events.count, 2, "One balanced remote key only")
+        viewer.events = []
+        key.sendActions(for: .touchDown); host.keyboardBar.showsExtraRows.toggle()
+        XCTAssertFalse(key.keyPreviewVisible); XCTAssertTrue(viewer.events.isEmpty)
+        viewer.view.layoutIfNeeded()
+        key.sendActions(for: .touchDown); XCTAssertTrue(key.keyPreviewVisible)
+        let originalFrame = key.frame; key.frame.origin.x += 2
+        key.dismissMovedKeyPreview(); XCTAssertFalse(key.keyPreviewVisible); key.frame = originalFrame
+        key.sendActions(for: .touchDown); key.isEnabled = false
+        XCTAssertFalse(key.keyPreviewVisible); XCTAssertTrue(viewer.events.isEmpty)
+        host.refresh(); key.sendActions(for: .touchDown)
+        host.keyboardBar.executionActive = true
+        XCTAssertFalse(key.keyPreviewVisible); XCTAssertTrue(viewer.events.isEmpty)
+        host.keyboardBar.executionActive = false; host.refresh(); key.sendActions(for: .touchDown)
+        NotificationCenter.default.post(name: UIApplication.willResignActiveNotification, object: nil)
+        XCTAssertFalse(key.keyPreviewVisible)
+        key.sendActions(for: .touchDown); key.removeFromSuperview()
+        XCTAssertFalse(key.keyPreviewVisible); XCTAssertTrue(viewer.events.isEmpty)
+    }
     func testOneShotLockedAndModifierAloneHaveSeparateBalancedBehavior() throws {
         let viewer = RemoteControlsTestViewer(), host = controls(viewer)
         host.keyboardBar.toggle(.ctrl)
