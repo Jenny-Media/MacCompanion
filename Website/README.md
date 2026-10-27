@@ -40,8 +40,11 @@ sample-content disclosure, and proportional export details. The app's native
 catalogs and signing configuration are independent.
 
 App artwork originates in `../Branding/app-icon.png`; the website retains its
-approved exported icon. Light, dark, and system appearance are supported on every
-route. Public navigation does not expose the unlisted beta invitation.
+approved exported icon. Appearance follows the system until the visitor chooses
+a theme. Each click on the header button visibly switches between light and
+dark and saves that choice across routes and reloads. Existing saved System
+preferences still follow the OS. Public navigation does not expose the unlisted
+beta invitation.
 
 Fonts use the system stack; artwork, styles and scripts are served from the site.
 The only browser storage is appearance preference. Product privacy disclosures

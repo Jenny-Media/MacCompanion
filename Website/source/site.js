@@ -3,14 +3,24 @@
   let mode = 'system';
   try { const saved = localStorage.getItem('maccompanion-appearance'); if (modes.includes(saved)) mode = saved; } catch {}
   const system = matchMedia('(prefers-color-scheme: dark)');
-  function apply() { document.documentElement.dataset.theme = mode === 'system' ? (system.matches ? 'dark' : 'light') : mode; }
+  let theme;
+  function appearance() { return mode === 'system' ? (system.matches ? 'dark' : 'light') : mode; }
+  function apply() {
+    const current = appearance();
+    document.documentElement.dataset.theme = current;
+    if (theme) {
+      const next = current === 'dark' ? 'light' : 'dark';
+      const label = `Appearance: ${current}${mode === 'system' ? ' (system)' : ''}. Switch to ${next}`;
+      theme.setAttribute('aria-label', label);
+      theme.title = label;
+    }
+  }
   apply();
   system.addEventListener('change', apply);
   document.addEventListener('DOMContentLoaded', () => {
-    const theme = document.querySelector('.theme-toggle');
-    function label() { const next = modes[(modes.indexOf(mode) + 1) % modes.length]; theme.setAttribute('aria-label', `Appearance: ${mode}. Switch to ${next}`); theme.title = `Appearance: ${mode}. Switch to ${next}`; }
-    label();
-    theme.addEventListener('click', () => { mode = modes[(modes.indexOf(mode) + 1) % modes.length]; try { localStorage.setItem('maccompanion-appearance', mode); } catch {} apply(); label(); });
+    theme = document.querySelector('.theme-toggle');
+    apply();
+    theme.addEventListener('click', () => { mode = appearance() === 'dark' ? 'light' : 'dark'; try { localStorage.setItem('maccompanion-appearance', mode); } catch {} apply(); });
     const menu = document.querySelector('.menu-toggle');
     const nav = document.querySelector('#site-nav');
     function close() { menu.setAttribute('aria-expanded', 'false'); menu.setAttribute('aria-label', 'Open navigation'); nav.classList.remove('open'); }
