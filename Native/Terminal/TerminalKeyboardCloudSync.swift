@@ -170,14 +170,14 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
         } catch { readable = false; status = "Keyboard sync history is unavailable. Local layouts are kept." }
         if observeChanges {
             let willChange = NotificationCenter.default.addObserver(forName: TerminalControlsStore.willChange, object: nil, queue: .main) { [weak self] note in
-                guard let raw = note.object as? String else { return }
+                guard note.userInfo?["cloudImport"] as? Bool != true, let raw = note.object as? String else { return }
                 MainActor.assumeIsolated {
                     guard let self, self.stores[raw] != nil else { return }
                     self.prepareForLocalSave()
                 }
             }
             let changed = NotificationCenter.default.addObserver(forName: TerminalControlsStore.changed, object: nil, queue: .main) { [weak self] note in
-                guard let raw = note.object as? String, let family = TerminalControlsFamily(rawValue: raw) else { return }
+                guard note.userInfo?["cloudImport"] as? Bool != true, let raw = note.object as? String, let family = TerminalControlsFamily(rawValue: raw) else { return }
                 MainActor.assumeIsolated { self?.localChange(family) }
             }
             let prepared = NotificationCenter.default.addObserver(forName: TerminalControlsStore.prepared, object: nil, queue: .main) { [weak self] note in
@@ -352,7 +352,7 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
                     self.applying = true
                     defer { self.applying = false }
                     for (name, store, profile) in changes {
-                        let saved = try store.save(profile)
+                        let saved = try store.save(profile, cloudImport: true)
                         self.observed[name] = try Self.fingerprint(DirectCloudKeyboardLayout(saved))
                     }
                 }
@@ -366,9 +366,9 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
                     if !self.pending.isEmpty {
                         self.status = "Some keyboard layouts couldn’t sync. Local controls are kept on this device; large layouts may exceed the sync limit."
                     } else if waitingForControls {
-                        self.status = "Some keyboard rows are waiting for you to open their controls. Saved shortcuts and text stay on this device."
+                        self.status = "Some keyboard rows are waiting for you to open their controls. Saved-content sync has its own setting."
                     } else {
-                        self.status = "Keyboard rows and built-in key choices sync. Saved shortcuts and text stay on this device."
+                        self.status = "Keyboard rows and built-in key choices sync. Saved-content sync has its own setting."
                     }
                 }
             } catch {

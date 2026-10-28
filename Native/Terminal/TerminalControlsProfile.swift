@@ -825,6 +825,22 @@ struct TerminalControlsProfile: Codable, Equatable {
         Dictionary(uniqueKeysWithValues: [DirectControlMode.desktop, .trackpad].map { ($0.rawValue, $0.defaults) })
     }
 
+    /// Content sync observes only committed identities, never provisional legacy collision UUIDs.
+    func savedControlsCloudProfile() throws -> TerminalControlsProfile? {
+        guard DirectAppLockV1.shared.canAccess else { throw TerminalSecretStore.Failure.locked }
+        guard let data = try read() else { return nil }
+        guard data.count <= 20 * 1024 * 1024 else { throw Failure.unreadable }
+        let format = try JSONDecoder().decode(Format.self, from: data); try format.checkSupported()
+        guard format.version == TerminalControlsProfile.currentVersion,
+              format.rowsSchema == TerminalControlsProfile.currentRowsSchema else { return nil }
+        let profile = try JSONDecoder().decode(TerminalControlsProfile.self, from: data)
+        guard profile.valid, (profile.family ?? .terminal) == family else { throw Failure.unreadable }
+        if family == .remoteMac && profile.remoteMenus == nil { return nil }
+        let pending = Set(try legacyIDs()).subtracting(excludedIDs())
+        guard pending.isSubset(of: profile.importedMacs) else { return nil }
+        return profile
+    }
+
     /// Remote layouts must wait for the existing context-aware menu migration.
     /// A context-free sync reader cannot create that shared local profile.
     func keyboardCloudReady() throws -> Bool {
@@ -888,16 +904,16 @@ struct TerminalControlsProfile: Codable, Equatable {
         if family == .remoteMac { profile.selectRemoteMenu(remoteMode) }
         return profile
     }
-    func save(_ draft: TerminalControlsProfile) throws -> TerminalControlsProfile {
+    func save(_ draft: TerminalControlsProfile, cloudImport: Bool = false) throws -> TerminalControlsProfile {
         try Format(version: draft.version, rowsSchema: draft.rowsSchema).checkSupported()
         guard draft.rowsSchema == TerminalControlsProfile.currentRowsSchema else { throw Failure.unreadable }
         let current = try load()
         guard current.revision == draft.revision else { throw Failure.staleDraft }
         guard draft.valid, draft.importedMacs == current.importedMacs else { throw Failure.unreadable }
         var result = draft; result.freezeKeyboardLayout(); result.captureRemoteMenu(); result.revision = UUID()
-        NotificationCenter.default.post(name: Self.willChange, object: family.rawValue)
+        NotificationCenter.default.post(name: Self.willChange, object: family.rawValue, userInfo: ["cloudImport": cloudImport])
         try persist(result)
-        NotificationCenter.default.post(name: Self.changed, object: family.rawValue)
+        NotificationCenter.default.post(name: Self.changed, object: family.rawValue, userInfo: ["cloudImport": cloudImport])
         return result
     }
     private func persist(_ profile: TerminalControlsProfile) throws {

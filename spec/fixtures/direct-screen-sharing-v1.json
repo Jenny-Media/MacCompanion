@@ -1034,6 +1034,59 @@
           "writer UUID"
         ],
         "deletionUsesExistingCloudDataRemoval": true
+      },
+      "savedControls": {
+        "introducedVersion": "1.1",
+        "platforms": [
+          "iOS",
+          "iPadOS"
+        ],
+        "service": "media.jenny.maccompanion.cloud-saved-controls.v1",
+        "defaultEnabled": false,
+        "requiresMainSync": true,
+        "requiresSeparateConsent": true,
+        "optInIsDeviceLocal": true,
+        "includes": [
+          "shortcut definitions",
+          "saved text",
+          "keyboard button positions",
+          "floating-menu favorites"
+        ],
+        "excludes": [
+          "passwords",
+          "SSH private keys",
+          "trusted host identities",
+          "live input",
+          "composer drafts",
+          "clipboard",
+          "session history"
+        ],
+        "maximumLogicalBytes": 32768,
+        "pieceBytes": 2000,
+        "maximumWireBytes": 4096,
+        "maximumWireRecords": 512,
+        "conflictOrder": [
+          "revision",
+          "writer UUID"
+        ],
+        "mergeUnit": "definition UUID and controls family",
+        "nilValueIsTombstone": true,
+        "writePiecesBeforeHead": true,
+        "requireCompleteGenerationAndDigest": true,
+        "incompleteDeliveryPreservesLocalContent": true,
+        "localJournal": "non-synchronizing Keychain",
+        "journalFetchedClocksBeforeImport": true,
+        "cloudImportsAreNotLocalEdits": true,
+        "missingRowFallsBackToMain": true,
+        "importExecutesActions": false,
+        "disableRetainsCloudCopy": true,
+        "deletionDrainsAdmittedWrites": true,
+        "existingCloudRemovalIncludesContentWhenOff": true,
+        "deletionClearsContentOptIn": true,
+        "generationDerivedFromContentDigest": true,
+        "consentBoundToDeviceWriter": true,
+        "durableMigrationIdentitiesBeforeProjection": true,
+        "deleteIndependentOfMacJournalReadability": true
       }
     },
     "terminalKeyboard": {

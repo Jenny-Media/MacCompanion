@@ -183,8 +183,8 @@ struct DirectSyncSecurityForm: View {
         }.directGroupedForm()
         .sheet(item: $sheet) { item in
             #if os(iOS)
-            if item == .enableSync {
-                DirectCloudEnableSheet(cloud: cloud).directAppearance()
+            if item == .enableSync || item == .enableSavedContent {
+                DirectCloudEnableSheet(cloud: cloud, savedContentOnly: item == .enableSavedContent).directAppearance()
             } else {
                 DirectCloudInformationSheet(kind: item, cloud: cloud).directAppearance()
             }
@@ -223,6 +223,18 @@ private struct DirectCloudSettingsSection: View {
         #if os(iOS)
         items.append("Keyboard row names, order, appearance and built-in key choices")
         #endif
+        #if os(iOS)
+        if cloud.savedControlsEnabled { items.append("Session shortcuts, saved text and their keyboard/menu positions") }
+        #endif
+        return items
+    }
+    private var localItems: [String] {
+        var items = ["Passwords and SSH keys", "Trusted Mac identities", "Appearance and app-lock settings"]
+        #if os(iOS)
+        if !cloud.savedControlsEnabled { items.append("Saved shortcuts, text and their keyboard buttons") }
+        #else
+        items.append("Saved shortcuts, text and their keyboard buttons")
+        #endif
         return items
     }
     var body: some View {
@@ -246,12 +258,28 @@ private struct DirectCloudSettingsSection: View {
                     Text(cloud.status)
                 }.font(.footnote).foregroundStyle(.secondary)
             }
+            #if os(iOS)
+            Toggle("Sync shortcuts & saved text", isOn: Binding(get: { cloud.savedControlsEnabled }, set: {
+                if $0 { present(.enableSavedContent) } else { cloud.setSavedControlsEnabled(false) }
+            })).disabled(cloud.busy || !cloud.savedControlsEnabled && !cloud.canEnableSavedControls)
+                .accessibilityIdentifier("icloud-saved-content-toggle")
+            if cloud.savedControlsEnabled, let status = cloud.savedControlsSyncStatus {
+                Text(status).font(.footnote).foregroundStyle(.secondary)
+            } else {
+                Text(cloud.enabled ? "Optional. Share saved content and its button positions across your devices." : "Enable iCloud Sync to share shortcuts and saved text.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            #endif
             DisclosureGroup("What Syncs") {
                 VStack(alignment: .leading, spacing: 12) {
                     DirectInformationGroup(title: "Across devices", symbol: "icloud", items: syncedItems)
                     Divider()
+                    #if os(iOS)
+                    DirectInformationGroup(title: "On this device", symbol: "icloud.slash", items: localItems)
+                    #else
                     DirectInformationGroup(title: "On this device", symbol: "lock.shield", items: [
                         "Passwords and SSH keys", "Trusted Mac identities", "Saved shortcuts, text and their keyboard buttons", "Appearance and app-lock settings"])
+                    #endif
                 }
             }
             DisclosureGroup("Manage Sync") {
@@ -279,7 +307,7 @@ private struct DirectCloudSettingsSection: View {
 enum DirectCloudSheet: String, Identifiable {
     case credentials, deleteData
     #if os(iOS)
-    case enableSync
+    case enableSync, enableSavedContent
     #endif
     var id: String { rawValue }
 }
@@ -287,6 +315,10 @@ enum DirectCloudSheet: String, Identifiable {
 #if os(iOS)
 private struct DirectCloudEnableSheet: View {
     let cloud: DirectCloudSyncV1
+    let savedContentOnly: Bool
+    init(cloud: DirectCloudSyncV1, savedContentOnly: Bool = false) {
+        self.cloud = cloud; self.savedContentOnly = savedContentOnly
+    }
     @State private var lock = DirectAppLockV1.shared
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -295,29 +327,36 @@ private struct DirectCloudEnableSheet: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                Text("Enable iCloud Sync?").font(.title2.bold()).accessibilityAddTraits(.isHeader)
-                summary("Syncs", symbol: "icloud", detail: "Saved Macs and keyboard layouts.")
+                Text(savedContentOnly ? "Sync shortcuts & saved text?" : "Enable iCloud Sync?").font(.title2.bold()).accessibilityAddTraits(.isHeader)
+                summary("Syncs", symbol: "icloud", detail: savedContentOnly
+                    ? "Session shortcuts, saved text and their button positions."
+                    : cloud.savedControlsEnabled ? "Saved Macs, keyboard layouts, shortcuts and saved text." : "Saved Macs and keyboard layouts.")
                     .accessibilityIdentifier("icloud-enable-synced")
                 summary("Stays on this device", symbol: "icloud.slash",
-                    detail: "Passwords, SSH keys, session shortcuts and saved text.")
+                    detail: savedContentOnly || cloud.savedControlsEnabled
+                        ? "Passwords, SSH keys and trusted Mac identities." : "Passwords, SSH keys, session shortcuts and saved text.")
                     .accessibilityIdentifier("icloud-enable-local")
-                Text("Uses iCloud Keychain").font(.footnote).foregroundStyle(.secondary)
+                if savedContentOnly {
+                    Text("Saved content may include private information.").font(.footnote).foregroundStyle(.secondary)
+                }
+                Text("Encrypted iCloud sync").font(.footnote).foregroundStyle(.secondary)
             }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 8) {
                 Button {
-                    guard lock.canAccess, !cloud.busy else { return }
-                    cloud.setEnabled(true)
+                    guard lock.canAccess, !cloud.busy, !savedContentOnly || cloud.enabled else { return }
+                    if savedContentOnly { cloud.setSavedControlsEnabled(true) } else { cloud.setEnabled(true) }
                     dismiss()
                 } label: {
-                    Text("Enable Sync").font(.headline).frame(maxWidth: .infinity, minHeight: 32)
+                    Text(savedContentOnly ? "Enable Content Sync" : "Enable Sync").font(.headline).frame(maxWidth: .infinity, minHeight: 32)
                 }
                 .buttonStyle(.borderedProminent).controlSize(.large)
-                .disabled(cloud.busy || !lock.canAccess).accessibilityIdentifier("icloud-enable-confirm")
+                .disabled(cloud.busy || !lock.canAccess || savedContentOnly && !cloud.canEnableSavedControls)
+                .accessibilityIdentifier(savedContentOnly ? "icloud-saved-content-confirm" : "icloud-enable-confirm")
                 Button("Cancel", role: .cancel) { dismiss() }
                     .frame(maxWidth: .infinity, minHeight: 44).buttonStyle(.plain)
-                    .accessibilityIdentifier("icloud-enable-cancel")
+                    .accessibilityIdentifier(savedContentOnly ? "icloud-saved-content-cancel" : "icloud-enable-cancel")
             }.padding(.horizontal, 24).padding(.vertical, 12).background(.bar)
         }
         .presentationSizing(.form)
@@ -362,17 +401,26 @@ struct DirectCloudInformationSheet: View {
                         DirectInformationGroup(title: "How Mac entries sync", symbol: "icloud", items: [
                             "Uses iCloud Keychain with your Apple Account and trusted devices.",
                             "Enable iCloud Keychain on every device you want to sync."])
+                        #if os(iOS)
+                        DirectInformationGroup(title: "Optional saved content", symbol: "text.quote", items: [
+                            "Session shortcuts, saved text and their button positions sync only after you enable their separate setting.",
+                            "The choice starts off on every device. Saved content may contain private information."])
+                        #endif
                         Link("About iCloud Keychain security", destination: URL(string: "https://support.apple.com/en-us/102651")!)
                     } else {
                         #if os(iOS)
                         DirectInformationGroup(title: "Delete from iCloud", symbol: "icloud.slash", items: [
-                            "Saved Mac entries, synced desktop preferences and keyboard layouts."])
+                            "Saved Mac entries, synced desktop preferences, keyboard layouts and any synced shortcuts or saved text."])
                         #else
                         DirectInformationGroup(title: "Delete from iCloud", symbol: "icloud.slash", items: [
                             "Saved Mac entries and their synced desktop preferences."])
                         #endif
                         DirectInformationGroup(title: "Keep on this device", symbol: "internaldrive", items: [
                             "Your saved Macs, passwords, SSH keys and local preferences."])
+                        #if os(iOS)
+                        Text("Your local shortcuts and saved text are kept. Their additional sync setting will be turned off.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                        #endif
                         DirectInformationGroup(title: "Before you continue", symbol: "exclamationmark.triangle", items: [
                             "Turn off Mac Companion sync on your other devices first. Otherwise they may upload their saved Macs again.",
                             "This turns sync off on this device. Removal may take a moment to reach other devices.",

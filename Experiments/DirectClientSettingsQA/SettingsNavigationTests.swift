@@ -56,7 +56,7 @@ import UIKit
                 for _ in 0..<4 where !row.isHittable { app.swipeUp() }
                 XCTAssertTrue(row.isHittable)
             }
-            let footer = app.staticTexts["Uses iCloud Keychain"]
+            let footer = app.staticTexts["Encrypted iCloud sync"]
             for _ in 0..<4 where !footer.isHittable { app.swipeUp() }
             XCTAssertTrue(footer.isHittable)
             let confirm = app.buttons["icloud-enable-confirm"]
