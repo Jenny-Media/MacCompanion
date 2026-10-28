@@ -336,6 +336,13 @@ struct TerminalControlsProfile: Codable, Equatable {
     var shortcutOrder: [UUID]?
     var textOrder: [UUID]?
     var rowsSchema: Int? = Self.currentRowsSchema
+    #if os(iOS)
+    var localCloudState: DirectControlsLocalSyncState?
+    var syncState: DirectControlsLocalSyncState {
+        get { localCloudState ?? .init() }
+        set { localCloudState = newValue }
+    }
+    #endif
     /// Old flat placements remain on the main row. New rows reference the same
     /// saved definitions, and never copy or discard their content.
     var resolvedRows: [TerminalKeyboardRow] {
@@ -649,7 +656,10 @@ struct TerminalControlsProfile: Codable, Equatable {
         } else if !enabled { removeBarItem(.saved(id)) }
     }
     var valid: Bool {
-        version == Self.currentVersion && (rowsSchema.map { (1...Self.currentRowsSchema).contains($0) } ?? true) && actions.count <= 4096 && importedMacs.count <= 4096
+        #if os(iOS)
+        guard (try? syncState.validate(family: family ?? .terminal)) != nil else { return false }
+        #endif
+        return version == Self.currentVersion && (rowsSchema.map { (1...Self.currentRowsSchema).contains($0) } ?? true) && actions.count <= 4096 && importedMacs.count <= 4096
             && Set(actions.map(\.id)).count == actions.count && actions.allSatisfy(\.valid)
             && (family == .remoteMac || !actions.contains { $0.operation?.remoteOnly == true })
             && validRemoteMenus
@@ -917,13 +927,28 @@ struct TerminalControlsProfile: Codable, Equatable {
         if family == .remoteMac { profile.selectRemoteMenu(remoteMode) }
         return profile
     }
-    func save(_ draft: TerminalControlsProfile, cloudImport: Bool = false) throws -> TerminalControlsProfile {
+    func save(_ draft: TerminalControlsProfile, cloudImport: Bool = false, captureSavedImport: Bool = false, captureLayoutImport: Bool = false) throws -> TerminalControlsProfile {
         try Format(version: draft.version, rowsSchema: draft.rowsSchema).checkSupported()
         guard draft.rowsSchema == TerminalControlsProfile.currentRowsSchema else { throw Failure.unreadable }
         let current = try load()
         guard current.revision == draft.revision else { throw Failure.staleDraft }
         guard draft.valid, draft.importedMacs == current.importedMacs else { throw Failure.unreadable }
         var result = draft; result.freezeKeyboardLayout(); result.captureRemoteMenu(); result.revision = UUID()
+        #if os(iOS)
+        if captureLayoutImport {
+            var state = result.syncState
+            state.layoutImport = .init(observed: try DirectControlsCausality.fingerprint(DirectCloudKeyboardLayout(result)))
+            result.syncState = state
+        }
+        if captureSavedImport {
+            let projected = DirectCloudSavedControl.project(result)
+            var state = result.syncState
+            state.savedImport = .init(observed: try Dictionary(uniqueKeysWithValues: projected.map {
+                ($0.key.uuidString.lowercased(), try DirectControlsCausality.fingerprint($0.value))
+            }))
+            result.syncState = state
+        }
+        #endif
         NotificationCenter.default.post(name: Self.willChange, object: family.rawValue, userInfo: ["cloudImport": cloudImport])
         try persist(result)
         NotificationCenter.default.post(name: Self.changed, object: family.rawValue, userInfo: ["cloudImport": cloudImport])

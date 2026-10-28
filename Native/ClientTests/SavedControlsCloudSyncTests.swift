@@ -701,5 +701,204 @@ private final class SavedContentMemoryCloud: DirectCloudTransport, @unchecked Se
         XCTAssertFalse(try versions(raw).contains { $0.writer == writerB }, "An imported fallback is not a local layout edit")
         one.setEnabled(false); two.setEnabled(false)
     }
+    func testDeletionAfterFailedImportHistorySurvivesRetryAndRestart() async throws {
+        for restart in [false, true] {
+            let action = text(), raw = SavedContentMemoryCloud(), a = try Profile(profile(action)), b = try Profile()
+            let one = engine(a, Journal(), raw); one.setEnabled(true); try await wait(one)
+            let writer = UUID(), journal = Journal()
+            let two = engine(b, journal, raw, writer: writer)
+            journal.failAtWrite = journal.writes + 3
+            two.setEnabled(true); try await wait(two)
+            XCTAssertNotNil(try b.store.load().actions.first { $0.id == action.id })
+            XCTAssertTrue(two.status.contains("history"))
+            var edited = try b.store.load(); edited.delete(action.id); _ = try b.store.save(edited)
+            journal.failAtWrite = nil
+            let recovered: DirectSavedControlsCloudSync
+            if restart { two.setEnabled(false); recovered = engine(b, journal, raw, writer: writer); recovered.setEnabled(true) }
+            else { recovered = two; recovered.retry() }
+            try await wait(recovered)
+            XCTAssertNil(try b.store.load().actions.first { $0.id == action.id }, "Deleted imported content must stay deleted")
+            let records = try versions(raw)
+            let key = b.family.rawValue + "." + action.id.uuidString.lowercased()
+            XCTAssertNil(DirectCloudSavedVersion.winners(records)[key]?.value)
+            one.setEnabled(false); recovered.setEnabled(false)
+        }
+    }
+
+    func testOfflineEditsKeepLosingTextOnceAndSequentialEditsStayQuiet() async throws {
+        let action = text("base"), raw = SavedContentMemoryCloud()
+        let a = try Profile(profile(action)), b = try Profile(), ja = Journal(), jb = Journal()
+        let writerA = UUID(), writerB = UUID()
+        let one = engine(a, ja, raw, writer: writerA), two = engine(b, jb, raw, writer: writerB)
+        one.setEnabled(true); try await wait(one); two.setEnabled(true); try await wait(two)
+        one.setEnabled(false); two.setEnabled(false)
+        var left = try a.store.load(); left.actions[left.actions.firstIndex { $0.id == action.id }!].text = "first offline edit"
+        _ = try a.store.save(left); one.localChange()
+        var right = try b.store.load(); right.actions[right.actions.firstIndex { $0.id == action.id }!].text = "second offline edit"
+        _ = try b.store.save(right); two.localChange()
+        one.setEnabled(true); try await wait(one)
+        two.setEnabled(true); try await wait(two); one.refresh(); try await wait(one)
+        XCTAssertEqual(try a.store.load().actions.first { $0.id == action.id }?.text, "second offline edit")
+        for memory in [a, b] {
+            XCTAssertEqual(try memory.store.load().syncState.recovered.compactMap { $0.control?.action.text }, ["first offline edit"])
+        }
+        let library = DirectControlsRecoveryLibrary(stores: [.terminal: b.store])
+        XCTAssertTrue(library.discard(try XCTUnwrap(library.entries.first)))
+        two.refresh(); try await wait(two); XCTAssertTrue(library.entries.isEmpty)
+        two.setEnabled(false)
+        let restarted = engine(b, jb, raw, writer: writerB); restarted.setEnabled(true); try await wait(restarted)
+        XCTAssertTrue(library.entries.isEmpty, "Dismissed copies must not return after restart")
+        var sequential = try b.store.load(); sequential.actions[sequential.actions.firstIndex { $0.id == action.id }!].text = "later ordinary edit"
+        _ = try b.store.save(sequential); restarted.localChange(); try await wait(restarted)
+        one.refresh(); try await wait(one)
+        XCTAssertEqual(try a.store.load().actions.first { $0.id == action.id }?.text, "later ordinary edit")
+        XCTAssertTrue(library.entries.isEmpty, "Successors are not conflicts")
+        XCTAssertEqual(try a.store.load().syncState.recovered.count, 1, "Ordinary sync adds no recovery copy")
+        one.setEnabled(false); restarted.setEnabled(false)
+    }
+
+    func testConcurrentDeletionKeepsEditRecoverableAndRestoresSeparateCopy() async throws {
+        for deletionFirst in [false, true] {
+            let action = text("base"), raw = SavedContentMemoryCloud(), a = try Profile(profile(action)), b = try Profile()
+            let one = engine(a, Journal(), raw), two = engine(b, Journal(), raw)
+            one.setEnabled(true); try await wait(one); two.setEnabled(true); try await wait(two)
+            one.setEnabled(false); two.setEnabled(false)
+            var deleted = try a.store.load(); deleted.delete(action.id); _ = try a.store.save(deleted); one.localChange()
+            var edited = try b.store.load(); edited.actions[edited.actions.firstIndex { $0.id == action.id }!].text = "keep this conflicting edit"
+            _ = try b.store.save(edited); two.localChange()
+            let first = deletionFirst ? one : two, second = deletionFirst ? two : one
+            first.setEnabled(true); try await wait(first); second.setEnabled(true); try await wait(second)
+            first.refresh(); try await wait(first)
+            XCTAssertNil(try a.store.load().actions.first { $0.id == action.id })
+            XCTAssertNil(try b.store.load().actions.first { $0.id == action.id })
+            let recovery = DirectControlsRecoveryLibrary(stores: [.terminal: b.store])
+            let entry = try XCTUnwrap(recovery.entries.first)
+            XCTAssertEqual(entry.control?.action.text, "keep this conflicting edit")
+            XCTAssertTrue(recovery.restore(entry)); two.localChange(); try await wait(two)
+            let restored = try b.store.load()
+            XCTAssertNil(restored.actions.first { $0.id == action.id })
+            let copy = try XCTUnwrap(restored.actions.first { $0.text == "keep this conflicting edit" })
+            XCTAssertNotEqual(copy.id, action.id); XCTAssertTrue(copy.title.hasSuffix("(Recovered copy)"))
+            XCTAssertTrue(restored.resolvedRows.flatMap(\.actionIDs).contains(copy.id))
+            XCTAssertTrue(recovery.entries.isEmpty)
+            one.setEnabled(false); two.setEnabled(false)
+        }
+    }
+
+    func testUnappliedImportDoesNotBecomePhantomDeletion() async throws {
+        let action = text(), raw = SavedContentMemoryCloud(), a = try Profile(profile(action)), b = try Profile()
+        let one = engine(a, Journal(), raw); one.setEnabled(true); try await wait(one)
+        var failSave = true, store = b.store
+        store.write = { if failSave { throw DirectCloudError.storage }; b.data = $0 }
+        let journal = Journal(), writer = UUID()
+        let two = DirectSavedControlsCloudSync(writer: writer, transport: DirectSavedControlsTransport(base: raw),
+            stores: ["terminal": store], observeChanges: false, readJournal: { try journal.read() }, writeJournal: { try journal.write($0) })
+        two.setEnabled(true); try await wait(two); XCTAssertNotNil(two.issue)
+        XCTAssertNil(try b.store.load().actions.first { $0.id == action.id })
+        failSave = false; two.retry(); try await wait(two)
+        XCTAssertNotNil(try b.store.load().actions.first { $0.id == action.id })
+        XCTAssertFalse(try versions(raw).contains { $0.writer == writer && $0.value == nil })
+        one.setEnabled(false); two.setEnabled(false)
+    }
+
+    func testDifferentConcurrentDefinitionsMergeWithoutRecoveries() async throws {
+        let raw = SavedContentMemoryCloud(), first = text("one"), second = text("two")
+        let a = try Profile(profile(first)), b = try Profile(profile(second))
+        let one = engine(a, Journal(), raw), two = engine(b, Journal(), raw)
+        one.setEnabled(true); try await wait(one); two.setEnabled(true); try await wait(two)
+        one.refresh(); try await wait(one)
+        for memory in [a,b] {
+            let loaded = try memory.store.load()
+            XCTAssertTrue(Set([first.id,second.id]).isSubset(of: Set(loaded.actions.map(\.id))))
+            XCTAssertTrue(loaded.syncState.recovered.isEmpty)
+        }
+        one.setEnabled(false); two.setEnabled(false)
+    }
+
+    func testRecoveredShortcutsAreInspectableDataAndProjectionExcludesHistory() throws {
+        var action = TerminalControlAction(title: "Synthetic shortcut", kind: .shortcut)
+        action.character = 0x61; action.modifiers = [0xffe3]
+        let saved = try XCTUnwrap(DirectCloudSavedControl.project(profile(action))[action.id])
+        var local = TerminalControlsProfile.defaults, state = local.syncState
+        let entry = DirectControlsRecoveredChange(id: "synthetic-shortcut-recovery", family: .terminal, control: saved)
+        state.recovered = [entry]; local.syncState = state
+        let memory = try Profile(local), library = DirectControlsRecoveryLibrary(stores: [.terminal: memory.store])
+        XCTAssertTrue(DirectCloudSavedControl.project(local).isEmpty, "Recovery is never a cloud definition")
+        XCTAssertTrue(library.restore(entry))
+        let restored = try memory.store.load()
+        XCTAssertEqual(restored.actions.filter { $0.title.hasSuffix("(Recovered copy)") }.count, 1)
+        XCTAssertTrue(restored.syncState.recovered.isEmpty)
+        // Restore writes only a definition; it has no session or input executor.
+    }
+
+    func testRecoverySaveFailureAndLockedAccessPreserveCopies() throws {
+        var local = profile(text("active")), state = local.syncState
+        let value = try XCTUnwrap(DirectCloudSavedControl.project(profile(text("recovered private text"))).values.first)
+        let entry = DirectControlsRecoveredChange(id: "synthetic-storage-recovery", family: .terminal, control: value)
+        state.recovered = [entry]; local.syncState = state
+        let memory = try Profile(local), before = memory.data
+        var store = memory.store; store.write = { _ in throw DirectCloudError.storage }
+        let library = DirectControlsRecoveryLibrary(stores: [.terminal: store])
+        XCTAssertFalse(library.restore(entry)); XCTAssertNotNil(library.error); XCTAssertEqual(memory.data,before)
+        let locked = DirectControlsRecoveryLibrary(stores: [.terminal: memory.store], canAccess: { false })
+        XCTAssertTrue(locked.entries.isEmpty); XCTAssertFalse(locked.discard(entry)); XCTAssertEqual(memory.data,before)
+    }
+
+    func testStartOverCanReseedCurrentContentWithoutClearingRecovery() async throws {
+        let action = text("current local content"), raw = SavedContentMemoryCloud(), memory = try Profile(profile(action))
+        let sync = engine(memory, Journal(), raw)
+        sync.setEnabled(true); try await wait(sync)
+        var local = try memory.store.load(); local.actions[local.actions.firstIndex { $0.id == action.id }!].text = "current updated content"
+        _ = try memory.store.save(local); sync.localChange(); try await wait(sync)
+        try await sync.removeCloudCopies(); XCTAssertTrue(raw.snapshot.isEmpty)
+        XCTAssertEqual(try memory.store.load().actions.first { $0.id == action.id }?.text, "current updated content")
+        sync.setEnabled(true); try await wait(sync)
+        XCTAssertNil(sync.issue)
+        XCTAssertEqual(try versions(raw).first { $0.id == action.id }?.value?.action.text,"current updated content")
+        sync.setEnabled(false)
+    }
+
+    func testStartOverDoesNotRestoreDelayedDeletedDefinition() async throws {
+        let action=text("old deleted value"), raw=SavedContentMemoryCloud(), memory=try Profile(profile(action))
+        let sync=engine(memory,Journal(),raw)
+        sync.setEnabled(true); try await wait(sync)
+        let old=try XCTUnwrap(versions(raw).first { $0.id==action.id })
+        var local=try memory.store.load(); local.delete(action.id); _=try memory.store.save(local)
+        sync.localChange(); try await wait(sync); try await sync.removeCloudCopies()
+        try DirectSavedControlsTransport(base:raw).write(old.encoded(),account:old.account)
+        sync.setEnabled(true); try await wait(sync)
+        XCTAssertNil(try memory.store.load().actions.first { $0.id==action.id })
+        sync.setEnabled(false)
+    }
+
+    func testRecoveryReadWarningClearsAfterStorageRecovers() throws {
+        let action=text("synthetic recoverable text"), value=try XCTUnwrap(DirectCloudSavedControl.project(profile(action))[action.id])
+        var local=TerminalControlsProfile.defaults, state=local.syncState
+        state.recovered=[.init(id:"read-retry",family:.terminal,control:value)]; local.syncState=state
+        let memory=try Profile(local); var fail=true, store=memory.store
+        store.read={ if fail { throw DirectCloudError.storage }; return memory.data }
+        let library=DirectControlsRecoveryLibrary(stores:[.terminal:store])
+        XCTAssertNotNil(library.error); fail=false; library.reload()
+        XCTAssertNil(library.error); XCTAssertEqual(library.entries.count,1)
+    }
+
+    func testRecoveryDiscardWhileOffCannotConsumeResetReseeding() async throws {
+        let action=text("deleted text"), raw=SavedContentMemoryCloud(), memory=try Profile(profile(action))
+        let sync=engine(memory,Journal(),raw,observe:true)
+        sync.setEnabled(true); try await wait(sync)
+        let original=try XCTUnwrap(versions(raw).first { $0.id==action.id })
+        var local=try memory.store.load(); local.delete(action.id)
+        var state=local.syncState
+        state.recovered=[.init(id:"reset-retained-recovery",family:.terminal,control:original.value)]
+        local.syncState=state; _=try memory.store.save(local); try await wait(sync)
+        try await sync.removeCloudCopies()
+        let recovery=DirectControlsRecoveryLibrary(stores:[.terminal:memory.store])
+        XCTAssertTrue(recovery.discard(try XCTUnwrap(recovery.entries.first)))
+        try DirectSavedControlsTransport(base:raw).write(original.encoded(),account:original.account)
+        sync.setEnabled(true); try await wait(sync)
+        XCTAssertNil(try memory.store.load().actions.first { $0.id==action.id })
+        sync.setEnabled(false)
+    }
+
 }
 #endif

@@ -16,7 +16,7 @@ and trust records remain local.
 The isolated `media.jenny.maccompanion.cloud-keyboard-layouts.v1` service does
 not change the 1.0 saved-Mac schema. Older clients ignore this service. Each
 writer retains one bounded version per controls family; revision and writer UUID
-resolve concurrent edits deterministically. A new device reads cloud versions
+resolve causally concurrent edits deterministically, retaining other versions in local recovery. A new device reads cloud versions
 before publishing defaults. Turning sync off preserves cloud records and tracks
 later local edits without cloud access. Remove iCloud Data removes the metadata, layout and saved-content services.
 
@@ -127,3 +127,45 @@ sheet keeps both actions visible and starts taller at ordinary text sizes, with
 a large scrolling presentation for accessibility. Cloud exclusion uses the
 crossed-out cloud; deletion uses a destructive trash action. Local-login details
 are available from What Syncs rather than repeated as a prominent warning.
+
+
+## Conflict recovery
+
+Routine sync stays automatic. Each edit records the per-writer revisions known
+from its last applied profile, including earlier edits on the same device. Fetching
+new data before uploading an offline edit does not make that edit a successor.
+Sequential edits produce no recovery copies. Independent saved definitions merge;
+concurrent edits to the same definition keep the non-selected version in Recovered
+Changes. A concurrent deletion keeps the item out of the active library and keeps
+the edited version recoverable. Layouts select one complete arrangement and retain
+the alternative instead of blending row positions.
+
+Manage Sync shows Recovered Changes only when there are copies or a storage
+notice. Inspect a version, Restore as Copy for saved content, or Use This Layout.
+Restoring saved content creates a new identity and restores its button positions;
+it never runs input. Switching layouts retains the previous layout in recovery.
+Discard actions affect recovery copies only and retain dismissal high-water marks
+so repeated refreshes do not recreate them. Discard All has an explicit confirmation.
+Start over with iCloud uses the existing scoped deletion review; current local
+data and recovery remain. Turning sync back on seeds from current local data.
+
+Recovery payloads, causal baselines and import receipts stay in the device-only
+controls profile. A saved-content import and its baseline are one Keychain write.
+If the following journal write fails, retry/restart compares later local changes
+against that applied receipt; a deleted import cannot return. Keyboard history
+now uses device-only Keychain storage keyed by the local writer, matching controls
+and writer identity. Synthetic file-backed history is also writer-bound, so a
+restored file cannot publish a new device's defaults over cloud customizations.
+Existing unpublished file journals are not migrated or deleted.
+
+
+Keyboard imports also carry a profile-atomic applied-layout receipt. Retry can
+distinguish an unedited import followed by another remote edit from a genuine
+local change back to the pre-import layout. Reset retains causal clocks and
+marks current layouts and known saved-definition deletions for reseeding, so
+delayed old cloud records cannot replace current data when sync is re-enabled.
+
+Reset reseeding remains explicit until new local versions are durably prepared.
+A matching first stale layout cannot consume it. Non-editing notifications such
+as recovery discard cannot consume saved-content reseeding or known deletions.
+Recovery confirmations use alerts with an explicit Cancel on phone and tablet.

@@ -94,9 +94,11 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
     var writer: UUID
     var revision: Int64
     var layout: DirectCloudKeyboardLayout
+    var context: [String: Int64]?
     var account: String { writer.uuidString.lowercased() + "." + family.rawValue }
     func validate() throws {
         guard schema == 1, (1...1_000_000_000).contains(revision) else { throw DirectCloudError.invalid }
+        guard DirectControlsCausality.valid(context ?? [:], before: revision) else { throw DirectCloudError.invalid }
         try layout.validate()
         // Retain the existing synchronizable-Keychain record bound. Oversized
         // local layouts remain usable; they produce a visible sync notice.
@@ -119,8 +121,15 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
         guard merged.count <= 512 else { throw DirectCloudError.invalid }
         return merged.values.sorted { $0.account < $1.account }
     }
+    static func frontier(_ versions: [Self], family: TerminalControlsFamily) -> [Self] {
+        let values = versions.filter { $0.family == family }
+        return values.filter { value in !values.contains { other in
+            other.writer == value.writer ? other.revision > value.revision
+                : DirectControlsCausality.sees(other.context, writer: value.writer, revision: value.revision)
+        } }
+    }
     static func winner(_ versions: [Self], family: TerminalControlsFamily) -> Self? {
-        versions.filter { $0.family == family }.max {
+        frontier(versions, family: family).max {
             $0.revision == $1.revision ? $0.writer.uuidString < $1.writer.uuidString : $0.revision < $1.revision
         }
     }
@@ -131,21 +140,27 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
     static let service = "media.jenny.maccompanion.cloud-keyboard-layouts.v1"
     private struct Journal: Codable {
         var schema = 1
+        var writer: UUID?
+        var appliedImports: [String: UUID]?
         var versions: [DirectCloudKeyboardVersion]
         // Hashes identify projected changes without duplicating private definitions.
         var observed: [String: String]?
         var pending: [String]?
+        var reseeding: [String]?
     }
     private static let maximumJournalBytes = 3_145_728
-    private let url: URL
+    private let readJournalData: @MainActor () throws -> Data?
     private let writer: UUID
     private let transport: any DirectCloudTransport
     private let stores: [String: TerminalControlsStore]
-    private let writeJournal: @MainActor (Data, URL) throws -> Void
+    private let writeJournalData: @MainActor (Data) throws -> Void
     private let canAccess: @MainActor () -> Bool
     private var versions: [DirectCloudKeyboardVersion] = []
     private var observed: [String: String] = [:]
+    private var appliedImports: [String: UUID] = [:]
     private var pending: Set<String> = []
+    private var reseeding: Set<String> = []
+    private var journalLoaded = false
     private var readable = true
     private var enabled = false
     private var applying = false
@@ -156,17 +171,32 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
     private(set) var busy = false
     private(set) var issue: DirectCloudSyncIssue?
     private(set) var status = "Keyboard layout sync is off."
-    init(url: URL, writer: UUID, transport: any DirectCloudTransport = DirectCloudKeychain(service: service),
+    init(url: URL? = nil, writer: UUID, transport: any DirectCloudTransport = DirectCloudKeychain(service: service),
          stores: [String: TerminalControlsStore] = [
             TerminalControlsFamily.terminal.rawValue: .init(),
             TerminalControlsFamily.remoteMac.rawValue: .remoteMac()
          ], observeChanges: Bool = true,
          canAccess: @escaping @MainActor () -> Bool = { DirectAppLockV1.shared.canAccess },
-         writeJournal: @escaping @MainActor (Data, URL) throws -> Void = { try DirectClientPlatformV1.write($0, to: $1) }) {
-        self.url = url; self.writer = writer; self.transport = transport; self.stores = stores
-        self.writeJournal = writeJournal; self.canAccess = canAccess
+         writeJournal: (@MainActor (Data, URL) throws -> Void)? = nil) {
+        self.writer = writer; self.transport = transport; self.stores = stores; self.canAccess = canAccess
+        // File injection is for synthetic tests only. Production history shares
+        // the device-only lifetime of controls and the sync writer identity.
+        if let url {
+            self.readJournalData = {
+                guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+                let file = try FileHandle(forReadingFrom: url); defer { try? file.close() }
+                return try file.read(upToCount: Self.maximumJournalBytes + 1)
+            }
+            self.writeJournalData = { data in
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                if let writeJournal { try writeJournal(data, url) } else { try DirectClientPlatformV1.write(data, to: url) }
+            }
+        } else {
+            self.readJournalData = { try TerminalSecretStore.read(writer, kind: "keyboard-cloud-journal-v1") }
+            self.writeJournalData = { try TerminalSecretStore.write($0, id: writer, kind: "keyboard-cloud-journal-v1") }
+        }
         do {
-            if FileManager.default.fileExists(atPath: url.path) { try readJournal() }
+            if canAccess() { try readJournal() }
             if canAccess(), try captureBaselines() { try persist(versions) }
         } catch { readable = false; issue = .storage; status = "Keyboard sync history is unavailable. Local layouts are kept." }
         if observeChanges {
@@ -196,27 +226,35 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
         return SHA256.hash(data: try encoder.encode(layout)).map { String(format: "%02x", $0) }.joined()
     }
     private func readJournal() throws {
-        let handle = try FileHandle(forReadingFrom: url)
-        defer { try? handle.close() }
-        let data = try handle.read(upToCount: Self.maximumJournalBytes + 1) ?? Data()
+        guard canAccess() else { throw DirectCloudError.locked }
+        guard let data = try readJournalData() else { journalLoaded = true; return }
         guard data.count <= Self.maximumJournalBytes else { throw DirectCloudError.invalid }
         let journal = try JSONDecoder().decode(Journal.self, from: data)
+        guard journal.writer == writer else { versions = []; observed = [:]; pending = []; reseeding = []; appliedImports = [:]; journalLoaded = true; return }
         let families = Set([TerminalControlsFamily.terminal.rawValue, TerminalControlsFamily.remoteMac.rawValue])
-        let hashes = journal.observed ?? [:], waiting = journal.pending ?? []
+        let hashes = journal.observed ?? [:], waiting = journal.pending ?? [], reset = journal.reseeding ?? []
         guard journal.schema == 1, Set(hashes.keys).isSubset(of: families),
+              Set((journal.appliedImports ?? [:]).keys).isSubset(of: families),
               hashes.values.allSatisfy({ $0.count == 64 && $0.allSatisfy { "0123456789abcdef".contains($0) } }),
+              reset.count == Set(reset).count, Set(reset).isSubset(of: families),
               waiting.count == Set(waiting).count, Set(waiting).isSubset(of: Set(hashes.keys)) else { throw DirectCloudError.invalid }
         let checked = try DirectCloudKeyboardVersion.merge([], journal.versions)
-        versions = checked; observed = hashes; pending = Set(waiting)
+        versions = checked; observed = hashes; pending = Set(waiting); reseeding = Set(reset); appliedImports = journal.appliedImports ?? [:]; journalLoaded = true
     }
     /// Establish a baseline before the first save, including when sync is off.
     /// Old journals use their last known winner so a crash before notification
     /// or a failed write cannot turn a later local edit into an untouched default.
     private func captureBaselines() throws -> Bool {
+        if !journalLoaded { try readJournal() }
         var changed = false
         for (name, store) in stores {
-            guard let family = TerminalControlsFamily(rawValue: name), observed[name] == nil else { continue }
-            let layout = DirectCloudKeyboardLayout(try store.load(persistMigrations: false))
+            guard let family = TerminalControlsFamily(rawValue: name) else { continue }
+            let profile = try store.load(persistMigrations: false)
+            if let receipt = profile.syncState.layoutImport, appliedImports[name] != receipt.id {
+                observed[name] = receipt.observed; appliedImports[name] = receipt.id; changed = true
+            }
+            guard observed[name] == nil else { continue }
+            let layout = DirectCloudKeyboardLayout(profile)
             let previous = try store.keyboardCloudReady() ? DirectCloudKeyboardVersion.winner(versions, family: family)?.layout : nil
             observed[name] = try Self.fingerprint(previous ?? layout)
             let value = DirectCloudKeyboardVersion(family: family, writer: writer, revision: 1, layout: layout)
@@ -235,7 +273,7 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
     func retry() {
         if !readable {
             do {
-                if FileManager.default.fileExists(atPath: url.path) { try readJournal() }
+                if canAccess() { try readJournal() }
                 if canAccess(), try captureBaselines() { try persist(versions) }
                 readable = true
             } catch { return }
@@ -244,11 +282,10 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
     }
     private func persist(_ next: [DirectCloudKeyboardVersion]) throws {
         let checked = try DirectCloudKeyboardVersion.merge([], next)
-        let data = try JSONEncoder().encode(Journal(versions: checked, observed: observed, pending: pending.sorted()))
+        let data = try JSONEncoder().encode(Journal(writer: writer, appliedImports: appliedImports, versions: checked, observed: observed, pending: pending.sorted(), reseeding: reseeding.sorted()))
         guard data.count <= Self.maximumJournalBytes else { throw DirectCloudError.invalid }
         do {
-            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try writeJournal(data, url)
+            try writeJournalData(data)
         } catch { readable = false; throw error }
         versions = checked
     }
@@ -270,15 +307,20 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
         guard !applying, readable, canAccess(), let store = stores[family.rawValue] else { return }
         do {
             guard try store.keyboardCloudReady() else { return }
+            if try captureBaselines() { try persist(versions) }
             let layout = DirectCloudKeyboardLayout(try store.load()), name = family.rawValue
             let hash = try Self.fingerprint(layout)
-            guard observed[name] != hash || pending.contains(name) else { return }
+            guard observed[name] != hash || pending.contains(name) || reseeding.contains(name) else { return }
             observed[name] = hash; pending.insert(name)
-            if DirectCloudKeyboardVersion.winner(versions, family: family)?.layout == layout {
+            if !reseeding.contains(name), DirectCloudKeyboardVersion.winner(versions, family: family)?.layout == layout {
                 pending.remove(name); try persist(versions); return
             }
+            let previous = versions.filter { $0.family == family && $0.writer == writer }.map {
+                DirectControlsCausality.including($0.context, writer: $0.writer, revision: $0.revision)
+            }
+            let context = DirectControlsCausality.join([try store.load().syncState.layoutClock] + previous)
             let record = DirectCloudKeyboardVersion(family: family, writer: writer,
-                revision: (versions.map(\.revision).max() ?? 0) + 1, layout: layout)
+                revision: max(versions.map(\.revision).max() ?? 0, context.values.max() ?? 0) + 1, layout: layout, context: context)
             do { try record.validate() }
             catch {
                 // Publication limits never authorize replacing this local edit.
@@ -287,9 +329,10 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
                 status = "This keyboard layout couldn’t sync. Local controls are kept; large layouts may exceed the sync limit."
                 return
             }
+            let wasReseeding = reseeding.remove(name) != nil
             pending.remove(name)
             do { try persist(versions.filter { $0.account != record.account } + [record]) }
-            catch { pending.insert(name); throw error }
+            catch { pending.insert(name); if wasReseeding { reseeding.insert(name) }; throw error }
             if scheduleRefresh { if busy { rerun = true } else { refresh() } }
         } catch {
             // Retry reads the last durable baseline and compares the current
@@ -340,9 +383,10 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
                     guard let family = TerminalControlsFamily(rawValue: name), !self.pending.contains(name) else { continue }
                     guard try store.keyboardCloudReady() else { throw DirectCloudError.storage }
                     if DirectCloudKeyboardVersion.winner(next, family: family) == nil {
+                        let profile = try store.load(), context = profile.syncState.layoutClock
                         let value = DirectCloudKeyboardVersion(family: family, writer: self.writer,
-                            revision: (next.map(\.revision).max() ?? 0) + 1,
-                            layout: DirectCloudKeyboardLayout(try store.load()))
+                            revision: max(next.map(\.revision).max() ?? 0, context.values.max() ?? 0) + 1,
+                            layout: DirectCloudKeyboardLayout(profile), context: context)
                         try value.validate(); next.append(value)
                     }
                 }
@@ -353,16 +397,26 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
                           let winner = DirectCloudKeyboardVersion.winner(next, family: family) else { continue }
                     guard try store.keyboardCloudReady() else { throw DirectCloudError.storage }
                     let local = try store.load()
-                    if DirectCloudKeyboardLayout(local) != winner.layout {
-                        changes.append((name, store, try winner.layout.applying(to: local)))
+                    var profile = try winner.layout.applying(to: local), state = local.syncState
+                    let values = next.filter { $0.family == family }
+                    state.layoutClock = DirectControlsCausality.join([state.layoutClock] + values.map {
+                        DirectControlsCausality.including($0.context, writer: $0.writer, revision: $0.revision)
+                    })
+                    for value in DirectCloudKeyboardVersion.frontier(next, family: family) where value.layout != winner.layout {
+                        let account = "layout." + value.account
+                        state.keep(.init(id: account + "." + String(value.revision), family: family, layout: value.layout),
+                            account: account, revision: value.revision)
                     }
+                    profile.syncState = state
+                    if profile != local { changes.append((name, store, profile)) }
                 }
                 do {
                     self.applying = true
                     defer { self.applying = false }
                     for (name, store, profile) in changes {
-                        let saved = try store.save(profile, cloudImport: true)
+                        let saved = try store.save(profile, cloudImport: true, captureLayoutImport: true)
                         self.observed[name] = try Self.fingerprint(DirectCloudKeyboardLayout(saved))
+                        self.appliedImports[name] = saved.syncState.layoutImport?.id
                     }
                 }
                 try self.persist(next)
@@ -395,6 +449,9 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
         task = nil
         let transport = transport
         try await Task.detached { try transport.removeAll() }.value
+        // Re-enable is an explicit start from the current local layout, even
+        // if a delayed old cloud record arrives after deletion.
+        pending.formUnion(observed.keys); reseeding.formUnion(stores.keys)
         try persist([])
     }
 }

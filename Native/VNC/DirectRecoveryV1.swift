@@ -347,6 +347,7 @@ private struct DirectCloudScopeForm: View {
 }
 
 private struct DirectCloudManagementForm: View {
+    @State private var recovered = DirectControlsRecoveryLibrary()
     let cloud: DirectCloudSyncV1
     let present: (DirectCloudSheet) -> Void
     @State private var lock = DirectAppLockV1.shared
@@ -364,12 +365,136 @@ private struct DirectCloudManagementForm: View {
                         .disabled(cloud.syncInProgress || !lock.canAccess)
                 }
             }
+            if !recovered.entries.isEmpty || recovered.error != nil {
+                Section {
+                    NavigationLink { DirectRecoveredChangesForm(library: recovered) } label: {
+                        Label("Recovered Changes", systemImage: "clock.arrow.circlepath")
+                    }.accessibilityIdentifier("icloud-recovered-changes")
+                } footer: { Text("Another version was kept. Review or restore it whenever you’re ready.") }
+            }
             Section {
                 Button(role: .destructive) { present(.deleteData) } label: {
                     Label("Delete Synced Data from iCloud…", systemImage: "trash").foregroundStyle(.red)
                 }.disabled(cloud.busy || !lock.canAccess).accessibilityIdentifier("icloud-delete-data")
-            } footer: { Text("Turning sync off keeps existing iCloud data.") }
+            } header: { Text("Start over with iCloud") }
+            footer: { Text("Deletes the synced copies and turns sync off here. Current data and recovered changes stay on this device.") }
         }.navigationTitle("Manage Sync").directInlineNavigationTitle()
+    }
+}
+
+struct DirectRecoveredChangesForm: View {
+    let library: DirectControlsRecoveryLibrary
+    @State private var confirmDiscardAll = false
+    @State private var lock = DirectAppLockV1.shared
+    var body: some View {
+        Form {
+            Section {
+                if library.entries.isEmpty && library.error == nil {
+                    Label("No recovered changes", systemImage: "checkmark.circle")
+                } else {
+                    ForEach(library.entries) { entry in
+                        NavigationLink { DirectRecoveredChangeDetail(entry: entry, library: library) } label: {
+                            Label {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(entry.title)
+                                    Text(entry.location).font(.caption).foregroundStyle(.secondary)
+                                }
+                            } icon: { Image(systemName: entry.symbol) }
+                        }.accessibilityIdentifier("icloud-recovered-" + entry.id)
+                    }
+                }
+            } footer: {
+                if !library.entries.isEmpty { Text("Another version was kept when devices changed the same item. Review it here whenever you’re ready.") }
+                else if library.error == nil { Text("Your current versions are in use.") }
+            }
+            if !library.entries.isEmpty {
+                Section {
+                    Button("Discard All Recovered Changes…", systemImage: "trash", role: .destructive) { confirmDiscardAll = true }
+                        .disabled(!lock.canAccess).accessibilityIdentifier("icloud-recovered-discard-all")
+                } header: { Text("Keep current versions") }
+                footer: { Text("Clears these recovery copies. Your current layouts, shortcuts and saved text stay as they are.") }
+            }
+            if let error = library.error {
+                Section {
+                    Label(error, systemImage: "exclamationmark.circle")
+                    Button("Reload Recovered Changes", systemImage: "arrow.clockwise") { library.reload() }.disabled(!lock.canAccess)
+                }
+            }
+        }
+        .navigationTitle("Recovered Changes").directInlineNavigationTitle()
+        .alert("Discard all recovered changes?", isPresented: $confirmDiscardAll) {
+            Button("Discard Recovery Copies", role: .destructive) { library.discardAll() }
+            Button("Cancel", role: .cancel) { }
+        } message: { Text("Only recovery copies are removed. Your current data and iCloud data are kept.") }
+    }
+}
+
+private struct DirectRecoveredChangeDetail: View {
+    let entry: DirectControlsRecoveredChange
+    let library: DirectControlsRecoveryLibrary
+    @Environment(\.dismiss) private var dismiss
+    @State private var lock = DirectAppLockV1.shared
+    private enum Confirmation { case layout, discard }
+    @State private var confirmation: Confirmation?
+    var body: some View {
+        Form {
+            if lock.canAccess {
+                Section {
+                    Label(entry.location, systemImage: entry.symbol)
+                    if let layout = entry.layout {
+                        ForEach(layout.rows, id: \.id) { row in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(row.title)
+                                Text(row.keys.map { $0.title(in: .defaults) }.joined(separator: " · "))
+                                    .font(.caption).foregroundStyle(.secondary)
+                                Text(row.visibility).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    } else if let control = entry.control {
+                        if control.action.kind == .text {
+                            Text(control.action.text).textSelection(.enabled)
+                        } else {
+                            if control.action.kind == .shortcut {
+                                ForEach(control.action.resolvedSteps) { step in
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Label(step.isText ? step.kind.title : step.label, systemImage: step.kind.symbol)
+                                        if step.isText { Text(step.text).font(.body.monospaced()).textSelection(.enabled) }
+                                    }
+                                }
+                            } else { Text(control.action.detail) }
+                            Text("\(control.bar.count) keyboard buttons · \(control.menus.count) menu favorites")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                } header: { Text("Recovered version") }
+                Section {
+                    Button(entry.layout != nil ? "Use This Layout…" : "Restore as Copy", systemImage: "arrow.uturn.backward") {
+                        if entry.layout != nil { confirmation = .layout }
+                        else if library.restore(entry) { dismiss() }
+                    }.accessibilityIdentifier("icloud-recovered-restore")
+                    Button("Discard This Recovery…", systemImage: "trash", role: .destructive) { confirmation = .discard }
+                        .accessibilityIdentifier("icloud-recovered-discard")
+                } footer: {
+                    Text(entry.layout != nil
+                        ? "Your current layout will be kept here so you can undo the change. Saved items stay."
+                        : "Adds a separate recovered copy, including its button positions. It won’t run a shortcut or send text.")
+                }
+                if let error = library.error { Section { Label(error, systemImage: "exclamationmark.circle") } }
+            } else { Text("Unlock the app to view recovered changes.") }
+        }
+        .navigationTitle(entry.title).directInlineNavigationTitle()
+        .alert(confirmation == .layout ? "Use this keyboard layout?" : "Discard this recovered version?",
+            isPresented: Binding(get: { confirmation != nil }, set: { if !$0 { confirmation = nil } })) {
+            if confirmation == .layout {
+                Button("Use Layout") { if library.restore(entry) { dismiss() }; confirmation = nil }
+            } else {
+                Button("Discard Recovery Copy", role: .destructive) { if library.discard(entry) { dismiss() }; confirmation = nil }
+            }
+            Button("Cancel", role: .cancel) { confirmation = nil }
+        } message: {
+            Text(confirmation == .layout ? "Your current layout stays recoverable. Saved items are kept."
+                : "Your current data and iCloud data are kept.")
+        }
     }
 }
 

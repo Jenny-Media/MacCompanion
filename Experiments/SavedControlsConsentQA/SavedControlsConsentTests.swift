@@ -144,4 +144,35 @@ import XCTest
             }
         }
     }
+    func testRecoveredChangesHaveClearRestoreUndoAndDiscardActions() {
+        for large in [false, true] {
+            let app = launch(large: large); defer { app.terminate() }
+            reveal(app.buttons["fixture-recovered"], app: app); app.buttons["fixture-recovered"].tap()
+            XCTAssertTrue(app.navigationBars["Recovered Changes"].waitForExistence(timeout: 5))
+            capture(large ? "recovered-list-large" : "recovered-list")
+            app.buttons["icloud-recovered-fixture-text"].tap()
+            XCTAssertTrue(app.staticTexts["Synthetic recovered notes. No personal data."].waitForExistence(timeout: 5))
+            capture(large ? "recovered-text-large" : "recovered-text")
+            let restore = app.buttons["icloud-recovered-restore"]; reveal(restore, app: app); restore.tap()
+            XCTAssertTrue(app.navigationBars["Recovered Changes"].waitForExistence(timeout: 5))
+            XCTAssertFalse(app.buttons["icloud-recovered-fixture-text"].exists)
+            app.buttons["icloud-recovered-fixture-layout"].tap()
+            XCTAssertTrue(app.staticTexts["Synthetic alternate layout"].waitForExistence(timeout: 5))
+            reveal(app.buttons["icloud-recovered-restore"], app: app)
+            capture(large ? "recovered-layout-large" : "recovered-layout")
+            app.buttons["icloud-recovered-restore"].tap()
+            XCTAssertTrue(app.buttons["Use Layout"].waitForExistence(timeout: 5)); app.buttons["Use Layout"].tap()
+            XCTAssertTrue(app.navigationBars["Recovered Changes"].waitForExistence(timeout: 5))
+            XCTAssertFalse(app.buttons["icloud-recovered-fixture-layout"].exists)
+            let discard = app.buttons["icloud-recovered-discard-all"]; reveal(discard, app: app); discard.tap()
+            XCTAssertTrue(app.staticTexts["Only recovery copies are removed. Your current data and iCloud data are kept."].waitForExistence(timeout: 5))
+            capture(large ? "recovered-discard-large" : "recovered-discard")
+            app.buttons["Cancel"].tap(); XCTAssertTrue(discard.exists)
+            discard.tap(); app.buttons["Discard Recovery Copies"].tap()
+            XCTAssertTrue(app.staticTexts["No recovered changes"].waitForExistence(timeout: 5))
+            capture(large ? "recovered-empty-large" : "recovered-empty")
+            app.terminate()
+        }
+    }
+
 }

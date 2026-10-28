@@ -1250,7 +1250,7 @@ Keypad-pinned accessory keys MUST retain their keyboard/floating-menu placements
 even though their local representation references a saved key definition.
 Logical versions identify controls family, definition UUID,
 writer UUID and a bounded logical revision; a nil value is a tombstone. Merge
-per definition by revision then writer UUID. Different definitions on different
+per definition using the causal conflict rules below, then revision/writer order. Different definitions on different
 devices MUST survive concurrent additions. Existing local definitions are
 included only after consent. Baselines and pending local edits are retained in
 a non-synchronizing local Keychain journal. Fetched clocks MUST be journaled
@@ -1297,3 +1297,40 @@ history is unreadable, preserves local
 definitions, and turns main sync off on this device. Other devices must be turned
 off first. Report local Keychain submission separately from verified delivery
 to another signed physical device.
+
+
+## iOS 1.1 controls conflict recovery, 2026-10-28
+
+Keyboard and saved-definition versions carry an optional causal-context map from
+writer UUID to observed logical revision. New edits MUST capture ancestry from
+the last applied profile and that writer's preceding local edit, before fetching
+unseen cloud changes. Upload-time revision rebasing MUST NOT imply that an offline
+edit observed a remote edit. Contexts are bounded to 512 canonical writer UUIDs;
+every context revision is positive and less than its enclosing revision.
+Only causally maximal versions participate in conflict resolution. Sequential
+edits replace predecessors without producing recovery copies. Concurrent layout
+edits use revision/writer order; concurrent edits of different saved definitions
+merge independently. For the same saved definition, a causally maximal deletion
+wins over concurrent edits. Different non-deleted losing values MUST be retained
+in device-local recovery before the winning profile is committed. Recovery never
+executes input. A restored saved definition receives a fresh UUID and is labeled
+as a recovered copy; a restored layout keeps the current layout recoverable.
+
+Recovery payloads and dismissal high-water marks are committed with the profile
+in device-only Keychain storage, excluded from cloud projections. Imported saved
+definitions and their observed baseline MUST be one atomic profile write, so a
+post-import journal failure followed by local deletion remains a deletion after
+retry or restart. An unapplied import MUST NOT create a deletion. Keyboard local
+history has the same device-only lifetime as the profile/writer; restored history
+from another writer MUST NOT turn fresh defaults into local edits.
+
+Manage Sync exposes nonblocking Recovered Changes with inspect, restore and
+discard actions. Discard All requires confirmation and affects recovery copies
+only. Starting over with iCloud uses the existing scoped cloud-data removal flow,
+retains current local data and disables sync here. There is no new setup toggle,
+automatic reset, conflict-resolution gate or broad format-compatibility layer.
+
+Keyboard imports MUST likewise commit their applied-layout fingerprint with the
+profile and reconcile that receipt before detecting edits after retry/restart.
+Reset/re-enable MUST reseed current local layouts and retain known local saved
+deletions above their causal clocks even if delayed pre-deletion records arrive.

@@ -154,11 +154,11 @@
       "valid": false
     },
     {
-      "value": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
+      "value": "ééééééééééééééééééééééééééééééé",
       "valid": true
     },
     {
-      "value": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
+      "value": "éééééééééééééééééééééééééééééééé",
       "valid": false
     },
     {
@@ -871,7 +871,7 @@
       "authenticationSuccessNeedsActiveAdmission": false,
       "completedFailedAttemptRequiresExplicitRetry": true,
       "authenticationPresentation": "persistentUnlockCard",
-      "evaluatingButtonTitle": "Unlocking\u2026",
+      "evaluatingButtonTitle": "Unlocking…",
       "lockedButtonTitle": "Unlock",
       "busyButtonEnabled": false,
       "separateBrandedTransition": false,
@@ -1042,7 +1042,11 @@
           "revision",
           "writer UUID"
         ],
-        "deletionUsesExistingCloudDataRemoval": true
+        "deletionUsesExistingCloudDataRemoval": true,
+        "causalContext": "per-writer revisions captured at local edit",
+        "recoverConcurrentLosingValues": true,
+        "recoveryIsDeviceLocal": true,
+        "localJournal": "device-only Keychain bound to writer identity"
       },
       "savedControls": {
         "introducedVersion": "1.1",
@@ -1101,7 +1105,17 @@
         "unmarkedDefinitionsRemainEligible": true,
         "explicitPaletteChoiceIsUserDefinition": true,
         "accessoryKeysUseSavedDefinitionProjection": true,
-        "accessoryKeyFields": ["id", "title", "key", "placements"]
+        "accessoryKeyFields": [
+          "id",
+          "title",
+          "key",
+          "placements"
+        ],
+        "causalContext": "per-writer revisions captured at local edit",
+        "recoverConcurrentLosingValues": true,
+        "recoveryIsDeviceLocal": true,
+        "concurrentDeleteWins": true,
+        "importBaselineAtomicWithProfile": true
       }
     },
     "terminalKeyboard": {
@@ -1418,16 +1432,16 @@
     },
     {
       "id": "unicode",
-      "value": "\u5de5\u4f5c Mac",
+      "value": "工作 Mac",
       "macValid": true,
-      "normalizedName": "\u5de5\u4f5c Mac",
+      "normalizedName": "工作 Mac",
       "keyValid": true
     },
     {
       "id": "emoji",
-      "value": "Mac \ud83d\udda5\ufe0f",
+      "value": "Mac 🖥️",
       "macValid": true,
-      "normalizedName": "Mac \ud83d\udda5\ufe0f",
+      "normalizedName": "Mac 🖥️",
       "keyValid": true
     },
     {
@@ -1463,7 +1477,7 @@
     },
     {
       "id": "bidi-format",
-      "value": "Mac\u202e",
+      "value": "Mac‮",
       "macValid": false,
       "keyValid": false
     },
@@ -2414,8 +2428,8 @@
       "normalized": "Studio Mac"
     },
     {
-      "value": "\u5f00\u53d1 Mac",
-      "normalized": "\u5f00\u53d1 Mac"
+      "value": "开发 Mac",
+      "normalized": "开发 Mac"
     },
     {
       "value": "",
@@ -2430,7 +2444,7 @@
       "normalized": null
     },
     {
-      "value": "Mac\u202eName",
+      "value": "Mac‮Name",
       "normalized": null
     }
   ],

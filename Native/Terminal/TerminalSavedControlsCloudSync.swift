@@ -206,11 +206,13 @@ struct DirectCloudSavedVersion: Codable, Equatable {
     var writer: UUID
     var revision: Int64
     var value: DirectCloudSavedControl?
+    var context: [String: Int64]?
     var key: String { family.rawValue + "." + id.uuidString.lowercased() }
     var account: String { family.rawValue + "." + writer.uuidString.lowercased() + "." + id.uuidString.lowercased() }
     func encoded() throws -> Data { let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys; return try encoder.encode(self) }
     func validate() throws {
         guard schema == 1, (1...1_000_000_000).contains(revision), value?.action.id == id || value == nil else { throw DirectCloudError.invalid }
+        guard DirectControlsCausality.valid(context ?? [:], before: revision) else { throw DirectCloudError.invalid }
         try value?.validate(family: family)
         guard try encoded().count <= Self.maximumBytes else { throw DirectCloudError.invalid }
     }
@@ -231,9 +233,20 @@ struct DirectCloudSavedVersion: Codable, Equatable {
         guard result.count <= 512 else { throw DirectCloudError.invalid }
         return result.values.sorted { $0.account < $1.account }
     }
+    static func frontier(_ versions: [Self]) -> [Self] {
+        versions.filter { value in !versions.contains { other in
+            other.key == value.key && (other.writer == value.writer ? other.revision > value.revision
+                : DirectControlsCausality.sees(other.context, writer: value.writer, revision: value.revision))
+        } }
+    }
     static func winners(_ versions: [Self]) -> [String: Self] {
-        versions.reduce(into: [:]) { result, value in
-            if let old = result[value.key], old.revision > value.revision || old.revision == value.revision && old.writer.uuidString > value.writer.uuidString { return }
+        frontier(versions).reduce(into: [:]) { result, value in
+            if let old = result[value.key] {
+                // A concurrent edit is recoverable, but does not resurrect a deletion.
+                if old.value == nil && value.value != nil { return }
+                if (old.value == nil) == (value.value == nil),
+                   old.revision > value.revision || old.revision == value.revision && old.writer.uuidString > value.writer.uuidString { return }
+            }
             result[value.key] = value
         }
     }
@@ -326,7 +339,7 @@ private final class SavedControlsObservers: @unchecked Sendable {
 }
 
 @MainActor @Observable final class DirectSavedControlsCloudSync {
-    private struct Pending: Codable { var family: TerminalControlsFamily; var id: UUID; var value: DirectCloudSavedControl?; var key: String { family.rawValue + "." + id.uuidString.lowercased() } }
+    private struct Pending: Codable { var family: TerminalControlsFamily; var id: UUID; var value: DirectCloudSavedControl?; var context: [String: Int64]?; var key: String { family.rawValue + "." + id.uuidString.lowercased() } }
     private struct Journal: Codable {
         var schema = 1
         var versions: [DirectCloudSavedVersion] = []
@@ -334,6 +347,8 @@ private final class SavedControlsObservers: @unchecked Sendable {
         var pending: [Pending] = []
         var seeded: Set<String> = []
         var unpublished: Set<String> = []
+        var appliedImports: [String: UUID]?
+        var reseeding: Set<String>?
     }
     private let writer: UUID
     private let transport: any DirectCloudTransport
@@ -389,6 +404,8 @@ private final class SavedControlsObservers: @unchecked Sendable {
             guard data.count <= 20 * 1024 * 1024 else { throw DirectCloudError.invalid }
             let restored = try JSONDecoder().decode(Journal.self, from: data)
             guard restored.schema == 1, restored.observed.count <= 8192, restored.pending.count <= 8192,
+                  Set((restored.appliedImports ?? [:]).keys).isSubset(of: Set(stores.keys)),
+                  (restored.reseeding ?? []).isSubset(of: Set(stores.keys)),
                   restored.seeded.isSubset(of: Set(stores.keys)), Set(restored.pending.map(\.key)).count == restored.pending.count,
                   restored.observed.keys.allSatisfy({ key in
                       let pieces = key.split(separator: ".")
@@ -399,6 +416,7 @@ private final class SavedControlsObservers: @unchecked Sendable {
             guard restored.unpublished.isSubset(of: Set(restored.versions.filter { $0.writer == writer }.map(\.account))) else { throw DirectCloudError.invalid }
             for pending in restored.pending {
                 try pending.value?.validate(family: pending.family)
+                guard DirectControlsCausality.valid(pending.context ?? [:]) else { throw DirectCloudError.invalid }
                 guard stores[pending.family.rawValue] != nil, pending.value?.action.id == pending.id || pending.value == nil else { throw DirectCloudError.invalid }
             }
             journal = restored
@@ -424,15 +442,27 @@ private final class SavedControlsObservers: @unchecked Sendable {
         for name in stores.keys.sorted() {
             guard let family = TerminalControlsFamily(rawValue: name), let store = stores[name],
                   let profile = try store.savedControlsCloudProfile() else { continue }
+            // The profile's import receipt survives a failed later journal
+            // write and local edits. Reconcile it before comparing deletions.
+            if let receipt = profile.syncState.savedImport, journal.appliedImports?[name] != receipt.id {
+                journal.observed = journal.observed.filter { !$0.key.hasPrefix(name + ".") }
+                for (id, hash) in receipt.observed { journal.observed[name + "." + id] = hash }
+                if journal.appliedImports == nil { journal.appliedImports = [:] }
+                journal.appliedImports?[name] = receipt.id; changed = true
+            }
+            // Reset owes the current local values/deletions a durable pending
+            // record even when this notification only dismissed recovery.
+            let recordChanges = markChanges || journal.reseeding?.contains(name) == true
             let current = DirectCloudSavedControl.project(profile)
             var normalized: [UUID: DirectCloudSavedControl]?, attemptedNormalization = false
             let keys = Set(current.keys.map { name + "." + $0.uuidString.lowercased() })
                 .union(journal.observed.keys.filter { $0.hasPrefix(name + ".") })
+                .union(journal.seeded.contains(name) ? [] : profile.syncState.savedClocks.keys.map { name + "." + $0 })
             for key in keys.sorted() {
                 guard let id = UUID(uuidString: String(key.dropFirst(name.count + 1))) else { throw DirectCloudError.invalid }
                 let value = current[id], hash = try value.map(Self.hash)
                 if journal.observed[key] != hash || !journal.seeded.contains(name) {
-                    if markChanges {
+                    if recordChanges {
                         journal.pending.removeAll { $0.key == key }
                         var imported = known[key] != nil && known[key]?.value == value
                         if !imported, known[key] != nil {
@@ -446,13 +476,20 @@ private final class SavedControlsObservers: @unchecked Sendable {
                             imported = normalized.map { $0[id] == value } ?? false
                         }
                         if !imported {
-                            journal.pending.append(Pending(family: family, id: id, value: value))
+                            let own = journal.versions.filter { $0.key == key && $0.writer == writer }.map {
+                                DirectControlsCausality.including($0.context, writer: $0.writer, revision: $0.revision)
+                            }
+                            let context = DirectControlsCausality.join([profile.syncState.savedClocks[id.uuidString.lowercased()] ?? [:]] + own)
+                            journal.pending.append(Pending(family: family, id: id, value: value, context: context))
                         }
                     }
                     journal.observed[key] = hash; changed = true
                 }
             }
-            if journal.seeded.insert(name).inserted { changed = true }
+            if recordChanges {
+                if journal.seeded.insert(name).inserted { changed = true }
+                if journal.reseeding?.remove(name) != nil { changed = true }
+            }
         }
         if changed { try persist() }
         return changed
@@ -507,8 +544,8 @@ private final class SavedControlsObservers: @unchecked Sendable {
                 try self.observe(markChanges: true)
                 var retained: [Pending] = [], candidate = self.journal
                 for pending in candidate.pending {
-                    let revision = (candidate.versions.map(\.revision).max() ?? 0) + 1
-                    let value = DirectCloudSavedVersion(family: pending.family, id: pending.id, writer: self.writer, revision: revision, value: pending.value)
+                    let revision = max(candidate.versions.map(\.revision).max() ?? 0, pending.context?.values.max() ?? 0) + 1
+                    let value = DirectCloudSavedVersion(family: pending.family, id: pending.id, writer: self.writer, revision: revision, value: pending.value, context: pending.context)
                     do { try value.validate() } catch { retained.append(pending); continue }
                     candidate.versions = try DirectCloudSavedVersion.merge(candidate.versions.filter { $0.account != value.account }, [value])
                     candidate.unpublished.insert(value.account)
@@ -522,13 +559,26 @@ private final class SavedControlsObservers: @unchecked Sendable {
                     guard let local = try store.savedControlsCloudProfile() else { throw DirectCloudError.storage }
                     let versions = winners.values.filter { $0.family.rawValue == name && !waiting.contains($0.key) }
                     let values = Dictionary(uniqueKeysWithValues: versions.map { ($0.id, $0.value) })
-                    let next = try DirectCloudSavedControl.applying(values, to: local)
+                    var next = try DirectCloudSavedControl.applying(values, to: local), state = local.syncState
+                    let relevant = self.journal.versions.filter { $0.family.rawValue == name && !waiting.contains($0.key) }
+                    for value in relevant {
+                        let id = value.id.uuidString.lowercased()
+                        state.savedClocks[id] = DirectControlsCausality.join([state.savedClocks[id] ?? [:],
+                            DirectControlsCausality.including(value.context, writer: value.writer, revision: value.revision)])
+                    }
+                    for value in DirectCloudSavedVersion.frontier(relevant) {
+                        guard let control = value.value, let winner = winners[value.key], control != winner.value else { continue }
+                        let account = "saved." + value.account
+                        state.keep(.init(id: account + "." + String(value.revision), family: value.family, control: control),
+                            account: account, revision: value.revision)
+                    }
+                    next.syncState = state
                     if next != local { changes.append((store, next)) }
                 }
                 self.applying = true
                 do {
                     defer { self.applying = false }
-                    for (store, profile) in changes { _ = try store.save(profile, cloudImport: true) }
+                    for (store, profile) in changes { _ = try store.save(profile, cloudImport: true, captureSavedImport: true) }
                     try self.observe(markChanges: false)
                 }
                 try self.persist()
@@ -548,7 +598,7 @@ private final class SavedControlsObservers: @unchecked Sendable {
         guard canAccess() else { throw DirectCloudError.locked }
         let transport = self.transport
         try await Task.detached { try transport.removeAll() }.value
-        journal = Journal(); loaded = true; readable = true; try persist()
+        journal = Journal(reseeding: Set(stores.keys)); loaded = true; readable = true; try persist()
     }
 }
 #endif

@@ -199,7 +199,7 @@ enum DirectCloudSyncIssue: Equatable { case storage, capacity }
         if !identityReadable { readable = false; recovery = .make(.cloudUnavailable, message: "This device’s sync identity couldn’t be read. Existing data is kept. Retry when device storage is available.") }
         #if os(iOS)
         if writerID == nil && readable {
-            keyboardCloud = DirectKeyboardCloudSync(url: DirectClientPlatformV1.dataURL("direct-cloud-keyboards-v1.json"), writer: writer, transport: self.keyboardTransport)
+            keyboardCloud = DirectKeyboardCloudSync(writer: writer, transport: self.keyboardTransport)
             savedControlsCloud = DirectSavedControlsCloudSync(writer: writer, transport: self.savedControlsTransport)
         }
         #endif
@@ -232,7 +232,7 @@ enum DirectCloudSyncIssue: Equatable { case storage, capacity }
         }
         #if os(iOS)
         if keyboardCloud == nil && injectedWriter == nil {
-            keyboardCloud = DirectKeyboardCloudSync(url: DirectClientPlatformV1.dataURL("direct-cloud-keyboards-v1.json"), writer: writer, transport: keyboardTransport)
+            keyboardCloud = DirectKeyboardCloudSync(writer: writer, transport: keyboardTransport)
             keyboardCloud?.setEnabled(enabled)
         }
         if savedControlsCloud == nil && injectedWriter == nil {

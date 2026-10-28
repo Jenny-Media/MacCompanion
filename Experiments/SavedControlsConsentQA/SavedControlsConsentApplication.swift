@@ -29,10 +29,26 @@ private final class NoCloudEffects: DirectCloudTransport, @unchecked Sendable {
 private struct CopyAuditHome: View {
     let cloud: DirectCloudSyncV1
     private enum Route: String, CaseIterable, Identifiable {
-        case sync, gestures, setup, trust, identity, manual, keyImport
+        case sync, gestures, setup, trust, identity, manual, keyImport, recovered
         var id: String { rawValue }
     }
     @State private var route: Route?
+    @State private var recovered = Self.makeRecoveryFixture()
+    private static func makeRecoveryFixture() -> DirectControlsRecoveryLibrary {
+        var profile = TerminalControlsProfile.defaults
+        var layout = DirectCloudKeyboardLayout(profile); layout.rows[0].title = "Synthetic alternate layout"
+        let action = TerminalControlAction(title: "Synthetic trip notes", kind: .text, text: "Synthetic recovered notes. No personal data.", inMenu: false)
+        let control = DirectCloudSavedControl(action: action, bar: [], menus: [], libraryIndex: 0)
+        var state = profile.syncState
+        state.recovered = [
+            .init(id: "fixture-layout", family: .terminal, layout: layout),
+            .init(id: "fixture-text", family: .terminal, control: control)
+        ]
+        profile.syncState = state
+        var bytes = try! JSONEncoder().encode(profile), store = TerminalControlsStore()
+        store.read = { bytes }; store.write = { bytes = $0 }; store.legacyIDs = { [] }; store.legacyActions = { [] }
+        return DirectControlsRecoveryLibrary(stores: [.terminal: store])
+    }
     private let mac = DirectMacRecordV1(id: UUID(uuidString: "4C18D75D-C154-4460-ACB9-830E5723AD31")!, name: "Synthetic Mac", addresses: ["synthetic.invalid"])
     var body: some View {
         NavigationStack {
@@ -51,6 +67,11 @@ private struct CopyAuditHome: View {
                 NavigationStack {
                     DirectSyncSecurityForm(cloud: cloud).navigationTitle("Sync & Security")
                         .navigationBarTitleDisplayMode(.inline)
+                        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { route = nil } } }
+                }
+            case .recovered:
+                NavigationStack {
+                    DirectRecoveredChangesForm(library: recovered)
                         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { route = nil } } }
                 }
             case .gestures:
