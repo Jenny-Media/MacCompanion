@@ -889,11 +889,13 @@ struct TerminalControlsProfile: Codable, Equatable {
             profile = .init(family: family == .remoteMac ? .remoteMac : nil, actions: actions.map(TerminalControlAction.init))
             resetKeyboard = true
         }
+        // Compare against the decoded record, including its format version.
+        // Sync reads the persisted profile, so a version-only update must save.
+        let before = profile
         profile.version = TerminalControlsProfile.currentVersion
         guard (profile.family ?? .terminal) == family else { throw Failure.unreadable }
         // Corrupt definitions and favorites must never be replaced by defaults.
         guard profile.valid else { throw Failure.unreadable }
-        let before = profile
         for index in profile.actions.indices { profile.actions[index].normalizeLegacyDefinition() }
         if family == .remoteMac && profile.remoteMenus == nil { profile.importRemoteMenus(try legacyRemoteMenus()) }
         guard profile.valid else { throw Failure.unreadable }

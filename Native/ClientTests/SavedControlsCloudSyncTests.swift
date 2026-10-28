@@ -83,6 +83,43 @@ private final class SavedContentMemoryCloud: DirectCloudTransport, @unchecked Se
     private func versions(_ raw: SavedContentMemoryCloud) throws -> [DirectCloudSavedVersion] {
         try DirectSavedControlsTransport(base: raw).read().map { try JSONDecoder().decode(DirectCloudSavedVersion.self, from: $0) }
     }
+    #if targetEnvironment(simulator)
+    func testSimulatorKeychainSavedContentRoundTrip() throws {
+        // Only this test's random service is touched; no real account records.
+        let base = DirectCloudKeychain(service: "dev.maccompanion.qa.saved-controls." + UUID().uuidString)
+        let transport = DirectSavedControlsTransport(base: base)
+        defer { try? transport.removeAll() }
+        XCTAssertTrue(try transport.read().isEmpty)
+        let action = text(String(repeating: "synthetic ", count: 400))
+        var version = DirectCloudSavedVersion(family: .terminal, id: action.id, writer: UUID(), revision: 1,
+            value: DirectCloudSavedControl.project(profile(action))[action.id])
+        try transport.write(version.encoded(), account: version.account)
+        XCTAssertEqual(try transport.read(), [try version.encoded()])
+        version.revision = 2
+        version.value?.action.text = "updated synthetic text"
+        try transport.write(version.encoded(), account: version.account)
+        XCTAssertEqual(try transport.read(), [try version.encoded()])
+        try transport.removeAll()
+        XCTAssertTrue(try transport.read().isEmpty)
+    }
+    #endif
+    func testEnablingSyncWithProductionDefaultControlFamilies() async throws {
+        var terminalBytes: Data?, remoteBytes: Data?
+        var terminal = TerminalControlsStore(), remote = TerminalControlsStore.remoteMac()
+        terminal.read = { terminalBytes }; terminal.write = { terminalBytes = $0 }
+        terminal.legacyIDs = { [] }; terminal.legacyActions = { DirectControlMode.terminal.defaults }
+        remote.read = { remoteBytes }; remote.write = { remoteBytes = $0 }
+        remote.legacyRemoteMenus = { ["desktop": DirectControlMode.desktop.defaults, "trackpad": DirectControlMode.trackpad.defaults] }
+        let raw = SavedContentMemoryCloud(), journal = Journal()
+        let sync = DirectSavedControlsCloudSync(writer: UUID(), transport: DirectSavedControlsTransport(base: raw),
+            stores: ["terminal": terminal, "remoteMac": remote], observeChanges: false,
+            readJournal: { try journal.read() }, writeJournal: { try journal.write($0) })
+        sync.setEnabled(true); try await wait(sync)
+        XCTAssertNil(sync.issue, sync.status)
+        XCTAssertNotNil(try terminal.savedControlsCloudProfile())
+        XCTAssertNotNil(try remote.savedControlsCloudProfile())
+        sync.setEnabled(false)
+    }
     func testEnablingSyncAutomaticallyPreparesFreshRecipientForSavedContent() async throws {
         for family in [TerminalControlsFamily.terminal, .remoteMac] {
             let raw = SavedContentMemoryCloud(), action = text("automatic-receiver-synthetic-text")
@@ -104,6 +141,25 @@ private final class SavedContentMemoryCloud: DirectCloudTransport, @unchecked Se
             XCTAssertEqual(imported.actions.first { $0.id == action.id }?.text, action.text)
             XCTAssertNotNil(try store.savedControlsCloudProfile()); XCTAssertNil(receiver.issue)
             receiver.setEnabled(false)
+        }
+    }
+
+    func testEnablingSyncPersistsCurrentProfileFormatBeforeSavedContentRead() async throws {
+        for family in [TerminalControlsFamily.terminal, .remoteMac] {
+            let action = text("synthetic existing content")
+            let memory = try Profile(profile(action, family: family))
+            var record = try XCTUnwrap(JSONSerialization.jsonObject(with: memory.data) as? [String: Any])
+            record["version"] = TerminalControlsProfile.currentVersion - 1
+            memory.data = try JSONSerialization.data(withJSONObject: record)
+            let raw = SavedContentMemoryCloud(), sync = engine(memory, Journal(), raw)
+            sync.setEnabled(true); try await wait(sync)
+            XCTAssertNil(sync.issue, sync.status)
+            let persisted = try JSONDecoder().decode(TerminalControlsProfile.self, from: memory.data)
+            XCTAssertEqual(persisted.version, TerminalControlsProfile.currentVersion)
+            XCTAssertNotNil(try memory.store.savedControlsCloudProfile())
+            XCTAssertEqual(persisted.actions.first { $0.id == action.id }?.text, action.text)
+            XCTAssertEqual(try versions(raw).first?.value?.action.text, action.text)
+            sync.setEnabled(false)
         }
     }
 

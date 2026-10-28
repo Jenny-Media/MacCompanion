@@ -50,6 +50,8 @@ Terminal and shared remote-Mac profiles through the existing controls store befo
 capturing baselines or reading cloud data. No Mac selection, connection, controls
 editor visit or additional setup action is required. Current saved controls are
 retained. Per-Mac compatibility setup from unpublished builds is not supported.
+The controls store persists a current-format header even when the existing rows
+and saved content need no other changes, so sync can read the initialized profile.
 Off-state baseline reads remain read-only. Storage or capacity failures preserve
 local controls and expose retry information in Manage Sync.
 Native regressions cover automatic fresh-profile initialization and import without
