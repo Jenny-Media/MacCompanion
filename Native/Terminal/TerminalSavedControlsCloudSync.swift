@@ -12,13 +12,14 @@ struct DirectCloudSavedControl: Codable, Equatable {
     var menus: [Menu]
     var libraryIndex: Int
     static func eligible(_ action: TerminalControlAction) -> Bool {
-        guard action.kind == .shortcut || action.kind == .text else { return false }
-        // These migrated built-ins have installation-local IDs. They are app defaults,
-        // not saved custom definitions; publishing them would duplicate them on every device.
+        guard action.kind == .key || action.kind == .shortcut || action.kind == .text else { return false }
+        // Exempt only definitions with actual migration provenance. A newly
+        // authored key can have identical values, and unmarked older records
+        // cannot safely be distinguished from a user's saved shortcuts.
         if action.kind == .shortcut, action.steps == nil, action.confirmBeforeRunning == nil,
            action.presetID == nil, action.text.isEmpty {
-            if action.title == "Interrupt · Ctrl-C", action.character == 0x63, action.modifiers == [0xffe3] { return false }
-            if action.title == "Return", action.character == 0xff0d, action.modifiers.isEmpty { return false }
+            if action.builtIn == .interrupt, action.title == "Interrupt · Ctrl-C", action.character == 0x63, action.modifiers == [0xffe3] { return false }
+            if action.builtIn == .returnKey, action.title == "Return", action.character == 0xff0d, action.modifiers.isEmpty { return false }
         }
         return true
     }
@@ -26,7 +27,8 @@ struct DirectCloudSavedControl: Codable, Equatable {
         var profile = profile; profile.captureRemoteMenu()
         let menus = profile.remoteMenus ?? ["terminal": profile.resolvedMenuPlacements]
         return Dictionary(uniqueKeysWithValues: profile.actions.filter(eligible).map { action in
-            var copy = action; copy.inRow = false; copy.inMenu = false
+            var copy = action.kind == .key ? keyDefinition(action) : action
+            copy.inRow = false; copy.inMenu = false
             let section: TerminalSavedItemsSection = action.kind == .text ? .text : .shortcuts
             return (action.id, Self(action: copy, bar: profile.resolvedRows.flatMap { row in
                 profile.barPlacements(in: row).enumerated().compactMap { index, placement in
@@ -40,6 +42,7 @@ struct DirectCloudSavedControl: Codable, Equatable {
         })
     }
     func validate(family: TerminalControlsFamily) throws {
+        if action.kind == .key, action != Self.keyDefinition(action) { throw DirectCloudError.invalid }
         let modes: Set<String> = family == .terminal ? ["terminal"] : ["desktop", "trackpad"]
         guard Self.eligible(action), action.valid, !action.inRow, !action.inMenu,
               (0..<4096).contains(libraryIndex), bar.count <= 4096, menus.count <= 4096,
@@ -60,7 +63,7 @@ struct DirectCloudSavedControl: Codable, Equatable {
         var result = source
         let managed = Set(applicable.keys)
         for (id, wrapped) in applicable {
-            if let old = source.actions.first(where: { $0.id == id }), old.kind != .shortcut && old.kind != .text { throw DirectCloudError.invalid }
+            if let old = source.actions.first(where: { $0.id == id }), old.kind != .key && old.kind != .shortcut && old.kind != .text { throw DirectCloudError.invalid }
             if let value = wrapped {
                 guard id == value.action.id else { throw DirectCloudError.invalid }
                 try value.validate(family: source.family ?? .terminal)
@@ -70,18 +73,50 @@ struct DirectCloudSavedControl: Codable, Equatable {
         let incoming = applicable.values.compactMap { $0 }.sorted {
             $0.libraryIndex == $1.libraryIndex ? $0.action.id.uuidString < $1.action.id.uuidString : $0.libraryIndex < $1.libraryIndex
         }
-        result.actions += incoming.map(\.action)
+        result.actions += incoming.map { value in
+            if value.action.kind == .key,
+               var local = source.actions.first(where: { $0.id == value.action.id && $0.kind == .key }) {
+                // Inactive payloads are local data, not part of a key's cloud
+                // projection. Update only its actual key definition and flags.
+                local.title = value.action.title; local.key = value.action.key
+                local.inRow = false; local.inMenu = false
+                return local
+            }
+            return value.action
+        }
         var rows = result.resolvedRows
         guard let main = rows.firstIndex(where: { $0.kind == .main }) else { throw DirectCloudError.invalid }
         let rowIDs = Set(rows.map(\.id)), mainID = rows[main].id
+        let retained = rows.flatMap { result.barPlacements(in: $0) }.filter {
+            $0.item.savedID.map { !managed.contains($0) } ?? true
+        }
+        // Saved placements can inherit a built-in's ID through editor replacement.
+        // Reserve their identities before remapping any colliding built-in keys.
+        var savedIDs = Set(retained.filter { $0.item.savedID != nil }.map(\.id))
+        var incomingBars: [UUID: [Bar]] = [:]
+        for item in incoming.sorted(by: { $0.action.id.uuidString < $1.action.id.uuidString }) {
+            incomingBars[item.action.id] = item.bar.map { position in
+                var position = position
+                let fallback = "saved-" + item.action.id.uuidString.lowercased() + "-"
+                    + DirectSavedControlsTransport.digest(Data(position.placement.utf8)).prefix(16)
+                position.placement = uniquePlacementID(position.placement, fallback: String(fallback), occupied: &savedIDs)
+                return position
+            }
+        }
+        var occupied = savedIDs.union(retained.map(\.id))
         for index in rows.indices {
             var placements = result.barPlacements(in: rows[index]).filter { placement in
                 placement.item.savedID.map { !managed.contains($0) } ?? true
             }
             let rowID = rows[index].id
+            for offset in placements.indices where placements[offset].item.savedID == nil && savedIDs.contains(placements[offset].id) {
+                let original = placements[offset].id
+                let fallback = "cloud-key-" + DirectSavedControlsTransport.digest(Data((rowID.uuidString + "." + original).utf8)).prefix(32)
+                placements[offset].id = uniquePlacementID(original, fallback: String(fallback), occupied: &occupied)
+            }
             var additions: [(Int, TerminalBarPlacement)] = []
             for item in incoming {
-                for position in item.bar {
+                for position in incomingBars[item.action.id] ?? [] {
                     let target = rowIDs.contains(position.row) ? position.row : mainID
                     if target == rowID {
                         additions.append((position.index, TerminalBarPlacement(id: position.placement, item: .saved(item.action.id))))
@@ -100,10 +135,12 @@ struct DirectCloudSavedControl: Codable, Equatable {
         var menus = result.remoteMenus ?? ["terminal": result.resolvedMenuPlacements]
         for mode in menus.keys.sorted() {
             var list = menus[mode]!.filter { !managed.contains($0.actionID) }
+            var occupied = Set(list.map(\.id))
             var additions: [(Int, TerminalMenuPlacement)] = []
-            for item in incoming {
+            for item in incoming.sorted(by: { $0.action.id.uuidString < $1.action.id.uuidString }) {
                 for position in item.menus where position.mode == mode {
-                    additions.append((position.index, TerminalMenuPlacement(id: position.placement, actionID: item.action.id)))
+                    let id = uniqueMenuPlacementID(position.placement, definition: item.action.id, mode: mode, occupied: &occupied)
+                    additions.append((position.index, TerminalMenuPlacement(id: id, actionID: item.action.id)))
                 }
             }
             additions.sort { $0.0 == $1.0 ? $0.1.id.uuidString < $1.1.id.uuidString : $0.0 < $1.0 }
@@ -136,6 +173,28 @@ struct DirectCloudSavedControl: Codable, Equatable {
         }
         guard result.valid else { throw DirectCloudError.invalid }
         return result
+    }
+    private static func keyDefinition(_ action: TerminalControlAction) -> TerminalControlAction {
+        .init(id: action.id, title: action.title, kind: .key, key: action.key, inMenu: false)
+    }
+    private static func uniquePlacementID(_ preferred: String, fallback: String, occupied: inout Set<String>) -> String {
+        if occupied.insert(preferred).inserted { return preferred }
+        var candidate = fallback, suffix = 0
+        while !occupied.insert(candidate).inserted { suffix += 1; candidate = fallback + "-\(suffix)" }
+        return candidate
+    }
+    private static func uniqueMenuPlacementID(_ preferred: UUID, definition: UUID, mode: String, occupied: inout Set<UUID>) -> UUID {
+        if occupied.insert(preferred).inserted { return preferred }
+        var suffix = 0
+        while true {
+            let seed = definition.uuidString + "." + mode + "." + preferred.uuidString + ".\(suffix)"
+            let hex = DirectSavedControlsTransport.digest(Data(seed.utf8))
+            let formatted = "\(hex.prefix(8))-\(hex.dropFirst(8).prefix(4))-\(hex.dropFirst(12).prefix(4))-\(hex.dropFirst(16).prefix(4))-\(hex.dropFirst(20).prefix(12))"
+            // The SHA-256 hex above always supplies a complete UUID's 32 digits.
+            let candidate = UUID(uuidString: formatted)!
+            if occupied.insert(candidate).inserted { return candidate }
+            suffix += 1
+        }
     }
 }
 

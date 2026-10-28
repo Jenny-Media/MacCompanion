@@ -7,6 +7,7 @@ private final class SavedContentMemoryCloud: DirectCloudTransport, @unchecked Se
     private var values: [String: Data] = [:]
     private var readTotal = 0, writeTotal = 0
     var failAtWrite: Int?
+    var failRemoval = false
     private var pause = false, started = false
     let resume = DispatchSemaphore(value: 0)
     var reads: Int { lock.lock(); defer { lock.unlock() }; return readTotal }
@@ -24,7 +25,11 @@ private final class SavedContentMemoryCloud: DirectCloudTransport, @unchecked Se
         inject(data, account: account)
     }
     func remove(account: String) throws { lock.lock(); defer { lock.unlock() }; values.removeValue(forKey: account) }
-    func removeAll() throws { lock.lock(); defer { lock.unlock() }; values.removeAll() }
+    func removeAll() throws {
+        lock.lock(); defer { lock.unlock() }
+        if failRemoval { throw DirectCloudError.storage }
+        values.removeAll()
+    }
 }
 
 @MainActor final class SavedControlsCloudSyncTests: XCTestCase {
@@ -92,6 +97,9 @@ private final class SavedContentMemoryCloud: DirectCloudTransport, @unchecked Se
         XCTAssertEqual(policy["importExecutesActions"] as? Bool, false)
         XCTAssertEqual(policy["maximumLogicalBytes"] as? Int, DirectCloudSavedVersion.maximumBytes)
         XCTAssertEqual(policy["pieceBytes"] as? Int, DirectSavedControlsTransport.pieceBytes)
+        XCTAssertEqual(policy["unmarkedDefinitionsRemainEligible"] as? Bool, true)
+        XCTAssertEqual(policy["explicitPaletteChoiceIsUserDefinition"] as? Bool, true)
+        XCTAssertEqual(policy["accessoryKeysUseSavedDefinitionProjection"] as? Bool, true)
     }
     func testProjectionKeepsTextAndPositionsWithoutUnrelatedPreferences() throws {
         let action = text(), local = profile(action)
@@ -104,10 +112,116 @@ private final class SavedContentMemoryCloud: DirectCloudTransport, @unchecked Se
     }
     func testUntouchedMigratedBuiltinsAreNotDuplicatedAsUserDefinitions() throws {
         XCTAssertTrue(DirectCloudSavedControl.project(.defaults).isEmpty)
+        let decoded = try JSONDecoder().decode(TerminalControlsProfile.self, from: JSONEncoder().encode(TerminalControlsProfile.defaults))
+        XCTAssertTrue(decoded.actions.contains { $0.kind == .shortcut && $0.builtIn == .interrupt })
+        XCTAssertTrue(DirectCloudSavedControl.project(decoded).isEmpty, "Migration provenance survives persistence")
         var source = TerminalControlsProfile.defaults
         let index = try XCTUnwrap(source.actions.firstIndex { $0.kind == .shortcut })
         source.actions[index].title = "My renamed shortcut"
         XCTAssertEqual(DirectCloudSavedControl.project(source).count, 1)
+    }
+    func testPaletteReturnSyncsItsDefinitionAndKeyboardAndMenuPositions() async throws {
+        let key = try XCTUnwrap(TerminalKeyCatalog.all.first { $0.character == 0xff0d && $0.modifiers.isEmpty })
+        var source = TerminalControlsProfile.defaults; source.freezeKeyboardLayout()
+        XCTAssertTrue(source.placeEditorItem(.key(key.id), in: .menu))
+        let action = try XCTUnwrap(source.actions.first(where: key.matches))
+        XCTAssertNil(action.builtIn)
+        let main = try XCTUnwrap(source.resolvedRows.first { $0.kind == .main })
+        source.placeBarItem(.saved(action.id), in: main.id)
+        let raw = SavedContentMemoryCloud(), a = try Profile(source), b = try Profile()
+        let first = engine(a, Journal(), raw), second = engine(b, Journal(), raw)
+        first.setEnabled(true); try await wait(first); second.setEnabled(true); try await wait(second)
+        let received = try b.store.load(), imported = try XCTUnwrap(received.actions.first { $0.id == action.id })
+        XCTAssertEqual(imported.character, 0xff0d); XCTAssertEqual(imported.kind, .shortcut)
+        XCTAssertTrue(received.resolvedRows.flatMap { received.barItems(in: $0) }.contains(.saved(action.id)))
+        XCTAssertTrue(received.resolvedMenuPlacements.contains { $0.actionID == action.id })
+        XCTAssertEqual(received.actions.filter { $0.builtIn == .interrupt }.count, 1, "Untouched local defaults are not duplicated")
+        first.setEnabled(false); second.setEnabled(false)
+    }
+    func testUnmarkedOlderReturnAndInterruptDefinitionsRemainEligible() throws {
+        for (title, character, modifiers) in [("Return", UInt32(0xff0d), [UInt32]()), ("Interrupt · Ctrl-C", UInt32(0x63), [UInt32(0xffe3)])] {
+            var action = TerminalControlAction(title: title, kind: .shortcut, inRow: true)
+            action.character = character; action.modifiers = modifiers
+            let local = try Profile(profile(action)), loaded = try local.store.load()
+            XCTAssertNil(loaded.actions.first { $0.id == action.id }?.builtIn)
+            XCTAssertNotNil(DirectCloudSavedControl.project(loaded)[action.id], "Values alone cannot establish a migrated-default origin")
+        }
+    }
+    func testExplicitPaletteSelectionActivatesMatchingMigratedReturn() throws {
+        let key = try XCTUnwrap(TerminalKeyCatalog.all.first { $0.character == 0xff0d && $0.modifiers.isEmpty })
+        for focusedEditor in [true, false] {
+            let migrated = TerminalControlAction(VNCQuickAction(title: "Return", kind: .returnKey))
+            var source = TerminalControlsProfile(actions: [migrated]); source.freezeKeyboardLayout()
+            XCTAssertEqual(migrated.builtIn, .returnKey); XCTAssertTrue(DirectCloudSavedControl.project(source).isEmpty)
+            if focusedEditor { XCTAssertTrue(source.placeEditorItem(.key(key.id), in: .menu)) }
+            else { XCTAssertEqual(source.pin(key, in: .keyboard), migrated.id) }
+            XCTAssertNil(source.actions.first { $0.id == migrated.id }?.builtIn)
+            XCTAssertNotNil(DirectCloudSavedControl.project(source)[migrated.id])
+        }
+    }
+    func testExplicitLegacyShortcutOriginSurvivesSharedMenuMigration() throws {
+        let id = UUID(), migrated = VNCQuickAction(id: id, title: "Return", kind: .returnKey)
+        let explicit = VNCQuickAction(id: id, title: "Return", kind: .shortcut, key: 0xff0d)
+        var source = TerminalControlsProfile(family: .remoteMac)
+        source.importRemoteMenus(["desktop": [migrated], "trackpad": [explicit]])
+        XCTAssertEqual(source.actions.count, 1)
+        XCTAssertNil(source.actions.first?.builtIn)
+        XCTAssertNotNil(DirectCloudSavedControl.project(source)[id])
+    }
+    func testKeypadAccessoryPinsRoundTripBothDestinationsAndFamilies() async throws {
+        let keys = try ["key-f1", "key-home", "key-left"].map { try XCTUnwrap(TerminalKeyCatalog.key($0)) }
+        for family in [TerminalControlsFamily.terminal, .remoteMac] {
+            for destination in TerminalControlsDestination.allCases {
+                var source: TerminalControlsProfile = family == .terminal ? .defaults : .remoteDefaults
+                var target: TerminalControlsProfile = family == .terminal ? .defaults : .remoteDefaults
+                if family == .remoteMac {
+                    source.remoteMenus = ["desktop": [], "trackpad": []]; source.remoteMenuMode = "desktop"
+                    target.remoteMenus = ["desktop": [], "trackpad": []]; target.remoteMenuMode = "desktop"
+                }
+                // The real remote-Mac owner prepares and persists rows before
+                // exposing its profile to cloud sync; keep both fixtures ready.
+                source.freezeKeyboardLayout(); target.freezeKeyboardLayout()
+                let ids = keys.map { source.pin($0, in: destination) }
+                source.captureRemoteMenu()
+                let a = try Profile(source), b = try Profile(target), raw = SavedContentMemoryCloud()
+                let first = engine(a, Journal(), raw), second = engine(b, Journal(), raw)
+                first.setEnabled(true); try await wait(first); second.setEnabled(true); try await wait(second)
+                let received = try b.store.load()
+                for (index, id) in ids.enumerated() {
+                    let action = try XCTUnwrap(received.actions.first { $0.id == id },
+                        "\(family.rawValue)/\(destination.rawValue): sender=\(first.status); receiver=\(second.status); wire=\(raw.snapshot.count); received keys=\(received.actions.filter { $0.kind == .key }.count)")
+                    XCTAssertEqual(action.kind, .key); XCTAssertEqual(action.key, keys[index].accessory)
+                    if destination == .keyboard { XCTAssertTrue(received.resolvedRows.flatMap { received.barItems(in: $0) }.contains(.saved(id))) }
+                    else { XCTAssertTrue(received.resolvedMenuPlacements.contains { $0.actionID == id }) }
+                }
+                var edit = try a.store.load(); edit.delete(ids[0]); _ = try a.store.save(edit)
+                first.localChange(); try await wait(first); second.refresh(); try await wait(second)
+                XCTAssertFalse(try b.store.load().actions.contains { $0.id == ids[0] }, "Key definitions and placements also propagate tombstones")
+                XCTAssertTrue(try b.store.load().actions.contains { $0.id == ids[1] })
+                first.setEnabled(false); second.setEnabled(false)
+            }
+        }
+    }
+    func testAccessoryProjectionExcludesInactivePayloadsAndKeepsThemLocal() throws {
+        var action = TerminalControlAction(title: "Synthetic F1", kind: .key, key: .f1, text: "synthetic inactive content", inRow: true)
+        action.character = 0x63; action.modifiers = [0xffe3]; action.confirmBeforeRunning = true
+        action.presetID = "synthetic inactive preset"; action.usage = "synthetic inactive usage"
+        let source = profile(action)
+        var value = try XCTUnwrap(DirectCloudSavedControl.project(source)[action.id])
+        try value.validate(family: .terminal)
+        let bytes = String(decoding: try JSONEncoder().encode(value), as: UTF8.self)
+        XCTAssertFalse(bytes.contains("synthetic inactive"))
+        XCTAssertEqual(value.action.character, 0); XCTAssertTrue(value.action.modifiers.isEmpty); XCTAssertTrue(value.action.text.isEmpty)
+        XCTAssertNil(value.action.confirmBeforeRunning); XCTAssertNil(value.action.presetID); XCTAssertNil(value.action.usage)
+        var malformed = value; malformed.action.text = "synthetic foreign inactive content"
+        XCTAssertThrowsError(try malformed.validate(family: .terminal))
+        value.action.title = "Synced F1"
+        let applied = try DirectCloudSavedControl.applying([action.id: value], to: source)
+        let local = try XCTUnwrap(applied.actions.first { $0.id == action.id })
+        XCTAssertEqual(local.title, "Synced F1"); XCTAssertEqual(local.key, .f1)
+        XCTAssertEqual(local.text, action.text); XCTAssertEqual(local.character, action.character); XCTAssertEqual(local.modifiers, action.modifiers)
+        XCTAssertEqual(local.presetID, action.presetID); XCTAssertEqual(local.usage, action.usage)
+        XCTAssertEqual(DirectCloudSavedControl.project(applied)[action.id], value, "Inactive local fields cannot become an import echo")
     }
     func testReturningToUntouchedBuiltinKeepsItsLocalDefinition() throws {
         let source = TerminalControlsProfile.defaults
@@ -309,6 +423,127 @@ private final class SavedContentMemoryCloud: DirectCloudTransport, @unchecked Se
         for _ in 0..<500 where cloud.busy { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertFalse(cloud.busy); XCTAssertFalse(cloud.enabled); XCTAssertTrue(content.snapshot.isEmpty)
         XCTAssertFalse(defaults.bool(forKey: DirectCloudSyncV1.enabledKey))
+    }
+    func testReplacingImportedKeyRoundTripsAfterLayoutFirstDelivery() throws {
+        var template = TerminalControlsProfile.defaults; template.freezeKeyboardLayout()
+        let row = try XCTUnwrap(template.addRow(title: "Synthetic Function Keys", navigation: false))
+        template.addBarPlacement(.key("key-f5"), to: row)
+        template.addBarPlacement(.key("key-f6"), to: row)
+        var author = try DirectCloudKeyboardLayout(template).applying(to: template)
+        let action = text(); author.actions.append(action)
+        XCTAssertTrue(author.replaceEditorItem(.key("key-f5"), in: row, with: .saved(action.id)))
+        XCTAssertTrue(author.valid)
+        let value = try XCTUnwrap(DirectCloudSavedControl.project(author)[action.id])
+        var receiver = try DirectCloudKeyboardLayout(author).applying(to: template)
+        let incoming: [UUID: DirectCloudSavedControl?] = [action.id: value]
+        receiver = try DirectCloudSavedControl.applying(incoming, to: receiver)
+        XCTAssertTrue(receiver.valid)
+        let importedRow = try XCTUnwrap(receiver.resolvedRows.first { $0.id == row })
+        XCTAssertEqual(receiver.barItems(in: importedRow), [.saved(action.id), .key("key-f6")])
+        XCTAssertEqual(receiver.actions.first { $0.id == action.id }?.text, action.text)
+        let again = try DirectCloudSavedControl.applying(incoming, to: receiver)
+        XCTAssertEqual(again, receiver, "Refresh must not keep reallocating placement identities")
+    }
+    func testIndependentlySavedButtonsWithSamePlacementIDRemainValidAndStable() throws {
+        let first = text("synthetic one"), second = text("synthetic two")
+        var a = try XCTUnwrap(DirectCloudSavedControl.project(profile(first))[first.id])
+        var b = try XCTUnwrap(DirectCloudSavedControl.project(profile(second))[second.id])
+        a.bar[0].placement = "synthetic-shared-placement"
+        b.bar[0].placement = "synthetic-shared-placement"
+        let values: [UUID: DirectCloudSavedControl?] = [first.id: a, second.id: b]
+        let applied = try DirectCloudSavedControl.applying(values, to: .defaults)
+        XCTAssertTrue(applied.valid)
+        let placements = applied.resolvedRows.flatMap { applied.barPlacements(in: $0) }
+        XCTAssertEqual(Set(placements.map(\.id)).count, placements.count)
+        XCTAssertEqual(Set(applied.actions.filter { $0.kind == .text }.map(\.text)), [first.text, second.text])
+        XCTAssertEqual(try DirectCloudSavedControl.applying(values, to: applied), applied)
+    }
+    func testConcurrentFavoriteReplacementKeepsBothMenuDefinitions() throws {
+        for family in [TerminalControlsFamily.terminal, .remoteMac] {
+            let first = text("synthetic favorite one"), second = text("synthetic favorite two")
+            var original = profile(first, family: family)
+            let favorite = TerminalMenuPlacement(actionID: first.id)
+            original.menuPlacements = [favorite]
+            if family == .remoteMac { original.remoteMenus = ["desktop": [favorite], "trackpad": [favorite]] }
+            let firstValue = try XCTUnwrap(DirectCloudSavedControl.project(original)[first.id])
+            var replacement = original
+            XCTAssertTrue(replacement.placeEditorItem(.saved(second.id), in: .menu,
+                replacing: .saved(first.id), placementID: favorite.id.uuidString, definition: second))
+            if family == .remoteMac { replacement.captureRemoteMenu(); replacement.remoteMenus!["trackpad"] = [.init(id: favorite.id, actionID: second.id)] }
+            let secondValue = try XCTUnwrap(DirectCloudSavedControl.project(replacement)[second.id])
+            let incoming: [UUID: DirectCloudSavedControl?] = [first.id: firstValue, second.id: secondValue]
+            let applied = try DirectCloudSavedControl.applying(incoming, to: original)
+            XCTAssertTrue(applied.valid)
+            let menus = family == .remoteMac ? try XCTUnwrap(applied.remoteMenus).values.map { $0 } : [applied.resolvedMenuPlacements]
+            for menu in menus {
+                XCTAssertEqual(Set(menu.map(\.actionID)), [first.id, second.id])
+                XCTAssertEqual(Set(menu.map(\.id)).count, 2)
+            }
+            XCTAssertEqual(try DirectCloudSavedControl.applying(incoming, to: applied), applied)
+        }
+    }
+    func testCollisionNormalizationDoesNotPublishReceiverEdits() async throws {
+        var template = TerminalControlsProfile.defaults; template.freezeKeyboardLayout()
+        let row = try XCTUnwrap(template.addRow(title: "Synthetic Function Keys", navigation: false))
+        template.addBarPlacement(.key("key-f5"), to: row); template.addBarPlacement(.key("key-f6"), to: row)
+        var author = try DirectCloudKeyboardLayout(template).applying(to: template)
+        let action = text(); author.actions.append(action)
+        XCTAssertTrue(author.replaceEditorItem(.key("key-f5"), in: row, with: .saved(action.id)))
+        let raw = SavedContentMemoryCloud(), a = try Profile(author)
+        let b = try Profile(DirectCloudKeyboardLayout(author).applying(to: template))
+        let senderID = UUID(), receiverID = UUID()
+        let sender = engine(a, Journal(), raw, writer: senderID)
+        let receiver = engine(b, Journal(), raw, writer: receiverID, observe: true)
+        sender.setEnabled(true); try await wait(sender)
+        receiver.setEnabled(true); try await wait(receiver)
+        receiver.refresh(); try await wait(receiver)
+        XCTAssertTrue(try b.store.load().valid)
+        XCTAssertEqual(try b.store.load().actions.first { $0.id == action.id }?.text, action.text)
+        XCTAssertFalse(try versions(raw).contains { $0.writer == receiverID }, "Import normalization is not a new local edit")
+        sender.setEnabled(false); receiver.setEnabled(false)
+    }
+    func testUnreadableMacJournalStillRemovesAllThreeServicesOnRepeatedRemoval() async throws {
+        let name = UUID().uuidString, defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        let url = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        let corrupt = Data("synthetic unreadable Mac journal".utf8); try corrupt.write(to: url)
+        defer { defaults.removePersistentDomain(forName: name); try? FileManager.default.removeItem(at: url) }
+        let macs = SavedContentMemoryCloud(), layouts = SavedContentMemoryCloud(), content = SavedContentMemoryCloud()
+        let cloud = DirectCloudSyncV1(defaults: defaults, url: url, transport: macs, writerID: UUID(),
+                                     keyboardTransport: layouts, savedControlsTransport: content)
+        for _ in 0..<2 {
+            for service in [macs, layouts, content] { service.inject(Data("synthetic cloud data".utf8), account: "synthetic") }
+            cloud.removeCloudCopies()
+            for _ in 0..<500 where cloud.busy { try await Task.sleep(for: .milliseconds(10)) }
+            XCTAssertFalse(cloud.busy); XCTAssertFalse(cloud.enabled)
+            XCTAssertTrue(macs.snapshot.isEmpty); XCTAssertTrue(layouts.snapshot.isEmpty); XCTAssertTrue(content.snapshot.isEmpty)
+            XCTAssertEqual(try Data(contentsOf: url), corrupt)
+            XCTAssertEqual(cloud.recovery?.reason, .cloudRemoval, "Cloud deletion must not claim unreadable local history was repaired")
+        }
+    }
+    func testUnavailableServiceDoesNotSkipOtherCloudRemovals() async throws {
+        struct History: Codable { var schema = 1; var versions: [DirectCloudVersion] }
+        for failedService in 0..<3 {
+            let name = UUID().uuidString, defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+            let url = URL.temporaryDirectory.appending(path: UUID().uuidString)
+            defer { defaults.removePersistentDomain(forName: name); try? FileManager.default.removeItem(at: url) }
+            let services = (0..<3).map { _ in SavedContentMemoryCloud() }
+            for service in services { service.inject(Data("synthetic cloud data".utf8), account: "synthetic") }
+            services[failedService].failRemoval = true
+            let writer = UUID(), tombstone = DirectCloudVersion(id: UUID(), writer: writer, revision: 7, mac: nil, preferences: nil)
+            let history = try JSONEncoder().encode(History(versions: [tombstone])); try history.write(to: url)
+            let cloud = DirectCloudSyncV1(defaults: defaults, url: url, transport: services[0], writerID: writer,
+                                         keyboardTransport: services[1], savedControlsTransport: services[2])
+            cloud.removeCloudCopies()
+            for _ in 0..<500 where cloud.busy { try await Task.sleep(for: .milliseconds(10)) }
+            XCTAssertFalse(cloud.busy); XCTAssertFalse(cloud.enabled)
+            for index in services.indices { XCTAssertEqual(services[index].snapshot.isEmpty, index != failedService) }
+            XCTAssertEqual(cloud.recovery?.reason, .cloudRemoval)
+            if failedService == 0 {
+                XCTAssertEqual(try Data(contentsOf: url), history, "A failed Mac-service removal must retain its revision and deletion history")
+            } else {
+                XCTAssertTrue(try JSONDecoder().decode(History.self, from: Data(contentsOf: url)).versions.isEmpty)
+            }
+        }
     }
     func testExistingEnabledMainSyncIgnoresObsoleteSavedContentFlags() throws {
         for oldChoice in [false, true] {

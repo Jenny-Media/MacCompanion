@@ -1046,6 +1046,7 @@
         "requiresMainSync": true,
         "requiresSeparateConsent": false,
         "includes": [
+          "accessory-key definitions",
           "shortcut definitions",
           "saved text",
           "keyboard button positions",
@@ -1086,7 +1087,12 @@
         "deleteIndependentOfMacJournalReadability": true,
         "followsMainSync": true,
         "enabledMainSettingIncludesExistingContent": true,
-        "deletionDisablesMainSync": true
+        "deletionDisablesMainSync": true,
+        "migratedDefaultProvenance": "retained builtIn origin on normalized Return/Interrupt",
+        "unmarkedDefinitionsRemainEligible": true,
+        "explicitPaletteChoiceIsUserDefinition": true,
+        "accessoryKeysUseSavedDefinitionProjection": true,
+        "accessoryKeyFields": ["id", "title", "key", "placements"]
       }
     },
     "terminalKeyboard": {

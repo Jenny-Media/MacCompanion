@@ -124,6 +124,7 @@ struct DirectCloudKeychain: DirectCloudTransport {
     #if os(iOS)
     private var keyboardCloud: DirectKeyboardCloudSync?
     private var savedControlsCloud: DirectSavedControlsCloudSync?
+    private let keyboardTransport: any DirectCloudTransport
     private let savedControlsTransport: any DirectCloudTransport
     var savedControlsSyncStatus: String? { savedControlsCloud?.status }
     var keyboardSyncStatus: String? { keyboardCloud?.status }
@@ -147,11 +148,15 @@ struct DirectCloudKeychain: DirectCloudTransport {
     private(set) var busy = false
     private(set) var status = "Sync is off on this device."
     init(defaults: UserDefaults = .standard, url: URL? = nil, transport: any DirectCloudTransport = DirectCloudKeychain(), writerID: UUID? = nil,
+         keyboardTransport: (any DirectCloudTransport)? = nil,
          savedControlsTransport: (any DirectCloudTransport)? = nil,
          applyPreferences: @escaping @MainActor (DirectCloudPreferences, UUID) -> Void = { $0.apply(mac: $1) }) {
         self.defaults = defaults; self.url = url ?? DirectClientPlatformV1.dataURL("direct-cloud-journal-v1.json"); self.transport = transport
         self.applyPreferences = applyPreferences
         #if os(iOS)
+        if let keyboardTransport { self.keyboardTransport = keyboardTransport }
+        else if writerID != nil { self.keyboardTransport = transport }
+        else { self.keyboardTransport = DirectCloudKeychain(service: DirectKeyboardCloudSync.service) }
         if let savedControlsTransport { self.savedControlsTransport = savedControlsTransport }
         else if writerID != nil { self.savedControlsTransport = transport }
         else { self.savedControlsTransport = DirectSavedControlsTransport() }
@@ -182,7 +187,7 @@ struct DirectCloudKeychain: DirectCloudTransport {
         if !identityReadable { readable = false; recovery = .make(.cloudUnavailable, message: "This device’s sync identity couldn’t be read. Existing data is kept. Retry when device storage is available.") }
         #if os(iOS)
         if writerID == nil && readable {
-            keyboardCloud = DirectKeyboardCloudSync(url: DirectClientPlatformV1.dataURL("direct-cloud-keyboards-v1.json"), writer: writer)
+            keyboardCloud = DirectKeyboardCloudSync(url: DirectClientPlatformV1.dataURL("direct-cloud-keyboards-v1.json"), writer: writer, transport: self.keyboardTransport)
             savedControlsCloud = DirectSavedControlsCloudSync(writer: writer, transport: self.savedControlsTransport)
         }
         #endif
@@ -215,7 +220,7 @@ struct DirectCloudKeychain: DirectCloudTransport {
         }
         #if os(iOS)
         if keyboardCloud == nil && injectedWriter == nil {
-            keyboardCloud = DirectKeyboardCloudSync(url: DirectClientPlatformV1.dataURL("direct-cloud-keyboards-v1.json"), writer: writer)
+            keyboardCloud = DirectKeyboardCloudSync(url: DirectClientPlatformV1.dataURL("direct-cloud-keyboards-v1.json"), writer: writer, transport: keyboardTransport)
             keyboardCloud?.setEnabled(enabled)
         }
         if savedControlsCloud == nil && injectedWriter == nil {
@@ -319,19 +324,35 @@ struct DirectCloudKeychain: DirectCloudTransport {
         busy = true; let transport = self.transport
         Task {
             defer { busy = false }
+            // Independent cloud services must remain removable when another
+            // service or its local journal is unavailable. Report partial failure
+            // only after every removal and local-history cleanup was attempted.
+            var failed = false, removedMacs = false
+            do { try await Task.detached { try transport.removeAll() }.value; removedMacs = true }
+            catch { failed = true }
+            #if os(iOS)
             do {
-                try await Task.detached { try transport.removeAll() }.value
-                #if os(iOS)
-                try await keyboardCloud?.removeCloudCopies()
+                if let keyboardCloud { try await keyboardCloud.removeCloudCopies() }
+                else {
+                    let layoutTransport = keyboardTransport
+                    try await Task.detached { try layoutTransport.removeAll() }.value
+                }
+            } catch { failed = true }
+            do {
                 if let savedControlsCloud { try await savedControlsCloud.removeCloudCopies() }
                 else {
                     let contentTransport = savedControlsTransport
                     try await Task.detached { try contentTransport.removeAll() }.value
                 }
-                #endif
-                try persist([])
+            } catch { failed = true }
+            #endif
+            // Keep the Mac clocks/tombstones if that service could not be
+            // removed. Losing them would let a later refresh revive old records.
+            if removedMacs { do { try persist([]) } catch { failed = true } }
+            if failed { recovery = .make(.cloudRemoval) }
+            else {
                 recovery = nil; status = "Deletion requested. Sync is off; your local Macs are kept. Other devices may take a moment to update."
-            } catch { recovery = .make(.cloudRemoval) }
+            }
         }
     }
 }

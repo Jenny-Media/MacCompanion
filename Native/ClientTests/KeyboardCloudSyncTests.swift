@@ -200,6 +200,24 @@ private final class KeyboardMemoryCloud: DirectCloudTransport, @unchecked Sendab
         transport.resumeWrite.signal(); try await deletion.value
         XCTAssertTrue(try transport.read().isEmpty); XCTAssertTrue(try memory.store.load().valid)
     }
+    func testCloudRemovalReportsLocalJournalFailureAfterDeletingLayouts() async throws {
+        let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let profile = try MemoryProfile(), transport = KeyboardMemoryCloud()
+        var failJournal = false
+        let sync = DirectKeyboardCloudSync(url: folder.appending(path: "journal.json"), writer: UUID(),
+            transport: transport, stores: ["terminal": profile.store], observeChanges: false,
+            writeJournal: { data, url in
+                if failJournal { throw DirectCloudError.storage }
+                try data.write(to: url)
+            })
+        sync.setEnabled(true); try await wait(sync)
+        XCTAssertFalse(try transport.read().isEmpty)
+        failJournal = true
+        do { try await sync.removeCloudCopies(); XCTFail("The local journal failure must remain visible") }
+        catch { XCTAssertTrue(try transport.read().isEmpty) }
+        XCTAssertTrue(try profile.store.load().valid)
+    }
     func testOversizedPendingEditSurvivesRefreshRestartAndCanSyncAgain() async throws {
         let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }

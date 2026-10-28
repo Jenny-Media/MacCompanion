@@ -1236,8 +1236,19 @@ drafts, clipboard contents and session history are excluded.
 
 The `media.jenny.maccompanion.cloud-saved-controls.v1` Keychain service is
 independent of saved-Mac and layout v1 records. Only saved shortcut/text actions
-are projected; unchanged migrated Return/Interrupt built-ins keep their local
-identities instead of being duplicated as user definitions. Logical versions identify controls family, definition UUID,
+and saved accessory-key definitions are projected; unchanged migrated Return/Interrupt built-ins carrying retained
+`builtIn` migration provenance keep their local identities instead of being
+duplicated as user definitions. Title/key values alone MUST NOT identify a
+migrated default. Older definitions without provenance remain eligible because
+their origin cannot be established safely. An explicit palette selection clears
+that provenance, including when it reuses a matching migrated definition.
+Accessory-key projections carry definition identity, title, key and placements.
+Unrelated shortcut/text/action payloads MUST be cleared in the existing action
+envelope; its fixed empty/default fields may remain. Inactive local payloads
+are retained locally when an existing key definition is updated.
+Keypad-pinned accessory keys MUST retain their keyboard/floating-menu placements
+even though their local representation references a saved key definition.
+Logical versions identify controls family, definition UUID,
 writer UUID and a bounded logical revision; a nil value is a tombstone. Merge
 per definition by revision then writer UUID. Different definitions on different
 devices MUST survive concurrent additions. Existing local definitions are

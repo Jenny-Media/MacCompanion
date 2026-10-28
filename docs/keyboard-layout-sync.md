@@ -56,6 +56,19 @@ and restart.
 
 ## Shortcuts and saved text
 
+Accessory keys pinned from Keypad use the same definition service, including
+their keyboard and floating-menu positions. Only the key, title, identity and
+placements sync; inactive shortcut/text payloads stay local. Existing local key
+updates retain that inactive local data. Key imports never press a key.
+
+Normalized legacy Return/Interrupt definitions retain their `builtIn` origin.
+Only unchanged definitions with that provenance are excluded as local defaults.
+An explicit palette selection clears the marker, including when it reuses an
+existing definition. Older unmarked definitions are kept eligible rather than
+guessing their origin from their name or key values; this can include an old
+default whose provenance had already been discarded. Import execution still
+depends on the action's category, never its migration marker.
+
 The iPhone/iPad consent footer says “Encrypted iCloud sync.” What Syncs and
 Credentials & iCloud explain that iCloud Keychain must be enabled on each device.
 The main iCloud Sync switch includes shortcut sequences, saved text and their
@@ -87,7 +100,15 @@ failure behavior, not delivery through a real Apple Account.
 Saved-content observers use committed profile identities and wait for legacy
 collision migration to persist before projecting it. Import retry recognizes
 normalized fallback placements instead of publishing them as edits. Cloud removal
-reaches the independent content service even if the Mac journal cannot be read.
+reaches every independent service even if the Mac journal cannot be read.
+Removal attempts each service before reporting any transport or local-journal
+failure; unreadable local history and local controls are preserved.
+
+Saved-button imports reserve saved placement identities before composing them
+with built-in keys. Editor replacements can retain an imported key's identity;
+colliding built-in identities are remapped, and independently merged saved
+buttons and floating-menu favorites receive stable aliases when necessary. Repeated imports remain valid
+without changing saved content or publishing normalization as a local edit.
 
 The iOS copy audit uses concise native icon rows for gestures, server identity,
 manual key setup and settings details. Security commands, matching-key-type

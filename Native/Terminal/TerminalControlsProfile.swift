@@ -79,6 +79,8 @@ struct TerminalControlAction: Codable, Identifiable, Equatable {
     /// Missing in older local profiles; shortcuts run immediately by default.
     var confirmBeforeRunning: Bool?
     var text = ""
+    /// Also retains Return/Interrupt migration provenance after normalization;
+    /// execution and category always follow `kind`, not this origin marker.
     var builtIn: VNCQuickAction.Kind? = nil
     var operation: TerminalAppAction? = nil
     var inRow = false
@@ -159,8 +161,8 @@ struct TerminalControlAction: Codable, Identifiable, Equatable {
         case .paste: operation = .paste
         case .escape: kind = .key; key = .escape
         case .tab: kind = .key; key = .tab
-        case .returnKey: kind = .shortcut; character = 0xff0d; modifiers = []
-        case .interrupt: kind = .shortcut; character = 0x63; modifiers = [0xffe3]
+        case .returnKey: kind = .shortcut; character = 0xff0d; modifiers = []; return
+        case .interrupt: kind = .shortcut; character = 0x63; modifiers = [0xffe3]; return
         case .rightClick: operation = .rightClick
         case .copyText: operation = .copyScreenText
         case .fit: operation = .fitToWindow
@@ -472,7 +474,12 @@ struct TerminalControlsProfile: Codable, Equatable {
                 guard draft.actions.contains(where: { $0.id == id }) else { return false }
                 definitionID = id
             } else if let key = item.palette {
-                if let existing = draft.actions.first(where: key.matches) { definitionID = existing.id }
+                if let index = draft.actions.firstIndex(where: key.matches) {
+                    definitionID = draft.actions[index].id
+                    // Choosing a key is an explicit user placement, even when
+                    // an installation-local migrated default can be reused.
+                    draft.actions[index].builtIn = nil
+                }
                 else {
                     let replacement = key.definition
                     guard replacement.valid, draft.actions.count < 4096 else { return false }
@@ -687,7 +694,13 @@ struct TerminalControlsProfile: Codable, Equatable {
                     $0.title == action.title && $0.kind == action.kind
                         && (action.kind == .text ? $0.text == action.text : $0.sameDefinition(as: action))
                 }
-                if let existing { action = existing }
+                if let existing {
+                    if action.kind == .shortcut, action.builtIn == nil,
+                       let index = actions.firstIndex(where: { $0.id == existing.id }) {
+                        actions[index].builtIn = nil
+                        action = actions[index]
+                    } else { action = existing }
+                }
                 else {
                     while actions.contains(where: { $0.id == action.id }) { action.id = UUID() }
                     action.inMenu = false; actions.append(action)
