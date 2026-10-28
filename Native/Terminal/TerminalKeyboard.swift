@@ -245,7 +245,7 @@ enum TerminalModifierAppearance {
     }
 }
 
-private final class TerminalModifierKeyButton: UIButton {
+private final class TerminalModifierKeyButton: TerminalKeyPreviewButton {
     private let heldMark = UIView()
     private var active = false
     private var modifierHeld = false
@@ -322,6 +322,8 @@ private final class TerminalKeyScrollView: UIScrollView {
     }
     func install(_ stack: UIStackView) {
         keyStack = stack
+        // Start key feedback on finger-down; pans still cancel UIButton tracking.
+        delaysContentTouches = false; canCancelContentTouches = true
         showsHorizontalScrollIndicator = true; alwaysBounceHorizontal = true
         canvas.translatesAutoresizingMaskIntoConstraints = false; addSubview(canvas)
         stack.translatesAutoresizingMaskIntoConstraints = false; canvas.addSubview(stack)
@@ -405,9 +407,9 @@ private final class TerminalKeyScrollView: UIScrollView {
     private var viewportConstraints: [NSLayoutConstraint] = []
     private var keyHeight: CGFloat = 44
     private var keyboardFocused: Bool?
-    let keyboardButton = UIButton(type: .system)
+    let keyboardButton: UIButton = TerminalKeyPreviewButton(type: .system)
     let keypadButton = UIButton(type: .system)
-    let expandButton = UIButton(type: .system)
+    let expandButton: UIButton = TerminalKeyPreviewButton(type: .system)
     let menuAnchor = UIView()
     private var menuAnchorWidth: NSLayoutConstraint?
     private let keyViewport = TerminalKeyScrollView()
@@ -628,6 +630,16 @@ private final class TerminalKeyScrollView: UIScrollView {
                     else { expandToggles.append(key) }
                 }
                 if let savedAction { remoteActionButtons.append((key, savedAction)) }
+                if let preview = key as? TerminalKeyPreviewButton {
+                    let localControl = savedAction?.isLocalKeyboardControl == true
+                        || item.control == .keyboard || item.control == .expand || item.control == .keypad
+                    preview.previewsKey = !editingPreview
+                    preview.previewTitle = item.palette?.accessory == .escape ? TerminalAccessoryKey.escape.title : nil
+                    preview.previewAllowed = { [weak self] in
+                        guard let self, !executionActive else { return false }
+                        return localControl || inputReady
+                    }
+                }
                 if editingPreview, item.control == .expand { expandToggles.append(key) }
                 key.accessibilityLabel = title
                 key.tag = Int(item.palette?.shortcutCode ?? (item.modifier == .ctrl ? 0xffe3 : item.modifier == .alt ? 0xffe9 : item.modifier == .shift ? 0xffe1 : item.modifier == .command ? 0xffeb : 0))
@@ -990,6 +1002,7 @@ private final class TerminalKeyScrollView: UIScrollView {
         }; refresh()
     }
     func setKeyboardFocused(_ focused: Bool) {
+        if keyboardFocused != focused { dismissKeyPreviews() }
         keyboardFocused = focused
         for key in keyboardToggles {
             key.accessibilityLabel = focused ? "Hide Keyboard" : "Show Keyboard"
@@ -997,7 +1010,11 @@ private final class TerminalKeyScrollView: UIScrollView {
         }
         updateKeyMetrics()
     }
+    func dismissKeyPreviews() {
+        allKeys.compactMap { $0 as? TerminalKeyPreviewButton }.forEach { $0.dismissKeyPreview() }
+    }
     private func updateVisibility() {
+        dismissKeyPreviews()
         let all = editingPreview && previewShowsAllRows
         for definition in profileRows {
             let hidden = !all && (definition.hidden == true || definition.extra && !showsExtraRows)
@@ -1033,7 +1050,10 @@ private final class TerminalKeyScrollView: UIScrollView {
             scroll.scrollRectToVisible(key.convert(key.bounds, to: scroll), animated: false)
         }
     }
-    override func layoutSubviews() { super.layoutSubviews(); layoutRows() }
+    override func layoutSubviews() {
+        super.layoutSubviews(); layoutRows()
+        allKeys.compactMap { $0 as? TerminalKeyPreviewButton }.forEach { $0.dismissMovedKeyPreview() }
+    }
     override func didMoveToWindow() { super.didMoveToWindow(); updateKeyMetrics(); prioritizeRowPans(); if window == nil { finishRowReorder(commit: false) } }
     private var keyFont: UIFont { UIFontMetrics(forTextStyle: .body).scaledFont(for: .systemFont(ofSize: 17, weight: .medium), compatibleWith: traitCollection) }
     private var allKeys: [UIButton] { generated + [keyboardButton, keypadButton, expandButton] }
@@ -1067,7 +1087,7 @@ private final class TerminalKeyScrollView: UIScrollView {
         width.isActive = true; keyWidths[ObjectIdentifier(key)] = width
     }
     private func button(_ title: String, symbol: String? = nil, modifier: Bool = false, action: @escaping () -> Void) -> UIButton {
-        let key: UIButton = modifier ? TerminalModifierKeyButton(type: .system) : UIButton(type: .system)
+        let key: UIButton = modifier ? TerminalModifierKeyButton(type: .system) : TerminalKeyPreviewButton(type: .system)
         configureButton(key, title: title, symbol: symbol); generated.append(key)
         let generation = layoutGeneration
         key.addAction(UIAction { [weak self] _ in guard self?.layoutGeneration == generation else { return }; action() }, for: .touchUpInside)
@@ -1103,6 +1123,13 @@ private final class TerminalKeyScrollView: UIScrollView {
         (key as? TerminalModifierKeyButton)?.showState(active: state.active.contains(modifier), held: locked)
         key.accessibilityValue = locked ? "On" : state.active.contains(modifier) ? "Next key" : "Off"
     }
+    private func refreshKeyAvailability(_ ready: Bool) {
+        let local = Set((keyboardToggles + expandToggles + keypadToggles + [keypadButton]).map(ObjectIdentifier.init))
+        for key in allKeys {
+            let enabled = ready || local.contains(ObjectIdentifier(key))
+            key.isEnabled = enabled; key.alpha = enabled ? 1 : 0.4
+        }
+    }
     func refresh() {
         guard !editingPreview else { return }
         if executionActive {
@@ -1112,11 +1139,10 @@ private final class TerminalKeyScrollView: UIScrollView {
         }
         if let remoteInput {
             let ready = remoteInput.ready(), state = remoteInput.state()
-            for key in allKeys { key.isEnabled = ready; key.alpha = ready ? 1 : 0.4 }
+            refreshKeyAvailability(ready)
             for (key, modifier) in modifierButtons {
                 refreshModifier(key, modifier: modifier, state: state)
             }
-            for key in keyboardToggles + expandToggles + keypadToggles + [keypadButton] { key.isEnabled = true; key.alpha = 1 }
             for (key, action) in remoteActionButtons { key.isEnabled = remoteInput.canUse(action); key.alpha = key.isEnabled ? 1 : 0.4 }
             return
         }
@@ -1124,14 +1150,13 @@ private final class TerminalKeyScrollView: UIScrollView {
         let ready = terminal.customInputEpoch() != nil && !terminal.inputReserved()
         if !terminal.keyEncoding.supportsCommand { terminal.keyboardState.armed.remove(.command); terminal.keyboardState.locked.remove(.command) }
         if terminal.customInputEpoch() == nil { terminal.keyboardState.reset(); terminal.controlModifier = false; terminal.metaModifier = false }
-        for key in allKeys { key.isEnabled = ready; key.alpha = ready ? 1 : 0.4 }
+        refreshKeyAvailability(ready)
         for (key, modifier) in modifierButtons {
             key.isEnabled = ready && (modifier != .command || terminal.keyEncoding.supportsCommand); key.alpha = key.isEnabled ? 1 : 0.4
             refreshModifier(key, modifier: modifier, state: terminal.keyboardState)
             if modifier == .command && !terminal.keyEncoding.supportsCommand { key.accessibilityValue = "Unavailable in this application" }
         }
         for key in commandShortcuts { key.isEnabled = ready && terminal.keyEncoding.supportsCommand; key.alpha = key.isEnabled ? 1 : 0.4; key.accessibilityValue = terminal.keyEncoding.supportsCommand ? nil : "Unavailable in this application" }
-        for key in keyboardToggles + expandToggles + keypadToggles + [keypadButton] { key.isEnabled = true; key.alpha = 1 }
     }
     private func send(_ key: TerminalAccessoryKey) {
         guard let terminal else { return }; terminal.performCustomInput { terminal.sendKey(.accessory(key), modifiers: terminal.keyboardState.consume()) }; refresh()
