@@ -120,6 +120,9 @@ import XCTest
         let field = app.textFields.firstMatch
         XCTAssertTrue(field.exists); field.tap()
         field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: (field.value as? String)?.count ?? 0) + name)
+        // Commit the iPad filename edit before using the Files toolbar.
+        let hideKeyboard = app.buttons["Hide keyboard"].firstMatch
+        if hideKeyboard.exists { hideKeyboard.tap() }
         app.buttons["DOCPicker.actionButton"].tap()
         XCTAssertTrue(picker.waitForNonExistence(timeout: 8))
         app.buttons["backup-import"].tap()
