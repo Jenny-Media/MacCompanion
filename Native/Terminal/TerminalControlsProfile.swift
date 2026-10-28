@@ -939,6 +939,13 @@ struct TerminalControlsProfile: Codable, Equatable {
             var state = result.syncState
             state.layoutImport = .init(observed: try DirectControlsCausality.fingerprint(DirectCloudKeyboardLayout(result)))
             result.syncState = state
+        } else if !cloudImport, result.syncState.layoutImport == nil,
+                  DirectCloudKeyboardLayout(result) != DirectCloudKeyboardLayout(current) {
+            // The first customization carries its pre-edit baseline in the
+            // same write, even if sync has never saved a separate journal.
+            var state = result.syncState
+            state.layoutImport = .init(observed: try DirectControlsCausality.fingerprint(DirectCloudKeyboardLayout(current)))
+            result.syncState = state
         }
         if captureSavedImport {
             let projected = DirectCloudSavedControl.project(result)

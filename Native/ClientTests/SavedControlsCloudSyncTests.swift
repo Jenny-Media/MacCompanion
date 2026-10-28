@@ -588,7 +588,8 @@ private final class SavedContentMemoryCloud: DirectCloudTransport, @unchecked Se
         let corrupt = Data("synthetic unreadable Mac journal".utf8); try corrupt.write(to: url)
         defer { defaults.removePersistentDomain(forName: name); try? FileManager.default.removeItem(at: url) }
         let macs = SavedContentMemoryCloud(), layouts = SavedContentMemoryCloud(), content = SavedContentMemoryCloud()
-        let cloud = DirectCloudSyncV1(defaults: defaults, url: url, transport: macs, writerID: UUID(),
+        let writer = UUID()
+        let cloud = DirectCloudSyncV1(defaults: defaults, url: url, transport: macs, writerID: writer,
                                      keyboardTransport: layouts, savedControlsTransport: content)
         for _ in 0..<2 {
             for service in [macs, layouts, content] { service.inject(Data("synthetic cloud data".utf8), account: "synthetic") }
@@ -597,6 +598,11 @@ private final class SavedContentMemoryCloud: DirectCloudTransport, @unchecked Se
             XCTAssertFalse(cloud.busy); XCTAssertFalse(cloud.enabled)
             XCTAssertTrue(macs.snapshot.isEmpty); XCTAssertTrue(layouts.snapshot.isEmpty); XCTAssertTrue(content.snapshot.isEmpty)
             XCTAssertEqual(try Data(contentsOf: url), corrupt)
+            for kind in ["keyboard-cloud-journal-v1", "saved-controls-cloud-journal-v1"] {
+                let bytes = try XCTUnwrap(TerminalSecretStore.read(writer, kind: kind))
+                let reset = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+                XCTAssertEqual(Set(try XCTUnwrap(reset["reseeding"] as? [String])), ["terminal", "remoteMac"])
+            }
             XCTAssertEqual(cloud.recovery?.reason, .cloudRemoval, "Cloud deletion must not claim unreadable local history was repaired")
         }
     }
@@ -842,6 +848,45 @@ private final class SavedContentMemoryCloud: DirectCloudTransport, @unchecked Se
         XCTAssertFalse(library.restore(entry)); XCTAssertNotNil(library.error); XCTAssertEqual(memory.data,before)
         let locked = DirectControlsRecoveryLibrary(stores: [.terminal: memory.store], canAccess: { false })
         XCTAssertTrue(locked.entries.isEmpty); XCTAssertFalse(locked.discard(entry)); XCTAssertEqual(memory.data,before)
+    }
+
+    func testResetIntentSurvivesStorageFailureAfterCloudDeletionAndRestart() async throws {
+        for family in [TerminalControlsFamily.terminal, .remoteMac] {
+            let action = text("unchanged synthetic content"), memory = try Profile(profile(action, family: family))
+            let journal = Journal(), raw = SavedContentMemoryCloud(), writer = UUID()
+            var failAfterDeletion = false
+            let sync = DirectSavedControlsCloudSync(writer: writer, transport: DirectSavedControlsTransport(base: raw),
+                stores: [family.rawValue: memory.store], observeChanges: false,
+                readJournal: { try journal.read() }, writeJournal: {
+                    if failAfterDeletion && raw.snapshot.isEmpty { throw DirectCloudError.storage }
+                    try journal.write($0)
+                })
+            sync.setEnabled(true); try await wait(sync)
+            XCTAssertTrue(try versions(raw).contains { $0.id == action.id && $0.value?.action.text == action.text })
+            failAfterDeletion = true
+            do { try await sync.removeCloudCopies() }
+            catch { XCTFail("Reset must already be durable before deletion: \(error)") }
+            XCTAssertTrue(raw.snapshot.isEmpty)
+            let restarted = engine(memory, journal, raw, writer: writer)
+            restarted.setEnabled(true); try await wait(restarted)
+            XCTAssertTrue(try versions(raw).contains { $0.id == action.id && $0.value?.action.text == action.text }, "Unchanged local content must return to the empty cloud")
+            let receiver = try Profile(family == .terminal ? .defaults : .remoteDefaults)
+            let second = engine(receiver, Journal(), raw)
+            second.setEnabled(true); try await wait(second)
+            XCTAssertEqual(try receiver.store.load().actions.first { $0.id == action.id }?.text, action.text)
+            XCTAssertNil(restarted.issue); restarted.setEnabled(false); second.setEnabled(false)
+        }
+    }
+
+    func testCloudRemovalWaitsForDurableResetIntent() async throws {
+        let memory = try Profile(profile(text())), journal = Journal(), raw = SavedContentMemoryCloud()
+        let sync = engine(memory, journal, raw)
+        sync.setEnabled(true); try await wait(sync)
+        let before = raw.snapshot; XCTAssertFalse(before.isEmpty)
+        journal.failWrite = true
+        do { try await sync.removeCloudCopies(); XCTFail("Reset persistence failure must be reported") }
+        catch { XCTAssertEqual(raw.snapshot, before, "Do not delete cloud data without durable reseeding intent") }
+        XCTAssertTrue(try memory.store.load().valid)
     }
 
     func testStartOverCanReseedCurrentContentWithoutClearingRecovery() async throws {

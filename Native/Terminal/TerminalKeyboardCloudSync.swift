@@ -447,12 +447,19 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
         setEnabled(false)
         await task?.value
         task = nil
-        let transport = transport
-        try await Task.detached { try transport.removeAll() }.value
-        // Re-enable is an explicit start from the current local layout, even
-        // if a delayed old cloud record arrives after deletion.
+        guard canAccess() else { throw DirectCloudError.locked }
+        // Commit reseeding before deletion. A storage failure must leave the
+        // cloud copy intact; restart retains the same intent after deletion.
         pending.formUnion(observed.keys); reseeding.formUnion(stores.keys)
         try persist([])
+        let transport = transport
+        try await Task.detached { try transport.removeAll() }.value
+    }
+    /// The parent can reset this independent service even when its Mac journal
+    /// prevented constructing the normal controls engines. No profile is read.
+    static func prepareForCloudRemoval(writer: UUID) throws {
+        let reset = Journal(writer: writer, versions: [], reseeding: ["terminal", "remoteMac"])
+        try TerminalSecretStore.write(JSONEncoder().encode(reset), id: writer, kind: "keyboard-cloud-journal-v1")
     }
 }
 #endif

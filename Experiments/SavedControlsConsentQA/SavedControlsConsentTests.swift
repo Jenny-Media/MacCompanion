@@ -144,6 +144,37 @@ import XCTest
             }
         }
     }
+    func testRecoveryNoticeIsVisibleAndLeadsToLayoutWithUndo() {
+        for large in [false, true] {
+            let app = launch(large: large); defer { app.terminate() }
+            reveal(app.buttons["fixture-recoveryNotice"], app: app); app.buttons["fixture-recoveryNotice"].tap()
+            let notice = app.buttons["icloud-recovery-notice"]
+            reveal(notice, app: app); capture(large ? "recovery-notice-large" : "recovery-notice")
+            notice.tap()
+            XCTAssertTrue(app.navigationBars["Recovered Changes"].waitForExistence(timeout: 5))
+            app.buttons["icloud-recovered-fixture-text"].tap()
+            reveal(app.buttons["icloud-recovered-restore"], app: app); app.buttons["icloud-recovered-restore"].tap()
+            // Duo places the system back button in its side rail toolbar.
+            let back = app.buttons["BackButton"]
+            XCTAssertTrue(back.waitForExistence(timeout: 5)); back.tap()
+            XCTAssertTrue(notice.waitForExistence(timeout: 5)); reveal(notice, app: app)
+            XCTAssertTrue(notice.label.contains("Review Layout"))
+            capture(large ? "recovery-layout-notice-large" : "recovery-layout-notice")
+            notice.tap()
+            XCTAssertTrue(app.staticTexts["Synthetic alternate layout"].waitForExistence(timeout: 5))
+            let explanation = app.staticTexts["This is a saved alternative. Your current layout is still in use."]
+            reveal(explanation, app: app)
+            let restore = app.buttons["icloud-recovered-restore"]
+            reveal(restore, app: app); capture(large ? "recovery-layout-detail-large" : "recovery-layout-detail")
+            restore.tap(); app.buttons["Use Layout"].tap()
+            XCTAssertTrue(notice.waitForExistence(timeout: 5)); reveal(notice, app: app); notice.tap()
+            let undo = app.buttons["icloud-recovered-restore"]; reveal(undo, app: app)
+            XCTAssertTrue(undo.exists, "Switching layouts keeps the previous one available to undo")
+            capture(large ? "recovery-layout-undo-large" : "recovery-layout-undo")
+            app.terminate()
+        }
+    }
+
     func testRecoveredChangesHaveClearRestoreUndoAndDiscardActions() {
         for large in [false, true] {
             let app = launch(large: large); defer { app.terminate() }

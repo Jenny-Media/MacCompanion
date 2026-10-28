@@ -140,8 +140,10 @@ Changes. A concurrent deletion keeps the item out of the active library and keep
 the edited version recoverable. Layouts select one complete arrangement and retain
 the alternative instead of blending row positions.
 
-Manage Sync shows Recovered Changes only when there are copies or a storage
-notice. Inspect a version, Restore as Copy for saved content, or Use This Layout.
+Sync & Security shows a nonblocking recovery notice when copies are available.
+A single layout opens directly with Review Layout; multiple copies open Recovered
+Changes. Manage Sync retains the same recovery entry. Inspect a version, Restore
+as Copy for saved content, or Use This Layout.
 Restoring saved content creates a new identity and restores its button positions;
 it never runs input. Switching layouts retains the previous layout in recovery.
 Discard actions affect recovery copies only and retain dismissal high-water marks
@@ -159,7 +161,9 @@ restored file cannot publish a new device's defaults over cloud customizations.
 Existing unpublished file journals are not migrated or deleted.
 
 
-Keyboard imports also carry a profile-atomic applied-layout receipt. Retry can
+The first local keyboard customization also saves its pre-edit baseline atomically
+with the profile. A failed first journal write followed by restart cannot turn that
+edit into an untouched baseline. Import receipts keep their existing role. Retry can
 distinguish an unedited import followed by another remote edit from a genuine
 local change back to the pre-import layout. Reset retains causal clocks and
 marks current layouts and known saved-definition deletions for reseeding, so
@@ -169,3 +173,10 @@ Reset reseeding remains explicit until new local versions are durably prepared.
 A matching first stale layout cannot consume it. Non-editing notifications such
 as recovery discard cannot consume saved-content reseeding or known deletions.
 Recovery confirmations use alerts with an explicit Cancel on phone and tablet.
+
+Both controls services durably record reset/reseeding intent before removing cloud
+copies. If that local write fails, the affected cloud service is left intact and
+removal reports failure. A restart after successful deletion retains the intent to
+upload unchanged local controls when sync is enabled again. The parent uses the
+same write-ahead reset when its Mac journal prevented creating a controls engine;
+an unavailable writer identity cannot authorize deletion without that bookkeeping.

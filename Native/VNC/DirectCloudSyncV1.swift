@@ -147,6 +147,7 @@ enum DirectCloudSyncIssue: Equatable { case storage, capacity }
     private let transport: any DirectCloudTransport
     private let applyPreferences: @MainActor (DirectCloudPreferences, UUID) -> Void
     private var writer: UUID
+    private var syncIdentityReadable = true
     private let injectedWriter: UUID?
     var recovery: DirectRecoveryNotice?
     private var versions: [DirectCloudVersion] = []
@@ -185,7 +186,7 @@ enum DirectCloudSyncIssue: Equatable { case storage, capacity }
                 } else { try TerminalSecretStore.write(Data(resolvedWriter.uuidString.utf8), id: identity, kind: "sync-writer") }
             } catch { identityReadable = false }
         }
-        injectedWriter = writerID; writer = resolvedWriter
+        injectedWriter = writerID; writer = resolvedWriter; syncIdentityReadable = identityReadable
         enabled = defaults.bool(forKey: Self.enabledKey)
         do {
             if FileManager.default.fileExists(atPath: self.url.path) {
@@ -226,7 +227,7 @@ enum DirectCloudSyncIssue: Equatable { case storage, capacity }
                     guard journal.schema == 1 else { throw DirectCloudError.invalid }
                     restored = try DirectCloudVersion.merge([], journal.versions)
                 }
-                writer = resolved; versions = restored; readable = true
+                writer = resolved; versions = restored; readable = true; syncIdentityReadable = true
                 if let library { for mac in library.macs where !versions.contains(where: { $0.id == mac.id && $0.writer == writer }) { localChange(mac.id) } }
             } catch { recovery = .make(.cloudUnavailable, message: "Sync data is still unavailable. Local Macs and the existing history are kept."); return }
         }
@@ -346,6 +347,8 @@ enum DirectCloudSyncIssue: Equatable { case storage, capacity }
             do {
                 if let keyboardCloud { try await keyboardCloud.removeCloudCopies() }
                 else {
+                    guard syncIdentityReadable else { throw DirectCloudError.storage }
+                    try DirectKeyboardCloudSync.prepareForCloudRemoval(writer: writer)
                     let layoutTransport = keyboardTransport
                     try await Task.detached { try layoutTransport.removeAll() }.value
                 }
@@ -353,6 +356,8 @@ enum DirectCloudSyncIssue: Equatable { case storage, capacity }
             do {
                 if let savedControlsCloud { try await savedControlsCloud.removeCloudCopies() }
                 else {
+                    guard syncIdentityReadable else { throw DirectCloudError.storage }
+                    try DirectSavedControlsCloudSync.prepareForCloudRemoval(writer: writer)
                     let contentTransport = savedControlsTransport
                     try await Task.detached { try contentTransport.removeAll() }.value
                 }

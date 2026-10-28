@@ -596,9 +596,15 @@ private final class SavedControlsObservers: @unchecked Sendable {
     func removeCloudCopies() async throws {
         setEnabled(false); await task?.value; task = nil
         guard canAccess() else { throw DirectCloudError.locked }
+        // This reset journal is the write-ahead intent. No later write is
+        // needed to remember that unchanged local content must upload again.
+        journal = Journal(reseeding: Set(stores.keys)); loaded = true; readable = true; try persist()
         let transport = self.transport
         try await Task.detached { try transport.removeAll() }.value
-        journal = Journal(reseeding: Set(stores.keys)); loaded = true; readable = true; try persist()
+    }
+    static func prepareForCloudRemoval(writer: UUID) throws {
+        let reset = Journal(reseeding: ["terminal", "remoteMac"])
+        try TerminalSecretStore.write(JSONEncoder().encode(reset), id: writer, kind: "saved-controls-cloud-journal-v1")
     }
 }
 #endif

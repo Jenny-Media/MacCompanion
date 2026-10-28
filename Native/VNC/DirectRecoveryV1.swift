@@ -171,7 +171,14 @@ struct DirectSyncSecurityForm: View {
     @State private var enableCloud = false
     #endif
     @State private var sheet: DirectCloudSheet?
+    #if os(iOS)
+    @State private var recovered: DirectControlsRecoveryLibrary
+    init(cloud: DirectCloudSyncV1 = .shared, recovered: DirectControlsRecoveryLibrary = .init()) {
+        _cloud = State(initialValue: cloud); _recovered = State(initialValue: recovered)
+    }
+    #else
     init(cloud: DirectCloudSyncV1 = .shared) { _cloud = State(initialValue: cloud) }
+    #endif
     var body: some View {
         Form {
             DirectCloudSettingsSection(cloud: cloud, enable: {
@@ -181,6 +188,11 @@ struct DirectSyncSecurityForm: View {
                 enableCloud = true
                 #endif
             }, present: { sheet = $0 })
+            #if os(iOS)
+            if !recovered.entries.isEmpty || recovered.error != nil {
+                Section { DirectControlsRecoveryNotice(library: recovered) }
+            }
+            #endif
             DirectAppUnlockSection()
         }.directGroupedForm()
         .sheet(item: $sheet) { item in
@@ -382,6 +394,42 @@ private struct DirectCloudManagementForm: View {
     }
 }
 
+private struct DirectControlsRecoveryNotice: View {
+    let library: DirectControlsRecoveryLibrary
+    private var layout: DirectControlsRecoveredChange? {
+        library.error == nil && library.entries.count == 1 && library.entries[0].layout != nil ? library.entries[0] : nil
+    }
+    var body: some View {
+        NavigationLink {
+            DirectControlsRecoveryDestination(library: library)
+        } label: {
+            Label {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(layout != nil ? "Review Layout" : "Review Recovered Changes")
+                    Text(library.error != nil ? "Recovery copies couldn’t be read. Retry here."
+                         : layout != nil ? "A keyboard layout was kept for recovery." : "Other versions were kept during sync.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            } icon: { Image(systemName: "clock.arrow.circlepath") }
+        }.accessibilityIdentifier("icloud-recovery-notice")
+    }
+}
+
+/// Keep the selected route stable while restoring/discarding changes the list.
+private struct DirectControlsRecoveryDestination: View {
+    let library: DirectControlsRecoveryLibrary
+    @State private var layout: DirectControlsRecoveredChange?
+    init(library: DirectControlsRecoveryLibrary) {
+        self.library = library
+        _layout = State(initialValue: library.error == nil && library.entries.count == 1 && library.entries[0].layout != nil
+            ? library.entries[0] : nil)
+    }
+    var body: some View {
+        if let layout { DirectRecoveredChangeDetail(entry: layout, library: library) }
+        else { DirectRecoveredChangesForm(library: library) }
+    }
+}
+
 struct DirectRecoveredChangesForm: View {
     let library: DirectControlsRecoveryLibrary
     @State private var confirmDiscardAll = false
@@ -404,7 +452,7 @@ struct DirectRecoveredChangesForm: View {
                     }
                 }
             } footer: {
-                if !library.entries.isEmpty { Text("Another version was kept when devices changed the same item. Review it here whenever you’re ready.") }
+                if !library.entries.isEmpty { Text("These copies were kept so you can review or restore another version.") }
                 else if library.error == nil { Text("Your current versions are in use.") }
             }
             if !library.entries.isEmpty {
@@ -467,6 +515,9 @@ private struct DirectRecoveredChangeDetail: View {
                         }
                     }
                 } header: { Text("Recovered version") }
+                footer: { Text(entry.layout != nil
+                    ? "This is a saved alternative. Your current layout is still in use."
+                    : "This copy stays separate until you restore it.") }
                 Section {
                     Button(entry.layout != nil ? "Use This Layout…" : "Restore as Copy", systemImage: "arrow.uturn.backward") {
                         if entry.layout != nil { confirmation = .layout }

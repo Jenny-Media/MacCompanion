@@ -261,7 +261,7 @@ private final class KeyboardMemoryCloud: DirectCloudTransport, @unchecked Sendab
         transport.resumeWrite.signal(); try await deletion.value
         XCTAssertTrue(try transport.read().isEmpty); XCTAssertTrue(try memory.store.load().valid)
     }
-    func testCloudRemovalReportsLocalJournalFailureAfterDeletingLayouts() async throws {
+    func testCloudRemovalWaitsForDurableResetIntent() async throws {
         let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }
         let profile = try MemoryProfile(), transport = KeyboardMemoryCloud()
@@ -276,7 +276,7 @@ private final class KeyboardMemoryCloud: DirectCloudTransport, @unchecked Sendab
         XCTAssertFalse(try transport.read().isEmpty)
         failJournal = true
         do { try await sync.removeCloudCopies(); XCTFail("The local journal failure must remain visible") }
-        catch { XCTAssertTrue(try transport.read().isEmpty) }
+        catch { XCTAssertFalse(try transport.read().isEmpty, "Cloud layouts stay until reset intent is durable") }
         XCTAssertTrue(try profile.store.load().valid)
     }
     func testOversizedPendingEditSurvivesRefreshRestartAndCanSyncAgain() async throws {
@@ -308,6 +308,37 @@ private final class KeyboardMemoryCloud: DirectCloudTransport, @unchecked Sendab
         XCTAssertFalse(restarted.status.contains("couldn’t sync"))
         restarted.setEnabled(false)
     }
+    func testFirstJournalFailureCannotLoseLaterLayoutAfterRestart() async throws {
+        for family in [TerminalControlsFamily.terminal, .remoteMac] {
+            let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let memory = try MemoryProfile(family == .terminal ? .defaults : .remoteDefaults)
+            var store = memory.store; store.family = family
+            store.legacyRemoteMenus = { ["desktop": [], "trackpad": []] }
+            let cloud = KeyboardMemoryCloud(), writer = UUID(), url = folder.appending(path: "journal.json")
+            var remote = try store.load(); remote.freezeKeyboardLayout(); remote.keyboardRows![0].title = "Other device layout"
+            let incoming = DirectCloudKeyboardVersion(family: family, writer: UUID(), revision: 12,
+                layout: DirectCloudKeyboardLayout(remote))
+            try cloud.write(JSONEncoder().encode(incoming), account: incoming.account)
+            let first = DirectKeyboardCloudSync(url: url, writer: writer, transport: cloud,
+                stores: [family.rawValue: store], observeChanges: true,
+                writeJournal: { _, _ in throw DirectCloudError.storage })
+            XCTAssertEqual(first.issue, .storage)
+            var edited = try store.load(); edited.freezeKeyboardLayout(); edited.keyboardRows![0].title = "My offline layout"
+            _ = try store.save(edited)
+            first.setEnabled(false)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+            let restarted = DirectKeyboardCloudSync(url: url, writer: writer, transport: cloud,
+                stores: [family.rawValue: store], observeChanges: false)
+            restarted.setEnabled(true); try await wait(restarted)
+            XCTAssertEqual(try store.load().keyboardRows![0].title, "My offline layout")
+            let records = try cloud.read().map { try JSONDecoder().decode(DirectCloudKeyboardVersion.self, from: $0) }
+            XCTAssertEqual(DirectCloudKeyboardVersion.winner(records, family: family)?.layout.rows[0].title, "My offline layout")
+            XCTAssertTrue(try store.load().syncState.recovered.contains { $0.layout == incoming.layout }, "The independent cloud version remains recoverable")
+            XCTAssertNil(restarted.issue); restarted.setEnabled(false)
+        }
+    }
+
     func testFailedJournalWritePreservesEditThroughRefreshRestartAndRetry() async throws {
         let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }

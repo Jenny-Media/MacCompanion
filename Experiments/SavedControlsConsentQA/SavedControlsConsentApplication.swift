@@ -29,7 +29,7 @@ private final class NoCloudEffects: DirectCloudTransport, @unchecked Sendable {
 private struct CopyAuditHome: View {
     let cloud: DirectCloudSyncV1
     private enum Route: String, CaseIterable, Identifiable {
-        case sync, gestures, setup, trust, identity, manual, keyImport, recovered
+        case sync, gestures, setup, trust, identity, manual, keyImport, recovered, recoveryNotice
         var id: String { rawValue }
     }
     @State private var route: Route?
@@ -66,6 +66,12 @@ private struct CopyAuditHome: View {
             case .sync:
                 NavigationStack {
                     DirectSyncSecurityForm(cloud: cloud).navigationTitle("Sync & Security")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { route = nil } } }
+                }
+            case .recoveryNotice:
+                NavigationStack {
+                    DirectSyncSecurityForm(cloud: cloud, recovered: recovered).navigationTitle("Sync & Security")
                         .navigationBarTitleDisplayMode(.inline)
                         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { route = nil } } }
                 }
