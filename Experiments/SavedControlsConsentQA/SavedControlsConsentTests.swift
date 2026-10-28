@@ -55,7 +55,7 @@ import XCTest
             capture("manual-backup-preview" + (large ? "-large-text" : ""))
             reveal(restore, app: app)
             capture("manual-backup-preview-action" + (large ? "-large-text" : ""))
-            app.buttons["Cancel"].firstMatch.tap()
+            dismissBackupPreview(app)
             XCTAssertTrue(app.buttons["backup-create"].waitForExistence(timeout: 5))
             capture("manual-backup-home" + (large ? "-large-text" : ""))
             app.buttons["Done"].firstMatch.tap()
@@ -78,6 +78,17 @@ import XCTest
             app.buttons["Done"].firstMatch.tap()
             XCTAssertEqual(app.staticTexts["fixture-backup-macs"].label, "Saved Macs: Current Mac")
             app.terminate()
+        }
+    }
+    private func dismissBackupPreview(_ app: XCUIApplication) {
+        let cancel = app.buttons["backup-cancel"]
+        if cancel.exists { cancel.tap() }
+        else {
+            // Duo can draw a visible toolbar replica outside the app's AX
+            // subtree. Use its observed leading cancellation area.
+            let bar = app.navigationBars["Restore Backup"]
+            XCTAssertTrue(bar.exists)
+            bar.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.4)).tap()
         }
     }
     private func dismissBackupFilePicker(_ app: XCUIApplication) {
@@ -118,7 +129,10 @@ import XCTest
         XCTAssertTrue(picker.waitForExistence(timeout: 8))
         let name = "Mac Companion QA " + UUID().uuidString.prefix(8)
         let field = app.textFields.firstMatch
-        XCTAssertTrue(field.exists); field.tap()
+        XCTAssertTrue(field.exists); field.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let keyboard = app.keyboards.firstMatch
+        if !keyboard.waitForExistence(timeout: 5) { field.tap() }
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 8))
         field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: (field.value as? String)?.count ?? 0) + name)
         // Commit the iPad filename edit before using the Files toolbar.
         let hideKeyboard = app.buttons["Hide keyboard"].firstMatch
@@ -132,7 +146,7 @@ import XCTest
         file.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)).tap()
         XCTAssertTrue(app.navigationBars["Restore Backup"].waitForExistence(timeout: 8))
         capture("manual-backup-files-roundtrip")
-        app.buttons["Cancel"].firstMatch.tap()
+        dismissBackupPreview(app)
         XCTAssertFalse(app.buttons["backup-previous"].exists)
         app.buttons["Done"].firstMatch.tap()
         XCTAssertEqual(app.staticTexts["fixture-backup-macs"].label, "Saved Macs: Current Mac")

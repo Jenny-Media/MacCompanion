@@ -129,7 +129,7 @@ struct DirectLocalBackupSettings: View {
                             .accessibilityIdentifier("backup-confirm-restore")
                     }
                 }.navigationTitle(selected.previous ? "Previous Data" : "Restore Backup").directInlineNavigationTitle()
-                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { selection = nil }.disabled(store.busy) } }
+                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { selection = nil }.disabled(store.busy).accessibilityIdentifier("backup-cancel") } }
             }.directAppearance().interactiveDismissDisabled(store.busy)
         }
     }
