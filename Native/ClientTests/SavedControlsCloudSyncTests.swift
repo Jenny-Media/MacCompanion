@@ -83,6 +83,30 @@ private final class SavedContentMemoryCloud: DirectCloudTransport, @unchecked Se
     private func versions(_ raw: SavedContentMemoryCloud) throws -> [DirectCloudSavedVersion] {
         try DirectSavedControlsTransport(base: raw).read().map { try JSONDecoder().decode(DirectCloudSavedVersion.self, from: $0) }
     }
+    func testEnablingSyncAutomaticallyPreparesFreshRecipientForSavedContent() async throws {
+        for family in [TerminalControlsFamily.terminal, .remoteMac] {
+            let raw = SavedContentMemoryCloud(), action = text("automatic-receiver-synthetic-text")
+            let senderProfile = try Profile(profile(action, family: family))
+            let sender = engine(senderProfile, Journal(), raw)
+            sender.setEnabled(true); try await wait(sender); sender.setEnabled(false)
+            var bytes: Data?
+            var store: TerminalControlsStore = family == .remoteMac ? .remoteMac() : .init()
+            store.read = { bytes }; store.write = { bytes = $0 }
+            store.legacyIDs = { [] }; store.legacyActions = { [] }
+            store.legacyRemoteMenus = { ["desktop": [], "trackpad": []] }
+            let journal = Journal(), reads = raw.reads
+            let receiver = DirectSavedControlsCloudSync(writer: UUID(), transport: DirectSavedControlsTransport(base: raw),
+                stores: [family.rawValue: store], observeChanges: false,
+                readJournal: { try journal.read() }, writeJournal: { try journal.write($0) })
+            XCTAssertNil(bytes); XCTAssertEqual(raw.reads, reads)
+            receiver.setEnabled(true); try await wait(receiver)
+            let imported = try store.load()
+            XCTAssertEqual(imported.actions.first { $0.id == action.id }?.text, action.text)
+            XCTAssertNotNil(try store.savedControlsCloudProfile()); XCTAssertNil(receiver.issue)
+            receiver.setEnabled(false)
+        }
+    }
+
     func testIndexedPolicyUsesMainSyncAndCompleteVersions() throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-screen-sharing-v1", withExtension: "json"))
         let data = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])

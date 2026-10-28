@@ -854,8 +854,7 @@ struct TerminalControlsProfile: Codable, Equatable {
         return profile
     }
 
-    /// Remote layouts must wait for the existing context-aware menu migration.
-    /// A context-free sync reader cannot create that shared local profile.
+    /// Off-state baseline reads never create or write a controls profile.
     func keyboardCloudReady() throws -> Bool {
         guard family == .remoteMac else { return true }
         guard let stored = try read() else { return false }
@@ -864,18 +863,8 @@ struct TerminalControlsProfile: Codable, Equatable {
         struct Readiness: Decodable { let remoteMenus: [String: [TerminalMenuPlacement]]? }
         return try JSONDecoder().decode(Readiness.self, from: stored).remoteMenus != nil
     }
-    /// Use the existing owners to initialize local controls only after opt-in.
-    /// A context-free loader must not replace a legacy per-Mac menu with defaults.
-    static func prepareForCloudSync(terminal: Self = .init(), remote: Self = .remoteMac(),
-                                    needsMacContext: () throws -> Bool) throws -> Bool {
-        _ = try terminal.load()
-        if try !remote.keyboardCloudReady(), try needsMacContext() { return false }
-        _ = try remote.load()
-        return true
-    }
     func load() throws -> TerminalControlsProfile { try load(persistMigrations: true) }
-    /// Baseline projections can normalize a snapshot without committing a
-    /// migration that still needs the UI's legacy Mac context.
+    /// Off-state baseline projections normalize a snapshot without writing it.
     func load(persistMigrations: Bool) throws -> TerminalControlsProfile {
         guard DirectAppLockV1.shared.canAccess else { throw TerminalSecretStore.Failure.locked }
         let stored = try read()

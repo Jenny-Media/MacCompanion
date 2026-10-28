@@ -482,10 +482,10 @@ private final class SavedControlsObservers: @unchecked Sendable {
         guard enabled, readable, !busy, canAccess(), DirectClientPlatformV1.sessionAvailable else { return }
         do {
             try prepare()
-            // Terminal migration has no Mac context. Commit it through its owner
-            // only after effective opt-in; baseline observers never invent IDs.
+            // Each service prepares its own profiles after opt-in. No Mac
+            // selection or connection is required for either controls family.
             applying = true
-            do { defer { applying = false }; if let terminal = stores[TerminalControlsFamily.terminal.rawValue] { _ = try terminal.load() } }
+            do { defer { applying = false }; for store in stores.values { _ = try store.load() } }
             try observe(markChanges: true)
         } catch { failJournal(); return }
         busy = true; generation = UUID(); let epoch = generation, prior = task, transport = self.transport
@@ -517,10 +517,9 @@ private final class SavedControlsObservers: @unchecked Sendable {
                 self.journal = candidate; try self.persist()
                 let winners = DirectCloudSavedVersion.winners(self.journal.versions), waiting = Set(retained.map(\.key))
                 var changes: [(TerminalControlsStore, TerminalControlsProfile)] = []
-                var waitingForControls = false
                 for name in self.stores.keys.sorted() {
                     guard let store = self.stores[name] else { continue }
-                    guard let local = try store.savedControlsCloudProfile() else { waitingForControls = true; continue }
+                    guard let local = try store.savedControlsCloudProfile() else { throw DirectCloudError.storage }
                     let versions = winners.values.filter { $0.family.rawValue == name && !waiting.contains($0.key) }
                     let values = Dictionary(uniqueKeysWithValues: versions.map { ($0.id, $0.value) })
                     let next = try DirectCloudSavedControl.applying(values, to: local)
@@ -535,9 +534,8 @@ private final class SavedControlsObservers: @unchecked Sendable {
                 try self.persist()
                 try await self.publish(epoch)
                 if self.current(epoch) {
-                    self.issue = !retained.isEmpty ? .capacity : waitingForControls ? .preparation : nil
+                    self.issue = !retained.isEmpty ? .capacity : nil
                     self.status = !retained.isEmpty ? "Some saved controls exceed the sync limit. Their local content is kept."
-                        : waitingForControls ? "Shortcuts and saved text need controls setup."
                         : "Saved shortcuts, text and button positions sync."
                 }
             } catch {

@@ -306,11 +306,6 @@ private struct DirectIOSCloudSettingsSection: View {
             })).disabled(cloud.busy).accessibilityIdentifier("icloud-library-toggle")
             Text(cloud.summary).font(.footnote).foregroundStyle(.secondary)
                 .accessibilityIdentifier("icloud-summary")
-            if cloud.enabled && cloud.needsControlsSetup {
-                NavigationLink { DirectCloudControlsSetup(cloud: cloud) } label: {
-                    Label("Finish Controls Setup", systemImage: "keyboard.badge.ellipsis")
-                }.accessibilityIdentifier("icloud-controls-setup")
-            }
             NavigationLink { DirectCloudScopeForm(present: present) } label: { Text("What Syncs") }
                 .accessibilityIdentifier("icloud-what-syncs")
             NavigationLink { DirectCloudManagementForm(cloud: cloud, present: present) } label: {
@@ -363,14 +358,8 @@ private struct DirectCloudManagementForm: View {
                     DirectRecoveryCard(notice: notice, primary: nil)
                 }
                 if cloud.enabled {
-                    if cloud.controlsSetupIssue == .storage {
-                        Text("Saved controls couldn’t be prepared. Existing data is kept. Try Refresh iCloud.")
-                    }
                     if let value = cloud.keyboardSyncStatus { Label(value, systemImage: "keyboard") }
                     if let value = cloud.savedControlsSyncStatus { Label(value, systemImage: "text.quote") }
-                    if cloud.needsControlsSetup {
-                        NavigationLink("Finish Controls Setup") { DirectCloudControlsSetup(cloud: cloud) }
-                    }
                     Button("Refresh iCloud", systemImage: "arrow.triangle.2.circlepath") { cloud.retry() }
                         .disabled(cloud.syncInProgress || !lock.canAccess)
                 }
@@ -384,30 +373,6 @@ private struct DirectCloudManagementForm: View {
     }
 }
 
-private struct DirectCloudControlsSetup: View {
-    let cloud: DirectCloudSyncV1
-    @State private var selectedMac: DirectMacRecordV1?
-    @State private var lock = DirectAppLockV1.shared
-    var body: some View {
-        Form {
-            Section {
-                Text("Review your existing Screen Sharing controls to finish preparing them for sync.")
-                ForEach(cloud.controlsSetupMacs) { mac in
-                    Button(mac.name) { selectedMac = mac }.disabled(!lock.canAccess)
-                }
-            } header: { Text("Choose a Mac") } footer: {
-                Text("Your existing controls are kept. This opens local settings, without connecting to the Mac.")
-            }
-            if cloud.syncNeedsAttention {
-                Button("Retry Setup") { cloud.retry() }.disabled(cloud.busy || !lock.canAccess)
-            }
-        }.navigationTitle("Set Up Controls").directInlineNavigationTitle()
-            .sheet(item: $selectedMac, onDismiss: { cloud.refresh() }) { mac in
-                TerminalControlsSettings(store: .remoteMac(legacyMac: mac.id), remoteMacID: mac.id) { selectedMac = nil }
-            }
-            .onChange(of: lock.canAccess) { _, allowed in if !allowed { selectedMac = nil } }
-    }
-}
 #endif
 
 enum DirectCloudSheet: String, Identifiable {

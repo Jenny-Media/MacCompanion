@@ -1032,8 +1032,9 @@
         "optedInPreparation": {
           "usesExistingOwners": true,
           "preparesBeforeStartingSyncTasks": true,
-          "automaticWithoutLegacyMacContext": true,
-          "legacyContextRequiresActionableSetup": true,
+          "automaticForBothControlFamilies": true,
+          "requiresMacContext": false,
+          "requiresSeparateSetup": false,
           "doesNotOpenConnectionOrExecuteInput": true,
           "doesNotClaimCrossDeviceDelivery": true
         },

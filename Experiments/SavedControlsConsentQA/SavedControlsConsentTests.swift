@@ -99,21 +99,20 @@ import XCTest
         }
     }
 
-    func testLegacySetupActionReachesLocalMacChoiceWithoutConnecting() {
-        let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.savedcontrolsqa.ios")
-        app.launchArguments = ["--fixture-controls-need-setup"]
-        app.launch(); defer { app.terminate() }
+    func testEnablingSyncNeedsNoAdditionalSetup() {
+        let app = launch(large: false); defer { app.terminate() }
         app.buttons["fixture-sync"].tap()
         tapSwitch(app.switches["icloud-library-toggle"], app: app)
         app.buttons["icloud-enable-confirm"].tap()
-        let action = app.buttons["icloud-controls-setup"]
-        XCTAssertTrue(action.waitForExistence(timeout: 5))
-        capture("sync-setup-needed")
-        action.tap()
-        XCTAssertTrue(app.navigationBars["Set Up Controls"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["Synthetic Mac"].exists)
-        XCTAssertTrue(app.staticTexts["Your existing controls are kept. This opens local settings, without connecting to the Mac."].exists)
-        capture("sync-setup-choice")
+        XCTAssertEqual(app.switches["icloud-library-toggle"].value as? String, "1")
+        XCTAssertFalse(app.buttons["icloud-controls-setup"].exists)
+        XCTAssertFalse(app.staticTexts["Finish setting up saved controls."].exists)
+        XCTAssertFalse(app.navigationBars["Set Up Controls"].exists)
+        capture("sync-automatic")
+        app.buttons["icloud-manage-sync"].tap()
+        XCTAssertTrue(app.buttons["Refresh iCloud"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Finish Controls Setup"].exists)
+        capture("sync-automatic-management")
     }
     func testGuidanceRowsAndSecurityDetailsStayReachable() {
         let routes: [(String, String, String)] = [

@@ -19,9 +19,8 @@ private final class NoCloudEffects: DirectCloudTransport, @unchecked Sendable {
         let root = URL.temporaryDirectory.appending(path: UUID().uuidString)
         library = DirectMacLibraryV1(url: root.appending(path: "macs.json"))
         precondition(library.save(id: nil, name: "Synthetic Mac", addresses: ["synthetic.invalid"]))
-        let needsSetup = ProcessInfo.processInfo.arguments.contains("--fixture-controls-need-setup")
         cloud = DirectCloudSyncV1(defaults: defaults, url: root.appending(path: "journal.json"),
-            transport: NoCloudEffects(), writerID: UUID(), prepareControls: { _ in !needsSetup })
+            transport: NoCloudEffects(), writerID: UUID())
         cloud.attach(library)
     }
     var body: some Scene { WindowGroup { CopyAuditHome(cloud: cloud).directAppearance() } }

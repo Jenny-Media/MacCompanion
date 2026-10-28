@@ -45,15 +45,15 @@ transport tests do not prove real-account cross-device propagation. Before a
 same iCloud account, including sync off/on, foreground refresh, local saved text
 retention and Remove iCloud Data.
 
-Sync baseline reads do not commit local profile migrations. After opt-in, the
-coordinator uses the existing owners to prepare Terminal and remote-Mac controls
-automatically when no per-Mac menu context is needed, before starting sync tasks
-and capturing their baselines. Older per-Mac Screen Sharing
-customizations still require their existing context-aware loader. A visible Finish
-Controls Setup action opens that Mac's local controls without connecting to it;
-preparation triggers a refresh. Sync status distinguishes setup, storage/capacity
-issues and active work, and never claims delivery to another device.
-Native regressions cover startup with only per-Mac legacy content, plus edits
+Sync is automatic after enabling the main switch. Each service initializes its
+Terminal and shared remote-Mac profiles through the existing controls store before
+capturing baselines or reading cloud data. No Mac selection, connection, controls
+editor visit or additional setup action is required. Current saved controls are
+retained. Per-Mac compatibility setup from unpublished builds is not supported.
+Off-state baseline reads remain read-only. Storage or capacity failures preserve
+local controls and expose retry information in Manage Sync.
+Native regressions cover automatic fresh-profile initialization and import without
+opening controls, retention of current shared controls, plus edits
 after an import-journal failure with the remote revision retained across Retry
 and restart.
 
@@ -101,8 +101,8 @@ local controls and turns main sync off here. Signed two-device propagation
 still needs physical acceptance; synthetic transport tests establish merge and
 failure behavior, not delivery through a real Apple Account.
 
-Saved-content observers use committed profile identities and wait for legacy
-collision migration to persist before projecting it. Import retry recognizes
+Saved-content observers use committed profile identities after owner
+initialization. Import retry recognizes
 normalized fallback placements instead of publishing them as edits. Cloud removal
 reaches every independent service even if the Mac journal cannot be read.
 Removal attempts each service before reporting any transport or local-journal

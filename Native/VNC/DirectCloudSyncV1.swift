@@ -116,7 +116,7 @@ struct DirectCloudKeychain: DirectCloudTransport {
     }
 }
 
-enum DirectCloudSyncIssue: Equatable { case preparation, storage, capacity }
+enum DirectCloudSyncIssue: Equatable { case storage, capacity }
 
 @MainActor @Observable final class DirectCloudSyncV1 {
     static let shared = DirectCloudSyncV1()
@@ -130,30 +130,15 @@ enum DirectCloudSyncIssue: Equatable { case preparation, storage, capacity }
     private let savedControlsTransport: any DirectCloudTransport
     var savedControlsSyncStatus: String? { savedControlsCloud?.status }
     var keyboardSyncStatus: String? { keyboardCloud?.status }
-    private let prepareControls: @MainActor ([UUID]) throws -> Bool
-    private(set) var controlsSetupIssue: DirectCloudSyncIssue?
-    var controlsSetupMacs: [DirectMacRecordV1] { library?.macs ?? [] }
-    var needsControlsSetup: Bool {
-        controlsSetupIssue == .preparation || keyboardCloud?.issue == .preparation || savedControlsCloud?.issue == .preparation
-    }
     var syncNeedsAttention: Bool {
-        recovery != nil || enabled && (controlsSetupIssue == .storage
-            || [keyboardCloud?.issue, savedControlsCloud?.issue].contains { $0 == .storage || $0 == .capacity })
+        recovery != nil || enabled && [keyboardCloud?.issue, savedControlsCloud?.issue].contains { $0 != nil }
     }
     var syncInProgress: Bool { busy || keyboardCloud?.busy == true || savedControlsCloud?.busy == true }
     var summary: String {
         if recovery != nil { return "iCloud needs attention. Local data is kept." }
         guard enabled else { return "Sync is off. iCloud data is kept." }
         if syncNeedsAttention { return "Sync needs attention. Local data is kept." }
-        if needsControlsSetup { return "Finish setting up saved controls." }
         return syncInProgress ? "Syncing with iCloud…" : "Sync is on. Changes may take a moment."
-    }
-    private func prepareLocalControls() {
-        guard enabled, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable,
-              let library, library.readable,
-              keyboardCloud?.busy != true, savedControlsCloud?.busy != true else { return }
-        do { controlsSetupIssue = try prepareControls(library.macs.map(\.id)) ? nil : .preparation }
-        catch { controlsSetupIssue = .storage }
     }
     #endif
     private struct Journal: Codable { var schema = 1; var versions: [DirectCloudVersion] }
@@ -177,19 +162,10 @@ enum DirectCloudSyncIssue: Equatable { case preparation, storage, capacity }
     init(defaults: UserDefaults = .standard, url: URL? = nil, transport: any DirectCloudTransport = DirectCloudKeychain(), writerID: UUID? = nil,
          keyboardTransport: (any DirectCloudTransport)? = nil,
          savedControlsTransport: (any DirectCloudTransport)? = nil,
-         prepareControls: (@MainActor ([UUID]) throws -> Bool)? = nil,
          applyPreferences: @escaping @MainActor (DirectCloudPreferences, UUID) -> Void = { $0.apply(mac: $1) }) {
         self.defaults = defaults; self.url = url ?? DirectClientPlatformV1.dataURL("direct-cloud-journal-v1.json"); self.transport = transport
         self.applyPreferences = applyPreferences
         #if os(iOS)
-        self.prepareControls = prepareControls ?? { ids in
-            // Injected coordinators never touch real controls/Keychain unless
-            // their test explicitly supplies a preparation owner.
-            if writerID != nil { return true }
-            return try TerminalControlsStore.prepareForCloudSync {
-                try VNCSessionPreferences.needsLegacyMacContext(ids)
-            }
-        }
         if let keyboardTransport { self.keyboardTransport = keyboardTransport }
         else if writerID != nil { self.keyboardTransport = transport }
         else { self.keyboardTransport = DirectCloudKeychain(service: DirectKeyboardCloudSync.service) }
@@ -255,7 +231,6 @@ enum DirectCloudSyncIssue: Equatable { case preparation, storage, capacity }
             } catch { recovery = .make(.cloudUnavailable, message: "Sync data is still unavailable. Local Macs and the existing history are kept."); return }
         }
         #if os(iOS)
-        prepareLocalControls()
         if keyboardCloud == nil && injectedWriter == nil {
             keyboardCloud = DirectKeyboardCloudSync(url: DirectClientPlatformV1.dataURL("direct-cloud-keyboards-v1.json"), writer: writer, transport: keyboardTransport)
             keyboardCloud?.setEnabled(enabled)
@@ -271,7 +246,6 @@ enum DirectCloudSyncIssue: Equatable { case preparation, storage, capacity }
         let firstAttachment = self.library == nil
         self.library = library
         #if os(iOS)
-        prepareLocalControls()
         keyboardCloud?.setEnabled(enabled)
         savedControlsCloud?.setEnabled(enabled)
         #endif
@@ -294,9 +268,6 @@ enum DirectCloudSyncIssue: Equatable { case preparation, storage, capacity }
         generation = UUID(); refreshTask?.cancel(); refreshTask = nil; busy = false
         enabled = value; defaults.set(value, forKey: Self.enabledKey)
         #if os(iOS)
-        // Capture preparation baselines before either engine can read cloud.
-        // Otherwise fresh defaults could look like an offline layout edit.
-        prepareLocalControls()
         keyboardCloud?.setEnabled(value)
         savedControlsCloud?.setEnabled(value)
         #endif
@@ -324,7 +295,6 @@ enum DirectCloudSyncIssue: Equatable { case preparation, storage, capacity }
     }
     func refresh() {
         #if os(iOS)
-        prepareLocalControls()
         if enabled { keyboardCloud?.refresh(); savedControlsCloud?.refresh() }
         #endif
         guard enabled, !busy, readable, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable, let library, library.readable else { return }

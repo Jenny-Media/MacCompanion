@@ -301,7 +301,13 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
     }
     func refresh() {
         guard enabled, readable, !busy, canAccess(), DirectClientPlatformV1.sessionAvailable else { return }
-        do { if try captureBaselines() { try persist(versions) } }
+        do {
+            // Initialize both families before reading cloud. The app has one
+            // sync switch; preparing controls never needs a Mac or a session.
+            applying = true
+            do { defer { applying = false }; for store in stores.values { _ = try store.load() } }
+            if try captureBaselines() { try persist(versions) }
+        }
         catch { readable = false; issue = .storage; status = "Keyboard sync history is unavailable. Local layouts are kept."; return }
         busy = true; generation = UUID(); let epoch = generation, transport = self.transport, prior = task
         task = Task { [weak self] in
@@ -328,12 +334,11 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
                 }
                 guard self.current(epoch) else { return }
                 next = self.versions
-                var waitingForControls = false
                 // Read cloud first. A new device's untouched default must never
                 // overwrite an existing customized keyboard.
                 for (name, store) in self.stores {
                     guard let family = TerminalControlsFamily(rawValue: name), !self.pending.contains(name) else { continue }
-                    guard try store.keyboardCloudReady() else { waitingForControls = true; continue }
+                    guard try store.keyboardCloudReady() else { throw DirectCloudError.storage }
                     if DirectCloudKeyboardVersion.winner(next, family: family) == nil {
                         let value = DirectCloudKeyboardVersion(family: family, writer: self.writer,
                             revision: (next.map(\.revision).max() ?? 0) + 1,
@@ -346,7 +351,7 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
                 for (name, store) in self.stores {
                     guard let family = TerminalControlsFamily(rawValue: name), !self.pending.contains(name),
                           let winner = DirectCloudKeyboardVersion.winner(next, family: family) else { continue }
-                    guard try store.keyboardCloudReady() else { waitingForControls = true; continue }
+                    guard try store.keyboardCloudReady() else { throw DirectCloudError.storage }
                     let local = try store.load()
                     if DirectCloudKeyboardLayout(local) != winner.layout {
                         changes.append((name, store, try winner.layout.applying(to: local)))
@@ -370,9 +375,6 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
                     if !self.pending.isEmpty {
                         self.issue = .capacity
                         self.status = "Some keyboard layouts couldn’t sync. Local controls are kept on this device; large layouts may exceed the sync limit."
-                    } else if waitingForControls {
-                        self.issue = .preparation
-                        self.status = "Keyboard layouts need controls setup."
                     } else {
                         self.issue = nil
                         self.status = "Keyboard layouts and built-in keys sync."
