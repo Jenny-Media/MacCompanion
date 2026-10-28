@@ -36,7 +36,9 @@ private struct CopyAuditHome: View {
     @State private var recovered = Self.makeRecoveryFixture()
     private static func makeRecoveryFixture() -> DirectControlsRecoveryLibrary {
         var profile = TerminalControlsProfile.defaults
+        profile.freezeKeyboardLayout()
         var layout = DirectCloudKeyboardLayout(profile); layout.rows[0].title = "Synthetic alternate layout"
+        layout.rows[0].alignment = .right; layout.rows[0].scrollStart = .right
         let action = TerminalControlAction(title: "Synthetic trip notes", kind: .text, text: "Synthetic recovered notes. No personal data.", inMenu: false)
         let control = DirectCloudSavedControl(action: action, bar: [], menus: [], libraryIndex: 0)
         var state = profile.syncState

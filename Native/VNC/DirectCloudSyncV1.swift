@@ -347,6 +347,7 @@ enum DirectCloudSyncIssue: Equatable { case storage, capacity }
             do {
                 if let keyboardCloud { try await keyboardCloud.removeCloudCopies() }
                 else {
+                    guard DirectAppLockV1.shared.canAccess else { throw DirectCloudError.locked }
                     guard syncIdentityReadable else { throw DirectCloudError.storage }
                     try DirectKeyboardCloudSync.prepareForCloudRemoval(writer: writer)
                     let layoutTransport = keyboardTransport
@@ -356,6 +357,7 @@ enum DirectCloudSyncIssue: Equatable { case storage, capacity }
             do {
                 if let savedControlsCloud { try await savedControlsCloud.removeCloudCopies() }
                 else {
+                    guard DirectAppLockV1.shared.canAccess else { throw DirectCloudError.locked }
                     guard syncIdentityReadable else { throw DirectCloudError.storage }
                     try DirectSavedControlsCloudSync.prepareForCloudRemoval(writer: writer)
                     let contentTransport = savedControlsTransport

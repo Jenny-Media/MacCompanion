@@ -935,6 +935,12 @@ struct TerminalControlsProfile: Codable, Equatable {
         guard draft.valid, draft.importedMacs == current.importedMacs else { throw Failure.unreadable }
         var result = draft; result.freezeKeyboardLayout(); result.captureRemoteMenu(); result.revision = UUID()
         #if os(iOS)
+        var positionState = result.syncState
+        let actionIDs = Set(result.actions.map { $0.id.uuidString.lowercased() })
+        positionState.savedPositions = positionState.savedPositions?.filter { actionIDs.contains($0.key) }
+        result.syncState = positionState
+        #endif
+        #if os(iOS)
         if captureLayoutImport {
             var state = result.syncState
             state.layoutImport = .init(observed: try DirectControlsCausality.fingerprint(DirectCloudKeyboardLayout(result)))

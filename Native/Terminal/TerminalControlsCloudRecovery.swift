@@ -55,6 +55,11 @@ struct DirectControlsLocalSyncState: Codable, Equatable {
     }
     var layoutImport: LayoutImport?
     var savedImport: Import?
+    struct SavedPositions: Codable, Equatable {
+        var intended: [DirectCloudSavedControl.Bar]
+        var applied: [DirectCloudSavedControl.Bar]
+    }
+    var savedPositions: [String: SavedPositions]?
     var savedClocks: [String: [String: Int64]] = [:]
     var layoutClock: [String: Int64] = [:]
     var recovered: [DirectControlsRecoveredChange] = []
@@ -72,6 +77,14 @@ struct DirectControlsLocalSyncState: Codable, Equatable {
               savedClocks.allSatisfy({ UUID(uuidString: $0.key) != nil && DirectControlsCausality.valid($0.value) }),
               recovered.count <= 512, Set(recovered.map(\.id)).count == recovered.count,
               recoverySeen.count <= 8192, recoverySeen.allSatisfy({ !$0.key.isEmpty && $0.key.utf8.count <= 256 && (1...1_000_000_000).contains($0.value) }) else { throw DirectCloudError.invalid }
+        if let savedPositions {
+            guard savedPositions.count <= 8192, savedPositions.allSatisfy({ key, value in
+                UUID(uuidString: key) != nil && [value.intended, value.applied].allSatisfy { positions in
+                    positions.count <= 4096 && Set(positions.map(\.placement)).count == positions.count
+                        && positions.allSatisfy { !$0.placement.isEmpty && $0.placement.utf8.count <= 256 && (0..<4096).contains($0.index) }
+                }
+            }) else { throw DirectCloudError.invalid }
+        }
         if let layoutImport {
             guard layoutImport.observed.count == 64,
                   layoutImport.observed.allSatisfy({ "0123456789abcdef".contains($0) }) else { throw DirectCloudError.invalid }
@@ -91,6 +104,7 @@ struct DirectControlsLocalSyncState: Codable, Equatable {
     private let canAccess: @MainActor () -> Bool
     private var observer: RecoveryObservers?
     private(set) var entries: [DirectControlsRecoveredChange] = []
+    private(set) var profiles: [TerminalControlsFamily: TerminalControlsProfile] = [:]
     private(set) var error: String?
     init(stores: [TerminalControlsFamily: TerminalControlsStore] = [.terminal: .init(), .remoteMac: .remoteMac()],
          canAccess: @escaping @MainActor () -> Bool = { DirectAppLockV1.shared.canAccess }) {
@@ -103,17 +117,19 @@ struct DirectControlsLocalSyncState: Codable, Equatable {
         observer = RecoveryObservers(tokens); reload()
     }
     func reload() {
-        guard canAccess() else { entries = []; return }
+        guard canAccess() else { entries = []; profiles = [:]; return }
         do {
             var next: [DirectControlsRecoveredChange] = []
+            var current: [TerminalControlsFamily: TerminalControlsProfile] = [:]
             for family in [TerminalControlsFamily.terminal, .remoteMac] {
                 if let store = stores[family], let profile = try store.savedControlsCloudProfile() {
-                    next += profile.syncState.recovered
+                    next += profile.syncState.recovered; current[family] = profile
                 }
             }
+            profiles = current
             entries = next.sorted { $0.location == $1.location ? $0.id < $1.id : $0.location < $1.location }
             if error == Self.readError { error = nil }
-        } catch { self.error = Self.readError }
+        } catch { profiles = [:]; self.error = Self.readError }
     }
     @discardableResult func restore(_ entry: DirectControlsRecoveredChange) -> Bool {
         update(entry.family) { profile in

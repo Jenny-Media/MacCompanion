@@ -8,8 +8,7 @@ on the signed-in account's iCloud Keychain availability and propagation.
 
 Row order, row names, visibility, alignment, initial scroll edge, and built-in
 keys / controls and row restore presets sync. Saved shortcut definitions, saved text and their button
-placements sync under the same main setting on iOS 1.1. Incoming rows retain local saved buttons at
-the end of their matching row. If that row was removed remotely, those buttons
+placements sync under the same main setting on iOS 1.1. Incoming rows preserve intended saved-button positions in the same atomic profile write. If that row was removed remotely, those buttons
 move to the main row rather than disappearing. Saved menu definitions and positions use the same setting; credentials
 and trust records remain local.
 
@@ -34,7 +33,9 @@ against fetched revision history before another import. Fetched history is
 journaled before profiles are applied, so an import cannot discard its observed
 clock. Malformed
 remote data or an unreadable local journal produces a notice and preserves local
-controls. Refresh iCloud retries the journal read.
+controls. Enabled services retry automatically with a bounded backoff, and again
+on foreground refresh. Every recovery validates retained history before importing;
+unreadable history is never reset implicitly. Explicit Off cancels retries.
 
 `KeyboardCloudSyncTests` covers projection privacy, local saved-button retention,
 malformed and oversized records, concurrent writers, offline changes, restart,
@@ -178,5 +179,29 @@ Both controls services durably record reset/reseeding intent before removing clo
 copies. If that local write fails, the affected cloud service is left intact and
 removal reports failure. A restart after successful deletion retains the intent to
 upload unchanged local controls when sync is enabled again. The parent uses the
-same write-ahead reset when its Mac journal prevented creating a controls engine;
+same validated write-ahead reset, retaining fetched history, when its Mac journal prevented creating a controls engine;
 an unavailable writer identity cannot authorize deletion without that bookkeeping.
+
+
+Recovery compares Current and Recovered with the actual read-only keyboard renderer.
+Show All Rows and horizontal scrolling only affect inspection. Layout Details shows
+visibility, alignment and the starting scroll edge. Use This Layout keeps the prior
+layout available for undo. No preview edits controls or sends remote input.
+
+Reset reseeding joins profile clocks with all retained fetched versions, even when
+the profile import failed. A delayed known record cannot override the freshly
+seeded current state. This bounded rule does not invalidate unseen edits on an
+offline device. Delete iCloud Data still leaves sync off; enabling it again uploads
+the current local data. No replacement-and-resume action is introduced here.
+
+Keyboard reset ancestry is frozen in the write-ahead reset journal. A first fetch
+may contain an unseen offline layout; it stays a concurrent alternative and is
+kept active or recoverable. Only revisions already known at reset are superseded.
+Pre-save baseline failures use the same bounded recovery as other storage errors.
+Fallback removal rechecks app access after each awaited independent service.
+
+Validated fetches remain in memory if their journal write fails. A subsequent
+reset must durably include that known history before deleting cloud copies. The
+completed frozen clock is validated against the 512-writer causal bound first;
+if it cannot be represented, reset refuses deletion and preserves existing
+history and cloud data instead of writing an unreadable reset journal.

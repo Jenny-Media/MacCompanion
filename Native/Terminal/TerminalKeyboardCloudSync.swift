@@ -83,6 +83,9 @@ struct DirectCloudKeyboardLayout: Codable, Equatable {
         next[main].placements = placements
         result.keyboardRows = next
         result.numberRow = nil; result.navigationRow = nil; result.expandedBar = nil; result.commandInBar = nil
+        // Commit the final saved-button positions with the imported rows. The
+        // saved-content engine may be paused and must not repair this later.
+        result = try DirectCloudSavedControl.applying(DirectCloudSavedControl.project(source).mapValues { Optional($0) }, to: result)
         guard result.valid else { throw DirectCloudError.invalid }
         return result
     }
@@ -147,6 +150,7 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
         var observed: [String: String]?
         var pending: [String]?
         var reseeding: [String]?
+        var resetClocks: [String: [String: Int64]]?
     }
     private static let maximumJournalBytes = 3_145_728
     private let readJournalData: @MainActor () throws -> Data?
@@ -156,10 +160,14 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
     private let writeJournalData: @MainActor (Data) throws -> Void
     private let canAccess: @MainActor () -> Bool
     private var versions: [DirectCloudKeyboardVersion] = []
+    // Validated fetches survive a failed journal write in this process. Reset
+    // must durably preserve them before it is allowed to delete cloud copies.
+    private var unpersistedFetch: [DirectCloudKeyboardVersion] = []
     private var observed: [String: String] = [:]
     private var appliedImports: [String: UUID] = [:]
     private var pending: Set<String> = []
     private var reseeding: Set<String> = []
+    private var resetClocks: [String: [String: Int64]] = [:]
     private var journalLoaded = false
     private var readable = true
     private var enabled = false
@@ -167,6 +175,9 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
     private var generation = UUID()
     private var task: Task<Void, Never>?
     private var rerun = false
+    private var recoveryTask: Task<Void, Never>?
+    private var recoveryAttempt = 0
+    private let recoveryDelays: [Duration]
     private var observer: KeyboardLayoutObserver?
     private(set) var busy = false
     private(set) var issue: DirectCloudSyncIssue?
@@ -177,8 +188,10 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
             TerminalControlsFamily.remoteMac.rawValue: .remoteMac()
          ], observeChanges: Bool = true,
          canAccess: @escaping @MainActor () -> Bool = { DirectAppLockV1.shared.canAccess },
-         writeJournal: (@MainActor (Data, URL) throws -> Void)? = nil) {
+         writeJournal: (@MainActor (Data, URL) throws -> Void)? = nil,
+         recoveryDelays: [Duration] = [.seconds(2), .seconds(5), .seconds(15)]) {
         self.writer = writer; self.transport = transport; self.stores = stores; self.canAccess = canAccess
+        self.recoveryDelays = recoveryDelays
         // File injection is for synthetic tests only. Production history shares
         // the device-only lifetime of controls and the sync writer identity.
         if let url {
@@ -230,7 +243,14 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
         guard let data = try readJournalData() else { journalLoaded = true; return }
         guard data.count <= Self.maximumJournalBytes else { throw DirectCloudError.invalid }
         let journal = try JSONDecoder().decode(Journal.self, from: data)
-        guard journal.writer == writer else { versions = []; observed = [:]; pending = []; reseeding = []; appliedImports = [:]; journalLoaded = true; return }
+        let checked = try Self.validated(journal, writer: writer)
+        versions = checked.versions; observed = checked.observed ?? [:]; pending = Set(checked.pending ?? [])
+        reseeding = Set(checked.reseeding ?? []); appliedImports = checked.appliedImports ?? [:]
+        resetClocks = try checked.resetClocks ?? Self.snapshotResetClocks(checked.versions, families: reseeding)
+        journalLoaded = true
+    }
+    private static func validated(_ journal: Journal, writer: UUID) throws -> Journal {
+        guard journal.writer == writer else { return Journal(writer: writer, versions: []) }
         let families = Set([TerminalControlsFamily.terminal.rawValue, TerminalControlsFamily.remoteMac.rawValue])
         let hashes = journal.observed ?? [:], waiting = journal.pending ?? [], reset = journal.reseeding ?? []
         guard journal.schema == 1, Set(hashes.keys).isSubset(of: families),
@@ -238,8 +258,19 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
               hashes.values.allSatisfy({ $0.count == 64 && $0.allSatisfy { "0123456789abcdef".contains($0) } }),
               reset.count == Set(reset).count, Set(reset).isSubset(of: families),
               waiting.count == Set(waiting).count, Set(waiting).isSubset(of: Set(hashes.keys)) else { throw DirectCloudError.invalid }
+        guard Set((journal.resetClocks ?? [:]).keys).isSubset(of: Set(reset)),
+              (journal.resetClocks ?? [:]).values.allSatisfy({ DirectControlsCausality.valid($0) }) else { throw DirectCloudError.invalid }
         let checked = try DirectCloudKeyboardVersion.merge([], journal.versions)
-        versions = checked; observed = hashes; pending = Set(waiting); reseeding = Set(reset); appliedImports = journal.appliedImports ?? [:]; journalLoaded = true
+        var result = journal; result.versions = checked; return result
+    }
+    private static func snapshotResetClocks(_ versions: [DirectCloudKeyboardVersion], families: Set<String>) throws -> [String: [String: Int64]] {
+        let result = Dictionary(uniqueKeysWithValues: families.map { name in
+            (name, DirectControlsCausality.join(versions.filter { $0.family.rawValue == name }.map {
+                DirectControlsCausality.including($0.context, writer: $0.writer, revision: $0.revision)
+            }))
+        })
+        guard result.values.allSatisfy({ DirectControlsCausality.valid($0) }) else { throw DirectCloudError.invalid }
+        return result
     }
     /// Establish a baseline before the first save, including when sync is off.
     /// Old journals use their last known winner so a crash before notification
@@ -263,31 +294,40 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
         }
         return changed
     }
+    /// Bounded automatic recovery never replaces unreadable history. Foreground
+    /// refresh and explicit retry can try again after this short backoff ends.
+    private func scheduleRecovery() {
+        guard enabled, !busy, issue == .storage, recoveryTask == nil, recoveryAttempt < recoveryDelays.count else { return }
+        let delay = recoveryDelays[recoveryAttempt]; recoveryAttempt += 1
+        recoveryTask = Task { [weak self] in
+            do { try await Task.sleep(for: delay) } catch { return }
+            guard !Task.isCancelled, let self else { return }
+            self.recoveryTask = nil; self.refresh()
+        }
+    }
+    private func recovered() {
+        recoveryAttempt = 0; recoveryTask?.cancel(); recoveryTask = nil
+    }
     func setEnabled(_ value: Bool) {
         if enabled == value { if value { refresh() }; return }
         // Retain cancelled work until it drains. Keychain calls already in
         // progress cannot be cancelled, and removal must wait for their writes.
         enabled = value; generation = UUID(); task?.cancel(); busy = false; rerun = false
+        recoveryTask?.cancel(); recoveryTask = nil; recoveryAttempt = 0
         if value { refresh() } else { status = "Keyboard layout sync is off. Existing cloud layouts are kept." }
     }
     func retry() {
-        if !readable {
-            do {
-                if canAccess() { try readJournal() }
-                if canAccess(), try captureBaselines() { try persist(versions) }
-                readable = true
-            } catch { return }
-        }
+        if busy { rerun = true; return }
         refresh()
     }
     private func persist(_ next: [DirectCloudKeyboardVersion]) throws {
-        let checked = try DirectCloudKeyboardVersion.merge([], next)
-        let data = try JSONEncoder().encode(Journal(writer: writer, appliedImports: appliedImports, versions: checked, observed: observed, pending: pending.sorted(), reseeding: reseeding.sorted()))
+        let checked = try DirectCloudKeyboardVersion.merge(next, unpersistedFetch)
+        let data = try JSONEncoder().encode(Journal(writer: writer, appliedImports: appliedImports, versions: checked, observed: observed, pending: pending.sorted(), reseeding: reseeding.sorted(), resetClocks: resetClocks))
         guard data.count <= Self.maximumJournalBytes else { throw DirectCloudError.invalid }
         do {
             try writeJournalData(data)
         } catch { readable = false; throw error }
-        versions = checked
+        versions = checked; unpersistedFetch = []
     }
     /// A locked startup cannot read local controls. Capture their still-stored
     /// projection before the first later save, including while cloud sync is off.
@@ -298,6 +338,7 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
             readable = false
             issue = .storage
             status = "Keyboard sync history couldn’t be saved. Local controls are kept. Retry with Refresh iCloud."
+            scheduleRecovery()
         }
     }
     func localChange(_ family: TerminalControlsFamily) {
@@ -318,7 +359,10 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
             let previous = versions.filter { $0.family == family && $0.writer == writer }.map {
                 DirectControlsCausality.including($0.context, writer: $0.writer, revision: $0.revision)
             }
-            let context = DirectControlsCausality.join([try store.load().syncState.layoutClock] + previous)
+            // Freeze reset ancestry before deletion. First-fetch offline edits are
+            // concurrent alternatives, not edits the reset already observed.
+            let resetClock = reseeding.contains(name) ? resetClocks[name] ?? [:] : [:]
+            let context = DirectControlsCausality.join([try store.load().syncState.layoutClock, resetClock] + previous)
             let record = DirectCloudKeyboardVersion(family: family, writer: writer,
                 revision: max(versions.map(\.revision).max() ?? 0, context.values.max() ?? 0) + 1, layout: layout, context: context)
             do { try record.validate() }
@@ -330,9 +374,10 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
                 return
             }
             let wasReseeding = reseeding.remove(name) != nil
+            let retainedResetClock = resetClocks.removeValue(forKey: name)
             pending.remove(name)
             do { try persist(versions.filter { $0.account != record.account } + [record]) }
-            catch { pending.insert(name); if wasReseeding { reseeding.insert(name) }; throw error }
+            catch { pending.insert(name); if wasReseeding { reseeding.insert(name) }; resetClocks[name] = retainedResetClock; throw error }
             if scheduleRefresh { if busy { rerun = true } else { refresh() } }
         } catch {
             // Retry reads the last durable baseline and compares the current
@@ -340,18 +385,26 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
             readable = false
             issue = .storage
             status = "Keyboard sync history couldn’t be saved. Local controls are kept. Retry with Refresh iCloud."
+            scheduleRecovery()
         }
     }
     func refresh() {
-        guard enabled, readable, !busy, canAccess(), DirectClientPlatformV1.sessionAvailable else { return }
+        guard enabled, !busy, canAccess(), DirectClientPlatformV1.sessionAvailable else { return }
+        recoveryTask?.cancel(); recoveryTask = nil
         do {
+            if !readable {
+                try readJournal()
+                _ = try captureBaselines()
+                try persist(versions)
+                readable = true
+            }
             // Initialize both families before reading cloud. The app has one
             // sync switch; preparing controls never needs a Mac or a session.
             applying = true
             do { defer { applying = false }; for store in stores.values { _ = try store.load() } }
             if try captureBaselines() { try persist(versions) }
         }
-        catch { readable = false; issue = .storage; status = "Keyboard sync history is unavailable. Local layouts are kept."; return }
+        catch { readable = false; issue = .storage; status = "Keyboard sync history is unavailable. Local layouts are kept."; scheduleRecovery(); return }
         busy = true; generation = UUID(); let epoch = generation, transport = self.transport, prior = task
         task = Task { [weak self] in
             guard let self else { return }
@@ -359,6 +412,7 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
                 if self.generation == epoch {
                     self.busy = false; self.task = nil
                     if self.rerun { self.rerun = false; self.refresh() }
+                    self.scheduleRecovery()
                 }
             }
             await prior?.value
@@ -369,6 +423,7 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
                 guard data.count <= 512, data.allSatisfy({ $0.count <= 4096 }) else { throw DirectCloudError.invalid }
                 let incoming = try data.map { try JSONDecoder().decode(DirectCloudKeyboardVersion.self, from: $0) }
                 var next = try DirectCloudKeyboardVersion.merge(self.versions, incoming)
+                self.unpersistedFetch = next
                 // Persist observed clocks before importing any profile. Recover
                 // unjournaled edits against fetched history, not an older clock.
                 try self.persist(next)
@@ -397,7 +452,8 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
                           let winner = DirectCloudKeyboardVersion.winner(next, family: family) else { continue }
                     guard try store.keyboardCloudReady() else { throw DirectCloudError.storage }
                     let local = try store.load()
-                    var profile = try winner.layout.applying(to: local), state = local.syncState
+                    var profile = try winner.layout.applying(to: local)
+                    var state = profile.syncState
                     let values = next.filter { $0.family == family }
                     state.layoutClock = DirectControlsCausality.join([state.layoutClock] + values.map {
                         DirectControlsCausality.including($0.context, writer: $0.writer, revision: $0.revision)
@@ -432,6 +488,7 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
                     } else {
                         self.issue = nil
                         self.status = "Keyboard layouts and built-in keys sync."
+                        self.recovered()
                     }
                 }
             } catch {
@@ -450,16 +507,30 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
         guard canAccess() else { throw DirectCloudError.locked }
         // Commit reseeding before deletion. A storage failure must leave the
         // cloud copy intact; restart retains the same intent after deletion.
-        pending.formUnion(observed.keys); reseeding.formUnion(stores.keys)
-        try persist([])
+        if !journalLoaded { try readJournal() }
+        let known = try DirectCloudKeyboardVersion.merge(versions, unpersistedFetch)
+        let families = reseeding.union(stores.keys)
+        let clocks = try Self.snapshotResetClocks(known, families: families)
+        pending.formUnion(observed.keys); reseeding = families; resetClocks = clocks
+        try persist(versions)
+        readable = true; issue = nil
         let transport = transport
         try await Task.detached { try transport.removeAll() }.value
     }
     /// The parent can reset this independent service even when its Mac journal
     /// prevented constructing the normal controls engines. No profile is read.
     static func prepareForCloudRemoval(writer: UUID) throws {
-        let reset = Journal(writer: writer, versions: [], reseeding: ["terminal", "remoteMac"])
-        try TerminalSecretStore.write(JSONEncoder().encode(reset), id: writer, kind: "keyboard-cloud-journal-v1")
+        var reset = Journal(writer: writer, versions: [])
+        if let data = try TerminalSecretStore.read(writer, kind: "keyboard-cloud-journal-v1") {
+            guard data.count <= maximumJournalBytes else { throw DirectCloudError.invalid }
+            reset = try validated(JSONDecoder().decode(Journal.self, from: data), writer: writer)
+        }
+        reset.observed = [:]; reset.pending = []; reset.appliedImports = [:]
+        reset.reseeding = ["terminal", "remoteMac"]
+        reset.resetClocks = try snapshotResetClocks(reset.versions, families: Set(reset.reseeding ?? []))
+        let bytes = try JSONEncoder().encode(reset)
+        guard bytes.count <= maximumJournalBytes else { throw DirectCloudError.invalid }
+        try TerminalSecretStore.write(bytes, id: writer, kind: "keyboard-cloud-journal-v1")
     }
 }
 #endif

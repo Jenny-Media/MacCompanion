@@ -11,8 +11,14 @@ import XCTest
     private func capture(_ name: String) {
         let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); shot.name = name; shot.lifetime = .keepAlways; add(shot)
     }
+    private func scrollForm(_ app: XCUIApplication, down: Bool = false) {
+        // iPad presents a smaller form sheet. A whole-app swipe can land on
+        // the obscured page; target the frontmost hittable vertical form.
+        let form = app.collectionViews.allElementsBoundByIndex.last(where: { $0.isHittable }) ?? app
+        if down { form.swipeDown() } else { form.swipeUp() }
+    }
     private func reveal(_ element: XCUIElement, app: XCUIApplication) {
-        for _ in 0..<8 where !element.isHittable { app.swipeUp() }
+        for _ in 0..<8 where !element.isHittable { scrollForm(app) }
         XCTAssertTrue(element.exists)
         XCTAssertTrue(element.isHittable)
     }
@@ -161,9 +167,20 @@ import XCTest
             XCTAssertTrue(notice.label.contains("Review Layout"))
             capture(large ? "recovery-layout-notice-large" : "recovery-layout-notice")
             notice.tap()
-            XCTAssertTrue(app.staticTexts["Synthetic alternate layout"].waitForExistence(timeout: 5))
             let explanation = app.staticTexts["This is a saved alternative. Your current layout is still in use."]
             reveal(explanation, app: app)
+            XCTAssertTrue(app.otherElements["icloud-recovery-preview-current"].waitForExistence(timeout: 5))
+            let preview = app.otherElements["icloud-recovery-preview-recovered"]
+            reveal(preview, app: app)
+            capture(large ? "keyboard-comparison-large" : "keyboard-comparison")
+            let details = app.buttons["icloud-recovery-details-recovered"]
+            reveal(details, app: app); details.tap()
+            reveal(app.staticTexts["Synthetic alternate layout"], app: app)
+            reveal(app.staticTexts["Starts at: Right"], app: app)
+            let allRows = app.switches["icloud-recovery-all-rows"]
+            for _ in 0..<8 where !allRows.isHittable { scrollForm(app, down: true) }
+            tapSwitch(allRows, app: app)
+            reveal(preview, app: app); capture(large ? "keyboard-comparison-expanded-large" : "keyboard-comparison-expanded")
             let restore = app.buttons["icloud-recovered-restore"]
             reveal(restore, app: app); capture(large ? "recovery-layout-detail-large" : "recovery-layout-detail")
             restore.tap(); app.buttons["Use Layout"].tap()
@@ -188,7 +205,18 @@ import XCTest
             XCTAssertTrue(app.navigationBars["Recovered Changes"].waitForExistence(timeout: 5))
             XCTAssertFalse(app.buttons["icloud-recovered-fixture-text"].exists)
             app.buttons["icloud-recovered-fixture-layout"].tap()
-            XCTAssertTrue(app.staticTexts["Synthetic alternate layout"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.otherElements["icloud-recovery-preview-current"].waitForExistence(timeout: 5))
+            let preview = app.otherElements["icloud-recovery-preview-recovered"]
+            reveal(preview, app: app)
+            capture(large ? "keyboard-comparison-large" : "keyboard-comparison")
+            let details = app.buttons["icloud-recovery-details-recovered"]
+            reveal(details, app: app); details.tap()
+            reveal(app.staticTexts["Synthetic alternate layout"], app: app)
+            reveal(app.staticTexts["Starts at: Right"], app: app)
+            let allRows = app.switches["icloud-recovery-all-rows"]
+            for _ in 0..<8 where !allRows.isHittable { scrollForm(app, down: true) }
+            tapSwitch(allRows, app: app)
+            reveal(preview, app: app); capture(large ? "keyboard-comparison-expanded-large" : "keyboard-comparison-expanded")
             reveal(app.buttons["icloud-recovered-restore"], app: app)
             capture(large ? "recovered-layout-large" : "recovered-layout")
             app.buttons["icloud-recovered-restore"].tap()

@@ -1265,7 +1265,7 @@ cross-device delivery.
 Automatic preparation and baseline capture MUST precede starting sync tasks, so
 new defaults cannot be mistaken for offline edits over an existing cloud layout.
 Failure to read or persist that journal MUST preserve local content and pause
-imports/publication until explicit retry. Layout-only imports MUST NOT be
+imports/publication until validated recovery. While enabled, bounded automatic retries and foreground refresh MUST attempt that recovery without discarding unreadable data. Explicit Off MUST remain Off. Layout-only imports MUST NOT be
 mistaken for local saved-content edits.
 
 Each logical version is at most 32768 bytes. Encode it as 2000-byte pieces in
@@ -1285,8 +1285,11 @@ overflow retains local changes and reports a retryable notice without truncation
 Sync includes saved button identities and their positions among existing row
 keys, plus favorites for Terminal and each shared remote-Mac menu. Rows remain
 owned by the existing layout sync. If an incoming saved placement refers to a
-row that has not arrived or was removed, retain it on the main row; reapply its
-intended placement after a layout import. No unrelated local definitions,
+row that has not arrived or was removed, retain it on the main row. A device-only
+receipt MUST retain both intended and actual positions. If actual positions are
+unchanged, content edits MUST retain intended positions; genuine placement edits
+MUST supersede the receipt. A layout import MUST compose the final rows and saved
+positions in the same profile write, independent of saved-content sync readiness. No unrelated local definitions,
 credentials, mode preferences or Mac identities are replaced.
 
 Turning the main setting off stops further reads/writes and retains local content
@@ -1332,5 +1335,17 @@ automatic reset, conflict-resolution gate or broad format-compatibility layer.
 
 Keyboard imports MUST likewise commit their applied-layout fingerprint with the
 profile and reconcile that receipt before detecting edits after retry/restart.
-Reset/re-enable MUST reseed current local layouts and retain known local saved
-deletions above their causal clocks even if delayed pre-deletion records arrive.
+Reset/re-enable MUST reseed current local layouts and saved definitions/deletions
+above all already-known clocks, including fetched history not yet applied to the
+profile. Durable reset intent MUST retain that history before deleting cloud
+copies. The reset causal basis MUST be frozen before deletion; a later first
+fetch MUST NOT add previously unseen offline edits to that basis. Known delayed
+records MUST NOT override the reseeded state. Validated fetched history awaiting
+a successful journal write MUST be retained for a same-process reset. Both reset
+paths MUST validate the complete frozen causal basis before writing intent or
+deleting cloud copies; overflow preserves existing history and cloud data. This does not
+invalidate previously unseen edits queued by another offline device. Successful
+reset clears storage-paused state without enabling a service explicitly left Off.
+Recovery comparison MUST render Current and Recovered keyboards without editing
+or input. Row scrolling and view-only expansion are allowed; hidden settings such
+as visibility, alignment and initial scroll edge remain inspectable.

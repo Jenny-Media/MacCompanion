@@ -484,20 +484,15 @@ private struct DirectRecoveredChangeDetail: View {
     @State private var lock = DirectAppLockV1.shared
     private enum Confirmation { case layout, discard }
     @State private var confirmation: Confirmation?
+    @State private var allRows = false
     var body: some View {
         Form {
             if lock.canAccess {
                 Section {
                     Label(entry.location, systemImage: entry.symbol)
-                    if let layout = entry.layout {
-                        ForEach(layout.rows, id: \.id) { row in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(row.title)
-                                Text(row.keys.map { $0.title(in: .defaults) }.joined(separator: " · "))
-                                    .font(.caption).foregroundStyle(.secondary)
-                                Text(row.visibility).font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
+                    if entry.layout != nil {
+                        Toggle("Show All Rows", isOn: $allRows)
+                            .accessibilityIdentifier("icloud-recovery-all-rows")
                     } else if let control = entry.control {
                         if control.action.kind == .text {
                             Text(control.action.text).textSelection(.enabled)
@@ -518,11 +513,20 @@ private struct DirectRecoveredChangeDetail: View {
                 footer: { Text(entry.layout != nil
                     ? "This is a saved alternative. Your current layout is still in use."
                     : "This copy stays separate until you restore it.") }
+                if let layout = entry.layout {
+                    if let current = library.profiles[entry.family], let recovered = try? layout.applying(to: current) {
+                        DirectRecoveryKeyboardPreview(title: "Current", profile: current, allRows: allRows, identifier: "current")
+                        DirectRecoveryKeyboardPreview(title: "Recovered", profile: recovered, allRows: allRows, identifier: "recovered")
+                    } else {
+                        Section { Label("Preview unavailable. Reload recovered changes.", systemImage: "exclamationmark.circle") }
+                    }
+                }
                 Section {
                     Button(entry.layout != nil ? "Use This Layout…" : "Restore as Copy", systemImage: "arrow.uturn.backward") {
                         if entry.layout != nil { confirmation = .layout }
                         else if library.restore(entry) { dismiss() }
                     }.accessibilityIdentifier("icloud-recovered-restore")
+                        .disabled(entry.layout != nil && library.profiles[entry.family] == nil)
                     Button("Discard This Recovery…", systemImage: "trash", role: .destructive) { confirmation = .discard }
                         .accessibilityIdentifier("icloud-recovered-discard")
                 } footer: {
@@ -546,6 +550,31 @@ private struct DirectRecoveredChangeDetail: View {
             Text(confirmation == .layout ? "Your current layout stays recoverable. Saved items are kept."
                 : "Your current data and iCloud data are kept.")
         }
+    }
+}
+
+/// Uses the shipping UIKit keyboard. No editor callbacks, terminal or input
+/// handler is attached; only row scrolling and view-local expansion are active.
+private struct DirectRecoveryKeyboardPreview: View {
+    let title: String
+    let profile: TerminalControlsProfile
+    let allRows: Bool
+    let identifier: String
+    var body: some View {
+        Section {
+            TerminalKeyboardBarPreview(profile: profile, allRows: allRows, presentation: true)
+                .accessibilityIdentifier("icloud-recovery-preview-" + identifier)
+                .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
+            DisclosureGroup("Layout Details") {
+                ForEach(profile.resolvedRows) { row in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(row.title).font(.subheadline)
+                        Text(row.visibility.rawValue + " · " + row.resolvedAlignment.rawValue + " alignment")
+                        Text("Starts at: " + (row.scrollStart ?? .automatic).rawValue)
+                    }.font(.caption).foregroundStyle(.secondary)
+                }
+            }.accessibilityIdentifier("icloud-recovery-details-" + identifier)
+        } header: { Text(title) }
     }
 }
 

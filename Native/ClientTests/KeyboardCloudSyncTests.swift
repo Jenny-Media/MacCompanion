@@ -308,6 +308,196 @@ private final class KeyboardMemoryCloud: DirectCloudTransport, @unchecked Sendab
         XCTAssertFalse(restarted.status.contains("couldn’t sync"))
         restarted.setEnabled(false)
     }
+    func testResetRetainsFetchedHistoryWhenItsJournalWriteFailed() async throws {
+        for restart in [false, true] {
+            let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let memory = try MemoryProfile(), cloud = KeyboardMemoryCloud(), writer = UUID(), url = folder.appending(path: "journal.json")
+            var fail = false
+            let sync = DirectKeyboardCloudSync(url: url, writer: writer, transport: cloud,
+                stores: ["terminal": memory.store], observeChanges: false, writeJournal: { data, url in
+                    if fail { throw DirectCloudError.storage }; try data.write(to: url)
+                }, recoveryDelays: [])
+            sync.setEnabled(true); try await wait(sync)
+            let before = DirectCloudKeyboardLayout(try memory.store.load())
+            let own = try XCTUnwrap(try cloud.read().map { try JSONDecoder().decode(DirectCloudKeyboardVersion.self, from: $0) }.first { $0.writer == writer })
+            var other = before; other.rows[0].title = "Known fetched layout"
+            let remote = DirectCloudKeyboardVersion(family: .terminal, writer: UUID(), revision: 100, layout: other,
+                context: [writer.uuidString.lowercased(): own.revision])
+            let bytes = try JSONEncoder().encode(remote); try cloud.write(bytes, account: remote.account)
+            fail = true; sync.refresh(); try await wait(sync); XCTAssertEqual(sync.issue, .storage)
+            fail = false; try await sync.removeCloudCopies()
+            let resumed = restart ? DirectKeyboardCloudSync(url: url, writer: writer, transport: cloud,
+                stores: ["terminal": memory.store], observeChanges: false) : sync
+            resumed.setEnabled(true); try await wait(resumed)
+            try cloud.write(bytes, account: remote.account); resumed.refresh(); try await wait(resumed)
+            XCTAssertEqual(DirectCloudKeyboardLayout(try memory.store.load()), before)
+            let current = try XCTUnwrap(try cloud.read().map { try JSONDecoder().decode(DirectCloudKeyboardVersion.self, from: $0) }.first { $0.writer == writer })
+            XCTAssertTrue(DirectControlsCausality.sees(current.context, writer: remote.writer, revision: 100))
+            resumed.setEnabled(false)
+        }
+    }
+
+    func testResetRefusesOversizedCausalBasisBeforeDeletingCloud() async throws {
+        let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let memory = try MemoryProfile(), cloud = KeyboardMemoryCloud(), writer = UUID(), url = folder.appending(path: "journal.json")
+        let sync = DirectKeyboardCloudSync(url: url, writer: writer, transport: cloud,
+            stores: ["terminal": memory.store], observeChanges: false, recoveryDelays: [])
+        sync.setEnabled(true); try await wait(sync)
+        var layout = DirectCloudKeyboardLayout(try memory.store.load()); layout.rows = [.init(id: TerminalKeyboardRow.mainID, kind: .main,
+            title: "Synthetic main", keys: [.key("key-f1")], visibility: "Always", alignment: .left, scrollStart: .automatic)]
+        for _ in 0..<13 {
+            let context = Dictionary(uniqueKeysWithValues: (0..<40).map { _ in (UUID().uuidString.lowercased(), Int64(1)) })
+            let version = DirectCloudKeyboardVersion(family: .terminal, writer: UUID(), revision: 2, layout: layout, context: context)
+            try version.validate(); try cloud.write(JSONEncoder().encode(version), account: version.account)
+        }
+        sync.refresh(); try await wait(sync); XCTAssertEqual(sync.issue, .storage)
+        let history = try Data(contentsOf: url), records = try cloud.read()
+        do { try await sync.removeCloudCopies(); XCTFail("Reset cannot discard a causal basis it cannot represent") }
+        catch { }
+        XCTAssertEqual(try Data(contentsOf: url), history)
+        XCTAssertEqual(Set(try cloud.read()), Set(records), "A refused reset preserves cloud copies")
+        let restarted = DirectKeyboardCloudSync(url: url, writer: writer, transport: cloud,
+            stores: ["terminal": memory.store], observeChanges: false, recoveryDelays: [])
+        XCTAssertNil(restarted.issue, "Reset must not write a journal that rejects itself on restart")
+        sync.setEnabled(false); restarted.setEnabled(false)
+        // The fallback path must enforce the same bound before it can authorize deletion.
+        try TerminalSecretStore.write(history, id: writer, kind: "keyboard-cloud-journal-v1")
+        XCTAssertThrowsError(try DirectKeyboardCloudSync.prepareForCloudRemoval(writer: writer))
+        XCTAssertEqual(try TerminalSecretStore.read(writer, kind: "keyboard-cloud-journal-v1"), history)
+    }
+
+    func testResetDoesNotAbsorbPreviouslyUnseenOfflineLayout() async throws {
+        for family in [TerminalControlsFamily.terminal, .remoteMac] {
+            for restart in [false, true] {
+                let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
+                defer { try? FileManager.default.removeItem(at: folder) }
+                let memory = try MemoryProfile(family == .terminal ? .defaults : .remoteDefaults)
+                var store = memory.store; store.family = family; store.legacyRemoteMenus = { ["desktop": [], "trackpad": []] }
+                let cloud = KeyboardMemoryCloud(), writer = UUID(), url = folder.appending(path: "journal.json")
+                let sync = DirectKeyboardCloudSync(url: url, writer: writer, transport: cloud,
+                    stores: [family.rawValue: store], observeChanges: false)
+                sync.setEnabled(true); try await wait(sync)
+                let before = DirectCloudKeyboardLayout(try store.load())
+                let own = try XCTUnwrap(try cloud.read().map { try JSONDecoder().decode(DirectCloudKeyboardVersion.self, from: $0) }.first { $0.writer == writer })
+                var offline = before; offline.rows[0].title = "Previously unseen offline layout"
+                let remote = DirectCloudKeyboardVersion(family: family, writer: UUID(), revision: 100, layout: offline,
+                    context: [writer.uuidString.lowercased(): own.revision])
+                try await sync.removeCloudCopies()
+                // This edit was not known when reset intent was committed.
+                try cloud.write(JSONEncoder().encode(remote), account: remote.account)
+                let resumed = restart ? DirectKeyboardCloudSync(url: url, writer: writer, transport: cloud,
+                    stores: [family.rawValue: store], observeChanges: false) : sync
+                resumed.setEnabled(true); try await wait(resumed)
+                let records = try cloud.read().map { try JSONDecoder().decode(DirectCloudKeyboardVersion.self, from: $0) }
+                let replacement = try XCTUnwrap(records.first { $0.writer == writer })
+                XCTAssertFalse(DirectControlsCausality.sees(replacement.context, writer: remote.writer, revision: 100))
+                let profile = try store.load(), active = DirectCloudKeyboardLayout(profile)
+                let recoverable = profile.syncState.recovered.compactMap(\.layout)
+                XCTAssertTrue(active == before || recoverable.contains(before))
+                XCTAssertTrue(active == offline || recoverable.contains(offline), "An unseen offline edit must remain active or recoverable")
+                resumed.setEnabled(false)
+            }
+        }
+    }
+
+    func testPreSaveBaselineFailureAutomaticallyRecoversWhileIdle() async throws {
+        let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let memory = try MemoryProfile(), cloud = KeyboardMemoryCloud()
+        var store = memory.store, failRead = false
+        store.read = { if failRead { throw DirectCloudError.storage }; return memory.data }
+        let sync = DirectKeyboardCloudSync(url: folder.appending(path: "journal.json"), writer: UUID(), transport: cloud,
+            stores: ["terminal": store], observeChanges: true, recoveryDelays: [.milliseconds(30)])
+        sync.setEnabled(true); try await wait(sync)
+        failRead = true
+        NotificationCenter.default.post(name: TerminalControlsStore.willChange, object: "terminal")
+        NotificationCenter.default.post(name: TerminalControlsStore.changed, object: "terminal")
+        XCTAssertEqual(sync.issue, .storage)
+        let reads = cloud.readCount; failRead = false
+        try await Task.sleep(for: .milliseconds(180)); try await wait(sync)
+        XCTAssertNil(sync.issue); XCTAssertGreaterThan(cloud.readCount, reads)
+        sync.setEnabled(false)
+    }
+
+    func testEnabledSyncAutomaticallyRecoversButOffDoesNotRetry() async throws {
+        for turnOff in [false, true] {
+            let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let memory = try MemoryProfile(), cloud = KeyboardMemoryCloud()
+            var fail = true, writes = 0
+            let sync = DirectKeyboardCloudSync(url: folder.appending(path: "journal.json"), writer: UUID(), transport: cloud,
+                stores: ["terminal": memory.store], observeChanges: false, writeJournal: { data, url in
+                    writes += 1; if fail { throw DirectCloudError.storage }; try data.write(to: url)
+                }, recoveryDelays: [.milliseconds(30), .milliseconds(60)])
+            sync.setEnabled(true); XCTAssertEqual(sync.issue, .storage)
+            if turnOff { sync.setEnabled(false) }
+            let before = writes; fail = false
+            try await Task.sleep(for: .milliseconds(180)); try await wait(sync)
+            if turnOff { XCTAssertEqual(writes, before); XCTAssertTrue(try cloud.read().isEmpty) }
+            else { XCTAssertNil(sync.issue); XCTAssertFalse(try cloud.read().isEmpty) }
+            sync.setEnabled(false)
+        }
+    }
+
+    func testResetResumesAfterJournalFailure() async throws {
+        let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let memory = try MemoryProfile(), cloud = KeyboardMemoryCloud()
+        var fail = false
+        let sync = DirectKeyboardCloudSync(url: folder.appending(path: "journal.json"), writer: UUID(), transport: cloud,
+            stores: ["terminal": memory.store], observeChanges: false, writeJournal: { data, url in
+                if fail { throw DirectCloudError.storage }; try data.write(to: url)
+            })
+        sync.setEnabled(true); try await wait(sync)
+        var local = try memory.store.load(); local.keyboardRows![0].title = "Keep current layout"
+        _ = try memory.store.save(local); fail = true; sync.localChange(.terminal)
+        XCTAssertEqual(sync.issue, .storage)
+        fail = false; try await sync.removeCloudCopies(); sync.setEnabled(true); try await wait(sync)
+        XCTAssertFalse(try cloud.read().isEmpty, "Reset and enable must resume without an extra Retry")
+        XCTAssertNil(sync.issue); XCTAssertEqual(try memory.store.load().keyboardRows![0].title, "Keep current layout")
+        sync.setEnabled(false)
+    }
+
+    func testForegroundRefreshRecoversJournalFailure() async throws {
+        let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let memory = try MemoryProfile(), cloud = KeyboardMemoryCloud()
+        var fail = true
+        let sync = DirectKeyboardCloudSync(url: folder.appending(path: "journal.json"), writer: UUID(), transport: cloud,
+            stores: ["terminal": memory.store], observeChanges: false, writeJournal: { data, url in
+                if fail { throw DirectCloudError.storage }; try data.write(to: url)
+            })
+        sync.setEnabled(true); XCTAssertEqual(sync.issue, .storage)
+        fail = false; sync.refresh(); try await wait(sync)
+        XCTAssertFalse(try cloud.read().isEmpty); XCTAssertNil(sync.issue)
+        sync.setEnabled(false)
+    }
+
+    func testResetRetainsFetchedClocksAfterProfileWriteFailure() async throws {
+        let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let memory = try MemoryProfile(), cloud = KeyboardMemoryCloud(), writer = UUID()
+        var failProfile = false, store = memory.store
+        store.write = { if failProfile { throw DirectCloudError.storage }; memory.data = $0 }
+        let sync = DirectKeyboardCloudSync(url: folder.appending(path: "journal.json"), writer: writer,
+            transport: cloud, stores: ["terminal": store], observeChanges: false)
+        sync.setEnabled(true); try await wait(sync)
+        let before = DirectCloudKeyboardLayout(try store.load())
+        let own = try XCTUnwrap(try cloud.read().map { try JSONDecoder().decode(DirectCloudKeyboardVersion.self, from: $0) }.first { $0.writer == writer })
+        var other = before; other.rows[0].title = "Old remote layout"
+        let remote = DirectCloudKeyboardVersion(family: .terminal, writer: UUID(), revision: 100, layout: other,
+            context: [writer.uuidString.lowercased(): own.revision])
+        let bytes = try JSONEncoder().encode(remote); try cloud.write(bytes, account: remote.account)
+        failProfile = true; sync.refresh(); try await wait(sync); XCTAssertEqual(sync.issue, .storage)
+        failProfile = false; try await sync.removeCloudCopies(); sync.setEnabled(true); try await wait(sync)
+        // Another device can retry its old queued write after the empty first fetch.
+        try cloud.write(bytes, account: remote.account); sync.refresh(); try await wait(sync)
+        XCTAssertEqual(DirectCloudKeyboardLayout(try store.load()), before)
+        XCTAssertNil(sync.issue); sync.setEnabled(false)
+    }
+
     func testFirstJournalFailureCannotLoseLaterLayoutAfterRestart() async throws {
         for family in [TerminalControlsFamily.terminal, .remoteMac] {
             let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
@@ -357,7 +547,7 @@ private final class KeyboardMemoryCloud: DirectCloudTransport, @unchecked Sendab
         _ = try memory.store.save(edited); first.localChange(.terminal)
         first.refresh(); try await wait(first)
         XCTAssertEqual(try memory.store.load().keyboardRows![0].title, "Keep my local edit")
-        XCTAssertTrue(first.status.contains("couldn’t be saved"))
+        XCTAssertEqual(first.issue, .storage)
         first.setEnabled(false)
         let restarted = DirectKeyboardCloudSync(url: url, writer: writer, transport: transport,
             stores: ["terminal": memory.store], observeChanges: false, writeJournal: write)

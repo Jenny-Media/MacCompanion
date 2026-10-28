@@ -9,6 +9,10 @@ private final class SavedContentMemoryCloud: DirectCloudTransport, @unchecked Se
     var failAtWrite: Int?
     var failRemoval = false
     private var pause = false, started = false
+    private var pauseRemoval = false, removing = false
+    let resumeRemoval = DispatchSemaphore(value: 0)
+    func pauseNextRemoval() { lock.lock(); defer { lock.unlock() }; pauseRemoval = true }
+    var removalStarted: Bool { lock.lock(); defer { lock.unlock() }; return removing }
     let resume = DispatchSemaphore(value: 0)
     var reads: Int { lock.lock(); defer { lock.unlock() }; return readTotal }
     var writes: Int { lock.lock(); defer { lock.unlock() }; return writeTotal }
@@ -26,6 +30,8 @@ private final class SavedContentMemoryCloud: DirectCloudTransport, @unchecked Se
     }
     func remove(account: String) throws { lock.lock(); defer { lock.unlock() }; values.removeValue(forKey: account) }
     func removeAll() throws {
+        lock.lock(); let waits = pauseRemoval; pauseRemoval = false; if waits { removing = true }; lock.unlock()
+        if waits, resumeRemoval.wait(timeout: .now() + 5) != .success { throw DirectCloudError.storage }
         lock.lock(); defer { lock.unlock() }
         if failRemoval { throw DirectCloudError.storage }
         values.removeAll()
@@ -582,6 +588,38 @@ private final class SavedContentMemoryCloud: DirectCloudTransport, @unchecked Se
         XCTAssertFalse(try versions(raw).contains { $0.writer == receiverID }, "Import normalization is not a new local edit")
         sender.setEnabled(false); receiver.setEnabled(false)
     }
+    func testFallbackRemovalRechecksLockAfterAwaitingMacDeletion() async throws {
+        guard !DirectAppLockV1.shared.enabled else { throw XCTSkip("QA app lock must begin off") }
+        let preference = UserDefaults.standard.object(forKey: DirectAppLockV1.preferenceKey)
+        let name = UUID().uuidString, defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        let url = URL.temporaryDirectory.appending(path: UUID().uuidString), writer = UUID()
+        try Data("synthetic unreadable Mac journal".utf8).write(to: url)
+        defer {
+            DirectAppLockV1.shared.setEnabled(false)
+            if let preference { UserDefaults.standard.set(preference, forKey: DirectAppLockV1.preferenceKey) }
+            else { UserDefaults.standard.removeObject(forKey: DirectAppLockV1.preferenceKey) }
+            defaults.removePersistentDomain(forName: name); try? FileManager.default.removeItem(at: url)
+        }
+        let macs = SavedContentMemoryCloud(), layouts = SavedContentMemoryCloud(), content = SavedContentMemoryCloud()
+        layouts.inject(Data("synthetic layout".utf8), account: "synthetic")
+        content.inject(Data("synthetic content".utf8), account: "synthetic")
+        let cloud = DirectCloudSyncV1(defaults: defaults, url: url, transport: macs, writerID: writer,
+            keyboardTransport: layouts, savedControlsTransport: content)
+        macs.pauseNextRemoval(); cloud.removeCloudCopies()
+        for _ in 0..<500 where !macs.removalStarted { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(macs.removalStarted)
+        UserDefaults.standard.set(true, forKey: DirectAppLockV1.preferenceKey)
+        DirectAppLockV1.shared.background(); XCTAssertFalse(DirectAppLockV1.shared.canAccess)
+        macs.resumeRemoval.signal()
+        for _ in 0..<500 where cloud.busy { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertFalse(cloud.busy)
+        XCTAssertFalse(layouts.snapshot.isEmpty); XCTAssertFalse(content.snapshot.isEmpty)
+        for kind in ["keyboard-cloud-journal-v1", "saved-controls-cloud-journal-v1"] {
+            XCTAssertNil(try TerminalSecretStore.read(writer, kind: kind), "Locked fallback must not create controls history")
+        }
+        XCTAssertEqual(cloud.recovery?.reason, .cloudRemoval)
+    }
+
     func testUnreadableMacJournalStillRemovesAllThreeServicesOnRepeatedRemoval() async throws {
         let name = UUID().uuidString, defaults = try XCTUnwrap(UserDefaults(suiteName: name))
         let url = URL.temporaryDirectory.appending(path: UUID().uuidString)
@@ -848,6 +886,113 @@ private final class SavedContentMemoryCloud: DirectCloudTransport, @unchecked Se
         XCTAssertFalse(library.restore(entry)); XCTAssertNotNil(library.error); XCTAssertEqual(memory.data,before)
         let locked = DirectControlsRecoveryLibrary(stores: [.terminal: memory.store], canAccess: { false })
         XCTAssertTrue(locked.entries.isEmpty); XCTAssertFalse(locked.discard(entry)); XCTAssertEqual(memory.data,before)
+    }
+
+    func testEnabledSyncAutomaticallyRecoversButOffDoesNotRetry() async throws {
+        for turnOff in [false, true] {
+            let memory = try Profile(profile(text())), journal = Journal(), raw = SavedContentMemoryCloud()
+            let sync = DirectSavedControlsCloudSync(writer: UUID(), transport: DirectSavedControlsTransport(base: raw),
+                stores: ["terminal": memory.store], observeChanges: false,
+                readJournal: { try journal.read() }, writeJournal: { try journal.write($0) },
+                recoveryDelays: [.milliseconds(30), .milliseconds(60)])
+            journal.failWrite = true; sync.setEnabled(true); try await wait(sync)
+            XCTAssertEqual(sync.issue, .storage)
+            if turnOff { sync.setEnabled(false) }
+            let writes = journal.writes; journal.failWrite = false
+            try await Task.sleep(for: .milliseconds(180)); try await wait(sync)
+            if turnOff { XCTAssertEqual(journal.writes, writes); XCTAssertTrue(raw.snapshot.isEmpty) }
+            else { XCTAssertNil(sync.issue); XCTAssertFalse(raw.snapshot.isEmpty) }
+            sync.setEnabled(false)
+        }
+    }
+
+    func testPositionIntentSurvivesMissingRowRestartAndContentEdit() throws {
+        for family in [TerminalControlsFamily.terminal, .remoteMac] {
+            let action = text(), original = profile(action, family: family), rowID = UUID()
+            var value = try XCTUnwrap(DirectCloudSavedControl.project(original)[action.id])
+            value.bar[0].row = rowID; value.bar[0].index = 2
+            var imported = try DirectCloudSavedControl.applying([action.id: value], to: original)
+            XCTAssertEqual(DirectCloudSavedControl.project(imported)[action.id]?.bar, value.bar)
+            // The real fallback is on Main, but its intent is durable and private.
+            XCTAssertNotEqual(DirectCloudSavedControl.project(imported, preservePositionIntent: false)[action.id]?.bar, value.bar)
+            imported = try JSONDecoder().decode(TerminalControlsProfile.self, from: JSONEncoder().encode(imported))
+            imported.actions[imported.actions.firstIndex { $0.id == action.id }!].text = "Synthetic genuine content edit"
+            var layout = DirectCloudKeyboardLayout(imported)
+            layout.rows.append(.init(id: rowID, kind: .custom, title: "Arriving row", keys: [.key("key-f1"), .key("key-f2"), .key("key-f3")],
+                visibility: "Always", alignment: .left, scrollStart: .automatic))
+            let final = try layout.applying(to: imported)
+            XCTAssertEqual(DirectCloudSavedControl.project(final, preservePositionIntent: false)[action.id]?.bar, value.bar)
+            XCTAssertEqual(final.actions.first { $0.id == action.id }?.text, "Synthetic genuine content edit")
+            // A subsequent placement edit overrides the receipt rather than being hidden.
+            var moved = final; let index = try XCTUnwrap(moved.keyboardRows?.firstIndex { $0.id == rowID })
+            var placements = moved.keyboardRows![index].placements
+            let placement = placements.remove(at: 2); placements.insert(placement, at: 0)
+            moved.keyboardRows![index].placements = placements
+            XCTAssertEqual(DirectCloudSavedControl.project(moved)[action.id]?.bar.first?.index, 0)
+        }
+    }
+
+    func testResetRetainsFetchedTombstoneAfterProfileWriteFailure() async throws {
+        for family in [TerminalControlsFamily.terminal, .remoteMac] {
+            for restart in [false, true] {
+                let action = text("keep synthetic local text"), memory = try Profile(profile(action, family: family))
+                let journal = Journal(), raw = SavedContentMemoryCloud(), writer = UUID()
+                var failProfile = false, store = memory.store
+                store.write = { if failProfile { throw DirectCloudError.storage }; memory.data = $0 }
+                let sync = DirectSavedControlsCloudSync(writer: writer, transport: DirectSavedControlsTransport(base: raw),
+                    stores: [family.rawValue: store], observeChanges: false,
+                    readJournal: { try journal.read() }, writeJournal: { try journal.write($0) })
+                sync.setEnabled(true); try await wait(sync)
+                let own = try XCTUnwrap(try versions(raw).first { $0.id == action.id && $0.writer == writer })
+                let remote = DirectCloudSavedVersion(family: family, id: action.id, writer: UUID(), revision: 100, value: nil,
+                    context: [writer.uuidString.lowercased(): own.revision])
+                let cloud = DirectSavedControlsTransport(base: raw), bytes = try remote.encoded()
+                try cloud.write(bytes, account: remote.account)
+                failProfile = true; sync.refresh(); try await wait(sync); XCTAssertEqual(sync.issue, .storage)
+                failProfile = false; try await sync.removeCloudCopies()
+                let recovered = restart ? engine(memory, journal, raw, writer: writer) : sync
+                recovered.setEnabled(true); try await wait(recovered)
+                try cloud.write(bytes, account: remote.account); recovered.refresh(); try await wait(recovered)
+                XCTAssertEqual(try store.load().actions.first { $0.id == action.id }?.text, action.text)
+                let winner = DirectCloudSavedVersion.winners(try versions(raw))[family.rawValue + "." + action.id.uuidString.lowercased()]
+                XCTAssertNotNil(winner?.value); XCTAssertTrue(DirectControlsCausality.sees(winner?.context, writer: remote.writer, revision: 100))
+                recovered.setEnabled(false)
+            }
+        }
+    }
+
+    func testPausedHistoryLayoutImportPreservesPositionsAndGenuineEdits() async throws {
+        for family in [TerminalControlsFamily.terminal, .remoteMac] {
+            for editText in [false, true] {
+                let action = text("original synthetic text"), memory = try Profile(profile(action, family: family))
+                let journal = Journal(), raw = SavedContentMemoryCloud(), sync = engine(memory, journal, raw, observe: true)
+                sync.setEnabled(true); try await wait(sync)
+                let initialWrites = raw.writes
+                journal.failWrite = true; sync.refresh(); try await wait(sync); XCTAssertEqual(sync.issue, .storage)
+                if editText {
+                    var local = try memory.store.load(); local.actions[local.actions.firstIndex { $0.id == action.id }!].text = "genuine synthetic edit"
+                    _ = try memory.store.save(local)
+                }
+                var layout = DirectCloudKeyboardLayout(try memory.store.load()); layout.rows[0].title = "Imported row title"
+                let imported = try layout.applying(to: memory.store.load())
+                _ = try memory.store.save(imported, cloudImport: true, captureLayoutImport: true)
+                journal.failWrite = false; sync.retry(); try await wait(sync)
+                let local = try memory.store.load(), row = try XCTUnwrap(local.resolvedRows.first { $0.kind == .main })
+                XCTAssertEqual(local.barPlacements(in: row).firstIndex { $0.item.savedID == action.id }, 1)
+                XCTAssertEqual(local.actions.first { $0.id == action.id }?.text, editText ? "genuine synthetic edit" : action.text)
+                XCTAssertEqual(try versions(raw).first { $0.id == action.id }?.value?.bar.first?.index, 1)
+                if !editText { XCTAssertEqual(raw.writes, initialWrites, "A layout import cannot author a saved-content edit") }
+                sync.setEnabled(false)
+            }
+        }
+    }
+
+    func testForegroundRefreshRecoversJournalFailure() async throws {
+        let memory = try Profile(profile(text())), journal = Journal(), raw = SavedContentMemoryCloud()
+        let sync = engine(memory, journal, raw); journal.failWrite = true
+        sync.setEnabled(true); try await wait(sync); XCTAssertEqual(sync.issue, .storage)
+        journal.failWrite = false; sync.refresh(); try await wait(sync)
+        XCTAssertNil(sync.issue); XCTAssertFalse(raw.snapshot.isEmpty); sync.setEnabled(false)
     }
 
     func testResetIntentSurvivesStorageFailureAfterCloudDeletionAndRestart() async throws {
