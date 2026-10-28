@@ -58,14 +58,14 @@ import XCTest
             dismissBackupPreview(app)
             XCTAssertTrue(app.buttons["backup-create"].waitForExistence(timeout: 5))
             capture("manual-backup-home" + (large ? "-large-text" : ""))
-            app.buttons["Done"].firstMatch.tap()
+            dismissBackupHome(app)
             XCTAssertEqual(app.staticTexts["fixture-backup-macs"].label, "Saved Macs: Current Mac")
             reveal(route, app: app); route.tap()
             XCTAssertTrue(app.navigationBars["Restore Backup"].waitForExistence(timeout: 8)); reveal(restore, app: app); restore.tap()
             let previous = app.buttons["backup-previous"]
             XCTAssertTrue(app.navigationBars["Backup & Restore"].waitForExistence(timeout: 8)); reveal(previous, app: app)
             capture("manual-backup-restored" + (large ? "-large-text" : ""))
-            app.buttons["Done"].firstMatch.tap()
+            dismissBackupHome(app)
             XCTAssertEqual(app.staticTexts["fixture-backup-macs"].label, "Saved Macs: Restored Mac")
             let manual = app.buttons["fixture-backup"]
             reveal(manual, app: app); manual.tap()
@@ -75,21 +75,30 @@ import XCTest
             restore.tap()
             XCTAssertTrue(app.navigationBars["Previous Data"].waitForNonExistence(timeout: 8))
             reveal(app.staticTexts["backup-status"], app: app)
-            app.buttons["Done"].firstMatch.tap()
+            dismissBackupHome(app)
             XCTAssertEqual(app.staticTexts["fixture-backup-macs"].label, "Saved Macs: Current Mac")
             app.terminate()
         }
     }
     private func dismissBackupPreview(_ app: XCUIApplication) {
         let cancel = app.buttons["backup-cancel"]
-        if cancel.exists { cancel.tap() }
-        else {
-            // Duo can draw a visible toolbar replica outside the app's AX
-            // subtree. Use its observed leading cancellation area.
-            let bar = app.navigationBars["Restore Backup"]
-            XCTAssertTrue(bar.exists)
-            bar.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.4)).tap()
+        // Duo hides navigation chrome while scrolling. Reverse the scroll
+        // before using its native toolbar, then verify the dialog closed.
+        for _ in 0..<8 {
+            if cancel.exists && cancel.isHittable { break }
+            scrollForm(app, down: true)
         }
+        XCTAssertTrue(cancel.exists); XCTAssertTrue(cancel.isHittable); cancel.tap()
+        XCTAssertTrue(app.navigationBars["Restore Backup"].waitForNonExistence(timeout: 5))
+    }
+    private func dismissBackupHome(_ app: XCUIApplication) {
+        let done = app.buttons["Done"].firstMatch
+        for _ in 0..<8 {
+            if done.exists && done.isHittable { break }
+            scrollForm(app, down: true)
+        }
+        XCTAssertTrue(done.isHittable); done.tap()
+        XCTAssertTrue(app.navigationBars["Backup & Restore"].waitForNonExistence(timeout: 5))
     }
     private func dismissBackupFilePicker(_ app: XCUIApplication) {
         let picker = app.navigationBars["FullDocumentManagerViewControllerNavigationBar"]
@@ -117,7 +126,7 @@ import XCTest
         XCTAssertTrue(app.buttons["backup-create"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["backup-error"].exists)
         XCTAssertFalse(app.buttons["backup-previous"].exists)
-        app.buttons["Done"].firstMatch.tap()
+        dismissBackupHome(app)
         XCTAssertEqual(app.staticTexts["fixture-backup-macs"].label, "Saved Macs: Current Mac")
     }
     func testManualBackupFilesRoundTrip() {
@@ -148,7 +157,7 @@ import XCTest
         capture("manual-backup-files-roundtrip")
         dismissBackupPreview(app)
         XCTAssertFalse(app.buttons["backup-previous"].exists)
-        app.buttons["Done"].firstMatch.tap()
+        dismissBackupHome(app)
         XCTAssertEqual(app.staticTexts["fixture-backup-macs"].label, "Saved Macs: Current Mac")
     }
     func testOneSyncConfirmationIncludesSavedContentAndHasNoSeparateOption() {
