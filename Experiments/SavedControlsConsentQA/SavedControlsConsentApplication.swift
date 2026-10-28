@@ -29,11 +29,33 @@ private final class NoCloudEffects: DirectCloudTransport, @unchecked Sendable {
 private struct CopyAuditHome: View {
     let cloud: DirectCloudSyncV1
     private enum Route: String, CaseIterable, Identifiable {
-        case sync, gestures, setup, trust, identity, manual, keyImport, recovered, recoveryNotice
+        case sync, gestures, setup, trust, identity, manual, keyImport, recovered, recoveryNotice, backup, backupPreview
         var id: String { rawValue }
     }
     @State private var route: Route?
     @State private var recovered = Self.makeRecoveryFixture()
+    @State private var backup = Self.makeBackupFixture()
+    private static func makeBackupFixture() -> DirectLocalBackupStore {
+        let root = URL.temporaryDirectory.appending(path: "manual-backup-qa-" + UUID().uuidString)
+        let library = DirectMacLibraryV1(url: root.appending(path: "macs.json"), removeLogin: { _ in })
+        precondition(library.save(id: nil, name: "Current Mac", addresses: ["synthetic.invalid"]))
+        var terminal = try! JSONEncoder().encode(TerminalControlsProfile.defaults)
+        var remote = try! JSONEncoder().encode(TerminalControlsProfile.remoteDefaults)
+        var terminalStore = TerminalControlsStore(), remoteStore = TerminalControlsStore.remoteMac()
+        terminalStore.read = { terminal }; terminalStore.write = { terminal = $0 }
+        remoteStore.read = { remote }; remoteStore.write = { remote = $0 }
+        terminalStore.legacyIDs = { [] }; terminalStore.legacyActions = { [] }
+        return DirectLocalBackupStore(library: library, stores: [.terminal: terminalStore, .remoteMac: remoteStore],
+            directory: root.appending(path: "recovery"), canAccess: { true }, sessionsActive: { false },
+            pauseSync: {}, applyPreferences: { _, _ in })
+    }
+    private func backupPreview() -> DirectLocalBackup {
+        var file = try! backup.makeBackup()
+        file.createdAt = Date(timeIntervalSince1970: 1_700_000_000)
+        file.macs[0].name = "Restored Mac"
+        file.terminal.actions.append(.init(title: "Sample Text", kind: .text, text: "Synthetic saved text.", inMenu: false))
+        return file
+    }
     private static func makeRecoveryFixture() -> DirectControlsRecoveryLibrary {
         var profile = TerminalControlsProfile.defaults
         profile.freezeKeyboardLayout()
@@ -54,17 +76,25 @@ private struct CopyAuditHome: View {
     private let mac = DirectMacRecordV1(id: UUID(uuidString: "4C18D75D-C154-4460-ACB9-830E5723AD31")!, name: "Synthetic Mac", addresses: ["synthetic.invalid"])
     var body: some View {
         NavigationStack {
-            List(Route.allCases) { choice in
+            List {
+            Text("Saved Macs: " + backup.library.macs.map(\.name).joined(separator: ", ")).accessibilityIdentifier("fixture-backup-macs")
+            ForEach(Route.allCases) { choice in
                 if choice == .gestures {
                     NavigationLink { DirectGestureGuide() } label: { Text(choice.rawValue) }
                         .accessibilityIdentifier("fixture-" + choice.rawValue)
                 } else {
                     Button(choice.rawValue) { route = choice }.accessibilityIdentifier("fixture-" + choice.rawValue)
                 }
+            }
             }.navigationTitle("Copy QA")
         }.sheet(item: $route) { choice in
             Group {
             switch choice {
+            case .backup, .backupPreview:
+                NavigationStack {
+                    DirectLocalBackupSettings(store: backup, preview: choice == .backupPreview ? backupPreview() : nil)
+                        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { route = nil } } }
+                }
             case .sync:
                 NavigationStack {
                     DirectSyncSecurityForm(cloud: cloud).navigationTitle("Sync & Security")

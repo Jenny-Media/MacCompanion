@@ -40,6 +40,7 @@ import UIKit
             ("Saved Login", AnyView(DirectMacAccessView(mac: mac))),
             ("Mac Settings", AnyView(DirectMacEditorV1(mac: mac, library: library))),
             ("App Settings", AnyView(DirectSessionSettingsV1().directAppearance())),
+            ("Backup & Restore", AnyView(DirectLocalBackupSettings(library: library).directAppearance())),
             ("SSH Keys", AnyView(TerminalKeySettings())),
             ("Setup Guide", AnyView(DirectMacSetupGuide())),
             ("Pro", AnyView(DirectProView())),

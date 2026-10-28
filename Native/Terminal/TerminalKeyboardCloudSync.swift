@@ -500,6 +500,8 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
         enabled && readable && generation == epoch && !Task.isCancelled
             && canAccess() && DirectClientPlatformV1.sessionAvailable
     }
+    /// Disabling invalidates application; admitted Keychain work still drains.
+    func waitForDisabledWork() async { await task?.value }
     func removeCloudCopies() async throws {
         setEnabled(false)
         await task?.value

@@ -18,7 +18,10 @@ import XCTest
         if down { form.swipeDown() } else { form.swipeUp() }
     }
     private func reveal(_ element: XCUIElement, app: XCUIApplication) {
-        for _ in 0..<8 where !element.isHittable { scrollForm(app) }
+        for _ in 0..<8 {
+            if element.exists && element.isHittable { break }
+            scrollForm(app)
+        }
         XCTAssertTrue(element.exists)
         XCTAssertTrue(element.isHittable)
     }
@@ -41,6 +44,95 @@ import XCTest
             start.press(forDuration: 0.1, thenDragTo: end)
         }
         XCTAssertLessThanOrEqual(footer.frame.maxY, confirm.frame.minY - 8, "The complete encryption note must scroll clear of the pinned actions")
+    }
+    func testManualBackupPreviewCancelRestoreAndRecovery() {
+        for large in [false, true] {
+            let app = launch(large: large); defer { app.terminate() }
+            let route = app.buttons["fixture-backupPreview"]
+            reveal(route, app: app); route.tap()
+            let restore = app.buttons["backup-confirm-restore"]
+            XCTAssertTrue(app.navigationBars["Restore Backup"].waitForExistence(timeout: 8))
+            capture("manual-backup-preview" + (large ? "-large-text" : ""))
+            reveal(restore, app: app)
+            capture("manual-backup-preview-action" + (large ? "-large-text" : ""))
+            app.buttons["Cancel"].firstMatch.tap()
+            XCTAssertTrue(app.buttons["backup-create"].waitForExistence(timeout: 5))
+            capture("manual-backup-home" + (large ? "-large-text" : ""))
+            app.buttons["Done"].firstMatch.tap()
+            XCTAssertEqual(app.staticTexts["fixture-backup-macs"].label, "Saved Macs: Current Mac")
+            reveal(route, app: app); route.tap()
+            XCTAssertTrue(app.navigationBars["Restore Backup"].waitForExistence(timeout: 8)); reveal(restore, app: app); restore.tap()
+            let previous = app.buttons["backup-previous"]
+            XCTAssertTrue(app.navigationBars["Backup & Restore"].waitForExistence(timeout: 8)); reveal(previous, app: app)
+            capture("manual-backup-restored" + (large ? "-large-text" : ""))
+            app.buttons["Done"].firstMatch.tap()
+            XCTAssertEqual(app.staticTexts["fixture-backup-macs"].label, "Saved Macs: Restored Mac")
+            let manual = app.buttons["fixture-backup"]
+            reveal(manual, app: app); manual.tap()
+            reveal(previous, app: app); previous.tap()
+            XCTAssertTrue(app.navigationBars["Previous Data"].waitForExistence(timeout: 5)); reveal(restore, app: app)
+            capture("manual-backup-recovery" + (large ? "-large-text" : ""))
+            restore.tap()
+            XCTAssertTrue(app.navigationBars["Previous Data"].waitForNonExistence(timeout: 8))
+            reveal(app.staticTexts["backup-status"], app: app)
+            app.buttons["Done"].firstMatch.tap()
+            XCTAssertEqual(app.staticTexts["fixture-backup-macs"].label, "Saved Macs: Current Mac")
+            app.terminate()
+        }
+    }
+    private func dismissBackupFilePicker(_ app: XCUIApplication) {
+        let picker = app.navigationBars["FullDocumentManagerViewControllerNavigationBar"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 8))
+        let cancel = app.buttons["Cancel"].firstMatch
+        if cancel.exists { cancel.tap() }
+        else {
+            // Newer Files pickers use the native sheet-dismiss gesture.
+            let start = picker.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.05))
+            let end = start.withOffset(CGVector(dx: 0, dy: app.frame.height * 0.7))
+            start.press(forDuration: 0.1, thenDragTo: end)
+        }
+        XCTAssertTrue(picker.waitForNonExistence(timeout: 5))
+    }
+    func testManualBackupSystemPickersCancelWithoutChanges() {
+        let app = launch(large: false); defer { app.terminate() }
+        let manual = app.buttons["fixture-backup"]
+        reveal(manual, app: app); manual.tap()
+        app.buttons["backup-create"].tap()
+        dismissBackupFilePicker(app)
+        XCTAssertTrue(app.buttons["backup-import"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["backup-error"].exists)
+        app.buttons["backup-import"].tap()
+        dismissBackupFilePicker(app)
+        XCTAssertTrue(app.buttons["backup-create"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["backup-error"].exists)
+        XCTAssertFalse(app.buttons["backup-previous"].exists)
+        app.buttons["Done"].firstMatch.tap()
+        XCTAssertEqual(app.staticTexts["fixture-backup-macs"].label, "Saved Macs: Current Mac")
+    }
+    func testManualBackupFilesRoundTrip() {
+        let app = launch(large: false); defer { app.terminate() }
+        let manual = app.buttons["fixture-backup"]
+        reveal(manual, app: app); manual.tap()
+        app.buttons["backup-create"].tap()
+        let picker = app.navigationBars["FullDocumentManagerViewControllerNavigationBar"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 8))
+        let name = "Mac Companion QA " + UUID().uuidString.prefix(8)
+        let field = app.textFields.firstMatch
+        XCTAssertTrue(field.exists); field.tap()
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: (field.value as? String)?.count ?? 0) + name)
+        app.buttons["DOCPicker.actionButton"].tap()
+        XCTAssertTrue(picker.waitForNonExistence(timeout: 8))
+        app.buttons["backup-import"].tap()
+        XCTAssertTrue(picker.waitForExistence(timeout: 8))
+        let file = app.cells.matching(NSPredicate(format: "label CONTAINS %@", name)).firstMatch
+        XCTAssertTrue(file.waitForExistence(timeout: 8))
+        file.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)).tap()
+        XCTAssertTrue(app.navigationBars["Restore Backup"].waitForExistence(timeout: 8))
+        capture("manual-backup-files-roundtrip")
+        app.buttons["Cancel"].firstMatch.tap()
+        XCTAssertFalse(app.buttons["backup-previous"].exists)
+        app.buttons["Done"].firstMatch.tap()
+        XCTAssertEqual(app.staticTexts["fixture-backup-macs"].label, "Saved Macs: Current Mac")
     }
     func testOneSyncConfirmationIncludesSavedContentAndHasNoSeparateOption() {
         for large in [false, true] {

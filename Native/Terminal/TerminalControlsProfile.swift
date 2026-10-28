@@ -876,6 +876,9 @@ struct TerminalControlsProfile: Codable, Equatable {
     func load() throws -> TerminalControlsProfile { try load(persistMigrations: true) }
     /// Off-state baseline projections normalize a snapshot without writing it.
     func load(persistMigrations: Bool) throws -> TerminalControlsProfile {
+        #if os(iOS)
+        guard !DirectLocalBackupStore.pendingRecovery || DirectLocalBackupStore.applying else { throw Failure.unreadable }
+        #endif
         guard DirectAppLockV1.shared.canAccess else { throw TerminalSecretStore.Failure.locked }
         let stored = try read()
         var profile: TerminalControlsProfile
@@ -927,7 +930,7 @@ struct TerminalControlsProfile: Codable, Equatable {
         if family == .remoteMac { profile.selectRemoteMenu(remoteMode) }
         return profile
     }
-    func save(_ draft: TerminalControlsProfile, cloudImport: Bool = false, captureSavedImport: Bool = false, captureLayoutImport: Bool = false) throws -> TerminalControlsProfile {
+    func save(_ draft: TerminalControlsProfile, cloudImport: Bool = false, captureSavedImport: Bool = false, captureLayoutImport: Bool = false, notifyChanges: Bool = true) throws -> TerminalControlsProfile {
         try Format(version: draft.version, rowsSchema: draft.rowsSchema).checkSupported()
         guard draft.rowsSchema == TerminalControlsProfile.currentRowsSchema else { throw Failure.unreadable }
         let current = try load()
@@ -962,9 +965,9 @@ struct TerminalControlsProfile: Codable, Equatable {
             result.syncState = state
         }
         #endif
-        NotificationCenter.default.post(name: Self.willChange, object: family.rawValue, userInfo: ["cloudImport": cloudImport])
+        if notifyChanges { NotificationCenter.default.post(name: Self.willChange, object: family.rawValue, userInfo: ["cloudImport": cloudImport]) }
         try persist(result)
-        NotificationCenter.default.post(name: Self.changed, object: family.rawValue, userInfo: ["cloudImport": cloudImport])
+        if notifyChanges { NotificationCenter.default.post(name: Self.changed, object: family.rawValue, userInfo: ["cloudImport": cloudImport]) }
         return result
     }
     private func persist(_ profile: TerminalControlsProfile) throws {

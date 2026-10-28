@@ -118,3 +118,11 @@ screen content. Store screenshots outside Git, as required by `AGENTS.md`.
 - Use Insert Symbol in a shortcut name, including an emoji name. Check insertion at the caret and replacement of selected text, then save and reopen.
 - Check Saved Text empty, single-line, multiline and over the 256-character limit. The field grows until it scrolls, stays readable with the keyboard open, and preserves spaces and trailing newlines. Cancel does not persist the draft.
 - On iOS, check Touch & Haptics: Show Touch Indicators and Haptic Feedback apply to all Mac connections on that iPhone or iPad. Mac only shows relevant desktop/terminal settings.
+
+
+### iOS local backup and restore
+
+- Create a backup with iCloud Sync off, save it in Files, and restore it on another signed iPhone or iPad. Compare Mac order, connection settings, keyboard rows, saved actions, positions and recovered alternatives. Restored Macs must request sign-in and trust confirmation.
+- Cancel both system file pickers and the restore preview; saved data must stay unchanged. Reject invalid, oversized and newer-format files before any imported data is saved.
+- Restore with iCloud Sync on, then confirm that this device stays off and the existing cloud copy is kept. Re-enable only deliberately; verify normal causal reconciliation on two signed devices.
+- Use Restore Previous Data, including after an app restart. Check portrait, landscape and large text, with all confirmation and recovery actions reachable.

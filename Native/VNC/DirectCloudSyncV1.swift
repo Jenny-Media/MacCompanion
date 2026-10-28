@@ -277,6 +277,20 @@ enum DirectCloudSyncIssue: Equatable { case storage, capacity }
             refresh()
         } else { status = "Sync is off on this device. Existing iCloud data is kept." }
     }
+    #if os(iOS)
+    func pauseForLocalRestore() async throws {
+        guard DirectAppLockV1.shared.canAccess else { throw DirectCloudError.locked }
+        let work = refreshTask
+        setEnabled(false)
+        await work?.value
+        guard !enabled else { throw DirectCloudError.storage }
+        await keyboardCloud?.waitForDisabledWork()
+        guard !enabled else { throw DirectCloudError.storage }
+        await savedControlsCloud?.waitForDisabledWork()
+        guard !enabled else { throw DirectCloudError.storage }
+        guard DirectAppLockV1.shared.canAccess else { throw DirectCloudError.locked }
+    }
+    #endif
     private func persist(_ values: [DirectCloudVersion]) throws {
         guard readable else { throw DirectCloudError.storage }
         let checked = try DirectCloudVersion.merge([], values)
