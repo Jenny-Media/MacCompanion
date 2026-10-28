@@ -165,31 +165,50 @@ extension View {
 struct DirectSyncSecurityForm: View {
     @State private var cloud: DirectCloudSyncV1
     @State private var lock = DirectAppLockV1.shared
+    #if !os(iOS)
     @State private var enableCloud = false
+    #endif
     @State private var sheet: DirectCloudSheet?
     init(cloud: DirectCloudSyncV1 = .shared) { _cloud = State(initialValue: cloud) }
     var body: some View {
         Form {
-            DirectCloudSettingsSection(cloud: cloud, enable: { enableCloud = true }, present: { sheet = $0 })
+            DirectCloudSettingsSection(cloud: cloud, enable: {
+                #if os(iOS)
+                sheet = .enableSync
+                #else
+                enableCloud = true
+                #endif
+            }, present: { sheet = $0 })
             DirectAppUnlockSection()
         }.directGroupedForm()
         .sheet(item: $sheet) { item in
+            #if os(iOS)
+            if item == .enableSync {
+                DirectCloudEnableSheet(cloud: cloud).directAppearance()
+            } else {
+                DirectCloudInformationSheet(kind: item, cloud: cloud).directAppearance()
+            }
+            #else
             DirectCloudInformationSheet(kind: item, cloud: cloud).directAppearance()
                 #if os(macOS)
                 .modifier(MacSheetPrivacyCover())
                 #endif
+            #endif
         }
+        #if !os(iOS)
         .alert("Enable iCloud Sync?", isPresented: $enableCloud) {
             Button("Enable Sync") { if lock.canAccess { cloud.setEnabled(true) } }
             Button("Cancel", role: .cancel) {}
-        } message: {
-            #if os(iOS)
-            Text("Sync saved Macs and keyboard layouts across your devices with iCloud Keychain.\n\nPasswords, SSH keys, session shortcuts and saved text stay on this device.")
-            #else
-            Text(DirectCloudSyncV1.disclosure)
-            #endif
+        } message: { Text(DirectCloudSyncV1.disclosure) }
+        #endif
+        .onChange(of: lock.canAccess) { _, allowed in
+            if !allowed {
+                #if !os(iOS)
+                enableCloud = false
+                #endif
+                sheet = nil
+            }
         }
-        .onChange(of: lock.canAccess) { _, allowed in if !allowed { enableCloud = false; sheet = nil } }
     }
 }
 
@@ -259,8 +278,65 @@ private struct DirectCloudSettingsSection: View {
 
 enum DirectCloudSheet: String, Identifiable {
     case credentials, deleteData
+    #if os(iOS)
+    case enableSync
+    #endif
     var id: String { rawValue }
 }
+
+#if os(iOS)
+private struct DirectCloudEnableSheet: View {
+    let cloud: DirectCloudSyncV1
+    @State private var lock = DirectAppLockV1.shared
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .title2) private var symbolWidth = 28
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Text("Enable iCloud Sync?").font(.title2.bold()).accessibilityAddTraits(.isHeader)
+                summary("Syncs", symbol: "icloud", detail: "Saved Macs and keyboard layouts.")
+                    .accessibilityIdentifier("icloud-enable-synced")
+                summary("Stays on this device", symbol: "icloud.slash",
+                    detail: "Passwords, SSH keys, session shortcuts and saved text.")
+                    .accessibilityIdentifier("icloud-enable-local")
+                Text("Uses iCloud Keychain").font(.footnote).foregroundStyle(.secondary)
+            }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: 8) {
+                Button {
+                    guard lock.canAccess, !cloud.busy else { return }
+                    cloud.setEnabled(true)
+                    dismiss()
+                } label: {
+                    Text("Enable Sync").font(.headline).frame(maxWidth: .infinity, minHeight: 32)
+                }
+                .buttonStyle(.borderedProminent).controlSize(.large)
+                .disabled(cloud.busy || !lock.canAccess).accessibilityIdentifier("icloud-enable-confirm")
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .frame(maxWidth: .infinity, minHeight: 44).buttonStyle(.plain)
+                    .accessibilityIdentifier("icloud-enable-cancel")
+            }.padding(.horizontal, 24).padding(.vertical, 12).background(.bar)
+        }
+        .presentationSizing(.form)
+        .presentationDetents(dynamicTypeSize.isAccessibilitySize ? [.large] : [.height(440), .large])
+        .presentationDragIndicator(.visible)
+    }
+
+    private func summary(_ title: LocalizedStringKey, symbol: String, detail: LocalizedStringKey) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: symbol).font(.title2).foregroundStyle(.secondary)
+                .frame(width: symbolWidth).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.headline)
+                Text(detail).foregroundStyle(.secondary)
+            }
+        }.accessibilityElement(children: .combine)
+    }
+}
+#endif
 
 struct DirectCloudInformationSheet: View {
     let kind: DirectCloudSheet

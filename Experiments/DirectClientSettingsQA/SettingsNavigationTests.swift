@@ -37,6 +37,48 @@ import UIKit
         app.navigationBars["Connection Options"].buttons.firstMatch.tap()
         app.buttons["quick-connect-cancel"].tap()
     }
+    func testSyncConsentRowsAndActionsRemainReachableWithoutEnablingSync() {
+        continueAfterFailure = false
+        for large in [false, true] {
+            let app = app()
+            if large { app.launchArguments = ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXL"] }
+            app.launch(); defer { app.terminate() }
+            XCTAssertTrue(app.buttons["open-app-settings"].waitForExistence(timeout: 10))
+            app.buttons["open-app-settings"].tap()
+            app.buttons["settings-sync"].tap()
+            let toggle = app.switches["icloud-library-toggle"]
+            XCTAssertEqual(toggle.value as? String, "0", "This QA journey requires sync to remain off")
+            toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+            XCTAssertTrue(app.staticTexts["Enable iCloud Sync?"].waitForExistence(timeout: 5))
+            for identifier in ["icloud-enable-synced", "icloud-enable-local"] {
+                let row = app.descendants(matching: .any)[identifier].firstMatch
+                XCTAssertTrue(row.exists)
+                for _ in 0..<4 where !row.isHittable { app.swipeUp() }
+                XCTAssertTrue(row.isHittable)
+            }
+            let footer = app.staticTexts["Uses iCloud Keychain"]
+            for _ in 0..<4 where !footer.isHittable { app.swipeUp() }
+            XCTAssertTrue(footer.isHittable)
+            let confirm = app.buttons["icloud-enable-confirm"]
+            let cancel = app.buttons["icloud-enable-cancel"]
+            XCTAssertTrue(confirm.isHittable)
+            XCTAssertTrue(cancel.isHittable)
+            capture(large ? "icloud-consent-large-text" : "icloud-consent", app: app)
+            if !large {
+                XCUIDevice.shared.orientation = .landscapeLeft
+                XCTAssertEqual(XCUIDevice.shared.orientation, .landscapeLeft)
+                XCTAssertTrue(cancel.isHittable)
+                let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+                screenshot.name = "icloud-consent-rotated"; screenshot.lifetime = .keepAlways
+                add(screenshot)
+            }
+            cancel.tap()
+            XCUIDevice.shared.orientation = .portrait
+            XCTAssertTrue(app.navigationBars["Sync & Security"].waitForExistence(timeout: 5))
+            XCTAssertEqual(toggle.value as? String, "0", "Reviewing and cancelling must not enable sync")
+            app.terminate()
+        }
+    }
     func testSyncDeletionCanBeCancelledAtBothConfirmationSteps() {
         continueAfterFailure = false
         let app = app(); app.launch(); defer { app.terminate() }
