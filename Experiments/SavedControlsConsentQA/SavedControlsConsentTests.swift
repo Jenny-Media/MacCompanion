@@ -45,6 +45,15 @@ import XCTest
         }
         XCTAssertLessThanOrEqual(footer.frame.maxY, confirm.frame.minY - 8, "The complete encryption note must scroll clear of the pinned actions")
     }
+    private func assertBackupMacs(_ names: String, app: XCUIApplication) {
+        let summary = app.staticTexts["fixture-backup-macs"]
+        for _ in 0..<8 {
+            if summary.exists { break }
+            scrollForm(app, down: true)
+        }
+        XCTAssertTrue(summary.exists)
+        XCTAssertEqual(summary.label, "Saved Macs: " + names)
+    }
     func testManualBackupPreviewCancelRestoreAndRecovery() {
         for large in [false, true] {
             let app = launch(large: large); defer { app.terminate() }
@@ -59,14 +68,14 @@ import XCTest
             XCTAssertTrue(app.buttons["backup-create"].waitForExistence(timeout: 5))
             capture("manual-backup-home" + (large ? "-large-text" : ""))
             dismissBackupHome(app)
-            XCTAssertEqual(app.staticTexts["fixture-backup-macs"].label, "Saved Macs: Current Mac")
+            assertBackupMacs("Current Mac", app: app)
             reveal(route, app: app); route.tap()
             XCTAssertTrue(app.navigationBars["Restore Backup"].waitForExistence(timeout: 8)); reveal(restore, app: app); restore.tap()
             let previous = app.buttons["backup-previous"]
             XCTAssertTrue(app.navigationBars["Backup & Restore"].waitForExistence(timeout: 8)); reveal(previous, app: app)
             capture("manual-backup-restored" + (large ? "-large-text" : ""))
             dismissBackupHome(app)
-            XCTAssertEqual(app.staticTexts["fixture-backup-macs"].label, "Saved Macs: Restored Mac")
+            assertBackupMacs("Restored Mac", app: app)
             let manual = app.buttons["fixture-backup"]
             reveal(manual, app: app); manual.tap()
             reveal(previous, app: app); previous.tap()
@@ -76,7 +85,7 @@ import XCTest
             XCTAssertTrue(app.navigationBars["Previous Data"].waitForNonExistence(timeout: 8))
             reveal(app.staticTexts["backup-status"], app: app)
             dismissBackupHome(app)
-            XCTAssertEqual(app.staticTexts["fixture-backup-macs"].label, "Saved Macs: Current Mac")
+            assertBackupMacs("Current Mac", app: app)
             app.terminate()
         }
     }
@@ -127,7 +136,7 @@ import XCTest
         XCTAssertFalse(app.staticTexts["backup-error"].exists)
         XCTAssertFalse(app.buttons["backup-previous"].exists)
         dismissBackupHome(app)
-        XCTAssertEqual(app.staticTexts["fixture-backup-macs"].label, "Saved Macs: Current Mac")
+        assertBackupMacs("Current Mac", app: app)
     }
     func testManualBackupFilesRoundTrip() {
         let app = launch(large: false); defer { app.terminate() }
@@ -158,7 +167,7 @@ import XCTest
         dismissBackupPreview(app)
         XCTAssertFalse(app.buttons["backup-previous"].exists)
         dismissBackupHome(app)
-        XCTAssertEqual(app.staticTexts["fixture-backup-macs"].label, "Saved Macs: Current Mac")
+        assertBackupMacs("Current Mac", app: app)
     }
     func testOneSyncConfirmationIncludesSavedContentAndHasNoSeparateOption() {
         for large in [false, true] {
