@@ -68,6 +68,7 @@ def main():
     parser.add_argument('--generate-only', action='store_true', help='Generate the private QA project without running tests')
     parser.add_argument('--composer-ui', action='store_true', help='Generate the simulator-only Maps-style composer app and native drag test scheme')
     parser.add_argument('--cold-start-ui', action='store_true', help='Generate native cold-start admission interaction tests')
+    parser.add_argument('--saved-controls-ui', action='store_true', help='Check unified sync consent and concise guidance with an injected no-cloud QA app')
     parser.add_argument('--settings-ui', action='store_true', help='Also test gear navigation and live sheet appearance using native UI interactions')
     parser.add_argument('--screen-text-ui', action='store_true', help='Generate the simulator-only native/area text selection UI journey')
     parser.add_argument('--mac-shortcuts-ui', action='store_true', help='Generate the simulator-only per-Mac shortcuts and native swipe tests')
@@ -157,6 +158,27 @@ def execute(args, parser, compiler):
             'test': {'config': 'Debug', 'macroExpansion': 'ComposerSheetApp', 'targets': [{'name': 'ComposerSheetUITests', 'parallelizable': False}]}}
         for action in ['run', 'profile', 'analyze', 'archive']:
             spec['schemes']['ComposerSheetQA'][action] = {'config': 'Debug'}
+    if args.saved_controls_ui:
+        import copy
+        consent = copy.deepcopy(app)
+        consent['sources'] = [row for row in consent['sources'] if not row['path'].startswith(str(ROOT / 'Apps/MacCompanionIOS'))]
+        consent['sources'].append({'path': str(ROOT / 'Experiments/SavedControlsConsentQA/SavedControlsConsentApplication.swift')})
+        consent['sources'].append({'path': str(ROOT / 'Apps/MacCompanionIOS/Assets.xcassets')})
+        consent['settings']['base'].update({'PRODUCT_BUNDLE_IDENTIFIER': 'dev.maccompanion.savedcontrolsqa.ios',
+                                          'PRODUCT_NAME': 'SavedControlsConsentQA', 'PRODUCT_MODULE_NAME': 'Mac_Companion'})
+        consent['dependencies'] = [row for row in consent['dependencies'] if row.get('target') != 'MacCompanionSessionActivity']
+        spec['targets']['SavedControlsConsentApp'] = consent
+        spec['targets']['SavedControlsConsentTests'] = {
+            'type': 'bundle.ui-testing', 'platform': 'iOS',
+            'sources': [{'path': str(ROOT / 'Experiments/SavedControlsConsentQA/SavedControlsConsentTests.swift')}],
+            'dependencies': [{'target': 'SavedControlsConsentApp'}],
+            'settings': {'base': {'GENERATE_INFOPLIST_FILE': 'YES', 'PRODUCT_BUNDLE_IDENTIFIER': 'dev.maccompanion.savedcontrolsqa.ios.tests',
+                'SWIFT_VERSION': '6.0', 'IPHONEOS_DEPLOYMENT_TARGET': '26.0', 'ARCHS': 'arm64', 'ONLY_ACTIVE_ARCH': 'YES',
+                'CODE_SIGN_IDENTITY': '-', 'CODE_SIGNING_ALLOWED': 'YES', 'TEST_TARGET_NAME': 'SavedControlsConsentApp'}}}
+        spec['schemes']['SavedControlsConsentQA'] = {'build': {'targets': {'SavedControlsConsentApp': 'all', 'SavedControlsConsentTests': 'all'}},
+            'test': {'config': 'Debug', 'macroExpansion': 'SavedControlsConsentApp', 'targets': [{'name': 'SavedControlsConsentTests', 'parallelizable': False}]}}
+        for action in ['run', 'profile', 'analyze', 'archive']:
+            spec['schemes']['SavedControlsConsentQA'][action] = {'config': 'Debug'}
     if args.cold_start_ui:
         import copy
         cold = copy.deepcopy(app)
@@ -265,15 +287,15 @@ def execute(args, parser, compiler):
     import time
     result = evidence / ('Results-' + str(time.time_ns()) + '.xcresult')
     with (evidence / 'test.log').open('w') as log:
-        run('xcodebuild', '-project', qa / 'DirectClientQA.xcodeproj', '-scheme', 'TerminalControlsQA' if args.terminal_controls_ui else 'DirectClientQA',
+        run('xcodebuild', '-project', qa / 'DirectClientQA.xcodeproj', '-scheme', 'SavedControlsConsentQA' if args.saved_controls_ui else 'TerminalControlsQA' if args.terminal_controls_ui else 'DirectClientQA',
             '-destination', 'platform=iOS Simulator,id=' + args.simulator, '-derivedDataPath', compiler / 'DerivedData',
-            '-onlyUsePackageVersionsFromResolvedFile', '-skipPackagePluginValidation', '-parallel-testing-enabled', 'NO',
+            '-onlyUsePackageVersionsFromResolvedFile', '-skipPackagePluginValidation', '-parallel-testing-enabled', 'NO', '-maximum-concurrent-test-simulator-destinations', '1',
             *(['-only-testing:DirectClientTests/DuoComparisonTests/testInteractiveCapture'] if args.duo_review else []),
             *['-only-testing:' + identifier for identifier in args.only_testing],
             '-collect-test-diagnostics', args.test_diagnostics, '-resultBundlePath', result, 'test', stdout=log, stderr=subprocess.STDOUT)
     container = subprocess.check_output(['xcrun', 'simctl', 'get_app_container', args.simulator,
-        'dev.maccompanion.controlsqa.ios' if args.terminal_controls_ui else bundle, 'data'], text=True).strip()
-    if not args.terminal_controls_ui and not args.duo_review and not args.only_testing:
+        'dev.maccompanion.savedcontrolsqa.ios' if args.saved_controls_ui else 'dev.maccompanion.controlsqa.ios' if args.terminal_controls_ui else bundle, 'data'], text=True).strip()
+    if not args.saved_controls_ui and not args.terminal_controls_ui and not args.duo_review and not args.only_testing:
         verify_external(Path(container) / 'Documents/synthetic-key-interop')
     for name in ['synthetic-ed25519', 'synthetic-ed25519.pub', 'synthetic-rsa', 'synthetic-rsa.pub']:
         (qa / name).unlink(missing_ok=True)

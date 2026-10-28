@@ -214,12 +214,22 @@ struct TerminalManualKeySetupView: View {
                         DirectClientPlatformV1.copy(target.key.publicKey + " mac-companion-" + target.id.uuidString.lowercased()); copied = true
                     }.disabled(target == nil)
                 }
+                #if os(iOS)
+                Section("On Your Mac") {
+                    DirectGuidanceRow(title: "1. Sign in", detail: "Use the Mac account you’ll connect to in Terminal.", symbol: "person.crop.circle")
+                    DirectGuidanceRow(title: "2. Add the public key", detail: "Add a new line to ~/.ssh/authorized_keys. Keep existing entries.", symbol: "doc.badge.plus")
+                    DirectGuidanceRow(title: "3. Set permissions", detail: "Use mode 700 for ~/.ssh and 600 for authorized_keys. Both belong to that account.", symbol: "lock.shield")
+                    DirectGuidanceRow(title: "4. Enable access", detail: "Turn on Remote Login for that account.", symbol: "terminal")
+                    DirectGuidanceRow(title: "5. Test the key", detail: "Return to Terminal, choose the key and connect. A successful login confirms setup.", symbol: "checkmark.circle")
+                }
+                #else
                 Section("On Your Mac") {
                     Text("1. Sign in to the Mac account you will use for Terminal.")
                     Text("2. Add the public key as its own line in ~/.ssh/authorized_keys. Keep existing entries.")
                     Text("3. Make sure ~/.ssh is private to that account (mode 700), and authorized_keys is mode 600. Enable Remote Login for the account.")
                     Text("4. Return to Terminal, choose this key and connect. A successful login confirms the Mac accepts it.")
                 }
+                #endif
                 Text("Only the public key goes on the Mac. Never copy your private key into authorized_keys.").font(.footnote).foregroundStyle(.secondary)
             }.navigationTitle("Manual Key Setup").directInlineNavigationTitle()
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }

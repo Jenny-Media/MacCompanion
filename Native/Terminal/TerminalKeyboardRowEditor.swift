@@ -208,6 +208,7 @@ struct TerminalKeyboardBarPreview: UIViewRepresentable {
         let row: UUID?
         let allRows: Bool
         let handles: Bool
+        let presentation: Bool
         let rowAdditions: Bool
         let rowMenu: Bool
         let preset: TerminalRowPreset?
@@ -222,6 +223,7 @@ struct TerminalKeyboardBarPreview: UIViewRepresentable {
     var row: UUID? = nil
     var allRows = false
     var handles = false
+    var presentation = false
     var preset: TerminalRowPreset? = nil
     var unavailable: Set<TerminalBarItem> = []
     var canAddPreset = true
@@ -246,6 +248,7 @@ struct TerminalKeyboardBarPreview: UIViewRepresentable {
     func updateUIView(_ bar: TerminalKeyboardBar, context: Context) {
         let enabled = context.environment.isEnabled
         bar.isUserInteractionEnabled = enabled
+        bar.presentationPreview = presentation
         bar.selectedPreviewItem = selected; bar.selectedPreviewRow = row
         bar.previewShowsAllRows = allRows; bar.previewShowsRowHandles = handles; bar.previewPreset = preset
         bar.previewUnavailableItems = unavailable; bar.previewCanAddPreset = canAddPreset
@@ -259,7 +262,7 @@ struct TerminalKeyboardBarPreview: UIViewRepresentable {
         bar.previewRowAction = enabled ? rowAction : nil
         bar.previewAddPreset = enabled ? addPreset : nil; bar.previewAddItem = enabled ? addItem : nil
         bar.previewCatalogDragBegan = enabled ? catalogDragBegan : nil
-        let configuration = Configuration(profile: profile, selected: selected, row: row, allRows: allRows, handles: handles, rowAdditions: addToRow != nil, rowMenu: rowAction != nil,
+        let configuration = Configuration(profile: profile, selected: selected, row: row, allRows: allRows, handles: handles, presentation: presentation, rowAdditions: addToRow != nil, rowMenu: rowAction != nil,
             preset: preset, unavailable: unavailable, canAdd: canAddPreset, enabled: enabled, textSize: context.environment.dynamicTypeSize)
         guard context.coordinator.configuration != configuration else { return }
         // UIKit invalidates intrinsic size during configuration. Rebuilding on

@@ -63,7 +63,9 @@ enum TerminalKeyCatalog {
 extension TerminalControlsProfile {
     @discardableResult mutating func pin(_ key: TerminalPaletteKey, in destination: TerminalControlsDestination) -> UUID {
         let id: UUID
-        if let existing = actions.first(where: { key.matches($0) }) { id = existing.id }
+        if let index = actions.firstIndex(where: { key.matches($0) }) {
+            id = actions[index].id; actions[index].builtIn = nil
+        }
         else { let item = key.definition; actions.append(item); id = item.id }
         pin(id, in: destination, enabled: true)
         return id

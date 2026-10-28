@@ -431,7 +431,8 @@ same-name snippets with different content. Journal completed source imports in
 the same atomic Keychain record as the actions so retries and later user removals
 cannot duplicate or resurrect imports. An unreadable source or destination must
 not be replaced with defaults. Custom content remains local, non-synchronizing,
-WhenUnlockedThisDeviceOnly and excluded from diagnostics and ActivityKit.
+WhenUnlockedThisDeviceOnly unless iOS 1.1 iCloud Sync
+below is enabled. It remains excluded from diagnostics and ActivityKit.
 Input continues through the existing ready-foreground, PTY-generation and
 whole-action queue admission policies. Retained menu actions are invalid after
 pause or connection replacement. Control presentation and local preference
@@ -447,8 +448,9 @@ sensitivity, not the wire format or authentication.
 Quick actions can be reordered, hidden and augmented with explicitly configured
 shortcut chords or saved text (at most 256 Unicode scalars in the legacy profiles;
 the shared iOS Terminal profile above supports 4096 UTF-8 bytes). Store custom content
-only in a distinct local, non-synchronizing WhenUnlockedThisDeviceOnly Keychain
-entry. Never include it in diagnostics or ActivityKit. Screen Sharing and Trackpad
+in a distinct local, non-synchronizing WhenUnlockedThisDeviceOnly Keychain
+entry. The iOS 1.1 iCloud extension below also syncs
+shortcut and text definitions. Never include them in diagnostics or ActivityKit. Screen Sharing and Trackpad
 send saved text as balanced Unicode key events; Terminal uses its existing UTF-8
 PTY path and negotiated bracketed paste. Neither claims a remote clipboard write.
 Shortcut modifiers and key are
@@ -867,7 +869,7 @@ An explicit optional free non-consumable `media.jenny.maccompanion.pro.trial14`,
 
 Free access has no session/time expiry: one saved Mac, one SSH key, Desktop, Trackpad & Keyboard, basic Terminal, local/private-VPN addresses, advanced ports, display selection/zoom, standard keyboard/number row, accessibility, app lock, server verification, diagnostics and key import/export. Pro adds multiple saved Macs, multiple named keys, automatic key installation, customized terminal rows, shortcuts and snippets. Existing extra Macs/keys are preserved for management/export/deletion when Pro is unavailable. A stable free selection remains usable; never terminate an active connection when entitlement changes. Purchasing/restoring unlocks preserved records. Commerce gates never grant SSH trust or change protocol authorization.
 
-iCloud library sync MUST default off on each installation and require explicit consent after a privacy disclosure. It uses synchronizable generic-password items in the app's existing Keychain access group, protected by iCloud Keychain; it does not introduce custom cryptography, a CloudKit container, or app authentication. Sync transports saved Mac UUIDs, names, ordered addresses, ports and non-content session preferences. Passwords, SSH private keys, accepted server keys, saved text, custom actions, app-unlock consent and the sync opt-in itself remain device-local. Cloud data never establishes server trust or opens a session.
+iCloud library sync MUST default off on each installation and require explicit consent after a privacy disclosure. It uses synchronizable generic-password items in the app's existing Keychain access group, protected by iCloud Keychain; it does not introduce custom cryptography, a CloudKit container, or app authentication. Sync transports saved Mac UUIDs, names, ordered addresses, ports and non-content session preferences. Passwords, SSH private keys, accepted server keys, app-unlock consent and the sync opt-in itself remain device-local. On iOS 1.1, the same opt-in also covers saved shortcuts, saved text and their placements as specified below. Cloud data never establishes server trust or opens a session.
 
 Each device writes its own bounded record versions, ordered by logical revision then device UUID. A validated newer tombstone suppresses a deleted Mac without deleting local credentials. Malformed, oversized, duplicate, unsupported or unreadable cloud data MUST preserve local records. Cloud work occurs only while opted in and the app is unlocked; refresh is performed on foreground and explicit request, never per input event. Local saves remain usable offline. Disabling stops reads and writes and retains local Macs and existing cloud copies. Deleting cloud copies is an explicit, separate operation with a warning to disable other devices first. The UI MUST distinguish local Keychain submission from confirmed delivery; it cannot report a successful multi-device sync without evidence.
 
@@ -1217,3 +1219,133 @@ Only a visible remote result confirms that the Mac acted on the input.
 Video-free Trackpad & Keyboard shows finger feedback without a desktop cursor
 overlay. Pause, interruption, review, recovery, presentation and mode transitions
 retire current finger feedback. Rejected clicks produce no success pulse/haptic.
+
+
+## iOS 1.1 saved-controls sync
+
+The main iCloud Sync setting MUST control saved Macs, supported preferences,
+keyboard layouts, saved shortcuts, saved text and their keyboard/floating-menu
+placements together. There is no separate saved-content switch or consent.
+The main setting still defaults off and requires a concise disclosure naming
+these categories before enabling. Existing enabled main settings include saved
+content on iOS 1.1; obsolete saved-content flags MUST NOT gate it. An unlocked,
+available app session is required for cloud work. Imported definitions MUST NOT
+execute, fill a composer draft, establish Mac trust, or open a connection.
+Passwords, SSH private keys, accepted host keys, live input, unsaved composer
+drafts, clipboard contents and session history are excluded.
+
+The `media.jenny.maccompanion.cloud-saved-controls.v1` Keychain service is
+independent of saved-Mac and layout v1 records. Only saved shortcut/text actions
+and saved accessory-key definitions are projected; unchanged migrated Return/Interrupt built-ins carrying retained
+`builtIn` migration provenance keep their local identities instead of being
+duplicated as user definitions. Title/key values alone MUST NOT identify a
+migrated default. Older definitions without provenance remain eligible because
+their origin cannot be established safely. An explicit palette selection clears
+that provenance, including when it reuses a matching migrated definition.
+Accessory-key projections carry definition identity, title, key and placements.
+Unrelated shortcut/text/action payloads MUST be cleared in the existing action
+envelope; its fixed empty/default fields may remain. Inactive local payloads
+are retained locally when an existing key definition is updated.
+Keypad-pinned accessory keys MUST retain their keyboard/floating-menu placements
+even though their local representation references a saved key definition.
+Logical versions identify controls family, definition UUID,
+writer UUID and a bounded logical revision; a nil value is a tombstone. Merge
+per definition using the causal conflict rules below, then revision/writer order. Different definitions on different
+devices MUST survive concurrent additions. Existing local definitions are
+included only after consent. Baselines and pending local edits are retained in
+a non-synchronizing local Keychain journal. Fetched clocks MUST be journaled
+before any import; pending local changes are rebased against those clocks.
+Saved-content baselines MUST use durable profile/migration identities. Off-state
+observations do not commit migrations. After opt-in, each service MUST prepare
+both Terminal and shared remote-Mac profiles through their existing owners.
+No Mac context, connection, controls-editor visit or separate setup action is
+required. Current saved controls MUST be retained. Unpublished per-Mac
+compatibility setup is not supported. Preparation MUST NOT execute input or claim
+cross-device delivery.
+Automatic preparation and baseline capture MUST precede starting sync tasks, so
+new defaults cannot be mistaken for offline edits over an existing cloud layout.
+Failure to read or persist that journal MUST preserve local content and pause
+imports/publication until validated recovery. While enabled, bounded automatic retries and foreground refresh MUST attempt that recovery without discarding unreadable data. Explicit Off MUST remain Off. Layout-only imports MUST NOT be
+mistaken for local saved-content edits.
+
+Each logical version is at most 32768 bytes. Encode it as 2000-byte pieces in
+bounded JSON records, each at most 4096 bytes, with a shared generation UUID.
+Write pieces first, then the head containing total bytes, piece count and the
+SHA-256 of the reconstructed version. SHA-256 matches pieces to a complete
+version; authentication/encryption remain Apple's existing Keychain service.
+Readers MUST validate all referenced pieces, generation, length, digest and
+logical schema before importing anything. Incomplete/out-of-order delivery
+pauses import and retries on a later refresh; it never means an empty library.
+Piece accounts are generation-specific and reused on retry. A generation UUID
+is derived from the first 128 bits of the complete content digest. Old or orphaned
+pieces can be removed
+only after the new head is committed. Preflight the 512-record service bound;
+overflow retains local changes and reports a retryable notice without truncation.
+
+Sync includes saved button identities and their positions among existing row
+keys, plus favorites for Terminal and each shared remote-Mac menu. Rows remain
+owned by the existing layout sync. If an incoming saved placement refers to a
+row that has not arrived or was removed, retain it on the main row. A device-only
+receipt MUST retain both intended and actual positions. If actual positions are
+unchanged, content edits MUST retain intended positions; genuine placement edits
+MUST supersede the receipt. A layout import MUST compose the final rows and saved
+positions in the same profile write, independent of saved-content sync readiness. No unrelated local definitions,
+credentials, mode preferences or Mac identities are replaced.
+
+Turning the main setting off stops further reads/writes and retains local content
+and existing cloud records. An admitted Keychain write may drain; cloud removal
+MUST wait for it before deleting this service. Existing Delete Mac Data from
+iCloud includes this service even when content sync is off or unrelated Mac
+history is unreadable, preserves local
+definitions, and turns main sync off on this device. Other devices must be turned
+off first. Report local Keychain submission separately from verified delivery
+to another signed physical device.
+
+
+## iOS 1.1 controls conflict recovery, 2026-10-28
+
+Keyboard and saved-definition versions carry an optional causal-context map from
+writer UUID to observed logical revision. New edits MUST capture ancestry from
+the last applied profile and that writer's preceding local edit, before fetching
+unseen cloud changes. Upload-time revision rebasing MUST NOT imply that an offline
+edit observed a remote edit. Contexts are bounded to 512 canonical writer UUIDs;
+every context revision is positive and less than its enclosing revision.
+Only causally maximal versions participate in conflict resolution. Sequential
+edits replace predecessors without producing recovery copies. Concurrent layout
+edits use revision/writer order; concurrent edits of different saved definitions
+merge independently. For the same saved definition, a causally maximal deletion
+wins over concurrent edits. Different non-deleted losing values MUST be retained
+in device-local recovery before the winning profile is committed. Recovery never
+executes input. A restored saved definition receives a fresh UUID and is labeled
+as a recovered copy; a restored layout keeps the current layout recoverable.
+
+Recovery payloads and dismissal high-water marks are committed with the profile
+in device-only Keychain storage, excluded from cloud projections. Imported saved
+definitions and their observed baseline MUST be one atomic profile write, so a
+post-import journal failure followed by local deletion remains a deletion after
+retry or restart. An unapplied import MUST NOT create a deletion. Keyboard local
+history has the same device-only lifetime as the profile/writer; restored history
+from another writer MUST NOT turn fresh defaults into local edits.
+
+Manage Sync exposes nonblocking Recovered Changes with inspect, restore and
+discard actions. Discard All requires confirmation and affects recovery copies
+only. Starting over with iCloud uses the existing scoped cloud-data removal flow,
+retains current local data and disables sync here. There is no new setup toggle,
+automatic reset, conflict-resolution gate or broad format-compatibility layer.
+
+Keyboard imports MUST likewise commit their applied-layout fingerprint with the
+profile and reconcile that receipt before detecting edits after retry/restart.
+Reset/re-enable MUST reseed current local layouts and saved definitions/deletions
+above all already-known clocks, including fetched history not yet applied to the
+profile. Durable reset intent MUST retain that history before deleting cloud
+copies. The reset causal basis MUST be frozen before deletion; a later first
+fetch MUST NOT add previously unseen offline edits to that basis. Known delayed
+records MUST NOT override the reseeded state. Validated fetched history awaiting
+a successful journal write MUST be retained for a same-process reset. Both reset
+paths MUST validate the complete frozen causal basis before writing intent or
+deleting cloud copies; overflow preserves existing history and cloud data. This does not
+invalidate previously unseen edits queued by another offline device. Successful
+reset clears storage-paused state without enabling a service explicitly left Off.
+Recovery comparison MUST render Current and Recovered keyboards without editing
+or input. Row scrolling and view-only expansion are allowed; hidden settings such
+as visibility, alignment and initial scroll edge remain inspectable.

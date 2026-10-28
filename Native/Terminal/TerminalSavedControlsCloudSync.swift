@@ -1,0 +1,670 @@
+#if os(iOS) && MACCOMPANION_VNC_DEVELOPMENT
+import Foundation
+import Observation
+import CryptoKit
+
+/// The optional projection contains saved definitions and placements, never a session.
+struct DirectCloudSavedControl: Codable, Equatable {
+    struct Bar: Codable, Equatable { var row: UUID; var placement: String; var index: Int }
+    struct Menu: Codable, Equatable { var mode: String; var placement: UUID; var index: Int }
+    var action: TerminalControlAction
+    var bar: [Bar]
+    var menus: [Menu]
+    var libraryIndex: Int
+    static func eligible(_ action: TerminalControlAction) -> Bool {
+        guard action.kind == .key || action.kind == .shortcut || action.kind == .text else { return false }
+        // Exempt only definitions with actual migration provenance. A newly
+        // authored key can have identical values, and unmarked older records
+        // cannot safely be distinguished from a user's saved shortcuts.
+        if action.kind == .shortcut, action.steps == nil, action.confirmBeforeRunning == nil,
+           action.presetID == nil, action.text.isEmpty {
+            if action.builtIn == .interrupt, action.title == "Interrupt · Ctrl-C", action.character == 0x63, action.modifiers == [0xffe3] { return false }
+            if action.builtIn == .returnKey, action.title == "Return", action.character == 0xff0d, action.modifiers.isEmpty { return false }
+        }
+        return true
+    }
+    static func project(_ profile: TerminalControlsProfile, preservePositionIntent: Bool = true) -> [UUID: Self] {
+        var profile = profile; profile.captureRemoteMenu()
+        let menus = profile.remoteMenus ?? ["terminal": profile.resolvedMenuPlacements]
+        return Dictionary(uniqueKeysWithValues: profile.actions.filter(eligible).map { action in
+            var copy = action.kind == .key ? keyDefinition(action) : action
+            copy.inRow = false; copy.inMenu = false
+            let section: TerminalSavedItemsSection = action.kind == .text ? .text : .shortcuts
+            var bar = profile.resolvedRows.flatMap { row in
+                profile.barPlacements(in: row).enumerated().compactMap { index, placement in
+                    placement.item.savedID == action.id ? Bar(row: row.id, placement: placement.id, index: index) : nil
+                }
+            }
+            if preservePositionIntent, let receipt = profile.syncState.savedPositions?[action.id.uuidString.lowercased()], receipt.applied == bar {
+                bar = receipt.intended
+            }
+            return (action.id, Self(action: copy, bar: bar, menus: menus.keys.sorted().flatMap { mode in
+                menus[mode]!.enumerated().compactMap { index, placement in
+                    placement.actionID == action.id ? Menu(mode: mode, placement: placement.id, index: index) : nil
+                }
+            }, libraryIndex: profile.savedItems(section).firstIndex(where: { $0.id == action.id }) ?? 0))
+        })
+    }
+    func validate(family: TerminalControlsFamily) throws {
+        if action.kind == .key, action != Self.keyDefinition(action) { throw DirectCloudError.invalid }
+        let modes: Set<String> = family == .terminal ? ["terminal"] : ["desktop", "trackpad"]
+        guard Self.eligible(action), action.valid, !action.inRow, !action.inMenu,
+              (0..<4096).contains(libraryIndex), bar.count <= 4096, menus.count <= 4096,
+              Set(bar.map(\.placement)).count == bar.count,
+              Set(menus.map { $0.mode + "." + $0.placement.uuidString }).count == menus.count,
+              bar.allSatisfy({ !$0.placement.isEmpty && $0.placement.utf8.count <= 256 && (0..<4096).contains($0.index) }),
+              menus.allSatisfy({ modes.contains($0.mode) && (0..<4096).contains($0.index) }) else { throw DirectCloudError.invalid }
+    }
+    static func applying(_ values: [UUID: Self?], to source: TerminalControlsProfile) throws -> TerminalControlsProfile {
+        guard !values.isEmpty else { return source }
+        // Returning a migrated control to its untouched built-in form removes
+        // the shared custom definition, but must keep this device's built-in.
+        let applicable = values.filter { id, value in
+            guard value == nil, let local = source.actions.first(where: { $0.id == id }) else { return true }
+            return eligible(local)
+        }
+        guard !applicable.isEmpty else { return source }
+        var result = source
+        let managed = Set(applicable.keys)
+        for (id, wrapped) in applicable {
+            if let old = source.actions.first(where: { $0.id == id }), old.kind != .key && old.kind != .shortcut && old.kind != .text { throw DirectCloudError.invalid }
+            if let value = wrapped {
+                guard id == value.action.id else { throw DirectCloudError.invalid }
+                try value.validate(family: source.family ?? .terminal)
+            }
+            result.delete(id)
+        }
+        let incoming = applicable.values.compactMap { $0 }.sorted {
+            $0.libraryIndex == $1.libraryIndex ? $0.action.id.uuidString < $1.action.id.uuidString : $0.libraryIndex < $1.libraryIndex
+        }
+        result.actions += incoming.map { value in
+            if value.action.kind == .key,
+               var local = source.actions.first(where: { $0.id == value.action.id && $0.kind == .key }) {
+                // Inactive payloads are local data, not part of a key's cloud
+                // projection. Update only its actual key definition and flags.
+                local.title = value.action.title; local.key = value.action.key
+                local.inRow = false; local.inMenu = false
+                return local
+            }
+            return value.action
+        }
+        var rows = result.resolvedRows
+        guard let main = rows.firstIndex(where: { $0.kind == .main }) else { throw DirectCloudError.invalid }
+        let rowIDs = Set(rows.map(\.id)), mainID = rows[main].id
+        let retained = rows.flatMap { result.barPlacements(in: $0) }.filter {
+            $0.item.savedID.map { !managed.contains($0) } ?? true
+        }
+        // Saved placements can inherit a built-in's ID through editor replacement.
+        // Reserve their identities before remapping any colliding built-in keys.
+        var savedIDs = Set(retained.filter { $0.item.savedID != nil }.map(\.id))
+        var incomingBars: [UUID: [Bar]] = [:]
+        for item in incoming.sorted(by: { $0.action.id.uuidString < $1.action.id.uuidString }) {
+            incomingBars[item.action.id] = item.bar.map { position in
+                var position = position
+                let fallback = "saved-" + item.action.id.uuidString.lowercased() + "-"
+                    + DirectSavedControlsTransport.digest(Data(position.placement.utf8)).prefix(16)
+                position.placement = uniquePlacementID(position.placement, fallback: String(fallback), occupied: &savedIDs)
+                return position
+            }
+        }
+        var occupied = savedIDs.union(retained.map(\.id))
+        for index in rows.indices {
+            var placements = result.barPlacements(in: rows[index]).filter { placement in
+                placement.item.savedID.map { !managed.contains($0) } ?? true
+            }
+            let rowID = rows[index].id
+            for offset in placements.indices where placements[offset].item.savedID == nil && savedIDs.contains(placements[offset].id) {
+                let original = placements[offset].id
+                let fallback = "cloud-key-" + DirectSavedControlsTransport.digest(Data((rowID.uuidString + "." + original).utf8)).prefix(32)
+                placements[offset].id = uniquePlacementID(original, fallback: String(fallback), occupied: &occupied)
+            }
+            var additions: [(Int, TerminalBarPlacement)] = []
+            for item in incoming {
+                for position in incomingBars[item.action.id] ?? [] {
+                    let target = rowIDs.contains(position.row) ? position.row : mainID
+                    if target == rowID {
+                        additions.append((position.index, TerminalBarPlacement(id: position.placement, item: .saved(item.action.id))))
+                    }
+                }
+            }
+            additions.sort { $0.0 == $1.0 ? $0.1.id < $1.1.id : $0.0 < $1.0 }
+            var last = -1
+            for (position, item) in additions {
+                let target = min(max(position, last + 1), placements.count)
+                placements.insert(item, at: target); last = target
+            }
+            rows[index].placements = placements
+        }
+        result.keyboardRows = rows
+        var menus = result.remoteMenus ?? ["terminal": result.resolvedMenuPlacements]
+        for mode in menus.keys.sorted() {
+            var list = menus[mode]!.filter { !managed.contains($0.actionID) }
+            var occupied = Set(list.map(\.id))
+            var additions: [(Int, TerminalMenuPlacement)] = []
+            for item in incoming.sorted(by: { $0.action.id.uuidString < $1.action.id.uuidString }) {
+                for position in item.menus where position.mode == mode {
+                    let id = uniqueMenuPlacementID(position.placement, definition: item.action.id, mode: mode, occupied: &occupied)
+                    additions.append((position.index, TerminalMenuPlacement(id: id, actionID: item.action.id)))
+                }
+            }
+            additions.sort { $0.0 == $1.0 ? $0.1.id.uuidString < $1.1.id.uuidString : $0.0 < $1.0 }
+            var last = -1
+            for (position, item) in additions {
+                let target = min(max(position, last + 1), list.count); list.insert(item, at: target); last = target
+            }
+            menus[mode] = list
+        }
+        if result.family == .remoteMac {
+            result.remoteMenus = menus
+            result.menuPlacements = menus[result.remoteMenuMode ?? "desktop"] ?? []
+        } else { result.menuPlacements = menus["terminal"] ?? [] }
+        let barIDs = Set(rows.flatMap(\.actionIDs)), menuIDs = Set(result.resolvedMenuPlacements.map(\.actionID))
+        for index in result.actions.indices {
+            result.actions[index].inRow = barIDs.contains(result.actions[index].id)
+            result.actions[index].inMenu = menuIDs.contains(result.actions[index].id)
+        }
+        for section in [TerminalSavedItemsSection.shortcuts, .text] {
+            var order = source.savedItems(section).map(\.id).filter { !managed.contains($0) }
+            let additions = incoming.filter { $0.action.kind == section.kind }.sorted {
+                $0.libraryIndex == $1.libraryIndex ? $0.action.id.uuidString < $1.action.id.uuidString : $0.libraryIndex < $1.libraryIndex
+            }
+            var last = -1
+            for item in additions {
+                let target = min(max(item.libraryIndex, last + 1), order.count)
+                order.insert(item.action.id, at: target); last = target
+            }
+            if section == .shortcuts { result.shortcutOrder = order } else { result.textOrder = order }
+        }
+        var state = result.syncState
+        if state.savedPositions == nil { state.savedPositions = [:] }
+        for id in managed { state.savedPositions?.removeValue(forKey: id.uuidString.lowercased()) }
+        let actual = project(result, preservePositionIntent: false)
+        for item in incoming {
+            state.savedPositions?[item.action.id.uuidString.lowercased()] = .init(
+                intended: incomingBars[item.action.id] ?? [], applied: actual[item.action.id]?.bar ?? [])
+        }
+        result.syncState = state
+        guard result.valid else { throw DirectCloudError.invalid }
+        return result
+    }
+    private static func keyDefinition(_ action: TerminalControlAction) -> TerminalControlAction {
+        .init(id: action.id, title: action.title, kind: .key, key: action.key, inMenu: false)
+    }
+    private static func uniquePlacementID(_ preferred: String, fallback: String, occupied: inout Set<String>) -> String {
+        if occupied.insert(preferred).inserted { return preferred }
+        var candidate = fallback, suffix = 0
+        while !occupied.insert(candidate).inserted { suffix += 1; candidate = fallback + "-\(suffix)" }
+        return candidate
+    }
+    private static func uniqueMenuPlacementID(_ preferred: UUID, definition: UUID, mode: String, occupied: inout Set<UUID>) -> UUID {
+        if occupied.insert(preferred).inserted { return preferred }
+        var suffix = 0
+        while true {
+            let seed = definition.uuidString + "." + mode + "." + preferred.uuidString + ".\(suffix)"
+            let hex = DirectSavedControlsTransport.digest(Data(seed.utf8))
+            let formatted = "\(hex.prefix(8))-\(hex.dropFirst(8).prefix(4))-\(hex.dropFirst(12).prefix(4))-\(hex.dropFirst(16).prefix(4))-\(hex.dropFirst(20).prefix(12))"
+            // The SHA-256 hex above always supplies a complete UUID's 32 digits.
+            let candidate = UUID(uuidString: formatted)!
+            if occupied.insert(candidate).inserted { return candidate }
+            suffix += 1
+        }
+    }
+}
+
+struct DirectCloudSavedVersion: Codable, Equatable {
+    static let maximumBytes = 32768
+    var schema = 1
+    var family: TerminalControlsFamily
+    var id: UUID
+    var writer: UUID
+    var revision: Int64
+    var value: DirectCloudSavedControl?
+    var context: [String: Int64]?
+    var key: String { family.rawValue + "." + id.uuidString.lowercased() }
+    var account: String { family.rawValue + "." + writer.uuidString.lowercased() + "." + id.uuidString.lowercased() }
+    func encoded() throws -> Data { let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys; return try encoder.encode(self) }
+    func validate() throws {
+        guard schema == 1, (1...1_000_000_000).contains(revision), value?.action.id == id || value == nil else { throw DirectCloudError.invalid }
+        guard DirectControlsCausality.valid(context ?? [:], before: revision) else { throw DirectCloudError.invalid }
+        try value?.validate(family: family)
+        guard try encoded().count <= Self.maximumBytes else { throw DirectCloudError.invalid }
+    }
+    static func merge(_ local: [Self], _ remote: [Self]) throws -> [Self] {
+        guard local.count <= 512, remote.count <= 512 else { throw DirectCloudError.invalid }
+        for list in [local, remote] {
+            guard Set(list.map(\.account)).count == list.count else { throw DirectCloudError.invalid }
+            try list.forEach { try $0.validate() }
+        }
+        var result = Dictionary(uniqueKeysWithValues: local.map { ($0.account, $0) })
+        for value in remote {
+            if let old = result[value.account] {
+                if old.revision > value.revision { continue }
+                guard old.revision != value.revision || old == value else { throw DirectCloudError.invalid }
+            }
+            result[value.account] = value
+        }
+        guard result.count <= 512 else { throw DirectCloudError.invalid }
+        return result.values.sorted { $0.account < $1.account }
+    }
+    static func frontier(_ versions: [Self]) -> [Self] {
+        versions.filter { value in !versions.contains { other in
+            other.key == value.key && (other.writer == value.writer ? other.revision > value.revision
+                : DirectControlsCausality.sees(other.context, writer: value.writer, revision: value.revision))
+        } }
+    }
+    static func winners(_ versions: [Self]) -> [String: Self] {
+        frontier(versions).reduce(into: [:]) { result, value in
+            if let old = result[value.key] {
+                // A concurrent edit is recoverable, but does not resurrect a deletion.
+                if old.value == nil && value.value != nil { return }
+                if (old.value == nil) == (value.value == nil),
+                   old.revision > value.revision || old.revision == value.revision && old.writer.uuidString > value.writer.uuidString { return }
+            }
+            result[value.key] = value
+        }
+    }
+}
+
+/// Immutable pieces plus a last-written head keep a partial write from replacing a complete version.
+struct DirectSavedControlsTransport: DirectCloudTransport {
+    static let service = "media.jenny.maccompanion.cloud-saved-controls.v1"
+    static let pieceBytes = 2000
+    struct Wire: Codable {
+        var schema = 1
+        var account: String
+        var generation: UUID
+        var index: Int?
+        var pieces: Int?
+        var total: Int?
+        var digest: String?
+        var data: Data?
+        var slot: String { account + (index.map { "." + generation.uuidString.lowercased() + ".part.\($0)" } ?? ".head") }
+        func validate() throws {
+            let parts = account.split(separator: ".")
+            guard schema == 1, parts.count == 3, TerminalControlsFamily(rawValue: String(parts[0])) != nil,
+                  UUID(uuidString: String(parts[1])) != nil, UUID(uuidString: String(parts[2])) != nil else { throw DirectCloudError.invalid }
+            if let index {
+                guard (0..<17).contains(index), let data, (1...DirectSavedControlsTransport.pieceBytes).contains(data.count),
+                      pieces == nil, total == nil, digest == nil else { throw DirectCloudError.invalid }
+            } else {
+                guard let pieces, (1...17).contains(pieces), let total, (1...DirectCloudSavedVersion.maximumBytes).contains(total),
+                      pieces == (total + DirectSavedControlsTransport.pieceBytes - 1) / DirectSavedControlsTransport.pieceBytes,
+                      let digest, digest.count == 64, digest.allSatisfy({ "0123456789abcdef".contains($0) }), data == nil else { throw DirectCloudError.invalid }
+            }
+        }
+    }
+    let base: any DirectCloudTransport
+    init(base: any DirectCloudTransport = DirectCloudKeychain(service: Self.service)) { self.base = base }
+    static func digest(_ bytes: Data) -> String { SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined() }
+    private func wires() throws -> [Wire] {
+        let bytes = try base.read()
+        guard bytes.count <= 512, bytes.allSatisfy({ $0.count <= 4096 }) else { throw DirectCloudError.invalid }
+        let wires = try bytes.map { try JSONDecoder().decode(Wire.self, from: $0) }
+        try wires.forEach { try $0.validate() }
+        guard Set(wires.map(\.slot)).count == wires.count else { throw DirectCloudError.invalid }
+        return wires
+    }
+    func read() throws -> [Data] {
+        let wires = try wires()
+        return try Dictionary(grouping: wires, by: \.account).keys.sorted().map { account in
+            let records = wires.filter { $0.account == account }
+            guard let head = records.first(where: { $0.index == nil }) else { throw DirectCloudError.storage }
+            var data = Data()
+            for index in 0..<head.pieces! {
+                guard let part = records.first(where: { $0.generation == head.generation && $0.index == index }),
+                      let bytes = part.data else { throw DirectCloudError.storage }
+                data.append(bytes)
+            }
+            guard data.count == head.total, Self.digest(data) == head.digest else { throw DirectCloudError.storage }
+            let value = try JSONDecoder().decode(DirectCloudSavedVersion.self, from: data)
+            try value.validate(); guard value.account == account else { throw DirectCloudError.invalid }
+            return data
+        }
+    }
+    func write(_ data: Data, account: String) throws {
+        let value = try JSONDecoder().decode(DirectCloudSavedVersion.self, from: data)
+        try value.validate(); guard value.account == account, data.count <= DirectCloudSavedVersion.maximumBytes else { throw DirectCloudError.invalid }
+        let digest = Self.digest(data), raw = String(digest.prefix(32))
+        let formatted = "\(raw.prefix(8))-\(raw.dropFirst(8).prefix(4))-\(raw.dropFirst(12).prefix(4))-\(raw.dropFirst(16).prefix(4))-\(raw.dropFirst(20))"
+        guard let generation = UUID(uuidString: formatted) else { throw DirectCloudError.invalid }
+        let chunks = stride(from: 0, to: data.count, by: Self.pieceBytes).enumerated().map { index, offset in
+            Wire(account: account, generation: generation, index: index, data: data.subdata(in: offset..<min(offset + Self.pieceBytes, data.count)))
+        }
+        let head = Wire(account: account, generation: generation, pieces: chunks.count, total: data.count, digest: digest)
+        let old = try wires(), next = chunks + [head]
+        guard Set((old + next).map(\.slot)).count <= 512 else { throw DirectCloudError.storage }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+        for record in next {
+            try record.validate(); let bytes = try encoder.encode(record)
+            guard bytes.count <= 4096 else { throw DirectCloudError.invalid }
+            try base.write(bytes, account: record.slot)
+        }
+        let kept = Set(next.map(\.slot))
+        for record in old where record.account == account && !kept.contains(record.slot) { try base.remove(account: record.slot) }
+    }
+    func removeAll() throws { try base.removeAll() }
+}
+
+private final class SavedControlsObservers: @unchecked Sendable {
+    let tokens: [NSObjectProtocol]
+    init(_ tokens: [NSObjectProtocol]) { self.tokens = tokens }
+    deinit { tokens.forEach { NotificationCenter.default.removeObserver($0) } }
+}
+
+@MainActor @Observable final class DirectSavedControlsCloudSync {
+    private struct Pending: Codable { var family: TerminalControlsFamily; var id: UUID; var value: DirectCloudSavedControl?; var context: [String: Int64]?; var key: String { family.rawValue + "." + id.uuidString.lowercased() } }
+    private struct Journal: Codable {
+        var schema = 1
+        var versions: [DirectCloudSavedVersion] = []
+        var observed: [String: String] = [:]
+        var pending: [Pending] = []
+        var seeded: Set<String> = []
+        var unpublished: Set<String> = []
+        var appliedImports: [String: UUID]?
+        var reseeding: Set<String>?
+    }
+    private let writer: UUID
+    private let transport: any DirectCloudTransport
+    private let stores: [String: TerminalControlsStore]
+    private let canAccess: @MainActor () -> Bool
+    private let readJournal: @MainActor () throws -> Data?
+    private let writeJournal: @MainActor (Data) throws -> Void
+    private var journal = Journal()
+    private var loaded = false
+    private var readable = true
+    private var enabled = false
+    private var applying = false
+    private var generation = UUID()
+    private var task: Task<Void, Never>?
+    private var rerun = false
+    private var recoveryTask: Task<Void, Never>?
+    private var recoveryAttempt = 0
+    private let recoveryDelays: [Duration]
+    private var observer: SavedControlsObservers?
+    private(set) var busy = false
+    private(set) var issue: DirectCloudSyncIssue?
+    private(set) var status = "Shortcuts and saved text stay on this device."
+    init(writer: UUID, transport: any DirectCloudTransport = DirectSavedControlsTransport(),
+         stores: [String: TerminalControlsStore] = ["terminal": .init(), "remoteMac": .remoteMac()],
+         observeChanges: Bool = true, canAccess: @escaping @MainActor () -> Bool = { DirectAppLockV1.shared.canAccess },
+         readJournal: (@MainActor () throws -> Data?)? = nil, writeJournal: (@MainActor (Data) throws -> Void)? = nil,
+         recoveryDelays: [Duration] = [.seconds(2), .seconds(5), .seconds(15)]) {
+        self.writer = writer; self.transport = transport; self.stores = stores; self.canAccess = canAccess
+        self.recoveryDelays = recoveryDelays
+        self.readJournal = readJournal ?? { try TerminalSecretStore.read(writer, kind: "saved-controls-cloud-journal-v1") }
+        self.writeJournal = writeJournal ?? { try TerminalSecretStore.write($0, id: writer, kind: "saved-controls-cloud-journal-v1") }
+        if canAccess() { do { try prepare(); try observe(markChanges: true) } catch { failJournal() } }
+        if observeChanges {
+            var tokens: [NSObjectProtocol] = []
+            for name in [TerminalControlsStore.willChange, TerminalControlsStore.changed, TerminalControlsStore.prepared] {
+                tokens.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                    let cloudImport = note.userInfo?["cloudImport"] as? Bool == true
+                    MainActor.assumeIsolated {
+                        guard let self, !self.applying, self.canAccess(), self.readable else { return }
+                        do {
+                            try self.prepare()
+                            let changed = try self.observe(markChanges: !cloudImport)
+                            if name != TerminalControlsStore.willChange && (changed || cloudImport || name == TerminalControlsStore.prepared) {
+                                if self.busy { self.rerun = true } else { self.refresh() }
+                            }
+                        } catch { self.failJournal() }
+                    }
+                })
+            }
+            observer = SavedControlsObservers(tokens)
+        }
+    }
+    private func failJournal() { readable = false; issue = .storage; status = "Saved-content sync history is unavailable. Local shortcuts and text are kept. Retry with Refresh iCloud."; scheduleRecovery() }
+    private func prepare() throws {
+        guard canAccess() else { throw DirectCloudError.locked }
+        guard !loaded else { return }
+        if let data = try readJournal() {
+            guard data.count <= 20 * 1024 * 1024 else { throw DirectCloudError.invalid }
+            let restored = try JSONDecoder().decode(Journal.self, from: data)
+            journal = try Self.validated(restored, writer: writer)
+        }
+        loaded = true
+    }
+    private static func validated(_ restored: Journal, writer: UUID) throws -> Journal {
+        let families: Set<String> = ["terminal", "remoteMac"]
+        guard restored.schema == 1, restored.observed.count <= 8192, restored.pending.count <= 8192,
+              Set((restored.appliedImports ?? [:]).keys).isSubset(of: families),
+              (restored.reseeding ?? []).isSubset(of: families),
+              restored.seeded.isSubset(of: families), Set(restored.pending.map(\.key)).count == restored.pending.count,
+              restored.observed.keys.allSatisfy({ key in
+                  let pieces = key.split(separator: ".")
+                  return pieces.count == 2 && families.contains(String(pieces[0])) && UUID(uuidString: String(pieces[1])) != nil
+              }),
+              restored.observed.values.allSatisfy({ $0.count == 64 && $0.allSatisfy { "0123456789abcdef".contains($0) } }) else { throw DirectCloudError.invalid }
+        _ = try DirectCloudSavedVersion.merge([], restored.versions)
+        guard restored.unpublished.isSubset(of: Set(restored.versions.filter { $0.writer == writer }.map(\.account))) else { throw DirectCloudError.invalid }
+        for pending in restored.pending {
+            try pending.value?.validate(family: pending.family)
+            guard DirectControlsCausality.valid(pending.context ?? [:]) else { throw DirectCloudError.invalid }
+            guard families.contains(pending.family.rawValue), pending.value?.action.id == pending.id || pending.value == nil else { throw DirectCloudError.invalid }
+        }
+        return restored
+    }
+
+    private func persist() throws {
+        guard canAccess() else { throw DirectCloudError.locked }
+        do {
+            let data = try JSONEncoder().encode(journal)
+            guard data.count <= 20 * 1024 * 1024 else { throw DirectCloudError.invalid }
+            try writeJournal(data)
+        } catch { failJournal(); throw error }
+    }
+    private static func hash(_ value: DirectCloudSavedControl) throws -> String {
+        let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+        return DirectSavedControlsTransport.digest(try encoder.encode(value))
+    }
+    @discardableResult private func observe(markChanges: Bool) throws -> Bool {
+        guard canAccess() else { throw DirectCloudError.locked }
+        let known = DirectCloudSavedVersion.winners(journal.versions)
+        var changed = false
+        for name in stores.keys.sorted() {
+            guard let family = TerminalControlsFamily(rawValue: name), let store = stores[name],
+                  let profile = try store.savedControlsCloudProfile() else { continue }
+            // The profile's import receipt survives a failed later journal
+            // write and local edits. Reconcile it before comparing deletions.
+            if let receipt = profile.syncState.savedImport, journal.appliedImports?[name] != receipt.id {
+                journal.observed = journal.observed.filter { !$0.key.hasPrefix(name + ".") }
+                for (id, hash) in receipt.observed { journal.observed[name + "." + id] = hash }
+                if journal.appliedImports == nil { journal.appliedImports = [:] }
+                journal.appliedImports?[name] = receipt.id; changed = true
+            }
+            // Reset owes the current local values/deletions a durable pending
+            // record even when this notification only dismissed recovery.
+            let resetting = journal.reseeding?.contains(name) == true
+            let recordChanges = markChanges || resetting
+            let current = DirectCloudSavedControl.project(profile)
+            var normalized: [UUID: DirectCloudSavedControl]?, attemptedNormalization = false
+            let keys = Set(current.keys.map { name + "." + $0.uuidString.lowercased() })
+                .union(journal.observed.keys.filter { $0.hasPrefix(name + ".") })
+                .union(journal.seeded.contains(name) ? [] : profile.syncState.savedClocks.keys.map { name + "." + $0 })
+                .union(resetting ? journal.versions.filter { $0.family == family }.map(\.key) : [])
+            for key in keys.sorted() {
+                guard let id = UUID(uuidString: String(key.dropFirst(name.count + 1))) else { throw DirectCloudError.invalid }
+                let value = current[id], hash = try value.map(Self.hash)
+                if resetting || journal.observed[key] != hash || !journal.seeded.contains(name) {
+                    if recordChanges {
+                        journal.pending.removeAll { $0.key == key }
+                        var imported = !resetting && known[key] != nil && known[key]?.value == value
+                        if !resetting, !imported, known[key] != nil {
+                            if !attemptedNormalization {
+                                attemptedNormalization = true
+                                let familyValues = Dictionary(uniqueKeysWithValues: known.values.filter { $0.family == family }.map { ($0.id, $0.value) })
+                                if let applied = try? DirectCloudSavedControl.applying(familyValues, to: profile) {
+                                    normalized = DirectCloudSavedControl.project(applied)
+                                }
+                            }
+                            imported = normalized.map { $0[id] == value } ?? false
+                        }
+                        if !imported {
+                            let own = journal.versions.filter { $0.key == key && (resetting || $0.writer == writer) }.map {
+                                DirectControlsCausality.including($0.context, writer: $0.writer, revision: $0.revision)
+                            }
+                            let context = DirectControlsCausality.join([profile.syncState.savedClocks[id.uuidString.lowercased()] ?? [:]] + own)
+                            journal.pending.append(Pending(family: family, id: id, value: value, context: context))
+                        }
+                    }
+                    journal.observed[key] = hash; changed = true
+                }
+            }
+            if recordChanges {
+                if journal.seeded.insert(name).inserted { changed = true }
+                if journal.reseeding?.remove(name) != nil { changed = true }
+            }
+        }
+        if changed { try persist() }
+        return changed
+    }
+    func localChange() {
+        guard !applying, readable, canAccess() else { return }
+        do { try prepare(); if try observe(markChanges: true) { if busy { rerun = true } else { refresh() } } }
+        catch { failJournal() }
+    }
+    /// Bounded automatic recovery never replaces unreadable history. Foreground
+    /// refresh and explicit retry can try again after this short backoff ends.
+    private func scheduleRecovery() {
+        guard enabled, !busy, issue == .storage, recoveryTask == nil, recoveryAttempt < recoveryDelays.count else { return }
+        let delay = recoveryDelays[recoveryAttempt]; recoveryAttempt += 1
+        recoveryTask = Task { [weak self] in
+            do { try await Task.sleep(for: delay) } catch { return }
+            guard !Task.isCancelled, let self else { return }
+            self.recoveryTask = nil; self.refresh()
+        }
+    }
+    private func recovered() {
+        recoveryAttempt = 0; recoveryTask?.cancel(); recoveryTask = nil
+    }
+    func setEnabled(_ value: Bool) {
+        if enabled == value { if value { refresh() }; return }
+        enabled = value; generation = UUID(); task?.cancel(); busy = false; rerun = false
+        recoveryTask?.cancel(); recoveryTask = nil; recoveryAttempt = 0
+        if value { refresh() } else { status = "Shortcuts and saved-text sync is off. Existing cloud copies are kept." }
+    }
+    func retry() {
+        if busy { rerun = true; return }
+        refresh()
+    }
+    private func current(_ epoch: UUID) -> Bool { enabled && readable && generation == epoch && !Task.isCancelled && canAccess() && DirectClientPlatformV1.sessionAvailable }
+    private func publish(_ epoch: UUID) async throws {
+        for account in journal.unpublished.sorted() {
+            guard current(epoch), let value = journal.versions.first(where: { $0.account == account && $0.writer == writer }) else { return }
+            let bytes = try value.encoded(), transport = self.transport
+            try await Task.detached { try transport.write(bytes, account: account) }.value
+            guard current(epoch) else { return }
+            journal.unpublished.remove(account); try persist()
+        }
+    }
+    func refresh() {
+        guard enabled, !busy, canAccess(), DirectClientPlatformV1.sessionAvailable else { return }
+        recoveryTask?.cancel(); recoveryTask = nil
+        do {
+            if !readable {
+                loaded = false; try prepare()
+                try observe(markChanges: true)
+                try persist(); readable = true
+            }
+            try prepare()
+            // Each service prepares its own profiles after opt-in. No Mac
+            // selection or connection is required for either controls family.
+            applying = true
+            do { defer { applying = false }; for store in stores.values { _ = try store.load() } }
+            try observe(markChanges: true)
+        } catch { failJournal(); return }
+        busy = true; generation = UUID(); let epoch = generation, prior = task, transport = self.transport
+        task = Task { [weak self] in
+            guard let self else { return }
+            defer { if self.generation == epoch { self.busy = false; self.task = nil; if self.rerun { self.rerun = false; self.refresh() }; self.scheduleRecovery() } }
+            await prior?.value
+            guard self.current(epoch) else { return }
+            do {
+                // Repair only previously admitted, durably journaled writes before reading partial delivery.
+                try await self.publish(epoch)
+                guard self.current(epoch) else { return }
+                let data = try await Task.detached { try transport.read() }.value
+                guard self.current(epoch) else { return }
+                guard data.count <= 512, data.allSatisfy({ $0.count <= DirectCloudSavedVersion.maximumBytes }) else { throw DirectCloudError.invalid }
+                let incoming = try data.map { try JSONDecoder().decode(DirectCloudSavedVersion.self, from: $0) }
+                self.journal.versions = try DirectCloudSavedVersion.merge(self.journal.versions, incoming)
+                try self.persist() // Fetched clocks precede local rebasing and every import.
+                try self.observe(markChanges: true)
+                var retained: [Pending] = [], candidate = self.journal
+                for pending in candidate.pending {
+                    let revision = max(candidate.versions.map(\.revision).max() ?? 0, pending.context?.values.max() ?? 0) + 1
+                    let value = DirectCloudSavedVersion(family: pending.family, id: pending.id, writer: self.writer, revision: revision, value: pending.value, context: pending.context)
+                    do { try value.validate() } catch { retained.append(pending); continue }
+                    candidate.versions = try DirectCloudSavedVersion.merge(candidate.versions.filter { $0.account != value.account }, [value])
+                    candidate.unpublished.insert(value.account)
+                }
+                candidate.pending = retained
+                self.journal = candidate; try self.persist()
+                let winners = DirectCloudSavedVersion.winners(self.journal.versions), waiting = Set(retained.map(\.key))
+                var changes: [(TerminalControlsStore, TerminalControlsProfile)] = []
+                for name in self.stores.keys.sorted() {
+                    guard let store = self.stores[name] else { continue }
+                    guard let local = try store.savedControlsCloudProfile() else { throw DirectCloudError.storage }
+                    let versions = winners.values.filter { $0.family.rawValue == name && !waiting.contains($0.key) }
+                    let values = Dictionary(uniqueKeysWithValues: versions.map { ($0.id, $0.value) })
+                    var next = try DirectCloudSavedControl.applying(values, to: local)
+                    var state = next.syncState
+                    let relevant = self.journal.versions.filter { $0.family.rawValue == name && !waiting.contains($0.key) }
+                    for value in relevant {
+                        let id = value.id.uuidString.lowercased()
+                        state.savedClocks[id] = DirectControlsCausality.join([state.savedClocks[id] ?? [:],
+                            DirectControlsCausality.including(value.context, writer: value.writer, revision: value.revision)])
+                    }
+                    for value in DirectCloudSavedVersion.frontier(relevant) {
+                        guard let control = value.value, let winner = winners[value.key], control != winner.value else { continue }
+                        let account = "saved." + value.account
+                        state.keep(.init(id: account + "." + String(value.revision), family: value.family, control: control),
+                            account: account, revision: value.revision)
+                    }
+                    next.syncState = state
+                    if next != local { changes.append((store, next)) }
+                }
+                self.applying = true
+                do {
+                    defer { self.applying = false }
+                    for (store, profile) in changes { _ = try store.save(profile, cloudImport: true, captureSavedImport: true) }
+                    try self.observe(markChanges: false)
+                }
+                try self.persist()
+                try await self.publish(epoch)
+                if self.current(epoch) {
+                    self.issue = !retained.isEmpty ? .capacity : nil
+                    if retained.isEmpty { self.recovered() }
+                    self.status = !retained.isEmpty ? "Some saved controls exceed the sync limit. Their local content is kept."
+                        : "Saved shortcuts, text and button positions sync."
+                }
+            } catch {
+                if self.generation == epoch && self.readable { self.issue = .storage; self.status = "Shortcuts and saved text couldn’t sync. Local content is kept. Retry with Refresh iCloud." }
+            }
+        }
+    }
+    func removeCloudCopies() async throws {
+        setEnabled(false); await task?.value; task = nil
+        guard canAccess() else { throw DirectCloudError.locked }
+        // This reset journal is the write-ahead intent. No later write is
+        // needed to remember that unchanged local content must upload again.
+        if !loaded { try prepare() }
+        journal = Journal(versions: journal.versions, reseeding: Set(stores.keys))
+        try persist(); loaded = true; readable = true; issue = nil
+        let transport = self.transport
+        try await Task.detached { try transport.removeAll() }.value
+    }
+    static func prepareForCloudRemoval(writer: UUID) throws {
+        var versions: [DirectCloudSavedVersion] = []
+        if let data = try TerminalSecretStore.read(writer, kind: "saved-controls-cloud-journal-v1") {
+            guard data.count <= 20 * 1024 * 1024 else { throw DirectCloudError.invalid }
+            versions = try validated(JSONDecoder().decode(Journal.self, from: data), writer: writer).versions
+        }
+        let reset = Journal(versions: versions, reseeding: ["terminal", "remoteMac"])
+        let bytes = try JSONEncoder().encode(reset)
+        guard bytes.count <= 20 * 1024 * 1024 else { throw DirectCloudError.invalid }
+        try TerminalSecretStore.write(bytes, id: writer, kind: "saved-controls-cloud-journal-v1")
+    }
+}
+#endif

@@ -40,7 +40,7 @@ class CloudProjectTests(unittest.TestCase):
             settings = target['settings']['base']
             self.assertEqual(settings['CODE_SIGN_STYLE'], 'Automatic')
             self.assertEqual(settings['DEVELOPMENT_TEAM'], '$(MACCOMPANION_DEVELOPMENT_TEAM)')
-            self.assertEqual(settings['MARKETING_VERSION'], '1.0')
+            self.assertEqual(settings['MARKETING_VERSION'], '1.1')
             self.assertEqual(settings['CODE_SIGN_IDENTITY'], '$(inherited)')
             entitlements = plistlib.loads((CLOUD / (name + '.entitlements')).read_bytes())
             self.assertEqual(entitlements, {'keychain-access-groups':

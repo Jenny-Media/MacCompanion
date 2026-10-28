@@ -1049,7 +1049,13 @@ struct DirectSessionSettingsV1: View {
             Section {
                 Toggle("Show session in Dynamic Island", isOn: $showSession).accessibilityIdentifier("session-live-activity")
                 Toggle("Interface Haptics", isOn: $controlsHaptics).accessibilityIdentifier("controls-haptics")
-            } header: { Text("This Device") } footer: { Text("Dynamic Island shows session status with Resume and End actions. Interface haptics confirm on-screen keys, modifier changes, gestures and session actions. Trackpad haptics are controlled separately.") }
+            } header: { Text("This Device") } footer: {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Dynamic Island: status, Resume and End.", systemImage: "rectangle.topthird.inset.filled")
+                    Label("Interface Haptics: keys, modifiers, gestures and actions.", systemImage: "hand.tap")
+                    Text("Trackpad haptics have a separate setting.")
+                }
+            }
         }.navigationBarTitleDisplayMode(.inline)
     }
     private var sync: some View {

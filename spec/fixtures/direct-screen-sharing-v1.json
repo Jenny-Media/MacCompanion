@@ -1004,7 +1004,119 @@
           "remoteDeleted": false,
           "winner": "remote"
         }
-      ]
+      ],
+      "keyboardLayouts": {
+        "introducedVersion": "1.1",
+        "platforms": [
+          "iOS",
+          "iPadOS"
+        ],
+        "service": "media.jenny.maccompanion.cloud-keyboard-layouts.v1",
+        "enabledBy": "existing iCloud Sync setting",
+        "maximumVersionBytes": 4096,
+        "includes": [
+          "row order",
+          "row appearance",
+          "built-in key choices",
+          "row restore presets"
+        ],
+        "excludes": [
+          "saved shortcut definitions",
+          "saved text",
+          "saved-item placements",
+          "credentials",
+          "trusted host keys"
+        ],
+        "preserveDeviceLocalSavedButtons": true,
+        "newDeviceReadsBeforeSeedingDefaults": true,
+        "optedInPreparation": {
+          "usesExistingOwners": true,
+          "preparesBeforeStartingSyncTasks": true,
+          "automaticForBothControlFamilies": true,
+          "requiresMacContext": false,
+          "requiresSeparateSetup": false,
+          "doesNotOpenConnectionOrExecuteInput": true,
+          "doesNotClaimCrossDeviceDelivery": true
+        },
+        "conflictOrder": [
+          "revision",
+          "writer UUID"
+        ],
+        "deletionUsesExistingCloudDataRemoval": true,
+        "causalContext": "per-writer revisions captured at local edit",
+        "recoverConcurrentLosingValues": true,
+        "recoveryIsDeviceLocal": true,
+        "localJournal": "device-only Keychain bound to writer identity"
+      },
+      "savedControls": {
+        "introducedVersion": "1.1",
+        "platforms": [
+          "iOS",
+          "iPadOS"
+        ],
+        "service": "media.jenny.maccompanion.cloud-saved-controls.v1",
+        "defaultEnabled": false,
+        "requiresMainSync": true,
+        "requiresSeparateConsent": false,
+        "includes": [
+          "accessory-key definitions",
+          "shortcut definitions",
+          "saved text",
+          "keyboard button positions",
+          "floating-menu favorites"
+        ],
+        "excludes": [
+          "passwords",
+          "SSH private keys",
+          "trusted host identities",
+          "live input",
+          "composer drafts",
+          "clipboard",
+          "session history"
+        ],
+        "maximumLogicalBytes": 32768,
+        "pieceBytes": 2000,
+        "maximumWireBytes": 4096,
+        "maximumWireRecords": 512,
+        "conflictOrder": [
+          "revision",
+          "writer UUID"
+        ],
+        "mergeUnit": "definition UUID and controls family",
+        "nilValueIsTombstone": true,
+        "writePiecesBeforeHead": true,
+        "requireCompleteGenerationAndDigest": true,
+        "incompleteDeliveryPreservesLocalContent": true,
+        "localJournal": "non-synchronizing Keychain",
+        "journalFetchedClocksBeforeImport": true,
+        "cloudImportsAreNotLocalEdits": true,
+        "missingRowFallsBackToMain": true,
+        "importExecutesActions": false,
+        "disableRetainsCloudCopy": true,
+        "deletionDrainsAdmittedWrites": true,
+        "existingCloudRemovalIncludesContentWhenOff": true,
+        "generationDerivedFromContentDigest": true,
+        "durableMigrationIdentitiesBeforeProjection": true,
+        "deleteIndependentOfMacJournalReadability": true,
+        "followsMainSync": true,
+        "enabledMainSettingIncludesExistingContent": true,
+        "deletionDisablesMainSync": true,
+        "migratedDefaultProvenance": "retained builtIn origin on normalized Return/Interrupt",
+        "unmarkedDefinitionsRemainEligible": true,
+        "explicitPaletteChoiceIsUserDefinition": true,
+        "accessoryKeysUseSavedDefinitionProjection": true,
+        "accessoryKeyFields": [
+          "id",
+          "title",
+          "key",
+          "placements"
+        ],
+        "causalContext": "per-writer revisions captured at local edit",
+        "recoverConcurrentLosingValues": true,
+        "recoveryIsDeviceLocal": true,
+        "concurrentDeleteWins": true,
+        "importBaselineAtomicWithProfile": true
+      }
     },
     "terminalKeyboard": {
       "numberRow": "always-when-keyboard-open",

@@ -79,6 +79,8 @@ struct TerminalControlAction: Codable, Identifiable, Equatable {
     /// Missing in older local profiles; shortcuts run immediately by default.
     var confirmBeforeRunning: Bool?
     var text = ""
+    /// Also retains Return/Interrupt migration provenance after normalization;
+    /// execution and category always follow `kind`, not this origin marker.
     var builtIn: VNCQuickAction.Kind? = nil
     var operation: TerminalAppAction? = nil
     var inRow = false
@@ -159,8 +161,8 @@ struct TerminalControlAction: Codable, Identifiable, Equatable {
         case .paste: operation = .paste
         case .escape: kind = .key; key = .escape
         case .tab: kind = .key; key = .tab
-        case .returnKey: kind = .shortcut; character = 0xff0d; modifiers = []
-        case .interrupt: kind = .shortcut; character = 0x63; modifiers = [0xffe3]
+        case .returnKey: kind = .shortcut; character = 0xff0d; modifiers = []; return
+        case .interrupt: kind = .shortcut; character = 0x63; modifiers = [0xffe3]; return
         case .rightClick: operation = .rightClick
         case .copyText: operation = .copyScreenText
         case .fit: operation = .fitToWindow
@@ -334,6 +336,13 @@ struct TerminalControlsProfile: Codable, Equatable {
     var shortcutOrder: [UUID]?
     var textOrder: [UUID]?
     var rowsSchema: Int? = Self.currentRowsSchema
+    #if os(iOS)
+    var localCloudState: DirectControlsLocalSyncState?
+    var syncState: DirectControlsLocalSyncState {
+        get { localCloudState ?? .init() }
+        set { localCloudState = newValue }
+    }
+    #endif
     /// Old flat placements remain on the main row. New rows reference the same
     /// saved definitions, and never copy or discard their content.
     var resolvedRows: [TerminalKeyboardRow] {
@@ -472,7 +481,12 @@ struct TerminalControlsProfile: Codable, Equatable {
                 guard draft.actions.contains(where: { $0.id == id }) else { return false }
                 definitionID = id
             } else if let key = item.palette {
-                if let existing = draft.actions.first(where: key.matches) { definitionID = existing.id }
+                if let index = draft.actions.firstIndex(where: key.matches) {
+                    definitionID = draft.actions[index].id
+                    // Choosing a key is an explicit user placement, even when
+                    // an installation-local migrated default can be reused.
+                    draft.actions[index].builtIn = nil
+                }
                 else {
                     let replacement = key.definition
                     guard replacement.valid, draft.actions.count < 4096 else { return false }
@@ -642,7 +656,10 @@ struct TerminalControlsProfile: Codable, Equatable {
         } else if !enabled { removeBarItem(.saved(id)) }
     }
     var valid: Bool {
-        version == Self.currentVersion && (rowsSchema.map { (1...Self.currentRowsSchema).contains($0) } ?? true) && actions.count <= 4096 && importedMacs.count <= 4096
+        #if os(iOS)
+        guard (try? syncState.validate(family: family ?? .terminal)) != nil else { return false }
+        #endif
+        return version == Self.currentVersion && (rowsSchema.map { (1...Self.currentRowsSchema).contains($0) } ?? true) && actions.count <= 4096 && importedMacs.count <= 4096
             && Set(actions.map(\.id)).count == actions.count && actions.allSatisfy(\.valid)
             && (family == .remoteMac || !actions.contains { $0.operation?.remoteOnly == true })
             && validRemoteMenus
@@ -687,7 +704,13 @@ struct TerminalControlsProfile: Codable, Equatable {
                     $0.title == action.title && $0.kind == action.kind
                         && (action.kind == .text ? $0.text == action.text : $0.sameDefinition(as: action))
                 }
-                if let existing { action = existing }
+                if let existing {
+                    if action.kind == .shortcut, action.builtIn == nil,
+                       let index = actions.firstIndex(where: { $0.id == existing.id }) {
+                        actions[index].builtIn = nil
+                        action = actions[index]
+                    } else { action = existing }
+                }
                 else {
                     while actions.contains(where: { $0.id == action.id }) { action.id = UUID() }
                     action.inMenu = false; actions.append(action)
@@ -779,7 +802,9 @@ struct TerminalControlsProfile: Codable, Equatable {
 @MainActor struct TerminalControlsStore {
     static let account = DirectControlMode.terminal.profileID
     static let kind = "terminal-controls-v2"
+    static let willChange = Notification.Name("TerminalControlsWillChangeV2")
     static let changed = Notification.Name("TerminalControlsChangedV2")
+    static let prepared = Notification.Name("TerminalControlsPreparedV2")
     enum Failure: Error, Equatable { case unreadable, staleDraft, newerFormat }
     static let newerFormatMessage = "These controls were saved by a newer version of Mac Companion. Update the app to edit them. Your saved controls have been kept."
     private struct Format: Decodable {
@@ -823,7 +848,34 @@ struct TerminalControlsProfile: Codable, Equatable {
         Dictionary(uniqueKeysWithValues: [DirectControlMode.desktop, .trackpad].map { ($0.rawValue, $0.defaults) })
     }
 
-    func load() throws -> TerminalControlsProfile {
+    /// Content sync observes only committed identities, never provisional legacy collision UUIDs.
+    func savedControlsCloudProfile() throws -> TerminalControlsProfile? {
+        guard DirectAppLockV1.shared.canAccess else { throw TerminalSecretStore.Failure.locked }
+        guard let data = try read() else { return nil }
+        guard data.count <= 20 * 1024 * 1024 else { throw Failure.unreadable }
+        let format = try JSONDecoder().decode(Format.self, from: data); try format.checkSupported()
+        guard format.version == TerminalControlsProfile.currentVersion,
+              format.rowsSchema == TerminalControlsProfile.currentRowsSchema else { return nil }
+        let profile = try JSONDecoder().decode(TerminalControlsProfile.self, from: data)
+        guard profile.valid, (profile.family ?? .terminal) == family else { throw Failure.unreadable }
+        if family == .remoteMac && profile.remoteMenus == nil { return nil }
+        let pending = Set(try legacyIDs()).subtracting(excludedIDs())
+        guard pending.isSubset(of: profile.importedMacs) else { return nil }
+        return profile
+    }
+
+    /// Off-state baseline reads never create or write a controls profile.
+    func keyboardCloudReady() throws -> Bool {
+        guard family == .remoteMac else { return true }
+        guard let stored = try read() else { return false }
+        guard stored.count <= 20 * 1024 * 1024 else { throw Failure.unreadable }
+        try JSONDecoder().decode(Format.self, from: stored).checkSupported()
+        struct Readiness: Decodable { let remoteMenus: [String: [TerminalMenuPlacement]]? }
+        return try JSONDecoder().decode(Readiness.self, from: stored).remoteMenus != nil
+    }
+    func load() throws -> TerminalControlsProfile { try load(persistMigrations: true) }
+    /// Off-state baseline projections normalize a snapshot without writing it.
+    func load(persistMigrations: Bool) throws -> TerminalControlsProfile {
         guard DirectAppLockV1.shared.canAccess else { throw TerminalSecretStore.Failure.locked }
         let stored = try read()
         var profile: TerminalControlsProfile
@@ -847,11 +899,13 @@ struct TerminalControlsProfile: Codable, Equatable {
             profile = .init(family: family == .remoteMac ? .remoteMac : nil, actions: actions.map(TerminalControlAction.init))
             resetKeyboard = true
         }
+        // Compare against the decoded record, including its format version.
+        // Sync reads the persisted profile, so a version-only update must save.
+        let before = profile
         profile.version = TerminalControlsProfile.currentVersion
         guard (profile.family ?? .terminal) == family else { throw Failure.unreadable }
         // Corrupt definitions and favorites must never be replaced by defaults.
         guard profile.valid else { throw Failure.unreadable }
-        let before = profile
         for index in profile.actions.indices { profile.actions[index].normalizeLegacyDefinition() }
         if family == .remoteMac && profile.remoteMenus == nil { profile.importRemoteMenus(try legacyRemoteMenus()) }
         guard profile.valid else { throw Failure.unreadable }
@@ -865,22 +919,52 @@ struct TerminalControlsProfile: Codable, Equatable {
         else { profile.freezeKeyboardLayout() }
         profile.captureRemoteMenu()
         guard profile.valid else { throw Failure.unreadable }
-        if stored == nil || profile != before {
+        if persistMigrations && (stored == nil || profile != before) {
             profile.revision = UUID()
             try persist(profile)
+            NotificationCenter.default.post(name: Self.prepared, object: family.rawValue)
         }
         if family == .remoteMac { profile.selectRemoteMenu(remoteMode) }
         return profile
     }
-    func save(_ draft: TerminalControlsProfile) throws -> TerminalControlsProfile {
+    func save(_ draft: TerminalControlsProfile, cloudImport: Bool = false, captureSavedImport: Bool = false, captureLayoutImport: Bool = false) throws -> TerminalControlsProfile {
         try Format(version: draft.version, rowsSchema: draft.rowsSchema).checkSupported()
         guard draft.rowsSchema == TerminalControlsProfile.currentRowsSchema else { throw Failure.unreadable }
         let current = try load()
         guard current.revision == draft.revision else { throw Failure.staleDraft }
         guard draft.valid, draft.importedMacs == current.importedMacs else { throw Failure.unreadable }
         var result = draft; result.freezeKeyboardLayout(); result.captureRemoteMenu(); result.revision = UUID()
+        #if os(iOS)
+        var positionState = result.syncState
+        let actionIDs = Set(result.actions.map { $0.id.uuidString.lowercased() })
+        positionState.savedPositions = positionState.savedPositions?.filter { actionIDs.contains($0.key) }
+        result.syncState = positionState
+        #endif
+        #if os(iOS)
+        if captureLayoutImport {
+            var state = result.syncState
+            state.layoutImport = .init(observed: try DirectControlsCausality.fingerprint(DirectCloudKeyboardLayout(result)))
+            result.syncState = state
+        } else if !cloudImport, result.syncState.layoutImport == nil,
+                  DirectCloudKeyboardLayout(result) != DirectCloudKeyboardLayout(current) {
+            // The first customization carries its pre-edit baseline in the
+            // same write, even if sync has never saved a separate journal.
+            var state = result.syncState
+            state.layoutImport = .init(observed: try DirectControlsCausality.fingerprint(DirectCloudKeyboardLayout(current)))
+            result.syncState = state
+        }
+        if captureSavedImport {
+            let projected = DirectCloudSavedControl.project(result)
+            var state = result.syncState
+            state.savedImport = .init(observed: try Dictionary(uniqueKeysWithValues: projected.map {
+                ($0.key.uuidString.lowercased(), try DirectControlsCausality.fingerprint($0.value))
+            }))
+            result.syncState = state
+        }
+        #endif
+        NotificationCenter.default.post(name: Self.willChange, object: family.rawValue, userInfo: ["cloudImport": cloudImport])
         try persist(result)
-        NotificationCenter.default.post(name: Self.changed, object: nil)
+        NotificationCenter.default.post(name: Self.changed, object: family.rawValue, userInfo: ["cloudImport": cloudImport])
         return result
     }
     private func persist(_ profile: TerminalControlsProfile) throws {
