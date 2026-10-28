@@ -182,7 +182,13 @@ struct DirectSyncSecurityForm: View {
         .alert("Enable iCloud Sync?", isPresented: $enableCloud) {
             Button("Enable Sync") { if lock.canAccess { cloud.setEnabled(true) } }
             Button("Cancel", role: .cancel) {}
-        } message: { Text(DirectCloudSyncV1.disclosure) }
+        } message: {
+            #if os(iOS)
+            Text("Sync saved Macs and keyboard layouts across your devices with iCloud Keychain.\n\nPasswords, SSH keys, session shortcuts and saved text stay on this device.")
+            #else
+            Text(DirectCloudSyncV1.disclosure)
+            #endif
+        }
         .onChange(of: lock.canAccess) { _, allowed in if !allowed { enableCloud = false; sheet = nil } }
     }
 }
