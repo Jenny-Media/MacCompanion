@@ -1,21 +1,28 @@
 import SwiftUI
 
-private struct NoCloudEffects: DirectCloudTransport {
-    func read() throws -> [Data] { throw DirectCloudError.storage }
-    func write(_ data: Data, account: String) throws { throw DirectCloudError.storage }
-    func removeAll() throws { throw DirectCloudError.storage }
+private final class NoCloudEffects: DirectCloudTransport, @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String: Data] = [:]
+    func read() throws -> [Data] { lock.lock(); defer { lock.unlock() }; return Array(values.values) }
+    func write(_ data: Data, account: String) throws { lock.lock(); defer { lock.unlock() }; values[account] = data }
+    func removeAll() throws { lock.lock(); defer { lock.unlock() }; values.removeAll() }
 }
 
 /// Private QA target. Injected identity bypasses shared cloud engines.
 @main @MainActor struct SavedControlsConsentApplication: App {
     let cloud: DirectCloudSyncV1
+    let library: DirectMacLibraryV1
     init() {
         let name = "dev.maccompanion.savedcontrolsqa.fixture"
         let defaults = UserDefaults(suiteName: name)!
         defaults.removePersistentDomain(forName: name)
-        cloud = DirectCloudSyncV1(defaults: defaults,
-            url: URL.temporaryDirectory.appending(path: UUID().uuidString + ".json"),
-            transport: NoCloudEffects(), writerID: UUID())
+        let root = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        library = DirectMacLibraryV1(url: root.appending(path: "macs.json"))
+        precondition(library.save(id: nil, name: "Synthetic Mac", addresses: ["synthetic.invalid"]))
+        let needsSetup = ProcessInfo.processInfo.arguments.contains("--fixture-controls-need-setup")
+        cloud = DirectCloudSyncV1(defaults: defaults, url: root.appending(path: "journal.json"),
+            transport: NoCloudEffects(), writerID: UUID(), prepareControls: { _ in !needsSetup })
+        cloud.attach(library)
     }
     var body: some Scene { WindowGroup { CopyAuditHome(cloud: cloud).directAppearance() } }
 }

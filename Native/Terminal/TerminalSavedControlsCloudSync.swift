@@ -351,6 +351,7 @@ private final class SavedControlsObservers: @unchecked Sendable {
     private var rerun = false
     private var observer: SavedControlsObservers?
     private(set) var busy = false
+    private(set) var issue: DirectCloudSyncIssue?
     private(set) var status = "Shortcuts and saved text stay on this device."
     init(writer: UUID, transport: any DirectCloudTransport = DirectSavedControlsTransport(),
          stores: [String: TerminalControlsStore] = ["terminal": .init(), "remoteMac": .remoteMac()],
@@ -380,7 +381,7 @@ private final class SavedControlsObservers: @unchecked Sendable {
             observer = SavedControlsObservers(tokens)
         }
     }
-    private func failJournal() { readable = false; status = "Saved-content sync history is unavailable. Local shortcuts and text are kept. Retry with Refresh iCloud." }
+    private func failJournal() { readable = false; issue = .storage; status = "Saved-content sync history is unavailable. Local shortcuts and text are kept. Retry with Refresh iCloud." }
     private func prepare() throws {
         guard canAccess() else { throw DirectCloudError.locked }
         guard !loaded else { return }
@@ -534,12 +535,13 @@ private final class SavedControlsObservers: @unchecked Sendable {
                 try self.persist()
                 try await self.publish(epoch)
                 if self.current(epoch) {
+                    self.issue = !retained.isEmpty ? .capacity : waitingForControls ? .preparation : nil
                     self.status = !retained.isEmpty ? "Some saved controls exceed the sync limit. Their local content is kept."
-                        : waitingForControls ? "Open the session controls once to finish preparing saved content."
+                        : waitingForControls ? "Shortcuts and saved text need controls setup."
                         : "Saved shortcuts, text and button positions sync."
                 }
             } catch {
-                if self.generation == epoch && self.readable { self.status = "Shortcuts and saved text couldn’t sync. Local content is kept. Retry with Refresh iCloud." }
+                if self.generation == epoch && self.readable { self.issue = .storage; self.status = "Shortcuts and saved text couldn’t sync. Local content is kept. Retry with Refresh iCloud." }
             }
         }
     }

@@ -39,6 +39,84 @@ private final class KeyboardMemoryCloud: DirectCloudTransport, @unchecked Sendab
         }
         XCTFail("Keyboard sync did not settle")
     }
+    func testOptedInPreparationInitializesFreshControlsThroughExistingOwners() throws {
+        let terminal = try MemoryProfile(), remote = try MemoryProfile(.remoteDefaults)
+        terminal.data = nil; remote.data = nil
+        var remoteStore = remote.store; remoteStore.family = .remoteMac
+        remoteStore.legacyRemoteMenus = { ["desktop": DirectControlMode.desktop.defaults, "trackpad": DirectControlMode.trackpad.defaults] }
+        XCTAssertTrue(try TerminalControlsStore.prepareForCloudSync(terminal: terminal.store, remote: remoteStore, needsMacContext: { false }))
+        XCTAssertNotNil(try terminal.store.savedControlsCloudProfile())
+        XCTAssertNotNil(try remoteStore.savedControlsCloudProfile())
+        let retained = remote.data
+        XCTAssertTrue(try TerminalControlsStore.prepareForCloudSync(terminal: terminal.store, remote: remoteStore, needsMacContext: { XCTFail("Prepared controls need no legacy context"); return true }))
+        XCTAssertEqual(remote.data, retained)
+    }
+
+    func testPreparationDefersLegacyMenusAndPreservesUnreadableControls() throws {
+        let terminal = try MemoryProfile(), remote = try MemoryProfile(.remoteDefaults)
+        remote.data = nil
+        var remoteStore = remote.store; remoteStore.family = .remoteMac
+        remoteStore.legacyRemoteMenus = { XCTFail("A context-free migration must not run"); return [:] }
+        XCTAssertFalse(try TerminalControlsStore.prepareForCloudSync(terminal: terminal.store, remote: remoteStore, needsMacContext: { true }))
+        XCTAssertNil(remote.data)
+        remote.data = Data("unreadable-synthetic-controls".utf8)
+        let retained = remote.data
+        XCTAssertThrowsError(try TerminalControlsStore.prepareForCloudSync(terminal: terminal.store, remote: remoteStore, needsMacContext: { false }))
+        XCTAssertEqual(remote.data, retained)
+    }
+
+    func testFreshPreparationBeforeEnablingDoesNotReplaceExistingCloudLayout() async throws {
+        let terminal = try MemoryProfile(), remote = try MemoryProfile(.remoteDefaults)
+        remote.data = nil
+        var remoteStore = remote.store; remoteStore.family = .remoteMac
+        remoteStore.legacyRemoteMenus = { ["desktop": DirectControlMode.desktop.defaults, "trackpad": DirectControlMode.trackpad.defaults] }
+        let folder = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let transport = KeyboardMemoryCloud()
+        var layout = TerminalControlsProfile.remoteDefaults; layout.freezeKeyboardLayout()
+        layout.keyboardRows![0].title = "Existing cloud layout"
+        let incoming = DirectCloudKeyboardVersion(family: .remoteMac, writer: UUID(), revision: 20,
+            layout: DirectCloudKeyboardLayout(layout))
+        try transport.write(JSONEncoder().encode(incoming), account: incoming.account)
+        let sync = DirectKeyboardCloudSync(url: folder.appending(path: "journal.json"), writer: UUID(),
+            transport: transport, stores: ["remoteMac": remoteStore], observeChanges: true)
+        XCTAssertTrue(try TerminalControlsStore.prepareForCloudSync(terminal: terminal.store, remote: remoteStore, needsMacContext: { false }))
+        XCTAssertEqual(transport.readCount, 0)
+        sync.setEnabled(true); try await wait(sync)
+        XCTAssertEqual(try remoteStore.load().keyboardRows![0].title, "Existing cloud layout")
+        let records = try transport.read().map { try JSONDecoder().decode(DirectCloudKeyboardVersion.self, from: $0) }
+        XCTAssertEqual(DirectCloudKeyboardVersion.winner(records, family: .remoteMac), incoming)
+        sync.setEnabled(false)
+    }
+
+    func testCoordinatorPreparationRequiresOptInAndHasActionableNonDeliveryStatus() async throws {
+        let folder = URL.temporaryDirectory.appending(path: UUID().uuidString), suite = UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: folder) }
+        let library = DirectMacLibraryV1(url: folder.appending(path: "macs.json"))
+        var needsContext = true, failPreparation = false, calls = 0
+        let cloud = DirectCloudSyncV1(defaults: defaults, url: folder.appending(path: "journal.json"),
+            transport: KeyboardMemoryCloud(), writerID: UUID(), prepareControls: { _ in
+                calls += 1
+                if failPreparation { throw DirectCloudError.storage }
+                return !needsContext
+            })
+        cloud.attach(library); cloud.refresh()
+        XCTAssertEqual(calls, 0, "Disabled sync must not commit preparation")
+        cloud.setEnabled(true)
+        XCTAssertTrue(cloud.needsControlsSetup)
+        XCTAssertEqual(cloud.summary, "Finish setting up saved controls.")
+        needsContext = false; cloud.refresh()
+        XCTAssertFalse(cloud.needsControlsSetup)
+        failPreparation = true; cloud.refresh()
+        XCTAssertTrue(cloud.syncNeedsAttention)
+        XCTAssertTrue(cloud.summary.contains("needs attention"))
+        cloud.setEnabled(false)
+        XCTAssertFalse(cloud.syncNeedsAttention)
+        cloud.recovery = .make(.cloudRemoval)
+        XCTAssertTrue(cloud.summary.contains("needs attention"), "Removal failure stays visible with sync off")
+        XCTAssertFalse(cloud.summary.contains("Up to date"))
+    }
     func testIndexedPolicyMatchesIsolatedServiceAndPrivacyBoundary() throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-screen-sharing-v1", withExtension: "json"))
         let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
@@ -452,6 +530,7 @@ private final class KeyboardMemoryCloud: DirectCloudTransport, @unchecked Sendab
         XCTAssertNil(memory.data, "Sync-off startup cannot initialize a context-free shared profile")
         sync.setEnabled(true); try await wait(sync)
         XCTAssertNil(memory.data, "Cloud import must wait for the existing context-aware migration")
+        XCTAssertEqual(sync.issue, .preparation)
         let migrated = try store(legacyMac: macID).load()
         XCTAssertTrue(migrated.actions.contains { $0.text == text.text })
         XCTAssertTrue(migrated.actions.contains { $0.title == shortcut.title })
@@ -461,6 +540,7 @@ private final class KeyboardMemoryCloud: DirectCloudTransport, @unchecked Sendab
         XCTAssertEqual(retained.keyboardRows![0].title, "Remote layout")
         XCTAssertTrue(retained.actions.contains { $0.text == text.text })
         XCTAssertTrue(retained.resolvedMenuPlacements.contains { $0.actionID == text.id })
+        XCTAssertNil(sync.issue)
         XCTAssertFalse(try transport.read().contains { String(decoding: $0, as: UTF8.self).contains(text.text) })
         sync.setEnabled(false)
     }

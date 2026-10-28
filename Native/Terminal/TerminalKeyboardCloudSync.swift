@@ -154,6 +154,7 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
     private var rerun = false
     private var observer: KeyboardLayoutObserver?
     private(set) var busy = false
+    private(set) var issue: DirectCloudSyncIssue?
     private(set) var status = "Keyboard layout sync is off."
     init(url: URL, writer: UUID, transport: any DirectCloudTransport = DirectCloudKeychain(service: service),
          stores: [String: TerminalControlsStore] = [
@@ -167,7 +168,7 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
         do {
             if FileManager.default.fileExists(atPath: url.path) { try readJournal() }
             if canAccess(), try captureBaselines() { try persist(versions) }
-        } catch { readable = false; status = "Keyboard sync history is unavailable. Local layouts are kept." }
+        } catch { readable = false; issue = .storage; status = "Keyboard sync history is unavailable. Local layouts are kept." }
         if observeChanges {
             let willChange = NotificationCenter.default.addObserver(forName: TerminalControlsStore.willChange, object: nil, queue: .main) { [weak self] note in
                 guard note.userInfo?["cloudImport"] as? Bool != true, let raw = note.object as? String else { return }
@@ -258,6 +259,7 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
         do { if try captureBaselines() { try persist(versions) } }
         catch {
             readable = false
+            issue = .storage
             status = "Keyboard sync history couldn’t be saved. Local controls are kept. Retry with Refresh iCloud."
         }
     }
@@ -281,6 +283,7 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
             catch {
                 // Publication limits never authorize replacing this local edit.
                 try persist(versions)
+                issue = .capacity
                 status = "This keyboard layout couldn’t sync. Local controls are kept; large layouts may exceed the sync limit."
                 return
             }
@@ -292,13 +295,14 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
             // Retry reads the last durable baseline and compares the current
             // profile again before any cloud value can be applied.
             readable = false
+            issue = .storage
             status = "Keyboard sync history couldn’t be saved. Local controls are kept. Retry with Refresh iCloud."
         }
     }
     func refresh() {
         guard enabled, readable, !busy, canAccess(), DirectClientPlatformV1.sessionAvailable else { return }
         do { if try captureBaselines() { try persist(versions) } }
-        catch { readable = false; status = "Keyboard sync history is unavailable. Local layouts are kept."; return }
+        catch { readable = false; issue = .storage; status = "Keyboard sync history is unavailable. Local layouts are kept."; return }
         busy = true; generation = UUID(); let epoch = generation, transport = self.transport, prior = task
         task = Task { [weak self] in
             guard let self else { return }
@@ -364,15 +368,18 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
                 }
                 if self.current(epoch) {
                     if !self.pending.isEmpty {
+                        self.issue = .capacity
                         self.status = "Some keyboard layouts couldn’t sync. Local controls are kept on this device; large layouts may exceed the sync limit."
                     } else if waitingForControls {
-                        self.status = "Open the session controls once to prepare their keyboard rows."
+                        self.issue = .preparation
+                        self.status = "Keyboard layouts need controls setup."
                     } else {
+                        self.issue = nil
                         self.status = "Keyboard layouts and built-in keys sync."
                     }
                 }
             } catch {
-                if self.generation == epoch { self.status = "Keyboard layouts couldn’t sync. Local controls are kept. Retry with Refresh iCloud." }
+                if self.generation == epoch { self.issue = .storage; self.status = "Keyboard layouts couldn’t sync. Local controls are kept. Retry with Refresh iCloud." }
             }
         }
     }

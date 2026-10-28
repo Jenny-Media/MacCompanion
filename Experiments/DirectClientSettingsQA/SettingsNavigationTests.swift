@@ -90,24 +90,27 @@ import UIKit
         let toggle = app.switches["icloud-library-toggle"]
         let original = toggle.value as? String
         capture("ios-sync-security", app: app)
+        app.buttons["icloud-what-syncs"].tap()
         app.buttons["icloud-credentials-info"].tap()
         XCTAssertTrue(app.navigationBars["Credentials & iCloud"].waitForExistence(timeout: 5))
         capture("ios-credentials-info", app: app); app.buttons["Done"].firstMatch.tap()
-        app.buttons["What Syncs"].tap()
         capture("ios-what-syncs", app: app)
-        app.buttons["What Syncs"].tap()
-        app.buttons["Manage Sync"].tap()
+        app.terminate(); app.launch()
+        app.buttons["open-app-settings"].tap(); app.buttons["settings-sync"].tap()
+        app.buttons["icloud-manage-sync"].tap()
         let delete = app.buttons["icloud-delete-data"]
         if !delete.isHittable { app.swipeUp() }
         delete.tap()
         XCTAssertTrue(app.navigationBars["Delete iCloud Data"].waitForExistence(timeout: 5))
         capture("ios-delete-review", app: app)
         app.buttons["icloud-review-continue"].tap()
-        XCTAssertTrue(app.alerts["Delete Mac Data from iCloud?"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.alerts["Delete Synced Data from iCloud?"].waitForExistence(timeout: 5))
         app.alerts.buttons["Cancel"].tap()
         XCTAssertTrue(app.navigationBars["Delete iCloud Data"].exists)
         app.buttons["Cancel"].firstMatch.tap()
-        XCTAssertTrue(app.navigationBars["Sync & Security"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Manage Sync"].waitForExistence(timeout: 5))
+        app.terminate(); app.launch()
+        app.buttons["open-app-settings"].tap(); app.buttons["settings-sync"].tap()
         XCTAssertEqual(toggle.value as? String, original, "Cancelling must not disable sync or execute deletion")
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Deletion requested.")).firstMatch.exists)
     }

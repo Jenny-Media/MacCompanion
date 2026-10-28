@@ -20,6 +20,22 @@ import XCTest
         reveal(element, app: app)
         let thumb = element.switches.firstMatch; XCTAssertTrue(thumb.exists); thumb.tap()
     }
+    private func revealConsentFooter(_ footer: XCUIElement, app: XCUIApplication) {
+        let confirm = app.buttons["icloud-enable-confirm"]
+        for _ in 0..<6 {
+            if footer.frame.maxY <= confirm.frame.minY - 8 { break }
+            // isHittable also accepts partially visible text. Drag inside the
+            // modal content rather than the underlying iPad form or action bar.
+            let startY = confirm.frame.minY - 30
+            let top = app.staticTexts["Enable iCloud Sync?"].frame.minY
+            let endY = max(app.frame.minY + 100, min(top + 40, startY - 100))
+            let origin = app.coordinate(withNormalizedOffset: .zero)
+            let start = origin.withOffset(CGVector(dx: confirm.frame.midX - app.frame.minX, dy: startY - app.frame.minY))
+            let end = origin.withOffset(CGVector(dx: confirm.frame.midX - app.frame.minX, dy: endY - app.frame.minY))
+            start.press(forDuration: 0.1, thenDragTo: end)
+        }
+        XCTAssertLessThanOrEqual(footer.frame.maxY, confirm.frame.minY - 8, "The complete encryption note must scroll clear of the pinned actions")
+    }
     func testOneSyncConfirmationIncludesSavedContentAndHasNoSeparateOption() {
         for large in [false, true] {
             let app = launch(large: large); defer { app.terminate() }
@@ -30,7 +46,8 @@ import XCTest
             tapSwitch(toggle, app: app)
             XCTAssertTrue(app.staticTexts["Enable iCloud Sync?"].waitForExistence(timeout: 5))
             XCTAssertTrue(app.staticTexts["Saved Macs, keyboard layouts, shortcuts and saved text."].exists)
-            let footer = app.staticTexts["Encrypted iCloud sync"]; reveal(footer, app: app)
+            let footer = app.staticTexts["Encrypted iCloud sync"]
+            revealConsentFooter(footer, app: app)
             XCTAssertTrue(app.buttons["icloud-enable-confirm"].isHittable)
             XCTAssertTrue(app.buttons["icloud-enable-cancel"].isHittable)
             capture(large ? "unified-sync-large-text" : "unified-sync")
@@ -43,10 +60,60 @@ import XCTest
             tapSwitch(toggle, app: app)
             app.buttons["icloud-enable-confirm"].tap()
             XCTAssertEqual(toggle.value as? String, "1")
+            XCTAssertTrue(app.staticTexts["icloud-summary"].exists)
+            capture(large ? "sync-enabled-large-text" : "sync-enabled")
             XCTAssertFalse(app.switches["icloud-saved-content-toggle"].exists)
             tapSwitch(toggle, app: app); XCTAssertEqual(toggle.value as? String, "0")
             app.terminate()
         }
+    }
+    func testSyncDetailsAndManagementUseSeparateScreensAndScopedDeletion() {
+        for large in [false, true] {
+            for page in ["what-syncs", "manage-sync"] {
+                let app = launch(large: large)
+                app.buttons["fixture-sync"].tap()
+                capture("sync-home-" + page + (large ? "-large" : ""))
+                app.buttons["icloud-" + page].tap()
+                if page == "what-syncs" {
+                    XCTAssertTrue(app.navigationBars["What Syncs"].waitForExistence(timeout: 5))
+                    XCTAssertTrue(app.staticTexts["Across devices"].exists)
+                    capture("sync-scope-top" + (large ? "-large" : ""))
+                    reveal(app.buttons["icloud-credentials-info"], app: app)
+                    capture("sync-scope-local" + (large ? "-large" : ""))
+                } else {
+                    XCTAssertTrue(app.navigationBars["Manage Sync"].waitForExistence(timeout: 5))
+                    let delete = app.buttons["icloud-delete-data"]
+                    reveal(delete, app: app)
+                    XCTAssertTrue(delete.label.contains("Delete Synced Data from iCloud"))
+                    capture("sync-manage" + (large ? "-large" : ""))
+                    delete.tap()
+                    XCTAssertTrue(app.navigationBars["Delete iCloud Data"].waitForExistence(timeout: 5))
+                    reveal(app.staticTexts["Saved Macs, preferences, keyboard layouts, shortcuts and saved text."], app: app)
+                    capture("sync-deletion-scope" + (large ? "-large" : ""))
+                    XCTAssertTrue(app.buttons["icloud-review-continue"].isHittable)
+                    app.buttons["Cancel"].firstMatch.tap()
+                    XCTAssertTrue(app.navigationBars["Manage Sync"].waitForExistence(timeout: 5))
+                }
+                app.terminate()
+            }
+        }
+    }
+
+    func testLegacySetupActionReachesLocalMacChoiceWithoutConnecting() {
+        let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.savedcontrolsqa.ios")
+        app.launchArguments = ["--fixture-controls-need-setup"]
+        app.launch(); defer { app.terminate() }
+        app.buttons["fixture-sync"].tap()
+        tapSwitch(app.switches["icloud-library-toggle"], app: app)
+        app.buttons["icloud-enable-confirm"].tap()
+        let action = app.buttons["icloud-controls-setup"]
+        XCTAssertTrue(action.waitForExistence(timeout: 5))
+        capture("sync-setup-needed")
+        action.tap()
+        XCTAssertTrue(app.navigationBars["Set Up Controls"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Synthetic Mac"].exists)
+        XCTAssertTrue(app.staticTexts["Your existing controls are kept. This opens local settings, without connecting to the Mac."].exists)
+        capture("sync-setup-choice")
     }
     func testGuidanceRowsAndSecurityDetailsStayReachable() {
         let routes: [(String, String, String)] = [

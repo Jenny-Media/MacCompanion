@@ -232,6 +232,9 @@ private struct DirectCloudSettingsSection: View {
         ["Passwords and SSH keys", "Trusted Mac identities", "Appearance and app-lock settings"]
     }
     var body: some View {
+        #if os(iOS)
+        DirectIOSCloudSettingsSection(cloud: cloud, enable: enable, present: present)
+        #else
         Section {
             Toggle("iCloud Sync", isOn: Binding(get: { cloud.enabled }, set: {
                 if $0 { enable() } else if lock.canAccess { cloud.setEnabled(false) }
@@ -286,8 +289,126 @@ private struct DirectCloudSettingsSection: View {
             }.buttonStyle(.plain).accessibilityIdentifier("icloud-credentials-info")
                 .accessibilityHint("Explains which information stays local and why")
         } header: { Text("iCloud") }
+        #endif
     }
 }
+
+#if os(iOS)
+private struct DirectIOSCloudSettingsSection: View {
+    let cloud: DirectCloudSyncV1
+    let enable: () -> Void
+    let present: (DirectCloudSheet) -> Void
+    @State private var lock = DirectAppLockV1.shared
+    var body: some View {
+        Section {
+            Toggle("iCloud Sync", isOn: Binding(get: { cloud.enabled }, set: {
+                if $0 { enable() } else if lock.canAccess { cloud.setEnabled(false) }
+            })).disabled(cloud.busy).accessibilityIdentifier("icloud-library-toggle")
+            Text(cloud.summary).font(.footnote).foregroundStyle(.secondary)
+                .accessibilityIdentifier("icloud-summary")
+            if cloud.enabled && cloud.needsControlsSetup {
+                NavigationLink { DirectCloudControlsSetup(cloud: cloud) } label: {
+                    Label("Finish Controls Setup", systemImage: "keyboard.badge.ellipsis")
+                }.accessibilityIdentifier("icloud-controls-setup")
+            }
+            NavigationLink { DirectCloudScopeForm(present: present) } label: { Text("What Syncs") }
+                .accessibilityIdentifier("icloud-what-syncs")
+            NavigationLink { DirectCloudManagementForm(cloud: cloud, present: present) } label: {
+                HStack {
+                    Text("Manage Sync")
+                    if cloud.syncNeedsAttention { Image(systemName: "exclamationmark.circle").foregroundStyle(.orange) }
+                }
+            }.accessibilityIdentifier("icloud-manage-sync")
+            if cloud.syncNeedsAttention {
+                Button(cloud.recovery?.reason == .cloudRemoval ? "Retry Removal" : "Retry Sync", systemImage: "arrow.clockwise") {
+                    if cloud.recovery?.reason == .cloudRemoval { present(.deleteData) } else { cloud.retry() }
+                }.disabled(cloud.busy || !lock.canAccess)
+            }
+        } header: { Text("iCloud") } footer: { Text("Sync Macs, controls and saved text.") }
+    }
+}
+
+private struct DirectCloudScopeForm: View {
+    let present: (DirectCloudSheet) -> Void
+    var body: some View {
+        Form {
+            Section {
+                DirectInformationGroup(title: "Across devices", symbol: "icloud", items: [
+                    "Saved Macs and connection details", "My Macs tap and swipe shortcuts", "Screen Sharing preferences",
+                    "Keyboard layouts and built-in keys", "Saved shortcuts, text and button positions"])
+            }
+            Section {
+                DirectInformationGroup(title: "On this device", symbol: "icloud.slash", items: [
+                    "Passwords and SSH keys", "Trusted Mac identities", "Appearance and app-lock settings"])
+                Button("About Local Logins", systemImage: "info.circle") { present(.credentials) }
+                    .accessibilityIdentifier("icloud-credentials-info")
+            }
+            Section {
+                Text("Uses iCloud Keychain with the same Apple Account on each device.")
+                Text("Enable iCloud Keychain on each device. Changes may take a moment to appear.")
+            } header: { Text("How it works") }
+        }.navigationTitle("What Syncs").directInlineNavigationTitle()
+    }
+}
+
+private struct DirectCloudManagementForm: View {
+    let cloud: DirectCloudSyncV1
+    let present: (DirectCloudSheet) -> Void
+    @State private var lock = DirectAppLockV1.shared
+    var body: some View {
+        Form {
+            Section("Status") {
+                Text(cloud.summary)
+                if let notice = cloud.recovery {
+                    DirectRecoveryCard(notice: notice, primary: nil)
+                }
+                if cloud.enabled {
+                    if cloud.controlsSetupIssue == .storage {
+                        Text("Saved controls couldn’t be prepared. Existing data is kept. Try Refresh iCloud.")
+                    }
+                    if let value = cloud.keyboardSyncStatus { Label(value, systemImage: "keyboard") }
+                    if let value = cloud.savedControlsSyncStatus { Label(value, systemImage: "text.quote") }
+                    if cloud.needsControlsSetup {
+                        NavigationLink("Finish Controls Setup") { DirectCloudControlsSetup(cloud: cloud) }
+                    }
+                    Button("Refresh iCloud", systemImage: "arrow.triangle.2.circlepath") { cloud.retry() }
+                        .disabled(cloud.syncInProgress || !lock.canAccess)
+                }
+            }
+            Section {
+                Button(role: .destructive) { present(.deleteData) } label: {
+                    Label("Delete Synced Data from iCloud…", systemImage: "trash").foregroundStyle(.red)
+                }.disabled(cloud.busy || !lock.canAccess).accessibilityIdentifier("icloud-delete-data")
+            } footer: { Text("Turning sync off keeps existing iCloud data.") }
+        }.navigationTitle("Manage Sync").directInlineNavigationTitle()
+    }
+}
+
+private struct DirectCloudControlsSetup: View {
+    let cloud: DirectCloudSyncV1
+    @State private var selectedMac: DirectMacRecordV1?
+    @State private var lock = DirectAppLockV1.shared
+    var body: some View {
+        Form {
+            Section {
+                Text("Review your existing Screen Sharing controls to finish preparing them for sync.")
+                ForEach(cloud.controlsSetupMacs) { mac in
+                    Button(mac.name) { selectedMac = mac }.disabled(!lock.canAccess)
+                }
+            } header: { Text("Choose a Mac") } footer: {
+                Text("Your existing controls are kept. This opens local settings, without connecting to the Mac.")
+            }
+            if cloud.syncNeedsAttention {
+                Button("Retry Setup") { cloud.retry() }.disabled(cloud.busy || !lock.canAccess)
+            }
+        }.navigationTitle("Set Up Controls").directInlineNavigationTitle()
+            .sheet(item: $selectedMac, onDismiss: { cloud.refresh() }) { mac in
+                TerminalControlsSettings(store: .remoteMac(legacyMac: mac.id), remoteMacID: mac.id) { selectedMac = nil }
+            }
+            .onChange(of: lock.canAccess) { _, allowed in if !allowed { selectedMac = nil } }
+    }
+}
+#endif
 
 enum DirectCloudSheet: String, Identifiable {
     case credentials, deleteData
@@ -314,7 +435,7 @@ private struct DirectCloudEnableSheet: View {
                 summary("Stays on this device", symbol: "icloud.slash", detail: "Passwords, SSH keys and trusted Mac identities.")
                     .accessibilityIdentifier("icloud-enable-local")
                 Text("Encrypted iCloud sync").font(.footnote).foregroundStyle(.secondary)
-            }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
+            }.padding(24).padding(.bottom, 12).frame(maxWidth: .infinity, alignment: .leading)
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 8) {
@@ -334,7 +455,7 @@ private struct DirectCloudEnableSheet: View {
             }.padding(.horizontal, 24).padding(.vertical, 12).background(.bar)
         }
         .presentationSizing(.form)
-        .presentationDetents(dynamicTypeSize.isAccessibilitySize ? [.large] : [.height(440), .large])
+        .presentationDetents(dynamicTypeSize.isAccessibilitySize ? [.large] : [.height(540), .large])
         .presentationDragIndicator(.visible)
     }
 
@@ -380,7 +501,7 @@ struct DirectCloudInformationSheet: View {
                         Link("About iCloud Keychain security", destination: URL(string: "https://support.apple.com/en-us/102651")!)
                     } else {
                         #if os(iOS)
-                        DirectInformationGroup(title: "Delete from iCloud", symbol: "icloud.slash", items: [
+                        DirectInformationGroup(title: "Delete from iCloud", symbol: "trash", items: [
                             "Saved Macs, preferences, keyboard layouts, shortcuts and saved text."])
                         #else
                         DirectInformationGroup(title: "Delete from iCloud", symbol: "icloud.slash", items: [
@@ -429,7 +550,7 @@ struct DirectCloudInformationSheet: View {
         .onDisappear { deletion.invalidate() }
         .visionSensitiveState { deletion.invalidate(); dismiss() }
         #else
-        .alert("Delete Mac Data from iCloud?", isPresented: $confirmDeletion) {
+        .alert("Delete Synced Data from iCloud?", isPresented: $confirmDeletion) {
             Button("Delete iCloud Data", role: .destructive) {
                 guard lock.canAccess, !cloud.busy else { return }
                 cloud.removeCloudCopies(); dismiss()

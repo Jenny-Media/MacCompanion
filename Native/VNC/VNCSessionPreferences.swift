@@ -184,6 +184,11 @@ struct VNCQuickAction: Codable, Identifiable, Equatable, Sendable {
         if mode == .desktop, let legacyMac, let legacy = try storedActions(legacyMac) { return mode.upgradingUntouchedDefaults(legacy) }
         return mode.defaults
     }
+    static func needsLegacyMacContext(_ macs: [UUID]) throws -> Bool {
+        guard DirectAppLockV1.shared.canAccess else { throw CocoaError(.fileReadNoPermission) }
+        if try storedActions(DirectControlMode.desktop.profileID) != nil { return false }
+        return try macs.contains { try storedActions($0) != nil }
+    }
     static func actions(_ mode: DirectControlMode, legacyMac: UUID? = nil) -> [VNCQuickAction] {
         let saved = (try? profileActions(mode, legacyMac: legacyMac)) ?? mode.defaults
         return DirectProAccess.shared.hasPro ? saved : saved.filter { $0.kind != .shortcut && $0.kind != .text }

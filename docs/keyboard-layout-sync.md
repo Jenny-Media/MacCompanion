@@ -45,10 +45,14 @@ transport tests do not prove real-account cross-device propagation. Before a
 same iCloud account, including sync off/on, foreground refresh, local saved text
 retention and Remove iCloud Data.
 
-Sync baseline reads do not commit local profile migrations. Shared remote-Mac
-rows wait until the existing Screen Sharing / Trackpad & Keyboard loader has
-imported legacy per-Mac definitions and menus with its Mac context. That local
-preparation triggers a refresh. Saved text and shortcuts use the same main iCloud switch once their profiles are ready.
+Sync baseline reads do not commit local profile migrations. After opt-in, the
+coordinator uses the existing owners to prepare Terminal and remote-Mac controls
+automatically when no per-Mac menu context is needed, before starting sync tasks
+and capturing their baselines. Older per-Mac Screen Sharing
+customizations still require their existing context-aware loader. A visible Finish
+Controls Setup action opens that Mac's local controls without connecting to it;
+preparation triggers a refresh. Sync status distinguishes setup, storage/capacity
+issues and active work, and never claims delivery to another device.
 Native regressions cover startup with only per-Mac legacy content, plus edits
 after an import-journal failure with the remote revision retained across Retry
 and restart.
@@ -91,7 +95,7 @@ logical version is capped at 32768 bytes and the service at 512 wire records.
 Incomplete delivery, malformed data, capacity or journal failure preserves local
 content and shows a retry notice. No content is truncated to fit.
 
-Turning the main switch off retains existing local/cloud data. Delete Mac Data from
+Turning the main switch off retains existing local/cloud data. Delete Synced Data from
 iCloud also removes saved-content records after admitted writes drain, preserves
 local controls and turns main sync off here. Signed two-device propagation
 still needs physical acceptance; synthetic transport tests establish merge and
@@ -114,3 +118,10 @@ The iOS copy audit uses concise native icon rows for gestures, server identity,
 manual key setup and settings details. Security commands, matching-key-type
 checks, file permissions, deletion consequences and local-data retention remain
 explicit. These presentation changes do not alter input or SSH authentication.
+
+Sync & Security keeps a concise status and navigation to What Syncs and Manage
+Sync. Per-service notices and retry controls stay in Manage Sync. The enable
+sheet keeps both actions visible and starts taller at ordinary text sizes, with
+a large scrolling presentation for accessibility. Cloud exclusion uses the
+crossed-out cloud; deletion uses a destructive trash action. Local-login details
+are available from What Syncs rather than repeated as a prominent warning.

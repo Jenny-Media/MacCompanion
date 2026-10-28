@@ -864,6 +864,15 @@ struct TerminalControlsProfile: Codable, Equatable {
         struct Readiness: Decodable { let remoteMenus: [String: [TerminalMenuPlacement]]? }
         return try JSONDecoder().decode(Readiness.self, from: stored).remoteMenus != nil
     }
+    /// Use the existing owners to initialize local controls only after opt-in.
+    /// A context-free loader must not replace a legacy per-Mac menu with defaults.
+    static func prepareForCloudSync(terminal: Self = .init(), remote: Self = .remoteMac(),
+                                    needsMacContext: () throws -> Bool) throws -> Bool {
+        _ = try terminal.load()
+        if try !remote.keyboardCloudReady(), try needsMacContext() { return false }
+        _ = try remote.load()
+        return true
+    }
     func load() throws -> TerminalControlsProfile { try load(persistMigrations: true) }
     /// Baseline projections can normalize a snapshot without committing a
     /// migration that still needs the UI's legacy Mac context.

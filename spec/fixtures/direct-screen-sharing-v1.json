@@ -1029,6 +1029,14 @@
         ],
         "preserveDeviceLocalSavedButtons": true,
         "newDeviceReadsBeforeSeedingDefaults": true,
+        "optedInPreparation": {
+          "usesExistingOwners": true,
+          "preparesBeforeStartingSyncTasks": true,
+          "automaticWithoutLegacyMacContext": true,
+          "legacyContextRequiresActionableSetup": true,
+          "doesNotOpenConnectionOrExecuteInput": true,
+          "doesNotClaimCrossDeviceDelivery": true
+        },
         "conflictOrder": [
           "revision",
           "writer UUID"

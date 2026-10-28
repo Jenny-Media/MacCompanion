@@ -1257,7 +1257,13 @@ a non-synchronizing local Keychain journal. Fetched clocks MUST be journaled
 before any import; pending local changes are rebased against those clocks.
 Saved-content baselines MUST use durable profile/migration identities. Off-state
 observations do not commit migrations; effective opt-in can prepare Terminal
-through its normal loader, while remote-Mac migration waits for its owner.
+through its normal loader. After opt-in, the coordinator MAY prepare remote-Mac
+controls through their existing owner only when no legacy per-Mac menu context
+is needed. Otherwise migration MUST wait for that context-aware owner and the UI
+MUST expose an actionable setup state. Initialization MUST NOT open a connection,
+execute input, discard legacy customizations or claim cross-device delivery.
+Automatic preparation and baseline capture MUST precede starting sync tasks, so
+new defaults cannot be mistaken for offline edits over an existing cloud layout.
 Failure to read or persist that journal MUST preserve local content and pause
 imports/publication until explicit retry. Layout-only imports MUST NOT be
 mistaken for local saved-content edits.
