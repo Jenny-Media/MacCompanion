@@ -431,7 +431,7 @@ same-name snippets with different content. Journal completed source imports in
 the same atomic Keychain record as the actions so retries and later user removals
 cannot duplicate or resurrect imports. An unreadable source or destination must
 not be replaced with defaults. Custom content remains local, non-synchronizing,
-WhenUnlockedThisDeviceOnly unless the separate iOS 1.1 saved-controls sync consent
+WhenUnlockedThisDeviceOnly unless iOS 1.1 iCloud Sync
 below is enabled. It remains excluded from diagnostics and ActivityKit.
 Input continues through the existing ready-foreground, PTY-generation and
 whole-action queue admission policies. Retained menu actions are invalid after
@@ -449,7 +449,7 @@ Quick actions can be reordered, hidden and augmented with explicitly configured
 shortcut chords or saved text (at most 256 Unicode scalars in the legacy profiles;
 the shared iOS Terminal profile above supports 4096 UTF-8 bytes). Store custom content
 in a distinct local, non-synchronizing WhenUnlockedThisDeviceOnly Keychain
-entry. The separate iOS 1.1 saved-controls consent below can additionally sync
+entry. The iOS 1.1 iCloud extension below also syncs
 shortcut and text definitions. Never include them in diagnostics or ActivityKit. Screen Sharing and Trackpad
 send saved text as balanced Unicode key events; Terminal uses its existing UTF-8
 PTY path and negotiated bracketed paste. Neither claims a remote clipboard write.
@@ -869,7 +869,7 @@ An explicit optional free non-consumable `media.jenny.maccompanion.pro.trial14`,
 
 Free access has no session/time expiry: one saved Mac, one SSH key, Desktop, Trackpad & Keyboard, basic Terminal, local/private-VPN addresses, advanced ports, display selection/zoom, standard keyboard/number row, accessibility, app lock, server verification, diagnostics and key import/export. Pro adds multiple saved Macs, multiple named keys, automatic key installation, customized terminal rows, shortcuts and snippets. Existing extra Macs/keys are preserved for management/export/deletion when Pro is unavailable. A stable free selection remains usable; never terminate an active connection when entitlement changes. Purchasing/restoring unlocks preserved records. Commerce gates never grant SSH trust or change protocol authorization.
 
-iCloud library sync MUST default off on each installation and require explicit consent after a privacy disclosure. It uses synchronizable generic-password items in the app's existing Keychain access group, protected by iCloud Keychain; it does not introduce custom cryptography, a CloudKit container, or app authentication. Sync transports saved Mac UUIDs, names, ordered addresses, ports and non-content session preferences. Passwords, SSH private keys, accepted server keys, app-unlock consent and the sync opt-in itself remain device-local. Saved text and custom actions remain local unless the separate iOS 1.1 saved-controls consent below is enabled. Cloud data never establishes server trust or opens a session.
+iCloud library sync MUST default off on each installation and require explicit consent after a privacy disclosure. It uses synchronizable generic-password items in the app's existing Keychain access group, protected by iCloud Keychain; it does not introduce custom cryptography, a CloudKit container, or app authentication. Sync transports saved Mac UUIDs, names, ordered addresses, ports and non-content session preferences. Passwords, SSH private keys, accepted server keys, app-unlock consent and the sync opt-in itself remain device-local. On iOS 1.1, the same opt-in also covers saved shortcuts, saved text and their placements as specified below. Cloud data never establishes server trust or opens a session.
 
 Each device writes its own bounded record versions, ordered by logical revision then device UUID. A validated newer tombstone suppresses a deleted Mac without deleting local credentials. Malformed, oversized, duplicate, unsupported or unreadable cloud data MUST preserve local records. Cloud work occurs only while opted in and the app is unlocked; refresh is performed on foreground and explicit request, never per input event. Local saves remain usable offline. Disabling stops reads and writes and retains local Macs and existing cloud copies. Deleting cloud copies is an explicit, separate operation with a warning to disable other devices first. The UI MUST distinguish local Keychain submission from confirmed delivery; it cannot report a successful multi-device sync without evidence.
 
@@ -1221,16 +1221,16 @@ overlay. Pause, interruption, review, recovery, presentation and mode transition
 retire current finger feedback. Rejected clicks produce no success pulse/haptic.
 
 
-## Optional iOS 1.1 saved-controls sync
+## iOS 1.1 saved-controls sync
 
-“Sync shortcuts & saved text” MUST default off independently on every device.
-Enabling the main iCloud switch alone MUST NOT authorize publishing or reading
-saved-content records. A separate confirmation names session shortcuts, saved
-text and their keyboard/floating-menu placements, and explains that content may
-be private. Both settings and an unlocked, available app session are required
-for cloud work. The choice itself is never synced and MUST be bound to the non-migrating
-device-only writer identity, so restored preferences cannot grant consent. Imported definitions MUST
-NOT execute, fill a composer draft, establish Mac trust, or open a connection.
+The main iCloud Sync setting MUST control saved Macs, supported preferences,
+keyboard layouts, saved shortcuts, saved text and their keyboard/floating-menu
+placements together. There is no separate saved-content switch or consent.
+The main setting still defaults off and requires a concise disclosure naming
+these categories before enabling. Existing enabled main settings include saved
+content on iOS 1.1; obsolete saved-content flags MUST NOT gate it. An unlocked,
+available app session is required for cloud work. Imported definitions MUST NOT
+execute, fill a composer draft, establish Mac trust, or open a connection.
 Passwords, SSH private keys, accepted host keys, live input, unsaved composer
 drafts, clipboard contents and session history are excluded.
 
@@ -1272,11 +1272,11 @@ row that has not arrived or was removed, retain it on the main row; reapply its
 intended placement after a layout import. No unrelated local definitions,
 credentials, mode preferences or Mac identities are replaced.
 
-Turning either setting off stops further reads/writes and retains local content
+Turning the main setting off stops further reads/writes and retains local content
 and existing cloud records. An admitted Keychain write may drain; cloud removal
 MUST wait for it before deleting this service. Existing Delete Mac Data from
 iCloud includes this service even when content sync is off or unrelated Mac
 history is unreadable, preserves local
-definitions, and clears the saved-content opt-in. Other devices must be turned
+definitions, and turns main sync off on this device. Other devices must be turned
 off first. Report local Keychain submission separately from verified delivery
 to another signed physical device.

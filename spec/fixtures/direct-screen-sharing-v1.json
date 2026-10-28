@@ -154,11 +154,11 @@
       "valid": false
     },
     {
-      "value": "ééééééééééééééééééééééééééééééé",
+      "value": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
       "valid": true
     },
     {
-      "value": "éééééééééééééééééééééééééééééééé",
+      "value": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
       "valid": false
     },
     {
@@ -871,7 +871,7 @@
       "authenticationSuccessNeedsActiveAdmission": false,
       "completedFailedAttemptRequiresExplicitRetry": true,
       "authenticationPresentation": "persistentUnlockCard",
-      "evaluatingButtonTitle": "Unlocking…",
+      "evaluatingButtonTitle": "Unlocking\u2026",
       "lockedButtonTitle": "Unlock",
       "busyButtonEnabled": false,
       "separateBrandedTransition": false,
@@ -1044,8 +1044,7 @@
         "service": "media.jenny.maccompanion.cloud-saved-controls.v1",
         "defaultEnabled": false,
         "requiresMainSync": true,
-        "requiresSeparateConsent": true,
-        "optInIsDeviceLocal": true,
+        "requiresSeparateConsent": false,
         "includes": [
           "shortcut definitions",
           "saved text",
@@ -1082,11 +1081,12 @@
         "disableRetainsCloudCopy": true,
         "deletionDrainsAdmittedWrites": true,
         "existingCloudRemovalIncludesContentWhenOff": true,
-        "deletionClearsContentOptIn": true,
         "generationDerivedFromContentDigest": true,
-        "consentBoundToDeviceWriter": true,
         "durableMigrationIdentitiesBeforeProjection": true,
-        "deleteIndependentOfMacJournalReadability": true
+        "deleteIndependentOfMacJournalReadability": true,
+        "followsMainSync": true,
+        "enabledMainSettingIncludesExistingContent": true,
+        "deletionDisablesMainSync": true
       }
     },
     "terminalKeyboard": {
@@ -1403,16 +1403,16 @@
     },
     {
       "id": "unicode",
-      "value": "工作 Mac",
+      "value": "\u5de5\u4f5c Mac",
       "macValid": true,
-      "normalizedName": "工作 Mac",
+      "normalizedName": "\u5de5\u4f5c Mac",
       "keyValid": true
     },
     {
       "id": "emoji",
-      "value": "Mac 🖥️",
+      "value": "Mac \ud83d\udda5\ufe0f",
       "macValid": true,
-      "normalizedName": "Mac 🖥️",
+      "normalizedName": "Mac \ud83d\udda5\ufe0f",
       "keyValid": true
     },
     {
@@ -1448,7 +1448,7 @@
     },
     {
       "id": "bidi-format",
-      "value": "Mac‮",
+      "value": "Mac\u202e",
       "macValid": false,
       "keyValid": false
     },
@@ -2399,8 +2399,8 @@
       "normalized": "Studio Mac"
     },
     {
-      "value": "开发 Mac",
-      "normalized": "开发 Mac"
+      "value": "\u5f00\u53d1 Mac",
+      "normalized": "\u5f00\u53d1 Mac"
     },
     {
       "value": "",
@@ -2415,7 +2415,7 @@
       "normalized": null
     },
     {
-      "value": "Mac‮Name",
+      "value": "Mac\u202eName",
       "normalized": null
     }
   ],

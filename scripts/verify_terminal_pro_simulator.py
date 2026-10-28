@@ -68,7 +68,7 @@ def main():
     parser.add_argument('--generate-only', action='store_true', help='Generate the private QA project without running tests')
     parser.add_argument('--composer-ui', action='store_true', help='Generate the simulator-only Maps-style composer app and native drag test scheme')
     parser.add_argument('--cold-start-ui', action='store_true', help='Generate native cold-start admission interaction tests')
-    parser.add_argument('--saved-controls-ui', action='store_true', help='Check separate saved-content consent with an injected no-cloud QA app')
+    parser.add_argument('--saved-controls-ui', action='store_true', help='Check unified sync consent and concise guidance with an injected no-cloud QA app')
     parser.add_argument('--settings-ui', action='store_true', help='Also test gear navigation and live sheet appearance using native UI interactions')
     parser.add_argument('--screen-text-ui', action='store_true', help='Generate the simulator-only native/area text selection UI journey')
     parser.add_argument('--mac-shortcuts-ui', action='store_true', help='Generate the simulator-only per-Mac shortcuts and native swipe tests')

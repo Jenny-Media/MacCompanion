@@ -366,9 +366,9 @@ struct DirectCloudKeyboardVersion: Codable, Equatable {
                     if !self.pending.isEmpty {
                         self.status = "Some keyboard layouts couldn’t sync. Local controls are kept on this device; large layouts may exceed the sync limit."
                     } else if waitingForControls {
-                        self.status = "Some keyboard rows are waiting for you to open their controls. Saved-content sync has its own setting."
+                        self.status = "Open the session controls once to prepare their keyboard rows."
                     } else {
-                        self.status = "Keyboard rows and built-in key choices sync. Saved-content sync has its own setting."
+                        self.status = "Keyboard layouts and built-in keys sync."
                     }
                 }
             } catch {

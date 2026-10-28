@@ -8,9 +8,9 @@ on the signed-in account's iCloud Keychain availability and propagation.
 
 Row order, row names, visibility, alignment, initial scroll edge, and built-in
 keys / controls and row restore presets sync. Saved shortcut definitions, saved text and their button
-placements remain on each device unless the separate saved-controls option below is enabled. Incoming rows retain local saved buttons at
+placements sync under the same main setting on iOS 1.1. Incoming rows retain local saved buttons at
 the end of their matching row. If that row was removed remotely, those buttons
-move to the main row rather than disappearing. Saved menu definitions and positions follow that separate option; credentials
+move to the main row rather than disappearing. Saved menu definitions and positions use the same setting; credentials
 and trust records remain local.
 
 The isolated `media.jenny.maccompanion.cloud-keyboard-layouts.v1` service does
@@ -18,7 +18,7 @@ not change the 1.0 saved-Mac schema. Older clients ignore this service. Each
 writer retains one bounded version per controls family; revision and writer UUID
 resolve concurrent edits deterministically. A new device reads cloud versions
 before publishing defaults. Turning sync off preserves cloud records and tracks
-later local edits without cloud access. Remove iCloud Data removes the metadata, layout and optional saved-content services.
+later local edits without cloud access. Remove iCloud Data removes the metadata, layout and saved-content services.
 
 The existing transport limit is 4 KiB per encoded version. Oversized layouts
 remain usable locally and show a sync notice; no layout is truncated. A durable
@@ -48,22 +48,23 @@ retention and Remove iCloud Data.
 Sync baseline reads do not commit local profile migrations. Shared remote-Mac
 rows wait until the existing Screen Sharing / Trackpad & Keyboard loader has
 imported legacy per-Mac definitions and menus with its Mac context. That local
-preparation triggers a refresh. Saved text and shortcuts remain local unless
-their separate sync option is enabled.
+preparation triggers a refresh. Saved text and shortcuts use the same main iCloud switch once their profiles are ready.
 Native regressions cover startup with only per-Mac legacy content, plus edits
 after an import-journal failure with the remote revision retained across Retry
 and restart.
 
 
-## Optional shortcuts and saved text
+## Shortcuts and saved text
 
 The iPhone/iPad consent footer says “Encrypted iCloud sync.” What Syncs and
 Credentials & iCloud explain that iCloud Keychain must be enabled on each device.
-The separate “Sync shortcuts & saved text” option starts off and requires its own
-confirmation. It includes shortcut sequences, saved text and their keyboard and
-floating-menu positions; it never includes credentials, trust, unsaved composer
-drafts, clipboard or session history. Imported controls never execute themselves.
-The flag is local to each installation, and the main iCloud switch must also be on.
+The main iCloud Sync switch includes shortcut sequences, saved text and their
+keyboard/menu positions by default on iOS 1.1, including when that main switch
+was already enabled. There is no separate content option. The main switch still
+starts off on a new installation; its confirmation names all synced categories.
+Credentials, trust, unsaved composer drafts, clipboard and session history stay
+local. Imported controls never execute themselves. Obsolete content-consent
+preferences do not enable, disable or gate the main setting.
 
 The independent saved-controls service merges definitions individually, retaining
 concurrent additions and using revision/writer order for conflicts and deletion
@@ -77,17 +78,18 @@ logical version is capped at 32768 bytes and the service at 512 wire records.
 Incomplete delivery, malformed data, capacity or journal failure preserves local
 content and shows a retry notice. No content is truncated to fit.
 
-Turning either switch off retains existing local/cloud data. Delete Mac Data from
+Turning the main switch off retains existing local/cloud data. Delete Mac Data from
 iCloud also removes saved-content records after admitted writes drain, preserves
-local controls and clears this additional opt-in. Signed two-device propagation
+local controls and turns main sync off here. Signed two-device propagation
 still needs physical acceptance; synthetic transport tests establish merge and
 failure behavior, not delivery through a real Apple Account.
 
-The additional consent is bound to this device's non-migrating Keychain writer,
-so restoring app preferences to another device cannot enable private-content
-sync. Saved-content observers use committed profile identities and wait for
-legacy collision migration to persist before projecting it. Import retry also
-recognizes normalized fallback placements instead of publishing them as edits.
-Cloud removal reaches the independent content service even if the Mac journal
-cannot be read. A remembered content choice can be switched off while main sync
-is off, before any future metadata-only re-enable.
+Saved-content observers use committed profile identities and wait for legacy
+collision migration to persist before projecting it. Import retry recognizes
+normalized fallback placements instead of publishing them as edits. Cloud removal
+reaches the independent content service even if the Mac journal cannot be read.
+
+The iOS copy audit uses concise native icon rows for gestures, server identity,
+manual key setup and settings details. Security commands, matching-key-type
+checks, file permissions, deletion consequences and local-data retention remain
+explicit. These presentation changes do not alter input or SSH authentication.

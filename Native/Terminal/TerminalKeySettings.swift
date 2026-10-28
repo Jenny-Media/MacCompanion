@@ -99,7 +99,7 @@ struct TerminalKeySettings: View {
                     #if os(macOS)
                     Text("Install the public key from the Mac’s Connection Settings → SSH Keys. Imported keys stay in Keychain; referenced keys stay in their original files. Neither is synced.")
                     #elseif os(iOS)
-                    Text("To install a public key, open Mac Settings → Set Up Key on This Mac. Private keys stay securely on this device and don’t sync.")
+                    Text("Install public keys in Mac Settings → Set Up Key on This Mac. Private keys stay on this device.")
                     #else
                     Text("Install the public key from the Mac’s Terminal Access settings. Private keys stay in this device’s Keychain and are never synced.")
                     #endif

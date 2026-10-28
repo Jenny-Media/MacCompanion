@@ -477,7 +477,7 @@ private final class SavedControlsObservers: @unchecked Sendable {
                 if self.current(epoch) {
                     self.status = !retained.isEmpty ? "Some saved controls exceed the sync limit. Their local content is kept."
                         : waitingForControls ? "Open the session controls once to finish preparing saved content."
-                        : "Shortcuts, saved text and their button positions sync. Changes may take time to reach other devices."
+                        : "Saved shortcuts, text and button positions sync."
                 }
             } catch {
                 if self.generation == epoch && self.readable { self.status = "Shortcuts and saved text couldn’t sync. Local content is kept. Retry with Refresh iCloud." }

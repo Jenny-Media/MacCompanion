@@ -78,7 +78,7 @@ private final class SavedContentMemoryCloud: DirectCloudTransport, @unchecked Se
     private func versions(_ raw: SavedContentMemoryCloud) throws -> [DirectCloudSavedVersion] {
         try DirectSavedControlsTransport(base: raw).read().map { try JSONDecoder().decode(DirectCloudSavedVersion.self, from: $0) }
     }
-    func testIndexedPolicyRequiresSeparateConsentAndCompleteVersions() throws {
+    func testIndexedPolicyUsesMainSyncAndCompleteVersions() throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-screen-sharing-v1", withExtension: "json"))
         let data = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
         let additions = try XCTUnwrap(data["clientAdditions"] as? [String: Any])
@@ -86,7 +86,9 @@ private final class SavedContentMemoryCloud: DirectCloudTransport, @unchecked Se
         let policy = try XCTUnwrap(cloud["savedControls"] as? [String: Any])
         XCTAssertEqual(policy["service"] as? String, DirectSavedControlsTransport.service)
         XCTAssertEqual(policy["defaultEnabled"] as? Bool, false)
-        XCTAssertEqual(policy["requiresSeparateConsent"] as? Bool, true)
+        XCTAssertEqual(policy["requiresSeparateConsent"] as? Bool, false)
+        XCTAssertEqual(policy["followsMainSync"] as? Bool, true)
+        XCTAssertEqual(policy["enabledMainSettingIncludesExistingContent"] as? Bool, true)
         XCTAssertEqual(policy["importExecutesActions"] as? Bool, false)
         XCTAssertEqual(policy["maximumLogicalBytes"] as? Int, DirectCloudSavedVersion.maximumBytes)
         XCTAssertEqual(policy["pieceBytes"] as? Int, DirectSavedControlsTransport.pieceBytes)
@@ -294,42 +296,37 @@ private final class SavedContentMemoryCloud: DirectCloudTransport, @unchecked Se
         XCTAssertFalse(try versions(raw).contains { $0.writer == writerB })
         one.setEnabled(false); two.setEnabled(false)
     }
-    func testMainSettingAloneDoesNotEnableContentAndDeletionClearsChoice() async throws {
+    func testMainSyncDefaultsOffAndRemovalDisablesTheSingleSetting() async throws {
         let name = UUID().uuidString, defaults = try XCTUnwrap(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name) }
-        let folder = URL.temporaryDirectory.appending(path: UUID().uuidString); defer { try? FileManager.default.removeItem(at: folder) }
-        let cloud = DirectCloudSyncV1(defaults: defaults, url: folder.appending(path: "macs.json"), transport: SavedContentMemoryCloud(), writerID: UUID())
-        XCTAssertFalse(cloud.savedControlsEnabled); cloud.setSavedControlsEnabled(true); XCTAssertFalse(cloud.savedControlsEnabled)
-        cloud.setEnabled(true); XCTAssertFalse(cloud.savedControlsEnabled)
-        cloud.setSavedControlsEnabled(true); XCTAssertTrue(cloud.savedControlsEnabled)
-        cloud.setEnabled(false); XCTAssertTrue(cloud.savedControlsEnabled, "Disabling main sync remembers the separate choice")
+        let url = URL.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let content = SavedContentMemoryCloud(); content.inject(Data("synthetic".utf8), account: "synthetic")
+        let cloud = DirectCloudSyncV1(defaults: defaults, url: url, transport: SavedContentMemoryCloud(), writerID: UUID(), savedControlsTransport: content)
+        XCTAssertFalse(cloud.enabled)
+        cloud.setEnabled(true); XCTAssertTrue(defaults.bool(forKey: DirectCloudSyncV1.enabledKey))
         cloud.removeCloudCopies()
         for _ in 0..<500 where cloud.busy { try await Task.sleep(for: .milliseconds(10)) }
-        XCTAssertFalse(cloud.savedControlsEnabled); XCTAssertFalse(defaults.bool(forKey: DirectCloudSyncV1.savedControlsEnabledKey))
+        XCTAssertFalse(cloud.busy); XCTAssertFalse(cloud.enabled); XCTAssertTrue(content.snapshot.isEmpty)
+        XCTAssertFalse(defaults.bool(forKey: DirectCloudSyncV1.enabledKey))
     }
-    func testRestoredPreferencesRequireConsentForTheNewDeviceWriter() throws {
+    func testExistingEnabledMainSyncIgnoresObsoleteSavedContentFlags() throws {
+        for oldChoice in [false, true] {
+            let name = UUID().uuidString, defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+            defer { defaults.removePersistentDomain(forName: name) }
+            defaults.set(true, forKey: DirectCloudSyncV1.enabledKey)
+            defaults.set(oldChoice, forKey: "direct-cloud-saved-controls-enabled-v1")
+            defaults.set(UUID().uuidString, forKey: "direct-cloud-saved-controls-consent-writer-v1")
+            let cloud = DirectCloudSyncV1(defaults: defaults, url: URL.temporaryDirectory.appending(path: UUID().uuidString), transport: SavedContentMemoryCloud(), writerID: UUID())
+            XCTAssertTrue(cloud.enabled, "Only the main choice governs sync")
+        }
+    }
+    func testObsoleteContentConsentCannotTurnMainSyncOn() throws {
         let name = UUID().uuidString, defaults = try XCTUnwrap(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name) }
-        defaults.set(true, forKey: DirectCloudSyncV1.enabledKey)
-        defaults.set(true, forKey: DirectCloudSyncV1.savedControlsEnabledKey)
-        defaults.set(UUID().uuidString, forKey: "direct-cloud-saved-controls-consent-writer-v1")
-        let cloud = DirectCloudSyncV1(defaults: defaults, url: URL.temporaryDirectory.appending(path: UUID().uuidString),
-            transport: SavedContentMemoryCloud(), writerID: UUID())
-        XCTAssertFalse(cloud.savedControlsEnabled, "A migrated Boolean is not this device's consent")
-    }
-    func testExplicitConsentSurvivesRestartOnlyOnTheSameWriter() throws {
-        let name = UUID().uuidString, defaults = try XCTUnwrap(UserDefaults(suiteName: name)), writer = UUID()
-        defer { defaults.removePersistentDomain(forName: name) }
-        defaults.set(true, forKey: DirectCloudSyncV1.enabledKey)
-        let url = URL.temporaryDirectory.appending(path: UUID().uuidString)
-        let first = DirectCloudSyncV1(defaults: defaults, url: url, transport: SavedContentMemoryCloud(), writerID: writer)
-        first.setSavedControlsEnabled(true); XCTAssertTrue(first.savedControlsEnabled)
-        let same = DirectCloudSyncV1(defaults: defaults, url: url, transport: SavedContentMemoryCloud(), writerID: writer)
-        XCTAssertTrue(same.savedControlsEnabled)
-        same.setEnabled(false); XCTAssertTrue(same.savedControlsEnabled)
-        same.setSavedControlsEnabled(false)
-        XCTAssertFalse(same.savedControlsEnabled)
-        XCTAssertNil(defaults.string(forKey: DirectCloudSyncV1.savedControlsConsentWriterKey))
+        defaults.set(true, forKey: "direct-cloud-saved-controls-enabled-v1")
+        let cloud = DirectCloudSyncV1(defaults: defaults, url: URL.temporaryDirectory.appending(path: UUID().uuidString), transport: SavedContentMemoryCloud(), writerID: UUID())
+        XCTAssertFalse(cloud.enabled)
     }
     func testUnreadableMacJournalDoesNotSkipSavedContentDeletion() async throws {
         let name = UUID().uuidString, defaults = try XCTUnwrap(UserDefaults(suiteName: name))

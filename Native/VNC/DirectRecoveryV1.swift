@@ -112,9 +112,10 @@ struct DirectGuidanceRow: View {
     let title: String
     let detail: String
     let symbol: String
+    @ScaledMetric(relativeTo: .title3) private var symbolWidth = 26
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: symbol).font(.title3).foregroundStyle(.tint).frame(width: 26).accessibilityHidden(true)
+            Image(systemName: symbol).font(.title3).foregroundStyle(.tint).frame(width: symbolWidth).accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
                 Text(title).font(.headline)
                 Text(detail).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -139,7 +140,8 @@ struct DirectMacSetupGuide: View {
                     Label("System Settings → General → Sharing", systemImage: "gearshape").font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("2. Add its address") {
-                    DirectGuidanceRow(title: "Local or private VPN address", detail: "Use your Mac’s hostname or IP address from Sharing settings. For a private VPN, connect both devices to the same network.", symbol: "network")
+                    DirectGuidanceRow(title: "Mac address", detail: "Use the hostname or IP address shown in Sharing settings.", symbol: "network")
+                    DirectGuidanceRow(title: "Using a private VPN?", detail: "Connect both devices to the same private VPN.", symbol: "lock.shield")
                 }
                 Section("3. Sign in") {
                     DirectGuidanceRow(title: "Your Mac account", detail: "Enter your Mac username and password.", symbol: "person.badge.key")
@@ -183,8 +185,8 @@ struct DirectSyncSecurityForm: View {
         }.directGroupedForm()
         .sheet(item: $sheet) { item in
             #if os(iOS)
-            if item == .enableSync || item == .enableSavedContent {
-                DirectCloudEnableSheet(cloud: cloud, savedContentOnly: item == .enableSavedContent).directAppearance()
+            if item == .enableSync {
+                DirectCloudEnableSheet(cloud: cloud).directAppearance()
             } else {
                 DirectCloudInformationSheet(kind: item, cloud: cloud).directAppearance()
             }
@@ -218,24 +220,16 @@ private struct DirectCloudSettingsSection: View {
     let present: (DirectCloudSheet) -> Void
     @State private var lock = DirectAppLockV1.shared
     private var syncedItems: [String] {
-        var items = ["Saved Macs, names and models", "Addresses and service ports", "My Macs tap and swipe shortcuts",
-                     "Display selection and fullscreen", "Pointer speed, input mode and cursor following"]
         #if os(iOS)
-        items.append("Keyboard row names, order, appearance and built-in key choices")
+        ["Saved Macs and connection details", "My Macs tap and swipe shortcuts", "Screen Sharing preferences",
+         "Keyboard layouts and built-in keys", "Saved shortcuts, text and button positions"]
+        #else
+        ["Saved Macs, names and models", "Addresses and service ports", "My Macs tap and swipe shortcuts",
+         "Display selection and fullscreen", "Pointer speed, input mode and cursor following"]
         #endif
-        #if os(iOS)
-        if cloud.savedControlsEnabled { items.append("Session shortcuts, saved text and their keyboard/menu positions") }
-        #endif
-        return items
     }
     private var localItems: [String] {
-        var items = ["Passwords and SSH keys", "Trusted Mac identities", "Appearance and app-lock settings"]
-        #if os(iOS)
-        if !cloud.savedControlsEnabled { items.append("Saved shortcuts, text and their keyboard buttons") }
-        #else
-        items.append("Saved shortcuts, text and their keyboard buttons")
-        #endif
-        return items
+        ["Passwords and SSH keys", "Trusted Mac identities", "Appearance and app-lock settings"]
     }
     var body: some View {
         Section {
@@ -250,26 +244,17 @@ private struct DirectCloudSettingsSection: View {
             } else {
                 VStack(alignment: .leading, spacing: 4) {
                     #if os(iOS)
-                    Text("Sync saved Macs and keyboard layouts across your devices.")
-                    if let keyboardStatus = cloud.keyboardSyncStatus { Text(keyboardStatus) }
+                    Text("Sync Macs, controls and saved text.")
+                    if cloud.enabled {
+                        if let keyboardStatus = cloud.keyboardSyncStatus { Label(keyboardStatus, systemImage: "keyboard") }
+                        if let contentStatus = cloud.savedControlsSyncStatus { Label(contentStatus, systemImage: "text.quote") }
+                    }
                     #else
                     Text("Sync saved Macs across your devices.")
                     #endif
                     Text(cloud.status)
                 }.font(.footnote).foregroundStyle(.secondary)
             }
-            #if os(iOS)
-            Toggle("Sync shortcuts & saved text", isOn: Binding(get: { cloud.savedControlsEnabled }, set: {
-                if $0 { present(.enableSavedContent) } else { cloud.setSavedControlsEnabled(false) }
-            })).disabled(cloud.busy || !cloud.savedControlsEnabled && !cloud.canEnableSavedControls)
-                .accessibilityIdentifier("icloud-saved-content-toggle")
-            if cloud.savedControlsEnabled, let status = cloud.savedControlsSyncStatus {
-                Text(status).font(.footnote).foregroundStyle(.secondary)
-            } else {
-                Text(cloud.enabled ? "Optional. Share saved content and its button positions across your devices." : "Enable iCloud Sync to share shortcuts and saved text.")
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
-            #endif
             DisclosureGroup("What Syncs") {
                 VStack(alignment: .leading, spacing: 12) {
                     DirectInformationGroup(title: "Across devices", symbol: "icloud", items: syncedItems)
@@ -307,7 +292,7 @@ private struct DirectCloudSettingsSection: View {
 enum DirectCloudSheet: String, Identifiable {
     case credentials, deleteData
     #if os(iOS)
-    case enableSync, enableSavedContent
+    case enableSync
     #endif
     var id: String { rawValue }
 }
@@ -315,10 +300,6 @@ enum DirectCloudSheet: String, Identifiable {
 #if os(iOS)
 private struct DirectCloudEnableSheet: View {
     let cloud: DirectCloudSyncV1
-    let savedContentOnly: Bool
-    init(cloud: DirectCloudSyncV1, savedContentOnly: Bool = false) {
-        self.cloud = cloud; self.savedContentOnly = savedContentOnly
-    }
     @State private var lock = DirectAppLockV1.shared
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -327,36 +308,29 @@ private struct DirectCloudEnableSheet: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                Text(savedContentOnly ? "Sync shortcuts & saved text?" : "Enable iCloud Sync?").font(.title2.bold()).accessibilityAddTraits(.isHeader)
-                summary("Syncs", symbol: "icloud", detail: savedContentOnly
-                    ? "Session shortcuts, saved text and their button positions."
-                    : cloud.savedControlsEnabled ? "Saved Macs, keyboard layouts, shortcuts and saved text." : "Saved Macs and keyboard layouts.")
+                Text("Enable iCloud Sync?").font(.title2.bold()).accessibilityAddTraits(.isHeader)
+                summary("Syncs", symbol: "icloud", detail: "Saved Macs, keyboard layouts, shortcuts and saved text.")
                     .accessibilityIdentifier("icloud-enable-synced")
-                summary("Stays on this device", symbol: "icloud.slash",
-                    detail: savedContentOnly || cloud.savedControlsEnabled
-                        ? "Passwords, SSH keys and trusted Mac identities." : "Passwords, SSH keys, session shortcuts and saved text.")
+                summary("Stays on this device", symbol: "icloud.slash", detail: "Passwords, SSH keys and trusted Mac identities.")
                     .accessibilityIdentifier("icloud-enable-local")
-                if savedContentOnly {
-                    Text("Saved content may include private information.").font(.footnote).foregroundStyle(.secondary)
-                }
                 Text("Encrypted iCloud sync").font(.footnote).foregroundStyle(.secondary)
             }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 8) {
                 Button {
-                    guard lock.canAccess, !cloud.busy, !savedContentOnly || cloud.enabled else { return }
-                    if savedContentOnly { cloud.setSavedControlsEnabled(true) } else { cloud.setEnabled(true) }
+                    guard lock.canAccess, !cloud.busy else { return }
+                    cloud.setEnabled(true)
                     dismiss()
                 } label: {
-                    Text(savedContentOnly ? "Enable Content Sync" : "Enable Sync").font(.headline).frame(maxWidth: .infinity, minHeight: 32)
+                    Text("Enable Sync").font(.headline).frame(maxWidth: .infinity, minHeight: 32)
                 }
                 .buttonStyle(.borderedProminent).controlSize(.large)
-                .disabled(cloud.busy || !lock.canAccess || savedContentOnly && !cloud.canEnableSavedControls)
-                .accessibilityIdentifier(savedContentOnly ? "icloud-saved-content-confirm" : "icloud-enable-confirm")
+                .disabled(cloud.busy || !lock.canAccess)
+                .accessibilityIdentifier("icloud-enable-confirm")
                 Button("Cancel", role: .cancel) { dismiss() }
                     .frame(maxWidth: .infinity, minHeight: 44).buttonStyle(.plain)
-                    .accessibilityIdentifier(savedContentOnly ? "icloud-saved-content-cancel" : "icloud-enable-cancel")
+                    .accessibilityIdentifier("icloud-enable-cancel")
             }.padding(.horizontal, 24).padding(.vertical, 12).background(.bar)
         }
         .presentationSizing(.form)
@@ -393,38 +367,31 @@ struct DirectCloudInformationSheet: View {
                 VStack(alignment: .leading, spacing: 20) {
                     if kind == .credentials {
                         DirectInformationGroup(title: "Your logins stay local", symbol: "lock.shield", items: [
-                            "Passwords and private keys aren’t included in app sync.",
-                            "Set up a login or SSH key on each device before connecting."])
-                        DirectInformationGroup(title: "Why", symbol: "info.circle", items: [
-                            "You choose which devices can use your Mac logins and private keys.",
-                            "Local credentials are stored in this device’s Keychain. Referenced key files stay in their original location."])
-                        DirectInformationGroup(title: "How Mac entries sync", symbol: "icloud", items: [
-                            "Uses iCloud Keychain with your Apple Account and trusted devices.",
-                            "Enable iCloud Keychain on every device you want to sync."])
-                        #if os(iOS)
-                        DirectInformationGroup(title: "Optional saved content", symbol: "text.quote", items: [
-                            "Session shortcuts, saved text and their button positions sync only after you enable their separate setting.",
-                            "The choice starts off on every device. Saved content may contain private information."])
+                            "Passwords, SSH keys and trusted Mac identities don’t sync.",
+                            "Set up a login or SSH key on each device."])
+                        #if !os(iOS)
+                        DirectInformationGroup(title: "Local storage", symbol: "internaldrive", items: [
+                            "Passwords and imported keys use this device’s Keychain.",
+                            "Referenced keys stay in their original files."])
                         #endif
+                        DirectInformationGroup(title: "How sync works", symbol: "icloud", items: [
+                            "Uses iCloud Keychain with your Apple Account.",
+                            "Enable iCloud Keychain on each device."])
                         Link("About iCloud Keychain security", destination: URL(string: "https://support.apple.com/en-us/102651")!)
                     } else {
                         #if os(iOS)
                         DirectInformationGroup(title: "Delete from iCloud", symbol: "icloud.slash", items: [
-                            "Saved Mac entries, synced desktop preferences, keyboard layouts and any synced shortcuts or saved text."])
+                            "Saved Macs, preferences, keyboard layouts, shortcuts and saved text."])
                         #else
                         DirectInformationGroup(title: "Delete from iCloud", symbol: "icloud.slash", items: [
                             "Saved Mac entries and their synced desktop preferences."])
                         #endif
                         DirectInformationGroup(title: "Keep on this device", symbol: "internaldrive", items: [
-                            "Your saved Macs, passwords, SSH keys and local preferences."])
-                        #if os(iOS)
-                        Text("Your local shortcuts and saved text are kept. Their additional sync setting will be turned off.")
-                            .font(.footnote).foregroundStyle(.secondary)
-                        #endif
+                            "Your local Macs, controls, text, logins and preferences."])
                         DirectInformationGroup(title: "Before you continue", symbol: "exclamationmark.triangle", items: [
-                            "Turn off Mac Companion sync on your other devices first. Otherwise they may upload their saved Macs again.",
-                            "This turns sync off on this device. Removal may take a moment to reach other devices.",
-                            "Turning sync back on can upload your local Macs again."])
+                            "Turn off sync on your other devices first.",
+                            "Sync turns off here; cloud deletion may take time.",
+                            "Re-enabling sync can upload local data again."])
                     }
                 }.padding(24).frame(maxWidth: 560, alignment: .leading).frame(maxWidth: .infinity)
             }.navigationTitle(kind == .credentials ? "Credentials & iCloud" : "Delete iCloud Data")
@@ -468,7 +435,7 @@ struct DirectCloudInformationSheet: View {
                 cloud.removeCloudCopies(); dismiss()
             }
             Button("Cancel", role: .cancel) {}
-        } message: { Text("This deletes the app’s synced Mac data and turns sync off here. Your local Macs and logins are kept. Other devices with sync enabled can upload data again.") }
+        } message: { Text("Synced data is deleted; sync turns off here. Local data is kept. Other devices can upload data again.") }
         #endif
         .onChange(of: lock.canAccess) { _, allowed in if !allowed { confirmDeletion = false; dismiss() } }
     }
@@ -636,11 +603,21 @@ struct TerminalServerTrustView: View {
                     Image(systemName: "lock.shield").font(.largeTitle).foregroundStyle(.blue)
                     #endif
                     Text("Is this your Mac?").font(.title.bold())
+                    #if os(iOS)
+                    DirectGuidanceRow(title: "1. Check on your Mac", detail: "Compare this fingerprint with the matching SSH server key on \(macName).", symbol: "desktopcomputer")
+                    #else
                     Text("You’re connecting to \(macName). Independently check this SSH server fingerprint on your Mac before trusting it.")
+                    #endif
                     Text(fingerprint).font(.footnote.monospaced()).textSelection(.enabled).padding(16)
                         .frame(maxWidth: .infinity, alignment: .leading).background(.quaternary, in: RoundedRectangle(cornerRadius: 14))
+                    #if os(iOS)
+                    Text("ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub")
+                        .font(.footnote.monospaced()).textSelection(.enabled)
+                    DirectGuidanceRow(title: "2. Match the key type", detail: "For another SSH key type, check its matching host-key file instead.", symbol: "key")
+                    #else
                     Text("On the Mac, compare the matching server key with ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub. If the server uses another key type, compare that matching host key instead.")
                         .font(.footnote).foregroundStyle(.secondary)
+                    #endif
                     #if !os(iOS)
                     Button("Trust & Connect") { answer(true) }.buttonStyle(.borderedProminent).controlSize(.large).frame(maxWidth: .infinity, minHeight: 44)
                     #endif

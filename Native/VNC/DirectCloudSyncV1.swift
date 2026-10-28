@@ -125,10 +125,6 @@ struct DirectCloudKeychain: DirectCloudTransport {
     private var keyboardCloud: DirectKeyboardCloudSync?
     private var savedControlsCloud: DirectSavedControlsCloudSync?
     private let savedControlsTransport: any DirectCloudTransport
-    static let savedControlsEnabledKey = "direct-cloud-saved-controls-enabled-v1"
-    static let savedControlsConsentWriterKey = "direct-cloud-saved-controls-consent-writer-v1"
-    var canEnableSavedControls: Bool { enabled && readable && !busy }
-    private(set) var savedControlsEnabled: Bool = false
     var savedControlsSyncStatus: String? { savedControlsCloud?.status }
     var keyboardSyncStatus: String? { keyboardCloud?.status }
     #endif
@@ -174,14 +170,6 @@ struct DirectCloudKeychain: DirectCloudTransport {
         }
         injectedWriter = writerID; writer = resolvedWriter
         enabled = defaults.bool(forKey: Self.enabledKey)
-        #if os(iOS)
-        savedControlsEnabled = identityReadable && defaults.bool(forKey: Self.savedControlsEnabledKey)
-            && defaults.string(forKey: Self.savedControlsConsentWriterKey) == writer.uuidString
-        if !savedControlsEnabled {
-            defaults.set(false, forKey: Self.savedControlsEnabledKey)
-            defaults.removeObject(forKey: Self.savedControlsConsentWriterKey)
-        }
-        #endif
         do {
             if FileManager.default.fileExists(atPath: self.url.path) {
                 let file = try FileHandle(forReadingFrom: self.url); defer { try? file.close() }
@@ -199,15 +187,6 @@ struct DirectCloudKeychain: DirectCloudTransport {
         }
         #endif
     }
-    #if os(iOS)
-    func setSavedControlsEnabled(_ value: Bool) {
-        guard DirectAppLockV1.shared.canAccess, !value || canEnableSavedControls else { return }
-        savedControlsEnabled = value; defaults.set(value, forKey: Self.savedControlsEnabledKey)
-        if value { defaults.set(writer.uuidString, forKey: Self.savedControlsConsentWriterKey) }
-        else { defaults.removeObject(forKey: Self.savedControlsConsentWriterKey) }
-        savedControlsCloud?.setEnabled(enabled && value)
-    }
-    #endif
     func retry() {
         guard !busy, DirectAppLockV1.shared.canAccess else { return }
         #if os(iOS)
@@ -231,11 +210,6 @@ struct DirectCloudKeychain: DirectCloudTransport {
                     restored = try DirectCloudVersion.merge([], journal.versions)
                 }
                 writer = resolved; versions = restored; readable = true
-                #if os(iOS)
-                savedControlsEnabled = defaults.bool(forKey: Self.savedControlsEnabledKey)
-                    && defaults.string(forKey: Self.savedControlsConsentWriterKey) == writer.uuidString
-                savedControlsCloud?.setEnabled(enabled && savedControlsEnabled)
-                #endif
                 if let library { for mac in library.macs where !versions.contains(where: { $0.id == mac.id && $0.writer == writer }) { localChange(mac.id) } }
             } catch { recovery = .make(.cloudUnavailable, message: "Sync data is still unavailable. Local Macs and the existing history are kept."); return }
         }
@@ -246,7 +220,7 @@ struct DirectCloudKeychain: DirectCloudTransport {
         }
         if savedControlsCloud == nil && injectedWriter == nil {
             savedControlsCloud = DirectSavedControlsCloudSync(writer: writer, transport: self.savedControlsTransport)
-            savedControlsCloud?.setEnabled(enabled && savedControlsEnabled)
+            savedControlsCloud?.setEnabled(enabled)
         }
         #endif
         recovery = nil; refresh()
@@ -254,7 +228,7 @@ struct DirectCloudKeychain: DirectCloudTransport {
     func attach(_ library: DirectMacLibraryV1) {
         #if os(iOS)
         keyboardCloud?.setEnabled(enabled)
-        savedControlsCloud?.setEnabled(enabled && savedControlsEnabled)
+        savedControlsCloud?.setEnabled(enabled)
         #endif
         let firstAttachment = self.library == nil
         self.library = library
@@ -278,7 +252,7 @@ struct DirectCloudKeychain: DirectCloudTransport {
         enabled = value; defaults.set(value, forKey: Self.enabledKey)
         #if os(iOS)
         keyboardCloud?.setEnabled(value)
-        savedControlsCloud?.setEnabled(value && savedControlsEnabled)
+        savedControlsCloud?.setEnabled(value)
         #endif
         if value {
             if let library { for mac in library.macs where !versions.contains(where: { $0.id == mac.id }) { localChange(mac.id) } }
@@ -304,7 +278,7 @@ struct DirectCloudKeychain: DirectCloudTransport {
     }
     func refresh() {
         #if os(iOS)
-        if enabled { keyboardCloud?.refresh(); if savedControlsEnabled { savedControlsCloud?.refresh() } }
+        if enabled { keyboardCloud?.refresh(); savedControlsCloud?.refresh() }
         #endif
         guard enabled, !busy, readable, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable, let library, library.readable else { return }
         busy = true; generation = UUID(); let id = generation, transport = self.transport
@@ -342,9 +316,6 @@ struct DirectCloudKeychain: DirectCloudTransport {
     func removeCloudCopies() {
         guard !busy, DirectAppLockV1.shared.canAccess else { return }
         setEnabled(false)
-        #if os(iOS)
-        setSavedControlsEnabled(false)
-        #endif
         busy = true; let transport = self.transport
         Task {
             defer { busy = false }

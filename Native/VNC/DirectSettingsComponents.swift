@@ -413,17 +413,20 @@ struct DirectGestureGuide: View {
     var body: some View {
         Form {
             Section("Screen Sharing") {
-                Text("Pointer: tap where you want to click. Trackpad: slide anywhere to move the cursor.")
-                Text("Tap to click. Hold, then move to drag. Tap with two fingers to right-click. In Trackpad, scroll with two fingers.")
-                Text("Pan the zoomed view with two fingers in Pointer or three in Trackpad. Pinch to zoom the desktop image. Double-tap with two fingers to zoom in or fit.")
+                DirectGuidanceRow(title: "Move the pointer", detail: "Pointer: tap where you want to click. Trackpad: slide to move.", symbol: "cursorarrow")
+                DirectGuidanceRow(title: "Click and drag", detail: "Tap to click. Hold and move to drag. Two-finger tap to right-click.", symbol: "hand.tap")
+                DirectGuidanceRow(title: "Scroll", detail: "In Trackpad, scroll with two fingers.", symbol: "arrow.up.arrow.down")
+                DirectGuidanceRow(title: "Zoom", detail: "Pinch the desktop image. Two-finger double-tap to zoom in or fit.", symbol: "plus.magnifyingglass")
+                DirectGuidanceRow(title: "Pan the zoomed view", detail: "Use two fingers in Pointer or three in Trackpad.", symbol: "hand.draw")
             }
             Section("Trackpad & Keyboard Only") {
-                Text("Slide to move the cursor, tap to click, and hold then move to drag. Tap with two fingers to right-click. Scroll with two fingers.")
-                Text("On supported Mac connections, pinch to zoom the Mac app at the cursor.")
+                DirectGuidanceRow(title: "Move, click and drag", detail: "Slide to move. Tap to click. Hold and move to drag.", symbol: "cursorarrow.motionlines")
+                DirectGuidanceRow(title: "Two-finger gestures", detail: "Tap to right-click. Slide to scroll.", symbol: "hand.draw")
+                DirectGuidanceRow(title: "Zoom Mac apps", detail: "On supported connections, pinch at the cursor.", symbol: "plus.magnifyingglass")
             }
             Section("Session Controls") {
-                Text("Tap the More button to open controls. Or hold it, slide onto an action or category, and release. Slide away to cancel.")
-                Text("Use Customize to choose and arrange quick actions. Input preferences are in App Settings → Controls.")
+                DirectGuidanceRow(title: "Open controls", detail: "Tap More. Or hold, slide to an action and release. Slide away to cancel.", symbol: "ellipsis.circle")
+                DirectGuidanceRow(title: "Customize", detail: "Arrange quick actions in Customize. Change input in App Settings → Controls.", symbol: "slider.horizontal.3")
             }
         }.navigationTitle("Gesture Guide").navigationBarTitleDisplayMode(.inline)
     }
