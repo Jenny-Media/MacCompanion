@@ -1,5 +1,6 @@
 #if os(iOS) && MACCOMPANION_VNC_DEVELOPMENT
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 struct DirectLocalBackupDocument: FileDocument {
@@ -19,6 +20,7 @@ struct DirectLocalBackupSettings: View {
     @State private var lock = DirectAppLockV1.shared
     @State private var connections = DirectMacConnections.shared
     @State private var document: DirectLocalBackupDocument?
+    @State private var exportFilename = "Mac Companion Backup"
     @State private var exporting = false
     @State private var picking = false
     @State private var preparing = false
@@ -83,7 +85,7 @@ struct DirectLocalBackupSettings: View {
             }
         }
         .fileExporter(isPresented: $exporting, document: document, contentType: .json,
-            defaultFilename: "Mac Companion Backup " + Date().formatted(.iso8601.year().month().day().dateSeparator(.dash))) { [generation = importGeneration] result in
+            defaultFilename: exportFilename) { [generation = importGeneration] result in
                 guard generation == importGeneration else { return }
                 defer { document = nil }
                 guard lock.canAccess else { return }
@@ -141,7 +143,19 @@ struct DirectLocalBackupSettings: View {
             await Task.yield()
             defer { if generation == importGeneration { preparing = false } }
             guard generation == importGeneration, lock.canAccess else { return }
-            do { document = .init(data: try store.makeBackup().encoded()); exporting = true }
+            do {
+                let backup = try store.makeBackup()
+                let data = try backup.encoded()
+                let formatter = DateFormatter()
+                formatter.locale = Locale(identifier: "en_US_POSIX")
+                formatter.calendar = Calendar(identifier: .gregorian)
+                formatter.timeZone = .current
+                formatter.dateFormat = "yyyy-MM-dd HH-mm-ss"
+                let device = UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
+                exportFilename = "Mac Companion Backup \(formatter.string(from: backup.createdAt)) \(device)"
+                document = .init(data: data)
+                exporting = true
+            }
             catch { issue = "Saved data couldn’t be read. Existing data is kept. Try again when storage is available." }
         }
     }
