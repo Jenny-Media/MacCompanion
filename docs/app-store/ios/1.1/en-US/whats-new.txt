@@ -1,0 +1,9 @@
+Version 1.1 brings more ways to keep your Mac setup and controls close at hand:
+
+• Back up saved Macs, keyboard layouts, shortcuts and saved text to Files without iCloud. Backup filenames include the local date, time and iPhone or iPad label, and remain editable.
+• Preview a backup before restoring. Your previous data is kept as a recovery copy, and restored Macs ask you to sign in and confirm their identity again.
+• Optionally sync keyboard layouts, shortcuts, saved text and button positions with iCloud. Review recovered alternatives when changes conflict.
+• See enlarged key previews as you press keyboard-row keys, with clearer Escape and row controls.
+• Find clearer guidance in Sync & Security and Mac setup.
+
+Passwords, SSH private keys and trusted Mac identities stay local. Restore turns iCloud Sync off on this device and keeps existing iCloud data.

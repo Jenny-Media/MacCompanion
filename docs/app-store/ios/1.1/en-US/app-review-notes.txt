@@ -1,0 +1,19 @@
+VPN clarification: Mac Companion does not provide VPN functionality. It does not create, install or manage VPN configurations, use Network Extension VPN providers, or route traffic from other apps. It collects no information using a VPN and shares no VPN-collected data with third parties. The optional use of an existing private VPN refers to a network managed separately by the user.
+
+Mac Companion connects only to a Mac selected by the user: Desktop and Trackpad & Keyboard use Screen Sharing (RFB/VNC) forwarded through SSH to that Mac's loopback Screen Sharing port. Terminal uses SSH; Files uses SFTP. There is no plaintext desktop fallback. No Mac Companion account, server, helper, hosted Mac or app catalog is required. Mirrored software runs on the Mac. No vendor demo account is needed; the reviewer uses an account on a reviewer-controlled Mac.
+
+Setup on iPhone or iPad, iOS/iPadOS 26+:
+1. Keep a Mac awake and unlocked on the same trusted LAN; leave a notebook lid open. In System Settings > General > Sharing, enable Remote Login AND Screen Sharing and allow the test Mac account in both. Screen Sharing and Remote Management cannot be enabled together.
+2. Tap Add Mac. Enter the Mac's hostname or IP address without a URL prefix. Leave Save to My Macs enabled, tap Connect, and allow Local Network access. Enter the Mac account's short username and password; saving the login is optional.
+3. Independently compare the displayed SHA256 SSH fingerprint with the matching host public key on the Mac before trusting it. For Ed25519 use: ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256. For another algorithm, compare that algorithm's key. Stop on an unexplained mismatch.
+4. Check Desktop and use Keyboard or Compose Text in a blank test document. Done disconnects. The saved Mac menu opens Trackpad & Keyboard, Terminal and Files. Terminal/Files use the saved Mac login unless a separate SSH password or key is configured. Test a harmless command such as pwd. Files transfers individual files, not folders.
+
+New in 1.1:
+- Settings > Backup & Restore > Create Backup saves a file through Files without iCloud. The editable filename includes date, time and iPhone/iPad. Restore Backup previews the contents and replaces local Macs and controls after confirmation. Restore Previous Data recovers the prior state. Disconnect sessions before restoring. Use disposable data: backups include saved text and network addresses, but exclude passwords, SSH private keys and trusted Mac identities. Restored Macs require sign-in and identity confirmation. Restore turns iCloud Sync off and keeps existing cloud data.
+- Settings > Sync & Security > What Syncs explains optional Mac settings, both keyboard layouts, shortcuts, saved text, menus and positions. Sync is off by default and uses iCloud Keychain with the same Apple Account. Credentials and trust remain local. Manage Sync includes recovery and scoped cloud deletion; use two test devices for propagation checks.
+- Keyboard-row keys show passive enlarged previews; previews do not send input. Duo Book/Tabletop adapt content and input around the system division.
+
+One Mac, one SSH key, core modes, Files and local backup are free. Lifetime Pro adds Macs/keys, custom controls, snippets and key installation. The optional 14-day trial does not renew or charge automatically. Restore Purchases is in Settings > Pro. Use Apple's review purchase environment.
+
+Support: https://mac.jenny.media/support/
+Privacy: https://mac.jenny.media/privacy/

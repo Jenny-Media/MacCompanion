@@ -1,0 +1,27 @@
+Your Mac, from your iPhone or iPad. Mac Companion brings remote desktop, SSH Terminal, and Trackpad & Keyboard together using the services built into macOS. No Mac Companion app or helper needs to be installed on your Mac.
+
+YOUR DESKTOP, WITHIN REACH
+See and control your Mac through built-in Screen Sharing, with desktop and input encrypted through Remote Login (SSH). Use Pointer or Trackpad, zoom the view, and choose a display when your Mac provides supported display information.
+
+A TERMINAL FOR YOUR MAC
+Open an independent SSH shell using a Mac account password or a named Ed25519 key. Keep scrollback, numbers, modifiers, navigation keys, and familiar shortcuts close at hand.
+
+TRACKPAD & KEYBOARD
+Control a Mac you can already see, such as one connected to a TV. Move the pointer, tap to click, hold to drag, and scroll with two fingers. Adjust pointer and scroll speed and choose touch feedback. Enlarged key previews help you see which keyboard-row key you are pressing.
+
+BACK UP WITHOUT ICLOUD
+Save your Mac settings, keyboard layouts, shortcuts and saved text in a backup file using Files. Preview a backup before restoring it, and return to your previous data with a recovery copy. Suggested filenames include the local date, time and iPhone or iPad label. Backups contain saved text and network addresses; keep them private. Passwords, SSH keys and trusted Mac identities are excluded. Restored Macs require sign-in and identity confirmation again.
+
+YOUR CONTROLS, ACROSS DEVICES
+Optional iCloud Sync is off by default. Turn it on to sync saved Mac settings, keyboard layouts, shortcuts, saved text, menu items and their positions across devices using the same Apple Account with iCloud Keychain. Review recovered alternatives when edits conflict. Passwords, private keys and trusted Mac identities stay local. Restoring a backup turns sync off on this device and preserves existing iCloud data.
+
+ROOM TO WORK
+Use portrait or landscape on iPhone and iPad. On iPhone Duo, Book places desktop or Terminal content beside the input controls. Tabletop separates content and input around the active fold. Compose Text keeps its draft and editing controls in an available pane as the layout changes.
+
+FREE ESSENTIALS, OPTIONAL PRO
+The free version includes one saved Mac, one SSH key, the core connection modes, Files over SFTP, and local backup and restore. Lifetime Pro adds multiple Macs and named keys, custom shortcuts and Terminal controls, saved text snippets, and SSH key installation. An optional 14-day Pro trial does not renew or charge automatically. Files supports individual-file uploads and downloads; folder transfers are not supported.
+
+REQUIREMENTS
+Requires iOS or iPadOS 26 or later and an awake, reachable Mac with an account you are allowed to use. Enable Remote Login for every mode, and also enable Screen Sharing for Desktop and Trackpad & Keyboard. Keep a Mac notebook's lid open; closed-lid capture compatibility varies.
+
+Connect over a trusted local network or your own existing private VPN. Verify the Mac's SSH fingerprint before trusting it. Mac Companion does not provide a VPN or public relay. Audio streaming and individual app/window capture are not included.
