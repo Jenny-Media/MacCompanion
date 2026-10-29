@@ -1,0 +1,909 @@
+{
+  "schemaVersion": 1,
+  "platform": "IOS",
+  "marketingVersion": "1.1",
+  "locale": "en-US",
+  "design": "Focused",
+  "candidateBuild": "167",
+  "candidateSource": "028c955040b2429c6e6ede8f48adfe7a642c0d15",
+  "candidateTree": "14956fcc9e77e0f72639ce200d6057525d04d00f",
+  "reviewedReleaseArtwork": true,
+  "reviewedAt": "2026-10-29",
+  "publicOrSyntheticDemoContentOnly": true,
+  "rawCapturesIncluded": false,
+  "logsIncluded": false,
+  "reusedCount": 28,
+  "newCount": 6,
+  "exports": [
+    {
+      "id": "iphone18-01-desktop",
+      "displayFamily": "iphone18",
+      "locale": "en-US",
+      "path": "screenshots/en-US/iphone18/01-desktop.jpg",
+      "width": 1320,
+      "height": 2868,
+      "bytes": 233602,
+      "sha256": "29a1481f72a9d457d94d00808b3d221dbe16945031c55e18dbcf5ca15c85cfd8",
+      "copyKey": "screen-sharing",
+      "title": "Screen Sharing",
+      "headline": [
+        "Control your Mac.",
+        "From your iPhone."
+      ],
+      "source": {
+        "kind": "reused-approved-v10-byte-identical",
+        "rawCaptureName": "v8-desktop.png",
+        "rawCaptureSHA256": "3522d6a55294da23f0ca5639f26040ba75b275ed05599fac9de8c83a69e92ee9",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceMaterialVersion": "1.0",
+        "sourceArtifact": "mac-companion-store-design-v10",
+        "notRecapturedFromBuild167": true
+      }
+    },
+    {
+      "id": "iphone18-02-terminal",
+      "displayFamily": "iphone18",
+      "locale": "en-US",
+      "path": "screenshots/en-US/iphone18/02-terminal.jpg",
+      "width": 1320,
+      "height": 2868,
+      "bytes": 229803,
+      "sha256": "e9eef5880ef18b254ffac676cc50583c7589ff53b18609cc9f0478f2c7685371",
+      "copyKey": "terminal",
+      "title": "Terminal",
+      "headline": [
+        "Your commands.",
+        "Your Mac."
+      ],
+      "source": {
+        "kind": "reused-approved-v10-byte-identical",
+        "rawCaptureName": "v7-terminal-r2.png",
+        "rawCaptureSHA256": "ed7a9b2af25dfc308b900aefc708717aa4066244f7f7364d5fde024cb1f24e26",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceMaterialVersion": "1.0",
+        "sourceArtifact": "mac-companion-store-design-v10",
+        "notRecapturedFromBuild167": true
+      }
+    },
+    {
+      "id": "iphone18-03-compose",
+      "displayFamily": "iphone18",
+      "locale": "en-US",
+      "path": "screenshots/en-US/iphone18/03-compose.jpg",
+      "width": 1320,
+      "height": 2868,
+      "bytes": 234177,
+      "sha256": "98532fb35619ccbe71e79909c9647cdc6401454ffa5bdffdb2862502520fe370",
+      "copyKey": "compose-text",
+      "title": "Compose Text",
+      "headline": [
+        "Compose here.",
+        "Send to your Mac."
+      ],
+      "source": {
+        "kind": "reused-approved-v10-byte-identical",
+        "rawCaptureName": "v8-compose.png",
+        "rawCaptureSHA256": "17052359c91ab57e596d5e95120c0bcbd4e631f6cf0db69e41ed94abb759e716",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceMaterialVersion": "1.0",
+        "sourceArtifact": "mac-companion-store-design-v10",
+        "notRecapturedFromBuild167": true
+      }
+    },
+    {
+      "id": "iphone18-04-keyboard",
+      "displayFamily": "iphone18",
+      "locale": "en-US",
+      "path": "screenshots/en-US/iphone18/04-keyboard.jpg",
+      "width": 1320,
+      "height": 2868,
+      "bytes": 164928,
+      "sha256": "d7205dff168c2171bbcb056acb13691301c588907630bd94149366e12c7cc908",
+      "copyKey": "custom-keyboard",
+      "title": "Customizable keyboard rows",
+      "headline": [
+        "Your keys.",
+        "Your way."
+      ],
+      "source": {
+        "kind": "reused-approved-v10-byte-identical",
+        "rawCaptureName": "v7-keyboard-final.png",
+        "rawCaptureSHA256": "89017e8f4e64a487fc83b27617fe6de74c97416c87be657f5acf8b0a120c8558",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceMaterialVersion": "1.0",
+        "sourceArtifact": "mac-companion-store-design-v10",
+        "notRecapturedFromBuild167": true
+      }
+    },
+    {
+      "id": "iphone18-05-files",
+      "displayFamily": "iphone18",
+      "locale": "en-US",
+      "path": "screenshots/en-US/iphone18/05-files.jpg",
+      "width": 1320,
+      "height": 2868,
+      "bytes": 188368,
+      "sha256": "c6128479961c72a93666c4486b94baf5a0802c045a05c394f8f3b1c34199c308",
+      "copyKey": "files",
+      "title": "Files over SFTP",
+      "headline": [
+        "Move files.",
+        "Keep working."
+      ],
+      "source": {
+        "kind": "reused-approved-v10-byte-identical",
+        "rawCaptureName": "new-files.png",
+        "rawCaptureSHA256": "7ed788557bd93f46d3c5e706484e7be6b99f967956516ed623ce59ec539f7d42",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceMaterialVersion": "1.0",
+        "sourceArtifact": "mac-companion-store-design-v10",
+        "notRecapturedFromBuild167": true
+      }
+    },
+    {
+      "id": "iphone18-06-trackpad",
+      "displayFamily": "iphone18",
+      "locale": "en-US",
+      "path": "screenshots/en-US/iphone18/06-trackpad.jpg",
+      "width": 1320,
+      "height": 2868,
+      "bytes": 176610,
+      "sha256": "c5f21300579bf63b5edda62f1a3a843f4cc6a5983fbb838c19519a3c3048f43b",
+      "copyKey": "trackpad-and-keyboard",
+      "title": "Trackpad & Keyboard",
+      "headline": [
+        "Point. Type.",
+        "Stay in control."
+      ],
+      "source": {
+        "kind": "reused-approved-v10-byte-identical",
+        "rawCaptureName": "03-trackpad.png",
+        "rawCaptureSHA256": "57b7e876c952ce7ff06779e460517c4def92b4b714a90a0e99594f57cb468c63",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceMaterialVersion": "1.0",
+        "sourceArtifact": "mac-companion-store-design-v10",
+        "notRecapturedFromBuild167": true
+      }
+    },
+    {
+      "id": "iphone18-07-setup",
+      "displayFamily": "iphone18",
+      "locale": "en-US",
+      "path": "screenshots/en-US/iphone18/07-setup.jpg",
+      "width": 1320,
+      "height": 2868,
+      "bytes": 215845,
+      "sha256": "d26c0ec75cede289c21b564cd3a272946770f3f84a5cc5a1a052cb47c0676e2e",
+      "copyKey": "mac-setup",
+      "title": "Mac setup",
+      "headline": [
+        "Your Mac.",
+        "No helper needed."
+      ],
+      "source": {
+        "kind": "reused-approved-v10-byte-identical",
+        "rawCaptureName": "05-setup.png",
+        "rawCaptureSHA256": "f2b079b40e37e1ff6dc5299751b5ae2313b70a3d65ae338ef2f2af3e587052e2",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceMaterialVersion": "1.0",
+        "sourceArtifact": "mac-companion-store-design-v10",
+        "notRecapturedFromBuild167": true
+      }
+    },
+    {
+      "id": "iphone18-08-backup",
+      "displayFamily": "iphone18",
+      "locale": "en-US",
+      "path": "screenshots/en-US/iphone18/08-backup.jpg",
+      "width": 1320,
+      "height": 2868,
+      "bytes": 434437,
+      "sha256": "1a6ef1753013622ccd030a4a510fa5cffd8ed866d60595ec7a3ced54b08d79c7",
+      "copyKey": "backup-restore",
+      "title": "Backup & Restore",
+      "headline": [
+        "Your setup.",
+        "A backup away."
+      ],
+      "source": {
+        "kind": "new-native-shipping-view-capture",
+        "rawCaptureName": "backup.png",
+        "rawCaptureSHA256": "28afd516c1d7b96900149b1a694cb067d5a4e86d2fbf6d181a152285e9df019c",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceCommit": "028c955040b2429c6e6ede8f48adfe7a642c0d15",
+        "simulatorOnlyHarness": true,
+        "shippingViewsUnmodified": true,
+        "selectedDisplay": "XCTest main"
+      }
+    },
+    {
+      "id": "iphone18-09-sync",
+      "displayFamily": "iphone18",
+      "locale": "en-US",
+      "path": "screenshots/en-US/iphone18/09-sync.jpg",
+      "width": 1320,
+      "height": 2868,
+      "bytes": 452568,
+      "sha256": "a35b6384073c737c418d2b2577dc61fe122778140914ca06a304546147478bee",
+      "copyKey": "icloud-controls",
+      "title": "Optional iCloud Sync",
+      "headline": [
+        "Your controls.",
+        "Across devices."
+      ],
+      "source": {
+        "kind": "new-native-shipping-view-capture",
+        "rawCaptureName": "sync.png",
+        "rawCaptureSHA256": "4fc27ac7bcd510d6db09105438eae2e53f29013dbc234a2706a58ee16a5542b8",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceCommit": "028c955040b2429c6e6ede8f48adfe7a642c0d15",
+        "simulatorOnlyHarness": true,
+        "shippingViewsUnmodified": true,
+        "selectedDisplay": "XCTest main"
+      }
+    },
+    {
+      "id": "iphone18-pro-01-desktop",
+      "displayFamily": "iphone18-pro",
+      "locale": "en-US",
+      "path": "screenshots/en-US/iphone18-pro/01-desktop.jpg",
+      "width": 1206,
+      "height": 2622,
+      "bytes": 205763,
+      "sha256": "fe21c97010252939e94a53d18daa520fddb5274992478fcb4ee96812f1f7ba50",
+      "copyKey": "screen-sharing",
+      "title": "Screen Sharing",
+      "headline": [
+        "Control your Mac.",
+        "From your iPhone."
+      ],
+      "source": {
+        "kind": "reused-approved-v10-byte-identical",
+        "rawCaptureName": "v8-desktop.png",
+        "rawCaptureSHA256": "9b832672fc597c713075a330dcfce25f3311a04f53ea3fe5f62dfeb444ed6569",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceMaterialVersion": "1.0",
+        "sourceArtifact": "mac-companion-store-design-v10",
+        "notRecapturedFromBuild167": true
+      }
+    },
+    {
+      "id": "iphone18-pro-02-terminal",
+      "displayFamily": "iphone18-pro",
+      "locale": "en-US",
+      "path": "screenshots/en-US/iphone18-pro/02-terminal.jpg",
+      "width": 1206,
+      "height": 2622,
+      "bytes": 211693,
+      "sha256": "0dfc4df0ad139a9ba8309bafefdaa57a6de328e5b84ab406c81cc3dafe1905cc",
+      "copyKey": "terminal",
+      "title": "Terminal",
+      "headline": [
+        "Your commands.",
+        "Your Mac."
+      ],
+      "source": {
+        "kind": "reused-approved-v10-byte-identical",
+        "rawCaptureName": "v7-terminal.png",
+        "rawCaptureSHA256": "5b0b5d95f3be1cbb3d26479bf7ad224c843fe72835782aa8a21d5d6dcd27398a",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceMaterialVersion": "1.0",
+        "sourceArtifact": "mac-companion-store-design-v10",
+        "notRecapturedFromBuild167": true
+      }
+    },
+    {
+      "id": "iphone18-pro-03-compose",
+      "displayFamily": "iphone18-pro",
+      "locale": "en-US",
+      "path": "screenshots/en-US/iphone18-pro/03-compose.jpg",
+      "width": 1206,
+      "height": 2622,
+      "bytes": 206882,
+      "sha256": "573dfb3da70d0caf2688b4e89ffdb81483183ce3a9f17ea825a0de6790629e17",
+      "copyKey": "compose-text",
+      "title": "Compose Text",
+      "headline": [
+        "Compose here.",
+        "Send to your Mac."
+      ],
+      "source": {
+        "kind": "reused-approved-v10-byte-identical",
+        "rawCaptureName": "v8-compose.png",
+        "rawCaptureSHA256": "7f87f0a778c5299f67980728d064ba9588b8c7bd9f6c0e77a5ab1d2ba96d9019",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceMaterialVersion": "1.0",
+        "sourceArtifact": "mac-companion-store-design-v10",
+        "notRecapturedFromBuild167": true
+      }
+    },
+    {
+      "id": "iphone18-pro-04-keyboard",
+      "displayFamily": "iphone18-pro",
+      "locale": "en-US",
+      "path": "screenshots/en-US/iphone18-pro/04-keyboard.jpg",
+      "width": 1206,
+      "height": 2622,
+      "bytes": 151231,
+      "sha256": "96938de514b47c43c9afef02264d8df361f2f7a7038fd35f8b9fc523281e6024",
+      "copyKey": "custom-keyboard",
+      "title": "Customizable keyboard rows",
+      "headline": [
+        "Your keys.",
+        "Your way."
+      ],
+      "source": {
+        "kind": "reused-approved-v10-byte-identical",
+        "rawCaptureName": "v9-keyboard.png",
+        "rawCaptureSHA256": "f5ac42dd14228dc29713ab8749787d714d5a989e3e55a0e8d89f6598b79e9129",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceMaterialVersion": "1.0",
+        "sourceArtifact": "mac-companion-store-design-v10",
+        "notRecapturedFromBuild167": true
+      }
+    },
+    {
+      "id": "iphone18-pro-05-files",
+      "displayFamily": "iphone18-pro",
+      "locale": "en-US",
+      "path": "screenshots/en-US/iphone18-pro/05-files.jpg",
+      "width": 1206,
+      "height": 2622,
+      "bytes": 172625,
+      "sha256": "36a7724b644afd82086f0aaaba1cd28664e159c7033d054e4b56498e82173fe8",
+      "copyKey": "files",
+      "title": "Files over SFTP",
+      "headline": [
+        "Move files.",
+        "Keep working."
+      ],
+      "source": {
+        "kind": "reused-approved-v10-byte-identical",
+        "rawCaptureName": "new-files.png",
+        "rawCaptureSHA256": "a4595bcd4e0926a3fb90df7eab22a831cc341104b46fff661e61d37b725caa1d",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceMaterialVersion": "1.0",
+        "sourceArtifact": "mac-companion-store-design-v10",
+        "notRecapturedFromBuild167": true
+      }
+    },
+    {
+      "id": "iphone18-pro-06-trackpad",
+      "displayFamily": "iphone18-pro",
+      "locale": "en-US",
+      "path": "screenshots/en-US/iphone18-pro/06-trackpad.jpg",
+      "width": 1206,
+      "height": 2622,
+      "bytes": 160300,
+      "sha256": "250d8a540cf8dce306f1fea6a040b932654c4cb4547daeccf14fdd218b3acbd0",
+      "copyKey": "trackpad-and-keyboard",
+      "title": "Trackpad & Keyboard",
+      "headline": [
+        "Point. Type.",
+        "Stay in control."
+      ],
+      "source": {
+        "kind": "reused-approved-v10-byte-identical",
+        "rawCaptureName": "03-trackpad.png",
+        "rawCaptureSHA256": "dbb9fccc6eff1f9f16e7c8a8819fdd1b4afaad5237d10938342f5b353056aaeb",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceMaterialVersion": "1.0",
+        "sourceArtifact": "mac-companion-store-design-v10",
+        "notRecapturedFromBuild167": true
+      }
+    },
+    {
+      "id": "iphone18-pro-07-setup",
+      "displayFamily": "iphone18-pro",
+      "locale": "en-US",
+      "path": "screenshots/en-US/iphone18-pro/07-setup.jpg",
+      "width": 1206,
+      "height": 2622,
+      "bytes": 198396,
+      "sha256": "1d9d0d24d4d100709ebf63cc22c8ca2e8dcf3b01444b2c3b192a74c9b1c97b8f",
+      "copyKey": "mac-setup",
+      "title": "Mac setup",
+      "headline": [
+        "Your Mac.",
+        "No helper needed."
+      ],
+      "source": {
+        "kind": "reused-approved-v10-byte-identical",
+        "rawCaptureName": "05-setup.png",
+        "rawCaptureSHA256": "87d67914b46e623c8ffa02b787c5becfc523d276d62dd6abde272bfd0ad01178",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceMaterialVersion": "1.0",
+        "sourceArtifact": "mac-companion-store-design-v10",
+        "notRecapturedFromBuild167": true
+      }
+    },
+    {
+      "id": "ipad-01-desktop",
+      "displayFamily": "ipad",
+      "locale": "en-US",
+      "path": "screenshots/en-US/ipad/01-desktop.jpg",
+      "width": 2064,
+      "height": 2752,
+      "bytes": 265380,
+      "sha256": "cca877835ecb326b31d0eae334c94f12ab76d01a4f3edf2cc29a9e60443a6aa7",
+      "copyKey": "ipad-desktop",
+      "title": "Screen Sharing",
+      "headline": [
+        "A bigger view.",
+        "A familiar Mac."
+      ],
+      "source": {
+        "kind": "reused-approved-v10-byte-identical",
+        "rawCaptureName": "v8-desktop.png",
+        "rawCaptureSHA256": "2b1a96125f8759e7dae82e4275d7908a10b6cc81639c20347e7b683f797fde48",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceMaterialVersion": "1.0",
+        "sourceArtifact": "mac-companion-store-design-v10",
+        "notRecapturedFromBuild167": true
+      }
+    },
+    {
+      "id": "ipad-02-terminal",
+      "displayFamily": "ipad",
+      "locale": "en-US",
+      "path": "screenshots/en-US/ipad/02-terminal.jpg",
+      "width": 2064,
+      "height": 2752,
+      "bytes": 245157,
+      "sha256": "04bd801c89378b53b088b3fb6ef5b00ac70a535c93672e75fc06005d202ddc57",
+      "copyKey": "terminal",
+      "title": "Terminal",
+      "headline": [
+        "Your commands.",
+        "Your Mac."
+      ],
+      "source": {
+        "kind": "reused-approved-v10-byte-identical",
+        "rawCaptureName": "v7-terminal.png",
+        "rawCaptureSHA256": "5f1368a1d06e266f720661ec6d1cffe94567e11b559413613586f7322dd99d08",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceMaterialVersion": "1.0",
+        "sourceArtifact": "mac-companion-store-design-v10",
+        "notRecapturedFromBuild167": true
+      }
+    },
+    {
+      "id": "ipad-03-compose",
+      "displayFamily": "ipad",
+      "locale": "en-US",
+      "path": "screenshots/en-US/ipad/03-compose.jpg",
+      "width": 2064,
+      "height": 2752,
+      "bytes": 258696,
+      "sha256": "dbeebee71621acdf9a3c2d671354b91fea8874fe6842c6576bdf0d35d3595fbb",
+      "copyKey": "compose-text",
+      "title": "Compose Text",
+      "headline": [
+        "Compose here.",
+        "Send to your Mac."
+      ],
+      "source": {
+        "kind": "reused-approved-v10-byte-identical",
+        "rawCaptureName": "v8-compose.png",
+        "rawCaptureSHA256": "a1ce8f8b62218a07a93248b6885697e0ae701385d5cd18e87d4d4df713499bcf",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceMaterialVersion": "1.0",
+        "sourceArtifact": "mac-companion-store-design-v10",
+        "notRecapturedFromBuild167": true
+      }
+    },
+    {
+      "id": "ipad-04-keyboard",
+      "displayFamily": "ipad",
+      "locale": "en-US",
+      "path": "screenshots/en-US/ipad/04-keyboard.jpg",
+      "width": 2064,
+      "height": 2752,
+      "bytes": 161699,
+      "sha256": "e287fa9d0d0bf96e6cb5609e798e702985853dc84345e776b5e0c70d06b7280e",
+      "copyKey": "custom-keyboard",
+      "title": "Customizable keyboard rows",
+      "headline": [
+        "Your keys.",
+        "Your way."
+      ],
+      "source": {
+        "kind": "reused-approved-v10-byte-identical",
+        "rawCaptureName": "v7-keyboard-final.png",
+        "rawCaptureSHA256": "08da748b574c89a5e7cc3dcba925d57031945d88589d2698ea1acb311ca7a4fe",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceMaterialVersion": "1.0",
+        "sourceArtifact": "mac-companion-store-design-v10",
+        "notRecapturedFromBuild167": true
+      }
+    },
+    {
+      "id": "ipad-05-files",
+      "displayFamily": "ipad",
+      "locale": "en-US",
+      "path": "screenshots/en-US/ipad/05-files.jpg",
+      "width": 2064,
+      "height": 2752,
+      "bytes": 180639,
+      "sha256": "398f81fcf4c5f2cf868126cd0ccedc2e5d3cdb986e1b0455dfcacac2cf5a7e23",
+      "copyKey": "files",
+      "title": "Files over SFTP",
+      "headline": [
+        "Move files.",
+        "Keep working."
+      ],
+      "source": {
+        "kind": "reused-approved-v10-byte-identical",
+        "rawCaptureName": "new-files-landscape.png",
+        "rawCaptureSHA256": "eb13e6739d91127952f865c85da0bfeb8ea3512c7dc4ec0c3db2a1b449369c04",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceMaterialVersion": "1.0",
+        "sourceArtifact": "mac-companion-store-design-v10",
+        "notRecapturedFromBuild167": true
+      }
+    },
+    {
+      "id": "ipad-06-trackpad",
+      "displayFamily": "ipad",
+      "locale": "en-US",
+      "path": "screenshots/en-US/ipad/06-trackpad.jpg",
+      "width": 2064,
+      "height": 2752,
+      "bytes": 196403,
+      "sha256": "7c5f254922c1ef8260a39a21e381894f91cf80a7a84377aa14deabd61085a60b",
+      "copyKey": "trackpad-and-keyboard",
+      "title": "Trackpad & Keyboard",
+      "headline": [
+        "Point. Type.",
+        "Stay in control."
+      ],
+      "source": {
+        "kind": "reused-approved-v10-byte-identical",
+        "rawCaptureName": "03-trackpad.png",
+        "rawCaptureSHA256": "f3ea2836e7e04e5556f613303a604ab1d80e2c30bb3ed2725bc621e296d7b74c",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceMaterialVersion": "1.0",
+        "sourceArtifact": "mac-companion-store-design-v10",
+        "notRecapturedFromBuild167": true
+      }
+    },
+    {
+      "id": "ipad-07-setup",
+      "displayFamily": "ipad",
+      "locale": "en-US",
+      "path": "screenshots/en-US/ipad/07-setup.jpg",
+      "width": 2064,
+      "height": 2752,
+      "bytes": 189792,
+      "sha256": "52daa0932e2145efac5dcf875514073190053a5237f7716122dbb10ee8c2e7ce",
+      "copyKey": "mac-setup",
+      "title": "Mac setup",
+      "headline": [
+        "Your Mac.",
+        "No helper needed."
+      ],
+      "source": {
+        "kind": "reused-approved-v10-byte-identical",
+        "rawCaptureName": "05-setup.png",
+        "rawCaptureSHA256": "3193b02c5fb48ef2aeba887bc97fc759f4d52b2b379b9755974a795d0a39df49",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceMaterialVersion": "1.0",
+        "sourceArtifact": "mac-companion-store-design-v10",
+        "notRecapturedFromBuild167": true
+      }
+    },
+    {
+      "id": "ipad-08-backup",
+      "displayFamily": "ipad",
+      "locale": "en-US",
+      "path": "screenshots/en-US/ipad/08-backup.jpg",
+      "width": 2064,
+      "height": 2752,
+      "bytes": 377173,
+      "sha256": "73ce64bdac530c8e51cf4ca774bce0e5f16d2298be712eed88e64313080d8dfa",
+      "copyKey": "backup-restore",
+      "title": "Backup & Restore",
+      "headline": [
+        "Your setup.",
+        "A backup away."
+      ],
+      "source": {
+        "kind": "new-native-shipping-view-capture",
+        "rawCaptureName": "backup.png",
+        "rawCaptureSHA256": "26d14f90762867bda13abe9ac15e54edaef9a7ec9d9d09fe96ca6347e13dcdb9",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceCommit": "028c955040b2429c6e6ede8f48adfe7a642c0d15",
+        "simulatorOnlyHarness": true,
+        "shippingViewsUnmodified": true,
+        "selectedDisplay": "XCTest main"
+      }
+    },
+    {
+      "id": "ipad-09-sync",
+      "displayFamily": "ipad",
+      "locale": "en-US",
+      "path": "screenshots/en-US/ipad/09-sync.jpg",
+      "width": 2064,
+      "height": 2752,
+      "bytes": 393970,
+      "sha256": "fdce91a7961aeef805344c46ea330d6b6c69378bd7e4ceafea346ed06a3ed33f",
+      "copyKey": "icloud-controls",
+      "title": "Optional iCloud Sync",
+      "headline": [
+        "Your controls.",
+        "Across devices."
+      ],
+      "source": {
+        "kind": "new-native-shipping-view-capture",
+        "rawCaptureName": "sync.png",
+        "rawCaptureSHA256": "8d93ec9f5802cf22a404797d34e9f36283a5a68edea1cf3783c34f5d68df219e",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceCommit": "028c955040b2429c6e6ede8f48adfe7a642c0d15",
+        "simulatorOnlyHarness": true,
+        "shippingViewsUnmodified": true,
+        "selectedDisplay": "XCTest main"
+      }
+    },
+    {
+      "id": "duo-01-tabletop",
+      "displayFamily": "duo",
+      "locale": "en-US",
+      "path": "screenshots/en-US/duo/01-tabletop.jpg",
+      "width": 2007,
+      "height": 2853,
+      "bytes": 242290,
+      "sha256": "c4dc9d34ffa09cf0c75aba89ce407eb31ea8612d1ce4d492ed02c2c51ad62b07",
+      "copyKey": "tabletop-screen-sharing",
+      "title": "Tabletop · Screen Sharing",
+      "headline": [
+        "Set it down.",
+        "Keep going."
+      ],
+      "source": {
+        "kind": "reused-approved-v10-byte-identical",
+        "rawCaptureName": "v8-tabletop.png",
+        "rawCaptureSHA256": "e09f245056ba278448064151be5281d2ef32b8a53f27adbb5bb5cf57b561e589",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceMaterialVersion": "1.0",
+        "sourceArtifact": "mac-companion-store-design-v10",
+        "notRecapturedFromBuild167": true
+      }
+    },
+    {
+      "id": "duo-02-book-terminal",
+      "displayFamily": "duo",
+      "locale": "en-US",
+      "path": "screenshots/en-US/duo/02-book-terminal.jpg",
+      "width": 2853,
+      "height": 2007,
+      "bytes": 216841,
+      "sha256": "9c7e2e991e3c3fe8e9dfe727e89a95ac5a53a7e3de212562e579ebcd758047ee",
+      "copyKey": "book-terminal",
+      "title": "Book · Terminal",
+      "headline": [
+        "Your commands.",
+        "Your Mac."
+      ],
+      "source": {
+        "kind": "reused-approved-v10-byte-identical",
+        "rawCaptureName": "v9-terminal.png",
+        "rawCaptureSHA256": "167fd2da8785d6ca97e39b44a71ab3f7775756414132f7aa854385a1ce42f249",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceMaterialVersion": "1.0",
+        "sourceArtifact": "mac-companion-store-design-v10",
+        "notRecapturedFromBuild167": true
+      }
+    },
+    {
+      "id": "duo-03-book-compose",
+      "displayFamily": "duo",
+      "locale": "en-US",
+      "path": "screenshots/en-US/duo/03-book-compose.jpg",
+      "width": 2853,
+      "height": 2007,
+      "bytes": 237030,
+      "sha256": "68652e6fc9ed53375efbf6ebcaca64a2b2760eb00e5ddb6b67bdd1564cbd4d66",
+      "copyKey": "book-compose-text",
+      "title": "Book · Compose Text",
+      "headline": [
+        "Compose here.",
+        "Send to your Mac."
+      ],
+      "source": {
+        "kind": "reused-approved-v10-byte-identical",
+        "rawCaptureName": "v10-compose-expanded.png",
+        "rawCaptureSHA256": "8c9fc0fb8eae1b0b76c17fdd318acf6d62735b77713145692aa4098bce451ce2",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceMaterialVersion": "1.0",
+        "sourceArtifact": "mac-companion-store-design-v10",
+        "notRecapturedFromBuild167": true
+      }
+    },
+    {
+      "id": "duo-04-keyboard",
+      "displayFamily": "duo",
+      "locale": "en-US",
+      "path": "screenshots/en-US/duo/04-keyboard.jpg",
+      "width": 2853,
+      "height": 2007,
+      "bytes": 176880,
+      "sha256": "fa8f8bbba07c58761bf27498d1f244c01431407a4132d2dec2f3ad03699f2cc0",
+      "copyKey": "custom-keyboard",
+      "title": "Customizable keyboard rows",
+      "headline": [
+        "Your keys.",
+        "Your way."
+      ],
+      "source": {
+        "kind": "reused-approved-v10-byte-identical",
+        "rawCaptureName": "v7-keyboard-final.png",
+        "rawCaptureSHA256": "c82b33e0e7b1761201b8cd67b6c42f8c18ad6774e06d99f29abcb070725ec3dc",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceMaterialVersion": "1.0",
+        "sourceArtifact": "mac-companion-store-design-v10",
+        "notRecapturedFromBuild167": true
+      }
+    },
+    {
+      "id": "duo-05-files",
+      "displayFamily": "duo",
+      "locale": "en-US",
+      "path": "screenshots/en-US/duo/05-files.jpg",
+      "width": 2853,
+      "height": 2007,
+      "bytes": 181205,
+      "sha256": "5f2d9fa1899b8a36f73e827575eec3a9071f7cb3b1b90f3fbcd795ac270e44b3",
+      "copyKey": "files",
+      "title": "Files over SFTP",
+      "headline": [
+        "Move files.",
+        "Keep working."
+      ],
+      "source": {
+        "kind": "reused-approved-v10-byte-identical",
+        "rawCaptureName": "new-files-inner.png",
+        "rawCaptureSHA256": "b13c4da0b896efef8769b4fde4f8d6d875fb131c102a3ac81a0f26e72b2e3952",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceMaterialVersion": "1.0",
+        "sourceArtifact": "mac-companion-store-design-v10",
+        "notRecapturedFromBuild167": true
+      }
+    },
+    {
+      "id": "duo-06-book-desktop",
+      "displayFamily": "duo",
+      "locale": "en-US",
+      "path": "screenshots/en-US/duo/06-book-desktop.jpg",
+      "width": 2853,
+      "height": 2007,
+      "bytes": 214573,
+      "sha256": "399f39593690c656cea709c82aee019e74222e1efa35abb4c09e85abcd2d64ab",
+      "copyKey": "book-screen-sharing",
+      "title": "Book · Screen Sharing",
+      "headline": [
+        "Your Mac.",
+        "Your controls."
+      ],
+      "source": {
+        "kind": "reused-approved-v10-byte-identical",
+        "rawCaptureName": "v8-desktop.png",
+        "rawCaptureSHA256": "34287ac50f1af08bd11ada209756d4281be91cad966f97e48a2ffcf26ba0931a",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceMaterialVersion": "1.0",
+        "sourceArtifact": "mac-companion-store-design-v10",
+        "notRecapturedFromBuild167": true
+      }
+    },
+    {
+      "id": "duo-07-setup",
+      "displayFamily": "duo",
+      "locale": "en-US",
+      "path": "screenshots/en-US/duo/07-setup.jpg",
+      "width": 2853,
+      "height": 2007,
+      "bytes": 203324,
+      "sha256": "8bba3bd4bfd99564c223c80de31cab9fe98a9dc044c2a3edd3a39516378cc401",
+      "copyKey": "mac-setup",
+      "title": "Mac setup",
+      "headline": [
+        "Your Mac.",
+        "No helper needed."
+      ],
+      "source": {
+        "kind": "reused-approved-v10-byte-identical",
+        "rawCaptureName": "06-setup.png",
+        "rawCaptureSHA256": "77b55e7265b8afc224ce6a4b1cc14233ad18a3f76362a3517ce75466b83bacd1",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceMaterialVersion": "1.0",
+        "sourceArtifact": "mac-companion-store-design-v10",
+        "notRecapturedFromBuild167": true
+      }
+    },
+    {
+      "id": "duo-08-backup",
+      "displayFamily": "duo",
+      "locale": "en-US",
+      "path": "screenshots/en-US/duo/08-backup.jpg",
+      "width": 2853,
+      "height": 2007,
+      "bytes": 444652,
+      "sha256": "8b0ed31457d4c1c1dc3562bb61b7d01982a817242366a818961746ed350cdde6",
+      "copyKey": "backup-restore",
+      "title": "Backup & Restore",
+      "headline": [
+        "Your setup.",
+        "A backup away."
+      ],
+      "source": {
+        "kind": "new-native-shipping-view-capture",
+        "rawCaptureName": "backup.png",
+        "rawCaptureSHA256": "ba49f9e898e4e0a51b0cf0b5347f876f43f4614d4e7efbaa90c0ff81b275e77d",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceCommit": "028c955040b2429c6e6ede8f48adfe7a642c0d15",
+        "simulatorOnlyHarness": true,
+        "shippingViewsUnmodified": true,
+        "selectedDisplay": 3
+      }
+    },
+    {
+      "id": "duo-09-sync",
+      "displayFamily": "duo",
+      "locale": "en-US",
+      "path": "screenshots/en-US/duo/09-sync.jpg",
+      "width": 2853,
+      "height": 2007,
+      "bytes": 464781,
+      "sha256": "89210bb763341db4f7b119f209e6e2af21086a6923a5d6da3235f73df9c23f74",
+      "copyKey": "icloud-controls",
+      "title": "Optional iCloud Sync",
+      "headline": [
+        "Your controls.",
+        "Across devices."
+      ],
+      "source": {
+        "kind": "new-native-shipping-view-capture",
+        "rawCaptureName": "sync.png",
+        "rawCaptureSHA256": "3fcb34a740a112675c2f41e81d0f7873ea7bea07aab5c3063381fb5c989b7088",
+        "physicalAcceptance": false,
+        "realICloudDeliveryExercised": false,
+        "sourceCommit": "028c955040b2429c6e6ede8f48adfe7a642c0d15",
+        "simulatorOnlyHarness": true,
+        "shippingViewsUnmodified": true,
+        "selectedDisplay": 3
+      }
+    }
+  ]
+}

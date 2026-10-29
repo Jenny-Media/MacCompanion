@@ -1,0 +1,13 @@
+iOS 1.1 materials candidate: build 167, source 028c955040b2429c6e6ede8f48adfe7a642c0d15.
+
+Highlights: local Files backup/restore with a preview and recovery copy; editable filenames with local date/time and iPhone/iPad; opt-in keyboard-layout and saved-control sync with conflict recovery; passive key previews and clearer sync/setup guidance.
+
+Privacy boundaries: cloud sync excludes passwords, private keys and trusted Mac identities. Backup files also exclude credentials and trust, but contain saved text and network addresses. Restore replaces local Macs and controls, turns sync off, and preserves existing cloud data.
+
+TestFlight: processed and Validated; Testing in Internal Testing and Public Beta. This is distribution evidence, not physical acceptance or App Store approval.
+
+Production: retain iOS 1.0 (157), existing metadata and manual release. The owner chose to keep the 1.0 record unchanged, so no separate 1.1 draft was created and build 167 was not selected for production. The outstanding VPN information request already has a clarification reply. No duplicate reply, cancellation, review submission or publication is authorized.
+
+Artwork: 34 reviewed final exports and their portable hash/dimension/provenance manifest are preserved in Git. Raw captures, rejected attempts, fixtures and logs remain in the external evidence archive. Six new images were staged only in Asset Library; at the last saved October 29 20:07 UTC inspection, three were ready and three were Processing. No version's media selection changed.
+
+Remaining: review local copy/media; rehearse signed build 167 on iPhone/iPad and two real iCloud devices; preserve the separate physical Duo/TestFlight gate; recheck Apple feedback, privacy/export/IAP/contact/territories/media and the initial-version workflow before later authorization.
