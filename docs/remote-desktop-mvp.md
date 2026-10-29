@@ -614,3 +614,51 @@ Mac metadata; cancellation discards provisional results without changing trust,
 saved addresses or credentials.
 
 Save to My Macs and Save Login are separate choices. A new Mac is added only after a usable desktop/input session or shell opens. If saving the Mac fails, its login must not be retained. A one-time connection keeps only the credentials required by its active recovery owner and removes its temporary trust/profile after all scoped connection owners stop; it never removes shared private keys or completed downloads. Temporary identities are journaled before connecting. If teardown or protected storage is unavailable, cleanup remains pending across launches and retries after unlock or foreground entry. Cleanup waits for all scoped owners, cancels when the Mac becomes saved, and deletes only that temporary identity’s access records and preferences. Completed downloads remain reachable from My Macs until exported or discarded. A temporary connection is subject to the same multi-Mac entitlement and foreground checks as a saved connection.
+
+
+## iOS 1.1 local backup and restore
+
+App Settings → Backup & Restore creates a versioned JSON file through Files;
+iCloud is not required. It contains saved Macs and connection preferences,
+Terminal and shared Screen Sharing / Trackpad keyboard layouts, shortcuts,
+saved text, button positions and recovered alternatives. The file includes
+network addresses and saved text, so keep it private. It contains no passwords,
+SSH private keys, trusted server identities, clipboard contents, unsaved drafts,
+purchase entitlements, device sync writer IDs or cloud ancestry. SSH keys retain
+their separate encrypted export in SSH Keys.
+
+Restore validates the complete file (format version 1, at most 45 MiB) before
+changing saved data. The preview names the replacement scope and counts.
+Imported Macs get fresh local IDs and require sign-in / trust confirmation;
+restoring does not connect to a Mac or run a shortcut. Active sessions must be
+disconnected first. iCloud Sync is turned off on this device, admitted sync
+work drains (including writes cancelled by an earlier Sync-off toggle), and
+the existing cloud copies are kept. Later publications wait for those writes.
+Sync stays off until the
+user explicitly enables it again.
+
+If iCloud data deletion is still running, restore leaves local data and the
+recovery copy unchanged and asks the user to wait. Deletion keeps its busy state
+until all services finish; sync cannot be re-enabled during that operation.
+
+Sync-off and current preferences pass a checked application-domain persistence
+barrier before the snapshot; imported preferences pass the same barrier before
+commit. Preference persistence failure follows the existing failure/rollback
+path. The previous local data is written to a protected, device-local snapshot
+before any imported data is saved. This snapshot freezes bounded connection
+preferences under each original Mac ID; preview, previous-data restore and
+rollback use those frozen values even if later sync changes the same IDs.
+Both control profiles, the Mac list and preference persistence must succeed
+before an atomic rename commits the restore. Write failures roll back; an
+interrupted restore rolls back before saved metadata and controls are admitted
+on the next launch. An absent original Mac file restores an empty library in
+memory as well as on disk. Imported preference notifications cannot journal
+uncommitted Macs. A protected local reconciliation intent survives both sides
+of the commit point and is replayed from the persisted Mac list after cloud
+tracking attaches, before Mac
+sync resumes; failed reconciliation keeps the intent and local data for retry.
+Recovery files use complete file protection and are excluded
+from device cloud backup. Restore Previous Data exchanges the active data with
+the recovery copy; it does not import credentials from a file. A successful new
+restore replaces the previous recovery copy. Synthetic fault and native UI
+checks remain separate from physical acceptance.

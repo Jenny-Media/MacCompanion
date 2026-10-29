@@ -644,6 +644,8 @@ private final class SavedControlsObservers: @unchecked Sendable {
             }
         }
     }
+    /// Disabling invalidates application; admitted Keychain work still drains.
+    func waitForDisabledWork() async { await task?.value }
     func removeCloudCopies() async throws {
         setEnabled(false); await task?.value; task = nil
         guard canAccess() else { throw DirectCloudError.locked }

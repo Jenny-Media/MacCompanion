@@ -69,6 +69,7 @@ def main():
     parser.add_argument('--composer-ui', action='store_true', help='Generate the simulator-only Maps-style composer app and native drag test scheme')
     parser.add_argument('--cold-start-ui', action='store_true', help='Generate native cold-start admission interaction tests')
     parser.add_argument('--saved-controls-ui', action='store_true', help='Check unified sync consent and concise guidance with an injected no-cloud QA app')
+    parser.add_argument('--local-backup-e2e', action='store_true', help='Run opt-in two-device backup UI stages in an isolated app with production file and Keychain stores')
     parser.add_argument('--settings-ui', action='store_true', help='Also test gear navigation and live sheet appearance using native UI interactions')
     parser.add_argument('--screen-text-ui', action='store_true', help='Generate the simulator-only native/area text selection UI journey')
     parser.add_argument('--mac-shortcuts-ui', action='store_true', help='Generate the simulator-only per-Mac shortcuts and native swipe tests')
@@ -179,6 +180,35 @@ def execute(args, parser, compiler):
             'test': {'config': 'Debug', 'macroExpansion': 'SavedControlsConsentApp', 'targets': [{'name': 'SavedControlsConsentTests', 'parallelizable': False}]}}
         for action in ['run', 'profile', 'analyze', 'archive']:
             spec['schemes']['SavedControlsConsentQA'][action] = {'config': 'Debug'}
+    if args.local_backup_e2e:
+        import copy
+        local = copy.deepcopy(app)
+        local['sources'] = [row for row in local['sources'] if not row['path'].startswith(str(ROOT / 'Apps/MacCompanionIOS'))]
+        local['sources'] += [{'path': str(ROOT / 'Experiments/LocalBackupE2EQA/LocalBackupApplication.swift')},
+                             {'path': str(ROOT / 'Apps/MacCompanionIOS/Assets.xcassets')}]
+        local_id = 'dev.maccompanion.backupe2e.ios'
+        local_entitlements = qa / 'LocalBackupE2E.entitlements'
+        local_entitlements.write_bytes(plistlib.dumps({'application-identifier': local_id, 'keychain-access-groups': [local_id]}))
+        local_info = qa / 'LocalBackupE2E-Info.plist'
+        properties = plistlib.loads(Path(settings['INFOPLIST_FILE']).read_bytes())
+        properties.update({'CFBundleDisplayName': 'Mac Companion Backup QA', 'UIFileSharingEnabled': True,
+                           'LSSupportsOpeningDocumentsInPlace': True})
+        local_info.write_bytes(plistlib.dumps(properties))
+        local['settings']['base'].update({'PRODUCT_BUNDLE_IDENTIFIER': local_id, 'PRODUCT_NAME': 'LocalBackupE2EQA',
+            'PRODUCT_MODULE_NAME': 'Mac_Companion', 'CODE_SIGN_ENTITLEMENTS': str(local_entitlements), 'INFOPLIST_FILE': str(local_info)})
+        local['dependencies'] = [row for row in local['dependencies'] if row.get('target') != 'MacCompanionSessionActivity']
+        spec['targets']['LocalBackupE2EApp'] = local
+        spec['targets']['LocalBackupE2ETests'] = {
+            'type': 'bundle.ui-testing', 'platform': 'iOS',
+            'sources': [{'path': str(ROOT / 'Experiments/LocalBackupE2EQA/LocalBackupE2ETests.swift')}],
+            'dependencies': [{'target': 'LocalBackupE2EApp'}],
+            'settings': {'base': {'GENERATE_INFOPLIST_FILE': 'YES', 'PRODUCT_BUNDLE_IDENTIFIER': local_id + '.tests',
+                'SWIFT_VERSION': '6.0', 'IPHONEOS_DEPLOYMENT_TARGET': '26.0', 'ARCHS': 'arm64', 'ONLY_ACTIVE_ARCH': 'YES',
+                'CODE_SIGN_IDENTITY': '-', 'CODE_SIGNING_ALLOWED': 'YES', 'TEST_TARGET_NAME': 'LocalBackupE2EApp'}}}
+        spec['schemes']['LocalBackupE2EQA'] = {'build': {'targets': {'LocalBackupE2EApp': 'all', 'LocalBackupE2ETests': 'all'}},
+            'test': {'config': 'Debug', 'macroExpansion': 'LocalBackupE2EApp', 'targets': [{'name': 'LocalBackupE2ETests', 'parallelizable': False}]}}
+        for action in ['run', 'profile', 'analyze', 'archive']:
+            spec['schemes']['LocalBackupE2EQA'][action] = {'config': 'Debug'}
     if args.cold_start_ui:
         import copy
         cold = copy.deepcopy(app)
@@ -287,15 +317,15 @@ def execute(args, parser, compiler):
     import time
     result = evidence / ('Results-' + str(time.time_ns()) + '.xcresult')
     with (evidence / 'test.log').open('w') as log:
-        run('xcodebuild', '-project', qa / 'DirectClientQA.xcodeproj', '-scheme', 'SavedControlsConsentQA' if args.saved_controls_ui else 'TerminalControlsQA' if args.terminal_controls_ui else 'DirectClientQA',
+        run('xcodebuild', '-project', qa / 'DirectClientQA.xcodeproj', '-scheme', 'LocalBackupE2EQA' if args.local_backup_e2e else 'SavedControlsConsentQA' if args.saved_controls_ui else 'TerminalControlsQA' if args.terminal_controls_ui else 'DirectClientQA',
             '-destination', 'platform=iOS Simulator,id=' + args.simulator, '-derivedDataPath', compiler / 'DerivedData',
             '-onlyUsePackageVersionsFromResolvedFile', '-skipPackagePluginValidation', '-parallel-testing-enabled', 'NO', '-maximum-concurrent-test-simulator-destinations', '1',
             *(['-only-testing:DirectClientTests/DuoComparisonTests/testInteractiveCapture'] if args.duo_review else []),
             *['-only-testing:' + identifier for identifier in args.only_testing],
             '-collect-test-diagnostics', args.test_diagnostics, '-resultBundlePath', result, 'test', stdout=log, stderr=subprocess.STDOUT)
     container = subprocess.check_output(['xcrun', 'simctl', 'get_app_container', args.simulator,
-        'dev.maccompanion.savedcontrolsqa.ios' if args.saved_controls_ui else 'dev.maccompanion.controlsqa.ios' if args.terminal_controls_ui else bundle, 'data'], text=True).strip()
-    if not args.saved_controls_ui and not args.terminal_controls_ui and not args.duo_review and not args.only_testing:
+        'dev.maccompanion.backupe2e.ios' if args.local_backup_e2e else 'dev.maccompanion.savedcontrolsqa.ios' if args.saved_controls_ui else 'dev.maccompanion.controlsqa.ios' if args.terminal_controls_ui else bundle, 'data'], text=True).strip()
+    if not args.local_backup_e2e and not args.saved_controls_ui and not args.terminal_controls_ui and not args.duo_review and not args.only_testing:
         verify_external(Path(container) / 'Documents/synthetic-key-interop')
     for name in ['synthetic-ed25519', 'synthetic-ed25519.pub', 'synthetic-rsa', 'synthetic-rsa.pub']:
         (qa / name).unlink(missing_ok=True)

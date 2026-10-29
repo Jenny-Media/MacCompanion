@@ -194,14 +194,17 @@ enum DesktopCredentialStoreV1 {
     }
     nonisolated static func readRecords(at url: URL) throws -> [DirectMacRecordV1]? {
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        let file = try JSONDecoder().decode(File.self, from: Data(contentsOf: url))
+        return try decodeRecords(Data(contentsOf: url))
+    }
+    nonisolated static func decodeRecords(_ data: Data) throws -> [DirectMacRecordV1] {
+        let file = try JSONDecoder().decode(File.self, from: data)
         guard (1...5).contains(file.version), file.macs.count <= 64,
               Set(file.macs.map(\.id)).count == file.macs.count else { throw DirectMacRecordV1.LibraryFailure.invalid }
         for mac in file.macs { _ = try mac.validated() }
         return file.version < 5 ? file.macs.sorted(by: Self.alphabetical) : file.macs
     }
     private func publishRead(_ records: [DirectMacRecordV1]?) {
-        if let records { macs = records }
+        macs = records ?? []
         readable = true; recovery = nil; loading = false
     }
     private func readFailed() {
@@ -209,12 +212,18 @@ enum DesktopCredentialStoreV1 {
         recovery = .make(.savedDataUnavailable, message: "Saved Macs couldn’t be read. Existing data is kept. Retry when device storage is available; unreadable data won’t be replaced.")
     }
     func reload() {
+        #if os(iOS)
+        guard prepareBackupRecovery() else { return }
+        #endif
         readGeneration = UUID(); initialRead?.cancel(); initialRead = nil
         do { publishRead(try Self.readRecords(at: url)) } catch { readFailed() }
     }
     /// Initial iOS metadata is prepared beneath the existing privacy cover.
     /// Mutations remain denied until the worker has produced a validated snapshot.
     func loadInitial(onLoad: () -> Void = {}) async {
+        #if os(iOS)
+        guard prepareBackupRecovery() else { return }
+        #endif
         guard loading else { onLoad(); return }
         if initialRead == nil {
             let read = readInitialRecords, location = url
@@ -237,10 +246,14 @@ enum DesktopCredentialStoreV1 {
     func save(id: UUID?, name: String, address: String) -> Bool { save(id: id, name: name, addresses: [address]) }
     func save(id: UUID?, name: String, addresses: [String], port: Int = 5900, sshPort: Int? = nil,
               usesAutomaticName: Bool? = nil, preferredConnection: DirectMacConnection? = nil,
-              swipeLeft: DirectMacSwipeAction? = nil, swipeRight: DirectMacSwipeAction? = nil) -> Bool {
+              swipeLeft: DirectMacSwipeAction? = nil, swipeRight: DirectMacSwipeAction? = nil,
+              requiresExisting: Bool = false) -> Bool {
         do {
             guard readable else { return false }
             let old = macs.first { $0.id == id }
+            if requiresExisting, old == nil {
+                failure = "This Mac was removed. Close this editor and open the current Mac again."; return false
+            }
             var record = try DirectMacRecordV1.normalized(id: id ?? UUID(), name: name, addresses: addresses, port: port, sshPort: sshPort ?? old?.sshPort ?? 22)
             record.usesAutomaticName = usesAutomaticName ?? (old?.name == record.name ? old?.usesAutomaticName : false) ?? false
             record.preferredConnection = preferredConnection ?? old?.preferredConnection ?? .desktop
@@ -311,6 +324,24 @@ enum DesktopCredentialStoreV1 {
             recovery = .make(.removeFailed, message: "The saved entry couldn’t be removed. Review the entry and retry; other logins are kept.")
             feedback("error"); return false
         }
+    }
+    #endif
+    #if os(iOS)
+    func backupRecoveryUnavailable() {
+        loading = false; readable = false
+        recovery = .make(.savedDataUnavailable, message: "A restore couldn’t finish. Your recovery copy is kept. Unlock the app and retry when storage is available.")
+    }
+    private func prepareBackupRecovery() -> Bool {
+        guard url.standardizedFileURL == Self.defaultURL.standardizedFileURL,
+              DirectLocalBackupStore.pendingRecovery, !DirectLocalBackupStore.applying else { return true }
+        do { try DirectLocalBackupStore.recoverDefaultIfNeeded(); return true }
+        catch { backupRecoveryUnavailable(); return false }
+    }
+    func replaceFromBackup(_ next: [DirectMacRecordV1]) throws {
+        guard DirectAppLockV1.shared.canAccess, next.count <= 64,
+              Set(next.map(\.id)).count == next.count else { throw DirectMacRecordV1.LibraryFailure.invalid }
+        try next.forEach { _ = try $0.validated() }
+        try write(next)
     }
     #endif
     func applyCloud(_ next: [DirectMacRecordV1]) throws {
@@ -529,7 +560,7 @@ struct DirectMacLibraryRootV1: View {
             .sheet(item: $files) { mac in DirectFilesView(mac: mac, session: DirectFilesWorkspace.session(mac, libraryURL: library.storageURL), retainWhenDismissed: true) }
             .sheet(item: $editor) { selection in DirectMacEditorV1(mac: selection.mac, library: library) }
             .sheet(isPresented: $setup) { DirectMacSetupV1() }
-            .sheet(isPresented: $settings) { DirectSessionSettingsV1() }
+            .sheet(isPresented: $settings) { DirectSessionSettingsV1(library: library) }
             .sheet(isPresented: $paywall) { DirectProView() }
             .task {
                 pro.start()
@@ -552,7 +583,12 @@ struct DirectMacLibraryRootV1: View {
             }
             .onChange(of: appLock.canAccess) { _, unlocked in
                 if !unlocked { library.discovery.stop(); cancelAccess(); deferredRoute = nil; loadingRoute = nil }
-                else { updateTemporaryCleanup() }
+                else {
+                    updateTemporaryCleanup()
+                    if DirectLocalBackupStore.pendingRecovery {
+                        Task { await library.reloadInBackground(onLoad: { attachLoadedServices() }) }
+                    }
+                }
             }
             .onChange(of: appLock.canInteract) { _, admitted in
                 if !admitted { cancelAccess() }
@@ -626,6 +662,12 @@ struct DirectMacLibraryRootV1: View {
         .onReceive(NotificationCenter.default.publisher(for: DirectMacConnections.changed)) { _ in
             DirectTemporaryMacCleanup.shared.retry()
         }
+        .onReceive(NotificationCenter.default.publisher(for: DirectLocalBackupStore.changed)) { note in
+            guard let change = note.object as? DirectLocalBackupStore.Change,
+                  change.libraryURL == library.storageURL.standardizedFileURL else { return }
+            library.reload()
+            if library.readable { change.ids.forEach { library.localChange?($0) } }
+        }
     }
     private func beginQuickConnect() { searchFocused = false; quickConnect = true }
     private func cancelQuickConnect() { quickConnect = false; library.discovery.stop(); cancelAccess(); deferredRoute = nil }
@@ -672,7 +714,8 @@ struct DirectMacLibraryRootV1: View {
         accessDeadline?.cancel(); accessDeadline = nil; pendingAccess = nil; accessTimedOut = false
     }
     private func admits(_ action: LibraryAction) -> Bool {
-        switch action {
+        guard !DirectLocalBackupStore.pendingRecovery else { return false }
+        return switch action {
         case .edit: appLock.canInteract
         case .open, .connect: appLock.canResumeRemoteSession
         }
@@ -927,6 +970,12 @@ struct DirectMacEditorV1: View {
                 case .pro: DirectProView()
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: DirectLocalBackupStore.changed)) { note in
+                guard let change = note.object as? DirectLocalBackupStore.Change,
+                      change.libraryURL == library.storageURL.standardizedFileURL else { return }
+                library.reload()
+                if let mac, !library.macs.contains(where: { $0.id == mac.id }) { sshSheet = nil; dismiss() }
+            }
             .task { refreshSelectedKey() }
             .task(id: automaticDiscoveryKey) {
                 guard automaticDiscoveryKey != nil else { return }
@@ -947,7 +996,7 @@ struct DirectMacEditorV1: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         if mac == nil && !DirectProAccess.shared.canAddMac(count: library.macs.count) { sshSheet = .pro; return }
-                        if let resolvedPort, library.save(id: mac?.id, name: name, addresses: addresses.map(\.address), port: resolvedPort, sshPort: resolvedSSHPort, usesAutomaticName: usesAutomaticName, preferredConnection: preferredConnection, swipeLeft: swipeLeft, swipeRight: swipeRight) {
+                        if let resolvedPort, library.save(id: mac?.id, name: name, addresses: addresses.map(\.address), port: resolvedPort, sshPort: resolvedSSHPort, usesAutomaticName: usesAutomaticName, preferredConnection: preferredConnection, swipeLeft: swipeLeft, swipeRight: swipeRight, requiresExisting: mac != nil) {
                             if let id = mac?.id ?? library.macs.last?.id { VNCSessionPreferences.setDesktopSize(desktopSize, mac: id) }
                             CompanionVNCPlayInterfaceFeedback("success"); startAutomaticDiscovery(); dismiss()
                         }
@@ -977,6 +1026,7 @@ struct DirectMacEditorV1: View {
 }
 
 struct DirectSessionSettingsV1: View {
+    var library: DirectMacLibraryV1? = nil
     @Environment(\.dismiss) private var dismiss
     @AppStorage(VNCSessionActivityController.preferenceKey) private var showSession = true
     @AppStorage(CompanionVNCControlsHapticsPreference) private var controlsHaptics = true
@@ -994,6 +1044,10 @@ struct DirectSessionSettingsV1: View {
                     NavigationLink { TerminalKeySettings(embedded: true) } label: { Label("SSH Keys", systemImage: "key") }.accessibilityIdentifier("settings-ssh-keys")
                     NavigationLink { sync.navigationTitle("Sync & Security") } label: { Label("Sync & Security", systemImage: "lock.shield") }
                         .accessibilityIdentifier("settings-sync")
+                    #if os(iOS)
+                    NavigationLink { DirectLocalBackupSettings(library: library) } label: { Label("Backup & Restore", systemImage: "externaldrive") }
+                        .accessibilityIdentifier("settings-backup")
+                    #endif
                 }
                 Section("Pro") {
                     Button { settingsSheet = .pro } label: { DirectSettingsRow(title: DirectProAccess.shared.accessTitle, symbol: "sparkles") }

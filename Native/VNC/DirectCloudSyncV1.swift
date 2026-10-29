@@ -128,6 +128,7 @@ enum DirectCloudSyncIssue: Equatable { case storage, capacity }
     private var savedControlsCloud: DirectSavedControlsCloudSync?
     private let keyboardTransport: any DirectCloudTransport
     private let savedControlsTransport: any DirectCloudTransport
+    private let localBackupDirectory: URL
     var savedControlsSyncStatus: String? { savedControlsCloud?.status }
     var keyboardSyncStatus: String? { keyboardCloud?.status }
     var syncNeedsAttention: Bool {
@@ -157,16 +158,19 @@ enum DirectCloudSyncIssue: Equatable { case storage, capacity }
     private var generation = UUID()
     private var observers: [NSObjectProtocol] = []
     private var refreshTask: Task<Void, Never>?
+    private var removingCloudCopies = false
     private(set) var enabled: Bool
     private(set) var busy = false
     private(set) var status = "Sync is off on this device."
     init(defaults: UserDefaults = .standard, url: URL? = nil, transport: any DirectCloudTransport = DirectCloudKeychain(), writerID: UUID? = nil,
          keyboardTransport: (any DirectCloudTransport)? = nil,
          savedControlsTransport: (any DirectCloudTransport)? = nil,
+         localBackupDirectory: URL? = nil,
          applyPreferences: @escaping @MainActor (DirectCloudPreferences, UUID) -> Void = { $0.apply(mac: $1) }) {
         self.defaults = defaults; self.url = url ?? DirectClientPlatformV1.dataURL("direct-cloud-journal-v1.json"); self.transport = transport
         self.applyPreferences = applyPreferences
         #if os(iOS)
+        self.localBackupDirectory = localBackupDirectory ?? DirectLocalBackupStore.recoveryDirectory
         if let keyboardTransport { self.keyboardTransport = keyboardTransport }
         else if writerID != nil { self.keyboardTransport = transport }
         else { self.keyboardTransport = DirectCloudKeychain(service: DirectKeyboardCloudSync.service) }
@@ -259,14 +263,29 @@ enum DirectCloudSyncIssue: Equatable { case storage, capacity }
                 let id = note.object as? UUID
                 MainActor.assumeIsolated { if let id { self?.localChange(id) } }
             })
+            #if os(iOS)
+            observers.append(NotificationCenter.default.addObserver(forName: DirectLocalBackupStore.changed, object: nil, queue: .main) { [weak self] note in
+                let change = note.object as? DirectLocalBackupStore.Change
+                MainActor.assumeIsolated {
+                    guard let self, let library = self.library,
+                          change?.libraryURL == library.storageURL.standardizedFileURL else { return }
+                    _ = self.reconcileLocalBackup()
+                }
+            })
+            #endif
         }
+        #if os(iOS)
+        guard reconcileLocalBackup() else { return }
+        #endif
         // Migrate only records that have no journal version. No cloud access while off.
         if firstAttachment { for mac in library.macs where !versions.contains(where: { $0.id == mac.id && $0.writer == writer }) { localChange(mac.id) } }
         refresh()
     }
     func setEnabled(_ value: Bool) {
-        guard DirectAppLockV1.shared.canAccess else { return }
-        generation = UUID(); refreshTask?.cancel(); refreshTask = nil; busy = false
+        guard !removingCloudCopies, DirectAppLockV1.shared.canAccess else { return }
+        // Cancellation cannot stop an already admitted detached Keychain
+        // write. Retain its task so restores and later refreshes can drain it.
+        generation = UUID(); refreshTask?.cancel(); busy = false
         enabled = value; defaults.set(value, forKey: Self.enabledKey)
         #if os(iOS)
         keyboardCloud?.setEnabled(value)
@@ -277,6 +296,48 @@ enum DirectCloudSyncIssue: Equatable { case storage, capacity }
             refresh()
         } else { status = "Sync is off on this device. Existing iCloud data is kept." }
     }
+    #if os(iOS)
+    /// Reconcile from the committed/recovered library, never from a transient
+    /// restore. Keep the durable intent until the entire journal is saved.
+    private func reconcileLocalBackup() -> Bool {
+        do {
+            guard let ids = try DirectLocalBackupStore.reconciliationIDs(in: localBackupDirectory) else { return true }
+            guard readable, DirectAppLockV1.shared.canAccess, let library else { throw DirectCloudError.storage }
+            // Session settings can restore through another library instance.
+            // Observer order must not make a stale cached list authoritative.
+            library.reload()
+            guard library.readable else { throw DirectCloudError.storage }
+            var next = versions
+            for id in ids.sorted(by: { $0.uuidString < $1.uuidString }) {
+                let mac = library.macs.first { $0.id == id }
+                guard mac != nil || next.contains(where: { $0.id == id }) else { continue }
+                let value = DirectCloudVersion(id: id, writer: writer, revision: (next.map(\.revision).max() ?? 0) + 1,
+                    mac: mac, preferences: mac.map { DirectCloudPreferences(mac: $0.id) })
+                next = try DirectCloudVersion.merge(next.filter { $0.account != value.account }, [value])
+            }
+            try persist(next)
+            try DirectLocalBackupStore.finishReconciliation(in: localBackupDirectory)
+            return true
+        } catch {
+            recovery = .make(.cloudUnavailable, message: "Restored data couldn’t be prepared for sync. Local data is kept. Retry when storage is available.")
+            return false
+        }
+    }
+    func pauseForLocalRestore() async throws {
+        guard !removingCloudCopies else { throw DirectLocalBackupStore.Failure.cloudRemovalInProgress }
+        guard DirectAppLockV1.shared.canAccess else { throw DirectCloudError.locked }
+        let work = refreshTask
+        setEnabled(false)
+        let epoch = generation
+        await work?.value
+        guard !enabled, generation == epoch else { throw DirectCloudError.storage }
+        await keyboardCloud?.waitForDisabledWork()
+        guard !enabled, generation == epoch else { throw DirectCloudError.storage }
+        await savedControlsCloud?.waitForDisabledWork()
+        guard !enabled, generation == epoch else { throw DirectCloudError.storage }
+        guard DirectAppLockV1.shared.canAccess else { throw DirectCloudError.locked }
+    }
+    #endif
     private func persist(_ values: [DirectCloudVersion]) throws {
         guard readable else { throw DirectCloudError.storage }
         let checked = try DirectCloudVersion.merge([], values)
@@ -285,6 +346,9 @@ enum DirectCloudSyncIssue: Equatable { case storage, capacity }
         versions = checked
     }
     func localChange(_ id: UUID) {
+        #if os(iOS)
+        guard !DirectLocalBackupStore.applying else { return }
+        #endif
         guard !applying, readable, let library, library.readable else { return }
         do {
             let mac = library.macs.first { $0.id == id }
@@ -296,12 +360,17 @@ enum DirectCloudSyncIssue: Equatable { case storage, capacity }
     }
     func refresh() {
         #if os(iOS)
+        guard !DirectLocalBackupStore.pendingRecovery, !DirectLocalBackupStore.applying,
+              reconcileLocalBackup() else { return }
         if enabled { keyboardCloud?.refresh(); savedControlsCloud?.refresh() }
         #endif
         guard enabled, !busy, readable, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable, let library, library.readable else { return }
-        busy = true; generation = UUID(); let id = generation, transport = self.transport
+        busy = true; generation = UUID(); let id = generation, transport = self.transport, prior = refreshTask
         refreshTask = Task {
             defer { if generation == id { busy = false; refreshTask = nil } }
+            await prior?.value
+            guard enabled, generation == id, !Task.isCancelled,
+                  DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { return }
             do {
                 let data = try await Task.detached { try transport.read() }.value
                 guard enabled, generation == id, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { return }
@@ -332,11 +401,11 @@ enum DirectCloudSyncIssue: Equatable { case storage, capacity }
         }
     }
     func removeCloudCopies() {
-        guard !busy, DirectAppLockV1.shared.canAccess else { return }
+        guard !busy, !removingCloudCopies, DirectAppLockV1.shared.canAccess else { return }
         setEnabled(false)
-        busy = true; let transport = self.transport
+        removingCloudCopies = true; busy = true; let transport = self.transport
         Task {
-            defer { busy = false }
+            defer { removingCloudCopies = false; busy = false }
             // Independent cloud services must remain removable when another
             // service or its local journal is unavailable. Report partial failure
             // only after every removal and local-history cleanup was attempted.
