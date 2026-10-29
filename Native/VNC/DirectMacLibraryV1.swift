@@ -204,7 +204,7 @@ enum DesktopCredentialStoreV1 {
         return file.version < 5 ? file.macs.sorted(by: Self.alphabetical) : file.macs
     }
     private func publishRead(_ records: [DirectMacRecordV1]?) {
-        if let records { macs = records }
+        macs = records ?? []
         readable = true; recovery = nil; loading = false
     }
     private func readFailed() {
