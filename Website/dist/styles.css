@@ -46,6 +46,8 @@ a:focus-visible, button:focus-visible, summary:focus-visible { outline: 3px soli
 .site-header nav { font-size: .875rem; }
 .site-header nav a { text-decoration: none; padding-block: 12px; white-space: nowrap; }
 .site-header a:hover, .site-header a[aria-current] { color: var(--blue); }
+.site-header nav .nav-download { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 10px 16px; border-radius: 100px; background: #0767ec; color: #fff; font-weight: 600; }
+.site-header nav .nav-download:hover { background: #0758c7; }
 .icon-button { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 42px; padding: 10px; border: 1px solid var(--line); border-radius: 50%; background: var(--surface); color: var(--ink); cursor: pointer; }
 .icon-button svg { width: 22px; height: 22px; }
 .icon-button:hover { background: var(--soft); }
@@ -57,6 +59,8 @@ a:focus-visible, button:focus-visible, summary:focus-visible { outline: 3px soli
 .hero h1 span { color: var(--blue); }
 .hero-description { color: var(--muted); font-size: 1.125rem; max-width: 445px; margin-top: 26px; }
 .hero-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 28px; }
+.app-store-badge { display: inline-flex; align-items: center; flex-shrink: 0; }
+.app-store-badge img { width: auto; height: 50px; }
 .button { display: inline-flex; align-items: center; justify-content: center; gap: 12px; min-height: 50px; padding: 14px 22px; border: 1px solid var(--line); border-radius: 100px; background: var(--surface); font-size: .875rem; font-weight: 600; text-decoration: none; transition: background .2s, transform .2s; }
 .button:hover { background: var(--soft); transform: translateY(-2px); }
 .button.primary { background: #0767ec; color: #fff; border-color: #0767ec; }
@@ -190,6 +194,7 @@ details a { color: var(--blue); }
 .page-hero{padding-block:72px 56px;max-width:900px}.page-hero h1{font-size:clamp(2.8rem,6vw,4.6rem);line-height:1.08;letter-spacing:-.06em}.page-hero .intro{font-size:1.2rem;color:var(--muted);margin-top:25px;max-width:660px}.page-hero .meta{font-size:.875rem;color:var(--muted);margin-top:24px}.reading-layout{display:grid;grid-template-columns:220px 1fr;gap:72px;padding-bottom:90px;align-items:start}.contents{position:sticky;top:118px;display:block;font-size:.9375rem;line-height:1.5}.contents strong{display:block;margin-bottom:18px}.contents a{display:block;padding:8px 0;text-decoration:none;color:var(--muted)}.contents a:hover{color:var(--blue)}.reading{max-width:760px;min-width:0}.reading section{padding-bottom:42px}.reading h2{font-size:1.75rem;margin-bottom:18px;line-height:1.2;font-weight:600}.reading h3{font-size:1.2rem;margin:25px 0 10px}.reading p,.reading li{font-size:1rem;line-height:1.75;color:var(--muted)}.reading p+p{margin-top:16px}.reading ul,.reading ol{padding-left:24px;margin:18px 0}.reading li{margin-block:8px}.reading strong{font-weight:600;color:var(--ink)}.reading a{color:var(--blue)}.reading .network-note{margin-block:22px}.data-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:30px}.data-card{padding:24px;background:var(--surface);border:1px solid var(--line);border-radius:18px}.data-card h3{margin:0 0 12px;font-size:1.15rem}.data-card p{font-size:.9375rem}.contact-card{display:flex;justify-content:space-between;align-items:center;gap:30px;padding:30px;background:var(--soft);border:1px solid var(--line);border-radius:20px;margin-bottom:38px}.contact-card h2{font-size:1.3rem;margin-bottom:10px}.contact-card p{font-size:.9375rem;color:var(--muted);max-width:490px}.support-faq details h3{font-size:1rem;margin:0 0 10px}.support-faq details code,.reading code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.9em;overflow-wrap:anywhere}.support-faq details .network-note{margin:0 0 24px}.support-faq summary{font-size:1rem}.support-group{margin-top:32px}.support-group h2{font-size:1.6rem;margin-bottom:14px}
 @media (max-width: 1100px) {
   .nav-actions, .site-header nav { gap: 18px; }
+  .site-header nav { gap: 12px; font-size: .8125rem; }
   .hero { gap: 10px; padding-top: 58px; }
   .hero h1 { font-size: 3.65rem; }
   .hero-description { font-size: 1rem; }
