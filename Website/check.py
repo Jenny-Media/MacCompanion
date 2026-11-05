@@ -4,6 +4,7 @@ from html.parser import HTMLParser
 import hashlib
 import json
 from pathlib import Path
+import re
 from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parent / "dist"
@@ -83,6 +84,26 @@ for path, page in pages.items():
         elif fragment and target in pages and fragment not in pages[target].ids:
             errors.append(f"{name}: missing anchor {link}")
 beta = (ROOT / "beta/index.html").resolve()
+store_url = "https://apps.apple.com/app/id6819496840"
+for path, page in pages.items():
+    name = path.relative_to(ROOT)
+    if store_url not in page.links:
+        errors.append(f"{name}: missing official App Store download link")
+    for link in page.links:
+        if urlsplit(link).hostname == "apps.apple.com" and link != store_url:
+            errors.append(f"{name}: unexpected App Store destination {link}")
+    if path != beta and re.search(
+        r"currently in (?:<strong>)?TestFlight|App Store (?:downloads and paid purchases are not yet|release is not yet)|planned U\.S\. price|The app is in beta",
+        path.read_text(), re.IGNORECASE,
+    ):
+        errors.append(f"{name}: obsolete pre-release availability or pricing copy")
+    if path != beta and re.search(r"testflight", path.read_text(), re.IGNORECASE):
+        errors.append(f"{name}: TestFlight links and mentions must stay on the unlisted beta route")
+home = pages.get((ROOT / "index.html").resolve())
+if home and not any(image.get("src") == "/assets/download-on-the-app-store.svg"
+                    and image.get("alt") == "Download on the App Store"
+                    for image in home.images):
+    errors.append("index.html: missing accessible official Apple download badge")
 if beta in pages:
     if not {"noindex", "nofollow"}.issubset({part.strip() for part in pages[beta].robots.split(",")}):
         errors.append("beta/index.html: missing search-index exclusion")
