@@ -97,6 +97,8 @@ for path, page in pages.items():
         path.read_text(), re.IGNORECASE,
     ):
         errors.append(f"{name}: obsolete pre-release availability or pricing copy")
+    if path != beta and re.search(r"testflight", path.read_text(), re.IGNORECASE):
+        errors.append(f"{name}: TestFlight links and mentions must stay on the unlisted beta route")
 home = pages.get((ROOT / "index.html").resolve())
 if home and not any(image.get("src") == "/assets/download-on-the-app-store.svg"
                     and image.get("alt") == "Download on the App Store"
