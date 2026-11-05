@@ -2,14 +2,28 @@
 """Validate versioned local iOS store materials; never writes to ASC."""
 import json
 import hashlib
+import re
+import struct
+import zlib
 from pathlib import Path
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 MATERIALS = ROOT / 'docs/app-store/ios'
-for target in ['MacCompanionIOS', 'MacCompanionSessionActivity']:
-    release = json.loads((ROOT / 'Native/iOSCloud/project.json').read_text())
-    assert release['targets'][target]['settings']['base']['MARKETING_VERSION'] == '1.1'
+release = json.loads((ROOT / 'Native/iOSCloud/project.json').read_text())
+active_versions = {release['targets'][target]['settings']['base']['MARKETING_VERSION']
+                   for target in ['MacCompanionIOS', 'MacCompanionSessionActivity']}
+assert len(active_versions) == 1, 'App and Live Activity must use the same version'
+active_version = active_versions.pop()
+
+
+def version_key(value):
+    assert re.fullmatch(r'\d+\.\d+(?:\.\d+)?', value), 'Expected an Apple marketing version'
+    parts = tuple(map(int, value.split('.')))
+    return parts + (0,) * (3 - len(parts))
+
+
+version_key(active_version)
 limits = {'name': (30, False), 'subtitle': (30, False), 'description': (4000, False),
           'keywords': (100, True), 'promotional-text': (170, False), 'app-review-notes': (4000, True)}
 accepted_sizes = {
@@ -53,6 +67,38 @@ def jpeg_dimensions(data):
     return dimensions
 
 
+def png_dimensions(data):
+    """Check the actual creative encoding and exclude private text/EXIF metadata."""
+    assert data.startswith(b'\x89PNG\r\n\x1a\n'), 'Expected an encoded PNG creative'
+    offset, dimensions, profile = 8, None, False
+    while offset < len(data):
+        assert offset + 12 <= len(data), 'Truncated PNG chunk'
+        length = int.from_bytes(data[offset:offset + 4], 'big')
+        kind = data[offset + 4:offset + 8]
+        end = offset + 12 + length
+        assert end <= len(data), 'Truncated PNG payload'
+        payload = data[offset + 8:end - 4]
+        assert zlib.crc32(kind + payload) == int.from_bytes(data[end - 4:end], 'big'), 'PNG CRC mismatch'
+        assert kind not in [b'eXIf', b'tEXt', b'iTXt', b'zTXt'], 'Private PNG metadata is excluded'
+        if kind == b'IHDR':
+            assert dimensions is None and offset == 8 and length == 13
+            width, height, depth, color, compression, filtering, interlace = struct.unpack('>IIBBBBB', payload)
+            assert (depth, color, compression, filtering, interlace) == (8, 2, 0, 0, 0), 'Expected opaque 8-bit RGB'
+            dimensions = (width, height)
+        elif kind == b'iCCP':
+            _, encoded = payload.split(b'\0', 1)
+            assert encoded[0] == 0 and zlib.decompress(encoded[1:])[36:40] == b'acsp', 'Invalid ICC profile'
+            profile = True
+        elif kind == b'sRGB':
+            profile = True
+        offset = end
+        if kind == b'IEND':
+            assert length == 0 and offset == len(data), 'Unexpected trailing PNG content'
+            break
+    assert kind == b'IEND' and dimensions is not None and profile, 'Incomplete or unprofiled PNG'
+    return dimensions
+
+
 def check_artwork(base, manifest, copy):
     artwork = json.loads((base / manifest['screenshotManifest']).read_text())
     assert artwork['schemaVersion'] == 1 and artwork['platform'] == 'IOS'
@@ -89,8 +135,31 @@ def check_artwork(base, manifest, copy):
             assert origin['simulatorOnlyHarness'] is True and origin['shippingViewsUnmodified'] is True
         paths.add(path)
     assert reused == artwork['reusedCount'] and len(paths) - reused == artwork['newCount']
-    assert paths == {path for path in (base / 'screenshots').rglob('*') if path.is_file()}, 'Unlisted screenshot files'
     print(f'iOS {base.name}: {len(paths)} reviewed final JPEGs verified by path, SHA-256 and encoded dimensions.')
+    creatives = artwork.get('creativeAssets', [])
+    if manifest.get('artifactRole') == 'released-version-archive':
+        assert {image['id'] for image in creatives} == {
+            'main-header-universal', 'main-search-universal',
+            'desktop-header-universal', 'desktop-search-universal'}
+        assert len(creatives) == 4
+    for image in creatives:
+        relative = Path(image['path'])
+        assert relative.parent == Path('screenshots/en-US/creatives') and relative.suffix == '.png'
+        path = base / relative
+        assert not path.is_symlink() and path.resolve().is_relative_to((base / 'screenshots').resolve())
+        data = path.read_bytes()
+        assert path not in paths and len(data) == image['bytes']
+        assert hashlib.sha256(data).hexdigest() == image['sha256'], f'Creative hash mismatch: {relative}'
+        assert png_dimensions(data) == (image['width'], image['height']) == (5244, 2950)
+        assert image['encodedFormat'] == 'PNG' and image['colorMode'] == 'RGB' and image['colorProfile'] == 'sRGB'
+        source = image['source']
+        assert source['kind'] == 'reviewed-native-grid-creative-reuse'
+        assert source['nativePixelsRepainted'] is False and source['nativeScreenUniformScale'] is True
+        assert len(source['sourceTemplateSHA256']) == 64
+        assert image['submissionId'] == manifest['releaseState']['submissionId']
+        paths.add(path)
+    assert paths == {path for path in (base / 'screenshots').rglob('*') if path.is_file()}, 'Unlisted artwork files'
+    print(f'iOS {base.name}: {len(creatives)} reviewed Header/Search PNGs verified separately from screenshots.')
 
 
 for metadata in sorted(MATERIALS.glob('*/metadata.json')):
@@ -107,7 +176,14 @@ for metadata in sorted(MATERIALS.glob('*/metadata.json')):
         assert draft.is_relative_to(base.resolve()), 'Draft must remain inside its version materials'
         check_text(draft, 4000)
     if base.name == '1.1':
-        assert manifest['preparationOnly'] is True
+        if manifest.get('artifactRole') == 'released-version-archive':
+            assert manifest['preparationOnly'] is False
+            state = manifest['releaseState']
+            assert state['appStoreStatus'] == 'READY_FOR_DISTRIBUTION' and state['reviewStatus'] == 'REVIEW_COMPLETED'
+            assert state['build'] == manifest['candidateBuild'] and state['approvedItemCount'] == 6
+            assert version_key(active_version) > version_key(manifest['marketingVersion']), 'Next uploads need a higher version'
+        else:
+            assert manifest['preparationOnly'] is True
         assert manifest['productionMutationAuthorized'] is False and manifest['submissionAuthorized'] is False
         assert manifest['candidateBuild'].isdigit()
         assert len(manifest['baseRevision']) == 40 and len(manifest['candidateTree']) == 40

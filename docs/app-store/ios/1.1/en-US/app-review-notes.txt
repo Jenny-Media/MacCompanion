@@ -1,5 +1,3 @@
-VPN clarification: Mac Companion does not provide VPN functionality. It does not create, install or manage VPN configurations, use Network Extension VPN providers, or route traffic from other apps. It collects no information using a VPN and shares no VPN-collected data with third parties. The optional use of an existing private VPN refers to a network managed separately by the user.
-
 Mac Companion connects only to a Mac selected by the user: Desktop and Trackpad & Keyboard use Screen Sharing (RFB/VNC) forwarded through SSH to that Mac's loopback Screen Sharing port. Terminal uses SSH; Files uses SFTP. There is no plaintext desktop fallback. No Mac Companion account, server, helper, hosted Mac or app catalog is required. Mirrored software runs on the Mac. No vendor demo account is needed; the reviewer uses an account on a reviewer-controlled Mac.
 
 Setup on iPhone or iPad, iOS/iPadOS 26+:
