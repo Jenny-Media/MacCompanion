@@ -4,7 +4,9 @@
   "appId": "6819496840",
   "bundleId": "media.jenny.maccompanion.ios",
   "primaryLocale": "en-US",
-  "locales": ["en-US"],
+  "locales": [
+    "en-US"
+  ],
   "supportUrl": "https://mac.jenny.media/support/",
   "marketingUrl": "https://mac.jenny.media/",
   "privacyPolicyUrl": "https://mac.jenny.media/privacy/",
@@ -12,15 +14,26 @@
   "releaseType": "MANUAL",
   "whatsNew": null,
   "whatsNewDraft": "en-US/whats-new.txt",
-  "whatsNewReason": "Production is still the unreleased 1.0 record. Use the conditional draft only if the final App Store version workflow offers What's New.",
+  "whatsNewReason": "Version 1.1 shipped as the initial App Store release and did not use a What\u2019s New field. The separate text file is an unused historical draft.",
   "signInRequired": false,
   "reviewContact": "Preserve the existing authorized App Store Connect contact; do not commit personal contact records.",
   "candidateBuild": "167",
   "candidateBuildId": "3f47c571-aa64-44ae-92be-36ab37e485a7",
   "baseRevision": "028c955040b2429c6e6ede8f48adfe7a642c0d15",
   "candidateTree": "14956fcc9e77e0f72639ce200d6057525d04d00f",
-  "preparationOnly": true,
+  "preparationOnly": false,
   "productionMutationAuthorized": false,
   "submissionAuthorized": false,
-  "screenshotManifest": "artwork-manifest.json"
+  "screenshotManifest": "artwork-manifest.json",
+  "artifactRole": "released-version-archive",
+  "releaseState": {
+    "verifiedOn": "2026-11-04",
+    "releaseDate": "2026-11-04",
+    "appStoreStatus": "READY_FOR_DISTRIBUTION",
+    "reviewStatus": "REVIEW_COMPLETED",
+    "submissionId": "609f17ea-1224-4399-84d5-4cdc62714fc8",
+    "build": "167",
+    "approvedItemCount": 6,
+    "appStoreUrl": "https://apps.apple.com/app/id6819496840"
+  }
 }

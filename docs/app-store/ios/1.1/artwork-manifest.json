@@ -12,8 +12,8 @@
   "publicOrSyntheticDemoContentOnly": true,
   "rawCapturesIncluded": false,
   "logsIncluded": false,
-  "reusedCount": 28,
-  "newCount": 6,
+  "reusedCount": 19,
+  "newCount": 15,
   "exports": [
     {
       "id": "iphone18-01-desktop",
@@ -22,8 +22,8 @@
       "path": "screenshots/en-US/iphone18/01-desktop.jpg",
       "width": 1320,
       "height": 2868,
-      "bytes": 233602,
-      "sha256": "29a1481f72a9d457d94d00808b3d221dbe16945031c55e18dbcf5ca15c85cfd8",
+      "bytes": 627402,
+      "sha256": "1ae36f7cf1892c6a6d46878a7f696612ac06e376b38c91669a7263a7d643e45b",
       "copyKey": "screen-sharing",
       "title": "Screen Sharing",
       "headline": [
@@ -31,14 +31,43 @@
         "From your iPhone."
       ],
       "source": {
-        "kind": "reused-approved-v10-byte-identical",
-        "rawCaptureName": "v8-desktop.png",
-        "rawCaptureSHA256": "3522d6a55294da23f0ca5639f26040ba75b275ed05599fac9de8c83a69e92ee9",
+        "kind": "new-native-shipping-view-capture",
+        "rawCaptureName": "01-desktop-final.png",
+        "rawCaptureSHA256": "3d216cb8d1cf7e41ddc9418b45e32bca942c71b362795d48e1bac2712219a5d1",
         "physicalAcceptance": false,
         "realICloudDeliveryExercised": false,
-        "sourceMaterialVersion": "1.0",
-        "sourceArtifact": "mac-companion-store-design-v10",
-        "notRecapturedFromBuild167": true
+        "sourceCommit": "028c955040b2429c6e6ede8f48adfe7a642c0d15",
+        "simulatorOnlyHarness": true,
+        "shippingViewsUnmodified": true,
+        "privateQABundle": "dev.maccompanion.storegrid.ios",
+        "sourceArtifact": "ios-1.1-mac-grid-refresh",
+        "selectedDisplay": 1,
+        "preparedMacScene": "mac-grid-portrait.png",
+        "preparedMacSceneSHA256": "956d24cad448ef5b39f64e584feec2a1dac12e20149848eb620451c38e68dadd",
+        "nativeMacPixelsRepainted": false,
+        "liveMacTransportExercised": false,
+        "macSceneProvenance": "Previously approved native Finder Mac Apps grid; native TextEdit window with synthetic text for Compose",
+        "nativeDivision": null,
+        "composition": {
+          "fullNativeScreenIncluded": true,
+          "nativePixelsRepainted": false,
+          "uniformScreenScale": 0.7143939393939394,
+          "headlineBounds": [
+            [
+              94,
+              230.0,
+              1066.0,
+              365.29999999999995
+            ],
+            [
+              94,
+              365.29999999999995,
+              1086.0,
+              500.59999999999997
+            ]
+          ],
+          "nativeComposerDetailCrop": null
+        }
       }
     },
     {
@@ -74,8 +103,8 @@
       "path": "screenshots/en-US/iphone18/03-compose.jpg",
       "width": 1320,
       "height": 2868,
-      "bytes": 234177,
-      "sha256": "98532fb35619ccbe71e79909c9647cdc6401454ffa5bdffdb2862502520fe370",
+      "bytes": 477773,
+      "sha256": "9f07072895f6eaa695af0d428ec04786851519c20631e73c3fa6d5fe97ecfb3a",
       "copyKey": "compose-text",
       "title": "Compose Text",
       "headline": [
@@ -83,14 +112,43 @@
         "Send to your Mac."
       ],
       "source": {
-        "kind": "reused-approved-v10-byte-identical",
-        "rawCaptureName": "v8-compose.png",
-        "rawCaptureSHA256": "17052359c91ab57e596d5e95120c0bcbd4e631f6cf0db69e41ed94abb759e716",
+        "kind": "new-native-shipping-view-capture",
+        "rawCaptureName": "03-compose-keyboard-final.png",
+        "rawCaptureSHA256": "1d44666cc493d1f264c07530e5155fa76d7677e2cdbbec8120a996411bb5d1b4",
         "physicalAcceptance": false,
         "realICloudDeliveryExercised": false,
-        "sourceMaterialVersion": "1.0",
-        "sourceArtifact": "mac-companion-store-design-v10",
-        "notRecapturedFromBuild167": true
+        "sourceCommit": "028c955040b2429c6e6ede8f48adfe7a642c0d15",
+        "simulatorOnlyHarness": true,
+        "shippingViewsUnmodified": true,
+        "privateQABundle": "dev.maccompanion.storegrid.ios",
+        "sourceArtifact": "ios-1.1-mac-grid-refresh",
+        "selectedDisplay": 1,
+        "preparedMacScene": "mac-compose-portrait.png",
+        "preparedMacSceneSHA256": "e01463f0dde729fc3ad3285356c87855b2e5f1153b040726994bb73ab975c106",
+        "nativeMacPixelsRepainted": false,
+        "liveMacTransportExercised": false,
+        "macSceneProvenance": "Previously approved native Finder Mac Apps grid; native TextEdit window with synthetic text for Compose",
+        "nativeDivision": null,
+        "composition": {
+          "fullNativeScreenIncluded": true,
+          "nativePixelsRepainted": false,
+          "uniformScreenScale": 0.7143939393939394,
+          "headlineBounds": [
+            [
+              94,
+              230.0,
+              932.0,
+              365.29999999999995
+            ],
+            [
+              94,
+              365.29999999999995,
+              1075.0,
+              500.59999999999997
+            ]
+          ],
+          "nativeComposerDetailCrop": null
+        }
       }
     },
     {
@@ -258,8 +316,8 @@
       "path": "screenshots/en-US/iphone18-pro/01-desktop.jpg",
       "width": 1206,
       "height": 2622,
-      "bytes": 205763,
-      "sha256": "fe21c97010252939e94a53d18daa520fddb5274992478fcb4ee96812f1f7ba50",
+      "bytes": 547648,
+      "sha256": "cbdb4635d21d16df1802916a8142d76c815aa2c0de7ece94613f031a3aaf721f",
       "copyKey": "screen-sharing",
       "title": "Screen Sharing",
       "headline": [
@@ -267,14 +325,43 @@
         "From your iPhone."
       ],
       "source": {
-        "kind": "reused-approved-v10-byte-identical",
-        "rawCaptureName": "v8-desktop.png",
-        "rawCaptureSHA256": "9b832672fc597c713075a330dcfce25f3311a04f53ea3fe5f62dfeb444ed6569",
+        "kind": "new-native-shipping-view-capture",
+        "rawCaptureName": "01-desktop.png",
+        "rawCaptureSHA256": "84911fe2a88bdbe752b2487517f868a0b4f61c5223ce4fe9c626fd7504992de6",
         "physicalAcceptance": false,
         "realICloudDeliveryExercised": false,
-        "sourceMaterialVersion": "1.0",
-        "sourceArtifact": "mac-companion-store-design-v10",
-        "notRecapturedFromBuild167": true
+        "sourceCommit": "028c955040b2429c6e6ede8f48adfe7a642c0d15",
+        "simulatorOnlyHarness": true,
+        "shippingViewsUnmodified": true,
+        "privateQABundle": "dev.maccompanion.storegrid.ios",
+        "sourceArtifact": "ios-1.1-mac-grid-refresh",
+        "selectedDisplay": 1,
+        "preparedMacScene": "mac-grid-portrait.png",
+        "preparedMacSceneSHA256": "956d24cad448ef5b39f64e584feec2a1dac12e20149848eb620451c38e68dadd",
+        "nativeMacPixelsRepainted": false,
+        "liveMacTransportExercised": false,
+        "macSceneProvenance": "Previously approved native Finder Mac Apps grid; native TextEdit window with synthetic text for Compose",
+        "nativeDivision": null,
+        "composition": {
+          "fullNativeScreenIncluded": true,
+          "nativePixelsRepainted": false,
+          "uniformScreenScale": 0.7114427860696517,
+          "headlineBounds": [
+            [
+              86,
+              210.0,
+              968.5,
+              333.0
+            ],
+            [
+              86,
+              333.0,
+              984.5,
+              456.0
+            ]
+          ],
+          "nativeComposerDetailCrop": null
+        }
       }
     },
     {
@@ -310,8 +397,8 @@
       "path": "screenshots/en-US/iphone18-pro/03-compose.jpg",
       "width": 1206,
       "height": 2622,
-      "bytes": 206882,
-      "sha256": "573dfb3da70d0caf2688b4e89ffdb81483183ce3a9f17ea825a0de6790629e17",
+      "bytes": 433036,
+      "sha256": "f14a732f5d6c8f942a381a1890beb6cd00331940568ac4d7f835fbc0c9063f6b",
       "copyKey": "compose-text",
       "title": "Compose Text",
       "headline": [
@@ -319,14 +406,43 @@
         "Send to your Mac."
       ],
       "source": {
-        "kind": "reused-approved-v10-byte-identical",
-        "rawCaptureName": "v8-compose.png",
-        "rawCaptureSHA256": "7f87f0a778c5299f67980728d064ba9588b8c7bd9f6c0e77a5ab1d2ba96d9019",
+        "kind": "new-native-shipping-view-capture",
+        "rawCaptureName": "03-compose-final.png",
+        "rawCaptureSHA256": "58eadf8ceb3f34cea64e0811749b658e1e5d094600a811bc852aee0d09df4c5f",
         "physicalAcceptance": false,
         "realICloudDeliveryExercised": false,
-        "sourceMaterialVersion": "1.0",
-        "sourceArtifact": "mac-companion-store-design-v10",
-        "notRecapturedFromBuild167": true
+        "sourceCommit": "028c955040b2429c6e6ede8f48adfe7a642c0d15",
+        "simulatorOnlyHarness": true,
+        "shippingViewsUnmodified": true,
+        "privateQABundle": "dev.maccompanion.storegrid.ios",
+        "sourceArtifact": "ios-1.1-mac-grid-refresh",
+        "selectedDisplay": 1,
+        "preparedMacScene": "mac-compose-portrait.png",
+        "preparedMacSceneSHA256": "e01463f0dde729fc3ad3285356c87855b2e5f1153b040726994bb73ab975c106",
+        "nativeMacPixelsRepainted": false,
+        "liveMacTransportExercised": false,
+        "macSceneProvenance": "Previously approved native Finder Mac Apps grid; native TextEdit window with synthetic text for Compose",
+        "nativeDivision": null,
+        "composition": {
+          "fullNativeScreenIncluded": true,
+          "nativePixelsRepainted": false,
+          "uniformScreenScale": 0.7114427860696517,
+          "headlineBounds": [
+            [
+              86,
+              210.0,
+              848.5,
+              333.0
+            ],
+            [
+              86,
+              333.0,
+              979.5,
+              456.0
+            ]
+          ],
+          "nativeComposerDetailCrop": null
+        }
       }
     },
     {
@@ -440,8 +556,8 @@
       "path": "screenshots/en-US/ipad/01-desktop.jpg",
       "width": 2064,
       "height": 2752,
-      "bytes": 265380,
-      "sha256": "cca877835ecb326b31d0eae334c94f12ab76d01a4f3edf2cc29a9e60443a6aa7",
+      "bytes": 865873,
+      "sha256": "783523c8a37989bcf2d088b36bfc08f3c795bece50bc72107f2d7a9e80c633a8",
       "copyKey": "ipad-desktop",
       "title": "Screen Sharing",
       "headline": [
@@ -449,14 +565,43 @@
         "A familiar Mac."
       ],
       "source": {
-        "kind": "reused-approved-v10-byte-identical",
-        "rawCaptureName": "v8-desktop.png",
-        "rawCaptureSHA256": "2b1a96125f8759e7dae82e4275d7908a10b6cc81639c20347e7b683f797fde48",
+        "kind": "new-native-shipping-view-capture",
+        "rawCaptureName": "01-desktop.png",
+        "rawCaptureSHA256": "7516399b11d7d5a5f96686e13073d5af29bcdf551ad9d583e73a4181f2f3ad75",
         "physicalAcceptance": false,
         "realICloudDeliveryExercised": false,
-        "sourceMaterialVersion": "1.0",
-        "sourceArtifact": "mac-companion-store-design-v10",
-        "notRecapturedFromBuild167": true
+        "sourceCommit": "028c955040b2429c6e6ede8f48adfe7a642c0d15",
+        "simulatorOnlyHarness": true,
+        "shippingViewsUnmodified": true,
+        "privateQABundle": "dev.maccompanion.storegrid.ios",
+        "sourceArtifact": "ios-1.1-mac-grid-refresh",
+        "selectedDisplay": 1,
+        "preparedMacScene": "mac-grid-landscape.png",
+        "preparedMacSceneSHA256": "888147a7642314a688180a462fccd7f8da4e62720f3261dafd316441fbcc099c",
+        "nativeMacPixelsRepainted": false,
+        "liveMacTransportExercised": false,
+        "macSceneProvenance": "Previously approved native Finder Mac Apps grid; native TextEdit window with synthetic text for Compose",
+        "nativeDivision": null,
+        "composition": {
+          "fullNativeScreenIncluded": true,
+          "nativePixelsRepainted": false,
+          "uniformScreenScale": 0.6500726744186046,
+          "headlineBounds": [
+            [
+              135,
+              330.0,
+              1208.0,
+              517.575
+            ],
+            [
+              135,
+              517.575,
+              1255.0,
+              705.15
+            ]
+          ],
+          "nativeComposerDetailCrop": null
+        }
       }
     },
     {
@@ -492,8 +637,8 @@
       "path": "screenshots/en-US/ipad/03-compose.jpg",
       "width": 2064,
       "height": 2752,
-      "bytes": 258696,
-      "sha256": "dbeebee71621acdf9a3c2d671354b91fea8874fe6842c6576bdf0d35d3595fbb",
+      "bytes": 559162,
+      "sha256": "07d4c21027548453cc4312aaf4cb79698582f7ab1f123738f8bf5ddd44733803",
       "copyKey": "compose-text",
       "title": "Compose Text",
       "headline": [
@@ -501,14 +646,48 @@
         "Send to your Mac."
       ],
       "source": {
-        "kind": "reused-approved-v10-byte-identical",
-        "rawCaptureName": "v8-compose.png",
-        "rawCaptureSHA256": "a1ce8f8b62218a07a93248b6885697e0ae701385d5cd18e87d4d4df713499bcf",
+        "kind": "new-native-shipping-view-capture",
+        "rawCaptureName": "03-compose.png",
+        "rawCaptureSHA256": "fcff52cc92d4a3f5bf26a0a2f9e52b777325e4e2bff6a923ad5c4e4b0e812e51",
         "physicalAcceptance": false,
         "realICloudDeliveryExercised": false,
-        "sourceMaterialVersion": "1.0",
-        "sourceArtifact": "mac-companion-store-design-v10",
-        "notRecapturedFromBuild167": true
+        "sourceCommit": "028c955040b2429c6e6ede8f48adfe7a642c0d15",
+        "simulatorOnlyHarness": true,
+        "shippingViewsUnmodified": true,
+        "privateQABundle": "dev.maccompanion.storegrid.ios",
+        "sourceArtifact": "ios-1.1-mac-grid-refresh",
+        "selectedDisplay": 1,
+        "preparedMacScene": "mac-compose-landscape.png",
+        "preparedMacSceneSHA256": "1aab03d4b172a59cd172e38450e8e32922d020512da8e85b26cacc9bcea32bed",
+        "nativeMacPixelsRepainted": false,
+        "liveMacTransportExercised": false,
+        "macSceneProvenance": "Previously approved native Finder Mac Apps grid; native TextEdit window with synthetic text for Compose",
+        "nativeDivision": null,
+        "composition": {
+          "fullNativeScreenIncluded": true,
+          "nativePixelsRepainted": false,
+          "uniformScreenScale": 0.5,
+          "headlineBounds": [
+            [
+              135,
+              330.0,
+              1308.0,
+              517.575
+            ],
+            [
+              135,
+              517.575,
+              1503.0,
+              705.15
+            ]
+          ],
+          "nativeComposerDetailCrop": [
+            736,
+            636,
+            2016,
+            940
+          ]
+        }
       }
     },
     {
@@ -676,23 +855,57 @@
       "path": "screenshots/en-US/duo/01-tabletop.jpg",
       "width": 2007,
       "height": 2853,
-      "bytes": 242290,
-      "sha256": "c4dc9d34ffa09cf0c75aba89ce407eb31ea8612d1ce4d492ed02c2c51ad62b07",
+      "bytes": 689808,
+      "sha256": "d6b050c3e98ba9da19506546643c9bdb5d6c1c883c9d51cf362a332932d94a92",
       "copyKey": "tabletop-screen-sharing",
-      "title": "Tabletop · Screen Sharing",
+      "title": "Tabletop \u00b7 Screen Sharing",
       "headline": [
         "Set it down.",
         "Keep going."
       ],
       "source": {
-        "kind": "reused-approved-v10-byte-identical",
-        "rawCaptureName": "v8-tabletop.png",
-        "rawCaptureSHA256": "e09f245056ba278448064151be5281d2ef32b8a53f27adbb5bb5cf57b561e589",
+        "kind": "new-native-shipping-view-capture",
+        "rawCaptureName": "01-tabletop.png",
+        "rawCaptureSHA256": "80f89ecd66c1f8a38d52ad639ffa213cc9a42f3f5105213e7c1d50fb328a2d44",
         "physicalAcceptance": false,
         "realICloudDeliveryExercised": false,
-        "sourceMaterialVersion": "1.0",
-        "sourceArtifact": "mac-companion-store-design-v10",
-        "notRecapturedFromBuild167": true
+        "sourceCommit": "028c955040b2429c6e6ede8f48adfe7a642c0d15",
+        "simulatorOnlyHarness": true,
+        "shippingViewsUnmodified": true,
+        "privateQABundle": "dev.maccompanion.storegrid.ios",
+        "sourceArtifact": "ios-1.1-mac-grid-refresh",
+        "selectedDisplay": 3,
+        "preparedMacScene": "mac-grid-landscape.png",
+        "preparedMacSceneSHA256": "888147a7642314a688180a462fccd7f8da4e62720f3261dafd316441fbcc099c",
+        "nativeMacPixelsRepainted": false,
+        "liveMacTransportExercised": false,
+        "macSceneProvenance": "Previously approved native Finder Mac Apps grid; native TextEdit window with synthetic text for Compose",
+        "nativeDivision": {
+          "height": 40,
+          "width": 669,
+          "x": 0,
+          "y": 455.5
+        },
+        "composition": {
+          "fullNativeScreenIncluded": true,
+          "nativePixelsRepainted": false,
+          "uniformScreenScale": 0.6228201295465869,
+          "headlineBounds": [
+            [
+              140,
+              280.0,
+              998.0,
+              459.375
+            ],
+            [
+              140,
+              459.375,
+              1019.0,
+              638.75
+            ]
+          ],
+          "nativeComposerDetailCrop": null
+        }
       }
     },
     {
@@ -705,7 +918,7 @@
       "bytes": 216841,
       "sha256": "9c7e2e991e3c3fe8e9dfe727e89a95ac5a53a7e3de212562e579ebcd758047ee",
       "copyKey": "book-terminal",
-      "title": "Book · Terminal",
+      "title": "Book \u00b7 Terminal",
       "headline": [
         "Your commands.",
         "Your Mac."
@@ -728,23 +941,57 @@
       "path": "screenshots/en-US/duo/03-book-compose.jpg",
       "width": 2853,
       "height": 2007,
-      "bytes": 237030,
-      "sha256": "68652e6fc9ed53375efbf6ebcaca64a2b2760eb00e5ddb6b67bdd1564cbd4d66",
+      "bytes": 507796,
+      "sha256": "2c0e92c239f4764b4840b4d1d739b8fddf196365bd0e874895829764e5f9c17a",
       "copyKey": "book-compose-text",
-      "title": "Book · Compose Text",
+      "title": "Book \u00b7 Compose Text",
       "headline": [
         "Compose here.",
         "Send to your Mac."
       ],
       "source": {
-        "kind": "reused-approved-v10-byte-identical",
-        "rawCaptureName": "v10-compose-expanded.png",
-        "rawCaptureSHA256": "8c9fc0fb8eae1b0b76c17fdd318acf6d62735b77713145692aa4098bce451ce2",
+        "kind": "new-native-shipping-view-capture",
+        "rawCaptureName": "03-book-compose.png",
+        "rawCaptureSHA256": "62f07a4e83b4024e9831fd1044456ae76751c8f7feef74fed917428bbfd5cd56",
         "physicalAcceptance": false,
         "realICloudDeliveryExercised": false,
-        "sourceMaterialVersion": "1.0",
-        "sourceArtifact": "mac-companion-store-design-v10",
-        "notRecapturedFromBuild167": true
+        "sourceCommit": "028c955040b2429c6e6ede8f48adfe7a642c0d15",
+        "simulatorOnlyHarness": true,
+        "shippingViewsUnmodified": true,
+        "privateQABundle": "dev.maccompanion.storegrid.ios",
+        "sourceArtifact": "ios-1.1-mac-grid-refresh",
+        "selectedDisplay": 3,
+        "preparedMacScene": "mac-compose-portrait.png",
+        "preparedMacSceneSHA256": "e01463f0dde729fc3ad3285356c87855b2e5f1153b040726994bb73ab975c106",
+        "nativeMacPixelsRepainted": false,
+        "liveMacTransportExercised": false,
+        "macSceneProvenance": "Previously approved native Finder Mac Apps grid; native TextEdit window with synthetic text for Compose",
+        "nativeDivision": {
+          "height": 669,
+          "width": 40,
+          "x": 455.5,
+          "y": 0
+        },
+        "composition": {
+          "fullNativeScreenIncluded": true,
+          "nativePixelsRepainted": false,
+          "uniformScreenScale": 0.614440939362075,
+          "headlineBounds": [
+            [
+              150,
+              220.0,
+              952.5,
+              349.15
+            ],
+            [
+              150,
+              349.15,
+              1091.5,
+              478.29999999999995
+            ]
+          ],
+          "nativeComposerDetailCrop": null
+        }
       }
     },
     {
@@ -806,23 +1053,57 @@
       "path": "screenshots/en-US/duo/06-book-desktop.jpg",
       "width": 2853,
       "height": 2007,
-      "bytes": 214573,
-      "sha256": "399f39593690c656cea709c82aee019e74222e1efa35abb4c09e85abcd2d64ab",
+      "bytes": 517443,
+      "sha256": "51800a6174443aa8d256d1172deb9bb645e5b0c65a4be3d154ceed20555c4d75",
       "copyKey": "book-screen-sharing",
-      "title": "Book · Screen Sharing",
+      "title": "Book \u00b7 Screen Sharing",
       "headline": [
         "Your Mac.",
         "Your controls."
       ],
       "source": {
-        "kind": "reused-approved-v10-byte-identical",
-        "rawCaptureName": "v8-desktop.png",
-        "rawCaptureSHA256": "34287ac50f1af08bd11ada209756d4281be91cad966f97e48a2ffcf26ba0931a",
+        "kind": "new-native-shipping-view-capture",
+        "rawCaptureName": "06-book-desktop.png",
+        "rawCaptureSHA256": "7d7c2c76a2d583e81f9f6be7d1094345eee3866f34ca9fc37c44b1be0c868da6",
         "physicalAcceptance": false,
         "realICloudDeliveryExercised": false,
-        "sourceMaterialVersion": "1.0",
-        "sourceArtifact": "mac-companion-store-design-v10",
-        "notRecapturedFromBuild167": true
+        "sourceCommit": "028c955040b2429c6e6ede8f48adfe7a642c0d15",
+        "simulatorOnlyHarness": true,
+        "shippingViewsUnmodified": true,
+        "privateQABundle": "dev.maccompanion.storegrid.ios",
+        "sourceArtifact": "ios-1.1-mac-grid-refresh",
+        "selectedDisplay": 3,
+        "preparedMacScene": "mac-grid-portrait.png",
+        "preparedMacSceneSHA256": "956d24cad448ef5b39f64e584feec2a1dac12e20149848eb620451c38e68dadd",
+        "nativeMacPixelsRepainted": false,
+        "liveMacTransportExercised": false,
+        "macSceneProvenance": "Previously approved native Finder Mac Apps grid; native TextEdit window with synthetic text for Compose",
+        "nativeDivision": {
+          "height": 669,
+          "width": 40,
+          "x": 455.5,
+          "y": 0
+        },
+        "composition": {
+          "fullNativeScreenIncluded": true,
+          "nativePixelsRepainted": false,
+          "uniformScreenScale": 0.614440939362075,
+          "headlineBounds": [
+            [
+              150,
+              220.0,
+              682.5,
+              349.15
+            ],
+            [
+              150,
+              349.15,
+              886.0,
+              478.29999999999995
+            ]
+          ],
+          "nativeComposerDetailCrop": null
+        }
       }
     },
     {
@@ -905,5 +1186,203 @@
         "selectedDisplay": 3
       }
     }
-  ]
+  ],
+  "macGridRefresh": {
+    "date": "2026-10-29",
+    "changedExports": [
+      "iphone18-01-desktop",
+      "iphone18-03-compose",
+      "iphone18-pro-01-desktop",
+      "iphone18-pro-03-compose",
+      "ipad-01-desktop",
+      "ipad-03-compose",
+      "duo-01-tabletop",
+      "duo-03-book-compose",
+      "duo-06-book-desktop"
+    ],
+    "unchangedExports": 25,
+    "previousManifestSHA256": "1d964182205901e2cf84bac919d8b416405971ffb1114a197d62eda9c69c6224",
+    "draftApplication": "Nine processed replacements assigned; reload verified all 34 screenshots in order, build 167, manual release and unchanged VPN-free copy; Prepare for Submission",
+    "appReviewSubmitted": false
+  },
+  "creativeAssets": [
+    {
+      "id": "main-header-universal",
+      "page": "Main product page",
+      "placement": "header",
+      "locale": "en-US",
+      "path": "screenshots/en-US/creatives/mac-companion-1.1-grid-en-US-main-header-universal-asc.png",
+      "width": 5244,
+      "height": 2950,
+      "bytes": 2541967,
+      "sha256": "2502e11482c49db26b5365f6ba391d06bbeb99a85538b2a54dda0f02f7bcf5dc",
+      "encodedFormat": "PNG",
+      "colorMode": "RGB",
+      "colorProfile": "sRGB",
+      "source": {
+        "kind": "reviewed-native-grid-creative-reuse",
+        "sourceArtifact": "ios-1.1-mac-grid-refresh/creative-assets",
+        "preparedExport": "exports/mac-companion-1.1-grid-en-US-main-header-universal-asc.png",
+        "sourceTemplateName": "main-header-universal.html",
+        "sourceTemplateSHA256": "e68919cc63e7c3b2d181ac8dc6334c522204e7178d6f1cce6fe3bbd3e1e838bf",
+        "sourceAssets": {
+          "ipad-grid.png": {
+            "sourceName": "01-desktop.png",
+            "sha256": "7516399b11d7d5a5f96686e13073d5af29bcdf551ad9d583e73a4181f2f3ad75"
+          },
+          "iphone-grid.png": {
+            "sourceName": "01-desktop-final.png",
+            "sha256": "3d216cb8d1cf7e41ddc9418b45e32bca942c71b362795d48e1bac2712219a5d1"
+          },
+          "ipad-bezel.png": {
+            "sourceName": "ipad-bezel.png",
+            "sha256": "1baa558379ab9e0d7e43089927fe9c7f4a16cc020d0675bc21a8c1c898ca619e"
+          },
+          "iphone18-bezel.png": {
+            "sourceName": "iphone18-bezel.png",
+            "sha256": "6cb9e72efb88c172710d0388f63f51fad883c86895ee382fb402559c0315343d"
+          }
+        },
+        "nativePixelsRepainted": false,
+        "nativeScreenUniformScale": true
+      },
+      "submissionId": "609f17ea-1224-4399-84d5-4cdc62714fc8",
+      "libraryAssetId": "06400019-6794-8388-8010-47bfe301f99d",
+      "placementAssetId": "d2800019-6794-8388-8f36-f3ac559bea04"
+    },
+    {
+      "id": "main-search-universal",
+      "page": "Main product page",
+      "placement": "search",
+      "locale": "en-US",
+      "path": "screenshots/en-US/creatives/mac-companion-1.1-grid-en-US-main-search-universal-asc.png",
+      "width": 5244,
+      "height": 2950,
+      "bytes": 1727648,
+      "sha256": "dec6ba1a7130f5085f047e4109a20e590ed4346b1831805559b609a7a73d1f76",
+      "encodedFormat": "PNG",
+      "colorMode": "RGB",
+      "colorProfile": "sRGB",
+      "source": {
+        "kind": "reviewed-native-grid-creative-reuse",
+        "sourceArtifact": "ios-1.1-mac-grid-refresh/creative-assets",
+        "preparedExport": "exports/mac-companion-1.1-grid-en-US-main-search-universal-asc.png",
+        "sourceTemplateName": "main-search-universal.html",
+        "sourceTemplateSHA256": "3bbc1111485a3e407542774e8c7f327d6e24ed001b3f249bb7e689537eeed692",
+        "sourceAssets": {
+          "ipad-grid.png": {
+            "sourceName": "01-desktop.png",
+            "sha256": "7516399b11d7d5a5f96686e13073d5af29bcdf551ad9d583e73a4181f2f3ad75"
+          },
+          "iphone-grid.png": {
+            "sourceName": "01-desktop-final.png",
+            "sha256": "3d216cb8d1cf7e41ddc9418b45e32bca942c71b362795d48e1bac2712219a5d1"
+          },
+          "ipad-bezel.png": {
+            "sourceName": "ipad-bezel.png",
+            "sha256": "1baa558379ab9e0d7e43089927fe9c7f4a16cc020d0675bc21a8c1c898ca619e"
+          },
+          "iphone18-bezel.png": {
+            "sourceName": "iphone18-bezel.png",
+            "sha256": "6cb9e72efb88c172710d0388f63f51fad883c86895ee382fb402559c0315343d"
+          }
+        },
+        "nativePixelsRepainted": false,
+        "nativeScreenUniformScale": true
+      },
+      "submissionId": "609f17ea-1224-4399-84d5-4cdc62714fc8",
+      "libraryAssetId": "8c800019-6794-8388-8032-2d07d2e32e03",
+      "placementAssetId": "c6000019-6794-8388-8f37-25d9c160a46a"
+    },
+    {
+      "id": "desktop-header-universal",
+      "page": "Remote Desktop custom product page",
+      "placement": "header",
+      "locale": "en-US",
+      "path": "screenshots/en-US/creatives/mac-companion-1.1-grid-en-US-desktop-header-universal-asc.png",
+      "width": 5244,
+      "height": 2950,
+      "bytes": 2557384,
+      "sha256": "f44fe2cc23ccfed6e8905d6f95ea668366eda5dacde2d41e4f7b4679d1bed02f",
+      "encodedFormat": "PNG",
+      "colorMode": "RGB",
+      "colorProfile": "sRGB",
+      "source": {
+        "kind": "reviewed-native-grid-creative-reuse",
+        "sourceArtifact": "ios-1.1-mac-grid-refresh/creative-assets",
+        "preparedExport": "exports/mac-companion-1.1-grid-en-US-desktop-header-universal-asc.png",
+        "sourceTemplateName": "desktop-header-universal.html",
+        "sourceTemplateSHA256": "5f6fb0046f78a49ec723ca8b41ada5dd510e4e5cd1c745936a8cd84877b1ced5",
+        "sourceAssets": {
+          "ipad-grid.png": {
+            "sourceName": "01-desktop.png",
+            "sha256": "7516399b11d7d5a5f96686e13073d5af29bcdf551ad9d583e73a4181f2f3ad75"
+          },
+          "iphone-grid.png": {
+            "sourceName": "01-desktop-final.png",
+            "sha256": "3d216cb8d1cf7e41ddc9418b45e32bca942c71b362795d48e1bac2712219a5d1"
+          },
+          "ipad-bezel.png": {
+            "sourceName": "ipad-bezel.png",
+            "sha256": "1baa558379ab9e0d7e43089927fe9c7f4a16cc020d0675bc21a8c1c898ca619e"
+          },
+          "iphone18-bezel.png": {
+            "sourceName": "iphone18-bezel.png",
+            "sha256": "6cb9e72efb88c172710d0388f63f51fad883c86895ee382fb402559c0315343d"
+          }
+        },
+        "nativePixelsRepainted": false,
+        "nativeScreenUniformScale": true
+      },
+      "submissionId": "609f17ea-1224-4399-84d5-4cdc62714fc8",
+      "libraryAssetId": "17800019-6794-8388-803f-6c6b6173ca14",
+      "placementAssetId": "62800019-6794-8388-8f22-c0fe673d724b"
+    },
+    {
+      "id": "desktop-search-universal",
+      "page": "Remote Desktop custom product page",
+      "placement": "search",
+      "locale": "en-US",
+      "path": "screenshots/en-US/creatives/mac-companion-1.1-grid-en-US-desktop-search-universal-asc.png",
+      "width": 5244,
+      "height": 2950,
+      "bytes": 1741837,
+      "sha256": "d34a4c4d4ec08eca4977f011bb9ba3f72fe8e72ef1778938bd44809cbea519c2",
+      "encodedFormat": "PNG",
+      "colorMode": "RGB",
+      "colorProfile": "sRGB",
+      "source": {
+        "kind": "reviewed-native-grid-creative-reuse",
+        "sourceArtifact": "ios-1.1-mac-grid-refresh/creative-assets",
+        "preparedExport": "exports/mac-companion-1.1-grid-en-US-desktop-search-universal-asc.png",
+        "sourceTemplateName": "desktop-search-universal.html",
+        "sourceTemplateSHA256": "3a0a4a7a26088264b5745b0516b836d889ec75f68c442f5049f18679b5af0d5d",
+        "sourceAssets": {
+          "ipad-grid.png": {
+            "sourceName": "01-desktop.png",
+            "sha256": "7516399b11d7d5a5f96686e13073d5af29bcdf551ad9d583e73a4181f2f3ad75"
+          },
+          "iphone-grid.png": {
+            "sourceName": "01-desktop-final.png",
+            "sha256": "3d216cb8d1cf7e41ddc9418b45e32bca942c71b362795d48e1bac2712219a5d1"
+          },
+          "ipad-bezel.png": {
+            "sourceName": "ipad-bezel.png",
+            "sha256": "1baa558379ab9e0d7e43089927fe9c7f4a16cc020d0675bc21a8c1c898ca619e"
+          },
+          "iphone18-bezel.png": {
+            "sourceName": "iphone18-bezel.png",
+            "sha256": "6cb9e72efb88c172710d0388f63f51fad883c86895ee382fb402559c0315343d"
+          }
+        },
+        "nativePixelsRepainted": false,
+        "nativeScreenUniformScale": true
+      },
+      "submissionId": "609f17ea-1224-4399-84d5-4cdc62714fc8",
+      "libraryAssetId": "fc000019-6794-8388-802d-a0fc9ccfffc1",
+      "placementAssetId": "eac00019-6794-8388-8f16-9ae3b89dd803"
+    }
+  ],
+  "creativeAssetsReviewedAt": "2026-10-30",
+  "releaseArchivedAt": "2026-11-04"
 }

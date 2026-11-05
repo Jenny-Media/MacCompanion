@@ -1,88 +1,115 @@
 # iOS 1.1 screenshot handoff
 
-The **34 reviewed final JPEGs** are versioned under [screenshots/en-US/](screenshots/en-US/).
+The **34 reviewed final JPEGs** are under [screenshots/en-US/](screenshots/en-US/).
 [artwork-manifest.json](artwork-manifest.json) records their relative paths,
-dimensions, SHA-256 hashes, source/reuse provenance and original raw-capture
-hashes. The authoritative captions and order are [screenshot-copy.json](screenshot-copy.json).
-Only these selected, sanitized exports are committed under the narrow release
-artwork exception in `AGENTS.md`.
+dimensions, SHA-256 hashes, source provenance and raw-capture hashes.
+[screenshot-copy.json](screenshot-copy.json) remains the caption and order authority.
+Only selected sanitized exports belong in application Git. Raw captures, source
+fixtures, rejected probes, bezels, build products and logs remain outside Git.
 
-Raw captures, rejected attempts, capture fixtures, source bezels and logs remain
-outside application Git at:
+## October 29 Mac grid refresh
 
-`/Users/yihong/.codex/visualizations/2026/10/29/01a18624-5e6b-70c1-9d77-38f779abea0a/ios-1.1-store-materials/`
+Nine final images are replaced:
 
-The external handoff's `index.html` is the review gallery. Its original manifest
-retains the detailed composition/capture evidence; the committed manifest is a
-portable inventory of final exports, with no raw images, fixtures or logs.
+- Large and medium iPhone: Desktop and Compose Text.
+- iPad: Desktop and Compose Text.
+- Duo: Tabletop, Book Compose Text and Book Desktop.
 
-Six new backup/sync exports were staged only in App Store Connect Asset Library
-on October 29. At the last saved 20:07 UTC inspection, three were ready and three
-were Processing. They were not assigned to the 1.0 version or submitted for
-review. The owner chose to preserve 1.0; see [the store handoff](README.md#asset-library-staging-and-retained-10-record).
+The five desktop scenes use the native Finder **Mac Apps** icon grid from the
+previously approved store artwork. Only its remote-Mac pixels were extracted;
+the old marketing frame and iOS controls are excluded. Compose scenes use a
+native TextEdit window with synthetic text: “Hello from Mac Companion.” and
+“Typed here. Sent to my Mac.” The grid appears behind the editor in the wide
+scene. Neither Mac window controls nor app controls are repainted.
 
-## Selected sequence
-
-The seven approved 1.0 core compositions remain byte-identical for each display
-family: Desktop, Terminal, Compose Text, Pro keyboard customization, Files,
-Trackpad & Keyboard, and no-helper Mac setup. Duo keeps its approved Tabletop,
-Book Terminal and Book Compose opening order. Their original capture/build
-provenance is retained; they are not relabeled as fresh build-167 captures.
-
-Fresh captures add **Backup & Restore** and **What Syncs** after the seven core
-images for the large iPhone, iPad and Duo. The medium iPhone retains its approved
-seven-image set. The compatible medium model is absent from the current QA
-inventory; the large iPhone is used for the new phone screens without creating
-another simulator or fabricating a medium-device capture.
+The other **25 final JPEGs remain byte-identical** to the prior manifest: 19
+approved core compositions and the six 1.1 Backup & Restore / What Syncs images.
+The manifest therefore records 19 reused exports and 15 new native shipping-view
+captures. This does not relabel any Simulator app as TestFlight binary 167.
 
 | Family | Output dimensions | Selected images |
 | --- | --- | --- |
 | Large iPhone | 1320 × 2868 | 9 |
 | Medium iPhone | 1206 × 2622 | 7 |
 | iPad | 2064 × 2752 | 9 |
-| Duo | 2853 × 2007 landscape; 2007 × 2853 Tabletop hero | 9 |
+| Duo | 2853 × 2007 Book; 2007 × 2853 Tabletop hero | 9 |
 
-The new captions are “Your setup. / A backup away.” and “Your controls. / Across
-devices.” Sync remains visibly optional; no screenshot claims that a real Apple
-Account synchronized during capture. Credentials and trust exclusions remain in
-the native scope screen. The setup composition continues to state that no Mac
-Companion helper is needed.
+The light Focused artwork, captions and official bezels are retained. Every
+native screen is included with proportional scaling and the device aperture's
+corner mask. The iPad Compose composition uses the real landscape keyboard
+layout plus an enlarged, uniformly scaled crop of its native Compose panel.
+The full device screen also remains visible. Device controls, text and keyboard
+pixels are not rewritten for the composition.
 
-## Capture and acceptance boundaries
+## Capture provenance and device retention
 
-New raw captures use the shipping Backup & Restore and Sync & Security views
-from candidate source `028c955040b2429c6e6ede8f48adfe7a642c0d15`, hosted in a
-private Simulator-only QA app. The app entry point injects an empty synthetic
-library and a cloud transport that refuses writes/removal. It navigates to the
-shipping What Syncs screen normally. No production view, label, control, profile,
-credential or entitlement is modified. The private QA app is not TestFlight
-binary 167 and is never uploaded.
+The private Simulator harness compiles the shipping viewer and composer from
+candidate source `028c955040b2429c6e6ede8f48adfe7a642c0d15`. The repository's
+Apps, Native, Packages and specification inputs were checked against that
+candidate. The private bundle is `dev.maccompanion.storegrid.ios`; its entry point
+and capture driver stay outside Git. It opens no Mac transport and is never
+uploaded to Apple. The prepared Mac scenes establish appearance, not delivery
+of text to a physical Mac.
 
-Existing compatible Mac Companion phone, iPad and Duo QA simulators are reused
-with their UUIDs passed explicitly and per-device locks held. Destinations run
-sequentially with parallel testing disabled. Record their UUIDs, runtime, initial
-and final state and native test results in the external manifest. Preserve prior
-fixtures and all raw captures. No simulator creation, reset, erasure or deletion
-is part of this work.
+Destinations ran sequentially with explicit UUIDs, per-device locks, the managed
+compiler lease, parallel testing disabled and a single concurrent destination:
 
-The three native UI journeys passed. XCTest's main-screen attachments on Duo
-selected the inactive outer display and were black; those probes are retained
-and excluded. The selected Duo images instead use native `simctl io screenshot
---display=3` captures, after visual confirmation in Device Hub. Its native Open
-posture was used for the two new forms, then its original Closed posture was
-restored. The iPhone and Duo remain booted as before; the iPad was returned to
-its original Shutdown state. All three devices are retained and their locks
-released. No other project's simulator was touched.
+- Reused large iPhone: `FF42D9EA-2237-4CD5-9A65-0525BE1B196B`, iOS 27.0.
+- Reused iPad: `2A3A688F-E93C-45BF-A0F2-B1807FF1C64F`, iPadOS 27.0.
+- Reused Duo: `93322CC3-1471-4BF3-BDBF-632537D1C875`, iOS 27.1.
+- Created reusable medium iPhone QA destination:
+  `0D54DA09-3BEA-4A25-8043-CC9CA50111B8`, iOS 27.0. The required compatible
+  project model was missing. This device is retained, is not disposable and was
+  returned to Shutdown after capture. No medium image was fabricated by scaling
+  a larger phone capture.
 
-Each new final composition places its unchanged native capture proportionally
-inside the existing approved official bezel and Focused visual style. The full
-native screen remains visible. Caption artwork is separate from the app pixels;
-no native text or controls are repainted. Inspect every new export and the
-combined gallery before later application. Images are opaque RGB JPEGs at the
-exact selected dimensions, with no EXIF or XMP metadata in the committed exports.
+The three reused devices remain booted as initially found. Duo Book and Tabletop
+use native Device Hub postures and inner display 3. Their real system divisions
+were recorded: a 40-point vertical Book division and a 40-point horizontal
+Tabletop division. No test division override was used. The original Closed
+posture was restored after the capture test exited. Temporary 9:41 status-bar
+overrides were cleared, capture locks released and all four devices retained.
+No simulator was erased or deleted, and no other project's device was used.
 
-Synthetic screenshots establish displayed UI only. They do not establish backup
-round-trip behavior, signed iCloud delivery, physical Mac input, or physical Duo
-acceptance. Use [reviewer-setup.md](reviewer-setup.md) for those pending checks.
-The external evidence records failures/rejected probes separately. Existing 1.0
-assets, store selections and custom product pages remain untouched.
+## External evidence and application boundary
+
+The refresh sources, raw captures, native test results, rendered export manifest,
+before/after gallery and store application evidence are outside application Git:
+
+`/Users/yihong/.codex/visualizations/2026/10/29/01a18624-5e6b-70c1-9d77-38f779abea0a/ios-1.1-mac-grid-refresh/`
+
+Its `gallery/index.html` provides the before/after comparison, and
+`gallery/refreshed-screenshots.jpg` provides the nine-image contact sheet.
+The earlier backup/sync capture evidence remains in the adjacent
+`ios-1.1-store-materials/` handoff.
+
+At the October 29 artwork checkpoint, all nine replacement images had finished
+processing and were assigned to the draft.
+Reload verification confirmed all 34 screenshots in order: seven medium iPhone,
+nine large iPhone, nine iPad and nine Duo images. The external
+`evidence/asc-final-verification.json` records the saved filenames, unchanged
+copy hashes, build 167, manual release and Prepare for Submission status.
+The 25 unchanged files remain byte-identical. No asset Add for Review, app
+Update Review or Submit action was used at that screenshot-refresh checkpoint.
+
+On October 30, the owner authorized withdrawal and resubmission to correct the
+separate Header and Search Results creatives. Four native-grid replacements
+were applied across the main page and Remote Desktop custom page, and all four
+placements were verified after reload. The existing 34 screenshots were checked
+again and remain unchanged. The six-item package entered Waiting for Review
+on October 30 under submission `609f17ea-1224-4399-84d5-4cdc62714fc8`, with build 167 and manual
+release. The four final PNGs are now archived in [screenshots/en-US/creatives/](screenshots/en-US/creatives/)
+and the manifest’s `creativeAssets` collection. The external `creative-assets/`
+directory retains source provenance, placement mapping, before/after previews,
+failed attempts and the historical resubmission receipt; those sources are not committed.
+
+On November 4, iOS 1.1 (167) was verified Ready for Distribution and the six-item
+review was complete with all items Approved. Earlier draft and Waiting for Review
+observations above are historical checkpoints. The archive contains 34 store
+screenshots plus four separate Header/Search creatives, not 38 store screenshots.
+
+These captures establish displayed native UI only. They do not establish
+physical Mac input, backup round-trip behavior, signed iCloud delivery, or
+physical Duo acceptance. The [reviewer setup](reviewer-setup.md) retains those
+separate acceptance checks. Build 167, manual release, current live copy,
+custom product pages and the historical review conversation are preserved.

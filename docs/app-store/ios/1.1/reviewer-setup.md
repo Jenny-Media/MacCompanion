@@ -1,9 +1,17 @@
-# iOS 1.1 candidate rehearsal
+# iOS 1.1 historical candidate rehearsal
 
 Target **1.1 (167)** from TestFlight. This is an execution checklist, not a
-record of completed physical tests. Use disposable data on reviewer-controlled
+record of completed physical tests. The shipped release is complete; these
+unchecked boxes preserve missing per-case evidence and do not reopen submission gates. Use disposable data on reviewer-controlled
 devices and a test Mac. Do not change a personal Mac's Sharing, network or
 security settings as part of materials preparation.
+
+October 29 owner checkpoint: the owner reported that the requested device checks
+had been performed and worked, then explicitly authorized submission of 1.1
+(167). The version later completed review and was released on November 4, 2026.
+Manual release had been retained through review.
+The individual boxes below are not marked as agent-executed tests: device models,
+per-step results and physical evidence were not supplied in that confirmation.
 
 ## Core connection rehearsal
 

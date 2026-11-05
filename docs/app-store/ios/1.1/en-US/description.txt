@@ -24,4 +24,4 @@ The free version includes one saved Mac, one SSH key, the core connection modes,
 REQUIREMENTS
 Requires iOS or iPadOS 26 or later and an awake, reachable Mac with an account you are allowed to use. Enable Remote Login for every mode, and also enable Screen Sharing for Desktop and Trackpad & Keyboard. Keep a Mac notebook's lid open; closed-lid capture compatibility varies.
 
-Connect over a trusted local network or your own existing private VPN. Verify the Mac's SSH fingerprint before trusting it. Mac Companion does not provide a VPN or public relay. Audio streaming and individual app/window capture are not included.
+Connect over a trusted local network. Verify the Mac's SSH fingerprint before trusting it. Audio streaming and individual app/window capture are not included.
