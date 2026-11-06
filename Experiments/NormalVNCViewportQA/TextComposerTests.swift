@@ -170,6 +170,8 @@ import StoreKitTest
     }
 
     func testOpenDuoComposerKeepsActionsAndFocusAcrossActualKeyboardRotations() async throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad,
+            "Windowed iPad rotation uses XCUIDevice in ComposerSheetUITests/testFloatingRotationKeepsEditorCloseAndSendAboveKeyboard; scene requests cannot force its window aspect ratio.")
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
         let root = UIViewController(); root.view.backgroundColor = .systemBlue
@@ -202,18 +204,31 @@ import StoreKitTest
             let division = bounds.width > bounds.height
                 ? CGRect(x: bounds.midX - 10, y: 0, width: 20, height: bounds.height)
                 : CGRect(x: 0, y: bounds.midY - 10, width: bounds.width, height: 20)
+            // A closed Duo's landscape safe area can be too narrow for two
+            // readable pages. Such a synthetic division uses full-window layout;
+            // the rendered-region tests separately cover unfolded Book/Tabletop.
+            var content = CGRect.null, input = CGRect.null
+            let safe = panel.view.safeAreaLayoutGuide.layoutFrame
+            let divided = CompanionVNCTabletopRegions(safe, division, &content, &input)
+                || CompanionVNCBookRegions(safe, division, &content, &input)
             panel.setDivisionForComposerTesting(NSValue(cgRect: division))
             composer.draft.expanded = true
-            try await waitForComposerUI("reachable composer after native keyboard rotation") {
-                let card = panel.panelFrame, keyboard = panel.view.keyboardLayoutGuide.layoutFrame
-                return card.height >= 112 && keyboard.height > 120 && panel.view.bounds.contains(card)
-                    && !card.intersects(division) && !card.intersects(keyboard)
-                    && card.contains(panel.deliveryActionFrame) && card.contains(panel.closeActionFrame)
+            do {
+                try await waitForComposerUI("reachable composer after native keyboard rotation") {
+                    let card = panel.panelFrame, keyboard = panel.view.keyboardLayoutGuide.layoutFrame
+                    return card.height >= 112 && keyboard.height > 120 && panel.view.bounds.contains(card)
+                        && (!divided || !card.intersects(division)) && !card.intersects(keyboard)
+                        && card.contains(panel.deliveryActionFrame) && card.contains(panel.closeActionFrame)
+                }
+            } catch {
+                print("Composer rotation geometry: orientation=\(expected.rawValue), bounds=\(panel.view.bounds), card=\(panel.panelFrame), keyboard=\(panel.view.keyboardLayoutGuide.layoutFrame), division=\(division), send=\(panel.deliveryActionFrame), close=\(panel.closeActionFrame)")
+                throw error
             }
             try await Task.sleep(for: .milliseconds(350))
             let card = panel.panelFrame
             XCTAssertGreaterThanOrEqual(card.height, 112)
-            XCTAssertFalse(card.intersects(panel.view.keyboardLayoutGuide.layoutFrame)); XCTAssertFalse(card.intersects(division))
+            XCTAssertFalse(card.intersects(panel.view.keyboardLayoutGuide.layoutFrame))
+            if divided { XCTAssertFalse(card.intersects(division)) }
             XCTAssertTrue(card.contains(panel.deliveryActionFrame)); XCTAssertTrue(card.contains(panel.closeActionFrame))
             XCTAssertGreaterThanOrEqual(panel.deliveryActionFrame.height, 44); XCTAssertGreaterThanOrEqual(panel.closeActionFrame.height, 44)
             XCTAssertTrue(editor.isFirstResponder); XCTAssertEqual(editor.selectedRange, selection)
@@ -366,13 +381,18 @@ import StoreKitTest
         let preferences = TerminalKeyboardPreferences(keys: [.f1, .f2])
         bar.configure(preferences); bar.setKeyboardFocused(true)
         XCTAssertEqual(bar.height, 99, accuracy: 1, "Numbers have an independent row while optional Navigation starts collapsed")
-        for landscape in [false, true] {
-            scene.requestGeometryUpdate(.iOS(interfaceOrientations: landscape ? .landscapeRight : .portrait))
-            for _ in 0..<300 {
-                if (window.bounds.width > window.bounds.height) == landscape && controller.transitionCoordinator == nil { break }
-                try await Task.sleep(for: .milliseconds(10))
+        // A windowed iPad retains its own shape when the display rotates.
+        // Physical rotation is exercised by the near-limit UI journey instead.
+        let windowed = UIDevice.current.userInterfaceIdiom == .pad
+        for landscape in windowed ? [window.bounds.width > window.bounds.height] : [false, true] {
+            if !windowed {
+                scene.requestGeometryUpdate(.iOS(interfaceOrientations: landscape ? .landscapeRight : .portrait))
+                for _ in 0..<300 {
+                    if (window.bounds.width > window.bounds.height) == landscape && controller.transitionCoordinator == nil { break }
+                    try await Task.sleep(for: .milliseconds(10))
+                }
+                XCTAssertEqual(window.bounds.width > window.bounds.height, landscape)
             }
-            XCTAssertEqual(window.bounds.width > window.bounds.height, landscape)
             for invalidate in [false, true] {
                 controller.textComposer.present(from: controller, available: { true }, send: { _, _ in XCTFail("Layout must not send input") })
                 let panel = try XCTUnwrap(controller.presentedViewController as? DirectTextComposerPanel)
@@ -675,7 +695,7 @@ import StoreKitTest
             panel.view.centerXAnchor.constraint(equalTo: root.view.centerXAnchor)])
         try await Task.sleep(for: .milliseconds(400))
         for invalid in [true, false] {
-            draft.edit(invalid ? String(repeating: "x", count: 257) : "synthetic draft")
+            draft.edit(invalid ? String(repeating: "x", count: 4097) : "synthetic draft")
             if !invalid { draft.issue = "Synthetic delivery failure" }
             try await Task.sleep(for: .milliseconds(200)); panel.view.setNeedsLayout(); panel.view.layoutIfNeeded()
             XCTAssertTrue(draft.compactLayout)
@@ -894,6 +914,8 @@ import StoreKitTest
         }
     }
     func testLandscapeComposerKeepsActualSendAndEditorAboveKeyboard() async throws {
+        try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad,
+            "Windowed iPad physical rotation and near-limit layout are covered by ComposerSheetUITests/testFloatingRotationKeepsEditorCloseAndSendAboveKeyboard.")
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previous = scene.windows.first(where: \.isKeyWindow)
         let window = UIWindow(windowScene: scene), root = UIViewController()
@@ -931,7 +953,7 @@ import StoreKitTest
         XCTAssertGreaterThan(editorRect.height, 35)
         XCTAssertGreaterThanOrEqual(editorRect.minY, contentRect.minY)
         XCTAssertLessThanOrEqual(editorRect.maxY, panel.deliveryActionFrame.minY, "The inline footer reserves Send below the editor")
-        editor.insertText(String(repeating: "x", count: 257))
+        editor.insertText(String(repeating: "x", count: 4097))
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertFalse(composer.draft.canSend, "Invalid input keeps Send disabled in compact layout")
         panel.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge

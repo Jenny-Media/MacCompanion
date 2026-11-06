@@ -2,9 +2,9 @@ import XCTest
 @MainActor final class ComposerSheetUITests: XCTestCase {
     override func setUp() { super.setUp(); continueAfterFailure = false; XCUIDevice.shared.orientation = .portrait }
     override func tearDown() { XCUIDevice.shared.orientation = .portrait; super.tearDown() }
-    private func open(narrow: Bool = false, shortcutBar: Bool = false) -> XCUIApplication {
+    private func open(narrow: Bool = false, shortcutBar: Bool = false, nearLimit: Bool = false) -> XCUIApplication {
         let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.sheetqa.ios")
-        app.launchArguments = (narrow ? ["--qa-narrow-composer"] : []) + (shortcutBar ? ["--qa-shortcut-bar"] : []); app.launch()
+        app.launchArguments = (narrow ? ["--qa-narrow-composer"] : []) + (shortcutBar ? ["--qa-shortcut-bar"] : []) + (nearLimit ? ["--qa-near-limit"] : []); app.launch()
         XCTAssertTrue(app.buttons["qa-compose"].waitForExistence(timeout: 10)); app.buttons["qa-compose"].tap()
         XCTAssertTrue(app.textViews["compose-text"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5)); return app
@@ -217,6 +217,7 @@ import XCTest
             app.launch(); defer { app.terminate() }
             XCTAssertTrue(app.buttons["qa-compose"].waitForExistence(timeout: 10)); app.buttons["qa-compose"].tap()
             XCTAssertTrue(app.textViews["compose-text"].waitForExistence(timeout: 5))
+            XCTAssertGreaterThan((app.textViews["compose-text"].value as? String)?.unicodeScalars.count ?? 0, 256)
             XCTAssertTrue(app.buttons["compose-send"].isEnabled)
             XCTAssertEqual(app.staticTexts["compose-limit-count"].exists, nearLimit)
             XCTAssertFalse(app.staticTexts["compose-inline-error"].exists)
@@ -235,7 +236,9 @@ import XCTest
         XCTAssertTrue(app.alerts["Can’t send this text"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.alerts.staticTexts.containing(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "4,097", "4,096")).firstMatch.exists)
         capture("composer-complete-limit-warning", app: app)
-        app.alerts.buttons["Done"].tap()
+        let warning = app.alerts["Can’t send this text"].firstMatch
+        warning.buttons["Done"].firstMatch.tap()
+        XCTAssertTrue(warning.waitForNonExistence(timeout: 5))
         XCTAssertEqual(app.textViews["compose-text"].value as? String, draft)
         app.buttons["compose-back"].tap(); XCTAssertTrue(app.buttons["qa-compose"].isHittable)
     }
@@ -258,8 +261,11 @@ import XCTest
         XCTAssertEqual(editor.value as? String, ""); XCTAssertFalse(app.buttons["compose-error"].exists)
     }
     func testFloatingRotationKeepsEditorCloseAndSendAboveKeyboard() async {
-        let app = open(shortcutBar: true); defer { app.terminate() }
-        let editor = app.textViews["compose-text"]; editor.typeText("rotation draft")
+        let app = open(shortcutBar: true, nearLimit: true); defer { app.terminate() }
+        let editor = app.textViews["compose-text"]
+        let initial = editor.value as? String
+        XCTAssertEqual(initial?.unicodeScalars.count, 3277)
+        XCTAssertTrue(app.staticTexts["compose-limit-count"].exists)
         XCUIDevice.shared.orientation = .landscapeLeft
         await waitForKeyboardAndPanel(app)
         let keyboard = app.keyboards.firstMatch, panel = app.otherElements["compose-panel"].firstMatch
@@ -269,9 +275,10 @@ import XCTest
         XCTAssertGreaterThan(editor.frame.height, 35)
         XCTAssertTrue(app.buttons["compose-send"].isHittable); XCTAssertTrue(app.buttons["compose-back"].isHittable)
         XCTAssertFalse(editor.frame.intersects(app.buttons["compose-send"].frame))
-        app.typeText(" retained"); XCTAssertEqual(editor.value as? String, "rotation draft retained")
+        app.typeText(" retained"); XCTAssertEqual(editor.value as? String, initial.map { $0 + " retained" })
         XCUIDevice.shared.orientation = .portrait
         await waitForKeyboardAndPanel(app); XCTAssertTrue(app.buttons["compose-send"].isHittable)
         XCTAssertFalse(panel.frame.intersects(app.otherElements["qa-shortcut-bar"].frame))
+        capture("composer-near-limit-rotation", app: app)
     }
 }

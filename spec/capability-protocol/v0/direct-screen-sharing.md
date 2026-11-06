@@ -552,9 +552,11 @@ without sending text. Failure or a lifecycle/readiness change after admission
 cancels the remainder, reports possible partial delivery, and never retries or
 replays it. Ordinary input cannot interleave with the owned long-text sequence.
 
-The composer shows the current count and limit. A blocked send has a readable
-inline explanation and a full wrapped detail message; neither may truncate the
-limit or recovery instruction. Draft rejection preserves the previous text.
+The composer shows the current count and limit only at 80% of the allowance or
+above; an exceeded limit is marked inline. The warning button opens a full wrapped
+native alert that cannot truncate the limit or recovery instruction. Keep status
+content clear of the editor and Send in compact layouts. Draft rejection
+preserves the previous text.
 
 Terminal sends UTF-8 to its existing PTY owner and wraps it in bracketed-paste
 markers only when the current terminal mode requests them. Every draft containing

@@ -122,12 +122,15 @@ struct DirectComposedText: Equatable {
     }
     var canSend: Bool { active && !sending && validationIssue == nil }
     var issueMessage: String? { issue ?? (text.isEmpty ? nil : validationIssue) }
-    var sizeSummary: String? {
+    var sizeSummary: String? { lengthSummary(includeUnits: true) }
+    var compactSizeSummary: String? { lengthSummary(includeUnits: false) }
+    private func lengthSummary(includeUnits: Bool) -> String? {
         let normalized = DirectComposedText.normalized(text)
         let count = mode == .terminal ? normalized.utf8.count : normalized.unicodeScalars.count
         let limit = mode == .terminal ? DirectComposedText.terminalMaximumBytes : DirectComposedText.desktopMaximumScalars
         guard count * 5 >= limit * 4 else { return nil }
-        return "\(count.formatted()) / \(limit.formatted()) " + (mode == .terminal ? "UTF-8 bytes" : "characters")
+        let counter = "\(count.formatted()) / \(limit.formatted())"
+        return includeUnits ? counter + " " + (mode == .terminal ? "UTF-8 bytes" : "characters") : counter
     }
     func configure(available: @escaping () -> Bool, send: @escaping (String, @escaping (String?) -> Void) -> Void) {
         epoch = UUID(); self.available = available; self.send = send; active = true; confirmation = nil; issue = nil
@@ -597,15 +600,9 @@ struct DirectComposerPlacement {
             measuredText = draft.text; measuredWidth = width; measuredCategory = category
         }
         var statusHeight: CGFloat = 0
-        if let summary = draft.sizeSummary {
+        if let summary = draft.compactSizeSummary {
             let font = UIFont.preferredFont(forTextStyle: .caption2, compatibleWith: traitCollection)
             let bounds = (summary as NSString).boundingRect(with: CGSize(width: width + 50, height: .greatestFiniteMagnitude),
-                options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: font], context: nil)
-            statusHeight += ceil(bounds.height) + 8
-        }
-        if let issue = draft.issueMessage {
-            let font = UIFont.preferredFont(forTextStyle: .caption1, compatibleWith: traitCollection)
-            let bounds = (issue as NSString).boundingRect(with: CGSize(width: width + 50, height: .greatestFiniteMagnitude),
                 options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: font], context: nil)
             statusHeight += ceil(bounds.height) + 8
         }
@@ -788,17 +785,12 @@ private struct DirectTextComposerView: View {
                     .accessibilityIdentifier("compose-expand")
                     .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("composer-panel")) } action: { reportExpansionBounds($0) }
             }
-            if let summary = draft.sizeSummary {
-                Text(summary).font(.caption2).foregroundStyle(.secondary)
+            if let summary = draft.compactSizeSummary {
+                Text(summary).font(.caption2).foregroundStyle(draft.validationIssue == nil ? Color.secondary : Color.red)
                     .lineLimit(nil).fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .trailing).padding(.horizontal, 12).padding(.top, 4)
+                    .accessibilityLabel(draft.sizeSummary ?? summary)
                     .accessibilityIdentifier("compose-limit-count")
-            }
-            if let issue {
-                Text(issue).font(.caption).foregroundStyle(.red)
-                    .lineLimit(nil).fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.top, 4)
-                    .accessibilityIdentifier("compose-inline-error")
             }
             HStack(spacing: 0) {
                 // Native Close occupies the first 44pt; its drag grip occupies this spacer.

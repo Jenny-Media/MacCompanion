@@ -374,7 +374,7 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         try await wait { record.received == reply + [0x71] }
     }
     func testComposerUsesCurrentPTYBracketingAndNeverAddsReturnOrReplaysAfterStop() async throws {
-        let record = SSHTestRecord(), key = NIOSSHPrivateKey(ed25519Key: .init())
+        let record = SSHTestRecord(echoInput: false, inputLimit: 32768), key = NIOSSHPrivateKey(ed25519Key: .init())
         let server = try await server(record: record, key: key)
         defer { _ = server.close() }
         let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Composer", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))

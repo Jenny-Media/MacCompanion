@@ -12,7 +12,7 @@ final class SSHTestRecord: @unchecked Sendable {
     let echoInput: Bool
     let inputLimit: Int
     init(respondToInstall: Bool = true, echoInput: Bool = true, initialOutput: String = "synthetic-ready\r\n", inputLimit: Int = 512) {
-        precondition((1...16384).contains(inputLimit))
+        precondition((1...32768).contains(inputLimit))
         self.respondToInstall = respondToInstall; self.echoInput = echoInput; self.initialOutput = initialOutput; self.inputLimit = inputLimit
     }
     private let lock=NSLock()
