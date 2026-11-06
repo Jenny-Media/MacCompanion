@@ -86,5 +86,31 @@ private final class ComposerBatchSession: CompanionVNCSession {
             }
         }
     }
+    func testRejectedPasteDetailsKeepTheWarningAndRetainedDraftCount() {
+        for mode in DirectControlMode.allCases {
+            for counterInDetails in [false, true] {
+                for retained in ["short draft", String(repeating: "😀", count: 3277)] {
+                    let draft = DirectTextComposerDraft(macName: "Synthetic Mac", mode: mode)
+                    draft.configure(available: { true }, send: { _, _ in XCTFail("Editing must not send text") })
+                    draft.edit(retained); draft.counterInDetails = counterInDetails
+                    let nearLimit = draft.sizeSummary != nil
+                    XCTAssertEqual(draft.detailsMessage, counterInDetails ? draft.sizeSummary : nil)
+                    draft.edit(String(repeating: "x", count: DirectComposedText.draftMaximumBytes + 1))
+                    XCTAssertEqual(draft.text, retained); XCTAssertTrue(draft.canSend)
+                    let warning = "This draft exceeds the 16 KB limit. Use a smaller selection. Your previous text was kept."
+                    XCTAssertEqual(draft.issueMessage, warning)
+                    let count = mode == .terminal ? retained.utf8.count : retained.unicodeScalars.count
+                    let limit = mode == .terminal ? DirectComposedText.terminalMaximumBytes : DirectComposedText.desktopMaximumScalars
+                    let units = mode == .terminal ? "UTF-8 bytes" : "characters"
+                    XCTAssertTrue(draft.detailsMessage?.contains(warning) == true)
+                    XCTAssertTrue(draft.detailsMessage?.contains("Current draft: \(count.formatted()) / \(limit.formatted()) \(units)") == true)
+                    XCTAssertEqual(draft.sizeSummary != nil, nearLimit)
+                    draft.edit(retained)
+                    XCTAssertNil(draft.issueMessage); XCTAssertTrue(draft.canSend)
+                    XCTAssertEqual(draft.detailsMessage, counterInDetails ? draft.sizeSummary : nil)
+                }
+            }
+        }
+    }
 }
 #endif

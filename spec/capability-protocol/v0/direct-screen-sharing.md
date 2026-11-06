@@ -552,9 +552,11 @@ without sending text. Failure or a lifecycle/readiness change after admission
 cancels the remainder, reports possible partial delivery, and never retries or
 replays it. Ordinary input cannot interleave with the owned long-text sequence.
 
-The composer shows the current count and limit only at 80% of the allowance or
+The composer shows the inline count and limit only at 80% of the allowance or
 above; an exceeded limit is marked inline. The warning button opens a full wrapped
-native alert that cannot truncate the limit or recovery instruction. Keep status
+native alert that cannot truncate the limit or recovery instruction. Its message
+and accessibility label MUST include both the warning and the current retained
+draft's count, limit and units, even after a rejected edit. Keep status
 content clear of the editor and Send in compact layouts. Draft rejection
 preserves the previous text. Flat and divided-pane admission MUST include the visible
 counter's measured height at that pane's available width, including Dynamic Type

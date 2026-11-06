@@ -83,6 +83,9 @@ final class ComposerSheetRoot: UIViewController {
                 bar?.removeFromSuperview()
             }
             draft.edit(String(repeating: "x", count: shortFlat ? 3277 : 4097))
+            if ProcessInfo.processInfo.arguments.contains("--qa-rejected-paste") {
+                draft.edit(String(repeating: "x", count: DirectComposedText.draftMaximumBytes + 1))
+            }
             return
         }
         let arguments = ProcessInfo.processInfo.arguments

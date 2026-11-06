@@ -125,11 +125,16 @@ struct DirectComposedText: Equatable {
     var issueMessage: String? { issue ?? (text.isEmpty ? nil : validationIssue) }
     var sizeSummary: String? { lengthSummary(includeUnits: true) }
     var compactSizeSummary: String? { lengthSummary(includeUnits: false) }
-    private func lengthSummary(includeUnits: Bool) -> String? {
+    var detailsMessage: String? {
+        guard let issue = issueMessage else { return counterInDetails ? sizeSummary : nil }
+        let count = lengthSummary(includeUnits: true, onlyNearLimit: false)
+        return [issue, count.map { "Current draft: \($0)" }].compactMap { $0 }.joined(separator: "\n\n")
+    }
+    private func lengthSummary(includeUnits: Bool, onlyNearLimit: Bool = true) -> String? {
         let normalized = DirectComposedText.normalized(text)
         let count = mode == .terminal ? normalized.utf8.count : normalized.unicodeScalars.count
         let limit = mode == .terminal ? DirectComposedText.terminalMaximumBytes : DirectComposedText.desktopMaximumScalars
-        guard count * 5 >= limit * 4 else { return nil }
+        guard !onlyNearLimit || count * 5 >= limit * 4 else { return nil }
         let counter = "\(count.formatted()) / \(limit.formatted())"
         return includeUnits ? counter + " " + (mode == .terminal ? "UTF-8 bytes" : "characters") : counter
     }
@@ -824,7 +829,7 @@ private struct DirectTextComposerView: View {
                 // Native Close occupies the first 44pt; its drag grip occupies this spacer.
                 Color.clear.frame(width: 44, height: 44).accessibilityHidden(true)
                 Spacer(minLength: 44)
-                if let details = issue ?? (draft.counterInDetails ? draft.sizeSummary : nil) {
+                if let details = draft.detailsMessage {
                     Button { if isCurrent() { showIssue = true } } label: {
                         Image(systemName: issue == nil ? "info.circle" : "exclamationmark.circle").font(.system(size: 20))
                             .frame(width: 44, height: 44).contentShape(Rectangle())
@@ -854,7 +859,7 @@ private struct DirectTextComposerView: View {
             .onChange(of: draft.active) { _, _ in requestLayout() }
             .alert(issue == nil ? "Text limit" : "Can’t send this text", isPresented: $showIssue) {
                 Button("Done", role: .cancel) {}.accessibilityIdentifier("compose-error-done")
-            } message: { Text(issue ?? draft.sizeSummary ?? "Review the text and try again.") }
+            } message: { Text(draft.detailsMessage ?? "Review the text and try again.") }
             .alert("Send line breaks or tabs?", isPresented: Binding(get: { draft.confirmation != nil }, set: { if !$0 { draft.confirmation = nil } }), presenting: draft.confirmation) { reviewed in
                 Button("Send Text") { if isCurrent() { draft.confirmSend(reviewed) } }
                 Button("Cancel", role: .cancel) { draft.confirmation = nil }

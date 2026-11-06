@@ -34,7 +34,7 @@ each write before admitting the next. The user-event queue remains bounded at
 sends no text; later failure stops the remainder and reports possible partial
 delivery without retry or replay.
 
-The composer stays minimal during ordinary use. The count and limit appear only
+The composer stays minimal during ordinary use. The inline count and limit appear only
 at 80% of the mode's allowance, including when it is exceeded. An exceeded limit
 is marked in red; the warning button opens a full native alert instead of the
 earlier popover that could truncate its message on narrow phones. Long messages
@@ -53,7 +53,10 @@ cannot retain a measurement made with earlier font metrics.
 Flat panes use the same height-aware selection and may temporarily yield an
 inactive shortcut strip when that creates enough room. If space remains too short,
 the inline count moves into a footer limit-details button. Its native alert shows
-the full count and units without changing the draft or Send availability. This
+the full count and units without changing the draft or Send availability. Warning
+alerts and their button's accessibility label include the warning together with
+the current draft's count, limit and units, including after an oversized paste
+keeps the previous text. This
 also preserves active execution controls. Native regressions cover both strip
 states, short and taller flat panes, the counter threshold, accessibility sizes
 and expansion; a UI test opens and dismisses the complete limit details.

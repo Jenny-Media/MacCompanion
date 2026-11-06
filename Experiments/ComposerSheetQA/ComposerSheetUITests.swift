@@ -108,7 +108,7 @@ import XCTest
         XCTAssertTrue(app.buttons["compose-error"].waitForExistence(timeout: 5))
         XCTAssertEqual(editor.value as? String, "retained draft typed")
         app.buttons["compose-error"].tap()
-        XCTAssertTrue(app.staticTexts["Synthetic delivery failure"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Synthetic delivery failure")).firstMatch.waitForExistence(timeout: 5))
         app.buttons["compose-error-done"].tap(); app.buttons["compose-send"].tap()
         let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: app.buttons["qa-compose"])
         XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed); XCTAssertFalse(editor.exists)
@@ -253,7 +253,7 @@ import XCTest
         XCTAssertEqual(editor.value as? String, "retry draft")
         XCTAssertTrue(app.buttons["compose-send"].isEnabled); XCTAssertTrue(app.buttons["compose-back"].isEnabled)
         app.buttons["compose-error"].tap()
-        XCTAssertTrue(app.staticTexts["Synthetic delivery failure"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Synthetic delivery failure")).firstMatch.waitForExistence(timeout: 5))
         app.buttons["compose-error-done"].tap(); app.buttons["compose-send"].tap()
         let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: app.buttons["qa-compose"])
         XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed)
@@ -283,6 +283,31 @@ import XCTest
         capture("short-flat-limit-details", app: app)
         alert.buttons["Done"].firstMatch.tap(); XCTAssertTrue(alert.waitForNonExistence(timeout: 5))
         XCTAssertEqual((editor.value as? String)?.unicodeScalars.count, 3277)
+        app.buttons["compose-back"].tap(); XCTAssertTrue(app.buttons["qa-compose"].isHittable)
+    }
+
+    func testShortFlatPaneRejectedPasteShowsWarningAndCurrentCountTogether() {
+        let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.sheetqa.ios")
+        app.launchArguments = ["--qa-short-flat-composer", "--qa-rejected-paste"]; app.launch(); defer { app.terminate() }
+        XCTAssertTrue(app.buttons["qa-compose"].waitForExistence(timeout: 10)); app.buttons["qa-compose"].tap()
+        let editor = app.textViews["compose-text"], warningButton = app.buttons["compose-error"]
+        XCTAssertTrue(warningButton.waitForExistence(timeout: 10)); XCTAssertTrue(warningButton.isHittable)
+        let retained = String(repeating: "x", count: 3277)
+        XCTAssertEqual(editor.value as? String, retained)
+        XCTAssertFalse(app.staticTexts["compose-limit-count"].exists)
+        XCTAssertTrue(app.buttons["compose-send"].isEnabled)
+        let warning = "This draft exceeds the 16 KB limit. Use a smaller selection. Your previous text was kept."
+        let count = "Current draft: 3,277 / 4,096 characters"
+        XCTAssertTrue(warningButton.label.contains(warning)); XCTAssertTrue(warningButton.label.contains(count))
+        warningButton.tap()
+        let alert = app.alerts["Can’t send this text"].firstMatch
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        let message = alert.staticTexts.containing(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", warning, count)).firstMatch
+        XCTAssertTrue(message.exists); XCTAssertTrue(message.isHittable)
+        capture("short-flat-rejected-paste-warning-and-count", app: app)
+        alert.buttons["Done"].firstMatch.tap(); XCTAssertTrue(alert.waitForNonExistence(timeout: 5))
+        XCTAssertEqual(editor.value as? String, retained); XCTAssertTrue(app.buttons["compose-send"].isEnabled)
+        XCTAssertTrue(warningButton.isHittable)
         app.buttons["compose-back"].tap(); XCTAssertTrue(app.buttons["qa-compose"].isHittable)
     }
 
