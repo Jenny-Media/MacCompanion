@@ -536,15 +536,35 @@ reads require an explicit native Paste action. Preserve spaces and trailing line
 breaks; normalize CRLF, CR and Unicode line/paragraph separators to LF. Reject
 other C0/C1 controls (including NUL and Escape), except Tab. Bound the editable
 draft to 16 KiB UTF-8 without silently truncating pasted content. Desktop sends
-at most 256 Unicode scalars; Terminal sends at most 4096 UTF-8 bytes, excluding
+at most 4096 Unicode scalars; Terminal sends at most 16384 UTF-8 bytes, excluding
 bracketed-paste framing. A too-large draft remains editable and cannot be sent.
 
 Desktop delivery uses balanced Unicode RFB key events, with LF represented by
 Return and Tab by the Tab keysym, clearing armed modifiers. It is typing into
 whatever currently has focus, not clipboard synchronization or semantic field
 selection. Every draft containing LF or Tab requires explicit confirmation that
-line breaks may submit content/run commands and tabs may change focus. Admit the
-whole event group into the existing bounded queue or none of it.
+line breaks may submit content/run commands and tabs may change focus. Short text
+retains the existing atomic event-group path. Longer text is preflighted in full
+and uses one exclusive connection-owned sequence, with at most 128 scalars
+(256 balanced key events) per batch. Await each local batch write before admitting
+the next; keep the existing 512-event user queue bound. Reject a busy first batch
+without sending text. Failure or a lifecycle/readiness change after admission
+cancels the remainder, reports possible partial delivery, and never retries or
+replays it. Ordinary input cannot interleave with the owned long-text sequence.
+
+The composer shows the inline count and limit only at 80% of the allowance or
+above; an exceeded limit is marked inline. The warning button opens a full wrapped
+native alert that cannot truncate the limit or recovery instruction. Its message
+and accessibility label MUST include both the warning and the current retained
+draft's count, limit and units, even after a rejected edit. Keep status
+content clear of the editor and Send in compact layouts. Draft rejection
+preserves the previous text. Flat and divided-pane admission MUST include the visible
+counter's measured height at that pane's available width, including Dynamic Type
+and wrapping, before yielding the shortcut strip or selecting an alternate pane.
+Only an inactive shortcut strip may yield, and only when doing so creates a fitting
+region. If the inline count still cannot fit, expose the complete count and limit
+through an accessible limit-details button in the fixed footer instead of adding
+the counter row. Keep the editor and 44-point actions clear and preserve the draft.
 
 Terminal sends UTF-8 to its existing PTY owner and wraps it in bracketed-paste
 markers only when the current terminal mode requests them. Every draft containing

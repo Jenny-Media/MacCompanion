@@ -5,29 +5,39 @@ import UIKit
 
 /// Plain text only. These bounds are independent of the saved-action library.
 struct DirectComposedText: Equatable {
+    static let desktopMaximumScalars = 4096
+    static let terminalMaximumBytes = 16384
+    static let draftMaximumBytes = 16384
+    static let desktopBatchMaximumScalars = 128
     let text: String
     var needsConfirmation: Bool { text.contains("\n") || text.contains("\t") }
     var endsWithNewline: Bool { text.hasSuffix("\n") }
     enum Failure: Error {
-        case empty, controls, tooLarge(DirectControlMode)
+        case empty, controls, tooLarge(DirectControlMode, Int)
         var message: String {
             switch self {
             case .empty: "Enter some text first."
             case .controls: "Remove control characters before sending. Line breaks and tabs are supported."
-            case .tooLarge(let mode): mode == .terminal ? "Terminal can send up to 4096 UTF-8 bytes at once." : "Screen Sharing input can send up to 256 Unicode characters at once."
+            case .tooLarge(let mode, let count): mode == .terminal
+                ? "This text uses \(count.formatted()) UTF-8 bytes. Send up to \(DirectComposedText.terminalMaximumBytes.formatted()) at a time. Shorten the text and try again."
+                : "This text has \(count.formatted()) characters. Send up to \(DirectComposedText.desktopMaximumScalars.formatted()) at a time. Shorten the text and try again."
             }
         }
     }
-    init(_ draft: String, mode: DirectControlMode) throws {
-        let text = draft.replacingOccurrences(of: "\r\n", with: "\n")
+    static func normalized(_ draft: String) -> String {
+        draft.replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
             .replacingOccurrences(of: "\u{2028}", with: "\n")
             .replacingOccurrences(of: "\u{2029}", with: "\n")
+    }
+    init(_ draft: String, mode: DirectControlMode) throws {
+        let text = Self.normalized(draft)
         guard !text.isEmpty else { throw Failure.empty }
         guard !text.unicodeScalars.contains(where: { scalar in
             (scalar.value < 32 && scalar.value != 9 && scalar.value != 10) || (127...159).contains(scalar.value)
         }) else { throw Failure.controls }
-        guard mode == .terminal ? text.utf8.count <= 4096 : text.unicodeScalars.count <= 256 else { throw Failure.tooLarge(mode) }
+        let count = mode == .terminal ? text.utf8.count : text.unicodeScalars.count
+        guard count <= (mode == .terminal ? Self.terminalMaximumBytes : Self.desktopMaximumScalars) else { throw Failure.tooLarge(mode, count) }
         self.text = text
     }
     var desktopEvents: [[String: Any]] {
@@ -42,6 +52,46 @@ struct DirectComposedText: Equatable {
     }
 }
 
+/// One connection owns a long send. Only one bounded batch is queued at a time.
+@MainActor private final class DirectDesktopTextDelivery {
+    let session: CompanionVNCSession
+    let batches: [[[String: Any]]]
+    let current: () -> Bool
+    let completion: (Bool) -> Void
+    private var identifier: String?
+    private var next = 0
+    init(events: [[String: Any]], session: CompanionVNCSession, current: @escaping () -> Bool, completion: @escaping (Bool) -> Void) {
+        self.session = session; self.current = current; self.completion = completion
+        let size = DirectComposedText.desktopBatchMaximumScalars * 2
+        batches = stride(from: 0, to: events.count, by: size).map { Array(events[$0..<min($0 + size, events.count)]) }
+    }
+    func start() -> Bool {
+        guard current(), DirectAppLockV1.shared.canAccess, let owner = session.beginControlSequence() else { return false }
+        identifier = owner
+        guard enqueueNext() else {
+            identifier = nil; session.endControlSequence(owner); return false
+        }
+        return true
+    }
+    private func enqueueNext() -> Bool {
+        guard let identifier, current(), DirectAppLockV1.shared.canAccess,
+              session.ownsControlSequence(identifier), next < batches.count else { return false }
+        let batch = batches[next]; next += 1
+        return session.tryControlSequenceEvents(batch, identifier: identifier) { [self] written in
+            guard written, current(), DirectAppLockV1.shared.canAccess, session.ownsControlSequence(identifier) else { finish(false); return }
+            if next == batches.count { finish(true) }
+            else if !enqueueNext() { finish(false) }
+        }
+    }
+    private func finish(_ written: Bool) {
+        guard let identifier else { return }
+        self.identifier = nil
+        if written { session.endControlSequence(identifier) }
+        else { session.cancelControlSequence(identifier) }
+        completion(written)
+    }
+}
+
 @MainActor @Observable final class DirectTextComposerDraft {
     let macName: String
     let mode: DirectControlMode
@@ -53,6 +103,7 @@ struct DirectComposedText: Equatable {
     var expanded = false
     var compactLayout = false
     var narrowLayout = false
+    var counterInDetails = false
     var issue: String?
     var confirmation: DirectComposedText?
     @ObservationIgnored private var epoch = UUID()
@@ -71,12 +122,28 @@ struct DirectComposedText: Equatable {
         catch { return "Review the draft before sending." }
     }
     var canSend: Bool { active && !sending && validationIssue == nil }
+    var issueMessage: String? { issue ?? (text.isEmpty ? nil : validationIssue) }
+    var sizeSummary: String? { lengthSummary(includeUnits: true) }
+    var compactSizeSummary: String? { lengthSummary(includeUnits: false) }
+    var detailsMessage: String? {
+        guard let issue = issueMessage else { return counterInDetails ? sizeSummary : nil }
+        let count = lengthSummary(includeUnits: true, onlyNearLimit: false)
+        return [issue, count.map { "Current draft: \($0)" }].compactMap { $0 }.joined(separator: "\n\n")
+    }
+    private func lengthSummary(includeUnits: Bool, onlyNearLimit: Bool = true) -> String? {
+        let normalized = DirectComposedText.normalized(text)
+        let count = mode == .terminal ? normalized.utf8.count : normalized.unicodeScalars.count
+        let limit = mode == .terminal ? DirectComposedText.terminalMaximumBytes : DirectComposedText.desktopMaximumScalars
+        guard !onlyNearLimit || count * 5 >= limit * 4 else { return nil }
+        let counter = "\(count.formatted()) / \(limit.formatted())"
+        return includeUnits ? counter + " " + (mode == .terminal ? "UTF-8 bytes" : "characters") : counter
+    }
     func configure(available: @escaping () -> Bool, send: @escaping (String, @escaping (String?) -> Void) -> Void) {
-        epoch = UUID(); self.available = available; self.send = send; active = true; confirmation = nil; issue = nil
+        epoch = UUID(); self.available = available; self.send = send; active = true; confirmation = nil; issue = nil; counterInDetails = false
     }
     func edit(_ value: String) {
         guard active, !sending else { return }
-        guard value.utf8.count <= 16384 else { issue = "The draft is too large. Paste a smaller selection; no text was added."; return }
+        guard value.utf8.count <= DirectComposedText.draftMaximumBytes else { issue = "This draft exceeds the 16 KB limit. Use a smaller selection. Your previous text was kept."; return }
         text = value; issue = nil; confirmation = nil
     }
     func requestSend() {
@@ -111,7 +178,7 @@ struct DirectComposedText: Equatable {
     func invalidate() {
         if sending { interrupted?() }
         epoch = UUID(); deliveryID = nil; text = ""; issue = nil; confirmation = nil; active = false; expanded = false; docked = false; floatingAnchor = CGPoint(x: 0.5, y: 1)
-        sending = false; available = { false }; send = nil; sendingChanged?(false); close?()
+        sending = false; counterInDetails = false; available = { false }; send = nil; sendingChanged?(false); close?()
     }
 }
 
@@ -165,6 +232,15 @@ struct DirectComposedText: Equatable {
     }
     @objc static func desktopEvents(_ text: String) -> [[String: Any]] {
         (try? DirectComposedText(text, mode: .desktop))?.desktopEvents ?? []
+    }
+    @objc static func sendDesktopText(_ text: String, session: CompanionVNCSession,
+                                     current: @escaping () -> Bool, completion: @escaping (Bool) -> Void) -> Bool {
+        guard current(), DirectAppLockV1.shared.canAccess,
+              let prepared = try? DirectComposedText(text, mode: .desktop) else { return false }
+        let events = prepared.desktopEvents
+        // Preserve compact, atomic admission for the existing short-text path.
+        if events.count <= 512 { return session.tryComposedTextEvents(events, completion: completion) }
+        return DirectDesktopTextDelivery(events: events, session: session, current: current, completion: completion).start()
     }
     @objc func present(from controller: UIViewController, available: @escaping () -> Bool,
                        send: @escaping (String, @escaping (String?) -> Void) -> Void) {
@@ -237,14 +313,15 @@ struct DirectComposerPlacement {
         let top = safe.minY + (room < 284 ? 8 : 48)
         return CGRect(x: safe.minX + 8, y: top, width: max(0, safe.width - 16), height: max(0, keyboardTop - 8 - top))
     }
-    static func area(safe: CGRect, keyboard: CGRect, shortcutBar: CGRect = .null) -> CGRect {
+    static func area(safe: CGRect, keyboard: CGRect, shortcutBar: CGRect = .null,
+                     minimumHeight: (CGFloat) -> CGFloat = { _ in 112 }) -> CGRect {
         // Keep separate obstacles separate: an undocked keyboard can sit near
         // the top while the app's shortcut row remains at the bottom.
         let obstacles = [keyboard, shortcutBar].map { $0.intersection(safe) }
             .filter { !$0.isNull && !$0.isEmpty }
         guard let ceiling = obstacles.map(\.minY).min() else { return area(safe: safe, keyboardTop: safe.maxY) }
         let above = area(safe: safe, keyboardTop: ceiling)
-        if above.height >= 180 { return above }
+        if above.height >= max(180, minimumHeight(above.width)) { return above }
         let base = area(safe: safe, keyboardTop: safe.maxY)
         let free = obstacles.reduce([base]) { regions, obstacle in
             regions.flatMap { region -> [CGRect] in
@@ -260,7 +337,7 @@ struct DirectComposerPlacement {
             }
         }
         let candidates = [above] + free
-        let readable = candidates.filter { $0.width >= 264 && $0.height >= 112 }
+        let readable = candidates.filter { $0.width >= 264 && $0.height >= minimumHeight($0.width) }
         return (readable.isEmpty ? candidates : readable).max {
             $0.width * min(324, $0.height) < $1.width * min(324, $1.height)
         } ?? above
@@ -273,23 +350,28 @@ struct DirectComposerPlacement {
     /// Keep a divided workspace on one page. The input page owns composition
     /// unless its unobscured area cannot hold the editor and both 44-point actions.
     static func region(safe: CGRect, division: CGRect, keyboard: CGRect,
-                       shortcutBar: CGRect, mayYieldShortcutBar: Bool, minimumHeight: CGFloat = 112) -> Region {
+                       shortcutBar: CGRect, mayYieldShortcutBar: Bool,
+                       minimumHeight: (CGFloat) -> CGFloat = { _ in 112 }) -> Region {
+        func fits(_ rect: CGRect) -> Bool { rect.width >= 264 && rect.height >= minimumHeight(rect.width) }
         var content = CGRect.null, input = CGRect.null
         guard CompanionVNCTabletopRegions(safe, division, &content, &input)
                 || CompanionVNCBookRegions(safe, division, &content, &input) else {
-            let result = area(safe: safe, keyboard: keyboard, shortcutBar: shortcutBar)
-            return Region(area: result, yieldsShortcutBar: false, fitsEditor: result.width >= 264 && result.height >= minimumHeight)
+            let result = area(safe: safe, keyboard: keyboard, shortcutBar: shortcutBar, minimumHeight: minimumHeight)
+            if !fits(result), mayYieldShortcutBar, !shortcutBar.isNull, !shortcutBar.isEmpty {
+                let withoutStrip = area(safe: safe, keyboard: keyboard, minimumHeight: minimumHeight)
+                if fits(withoutStrip) { return Region(area: withoutStrip, yieldsShortcutBar: true, fitsEditor: true) }
+            }
+            return Region(area: result, yieldsShortcutBar: false, fitsEditor: fits(result))
         }
-        func fits(_ rect: CGRect) -> Bool { rect.width >= 264 && rect.height >= minimumHeight }
-        let preferred = area(safe: input, keyboard: keyboard, shortcutBar: shortcutBar)
+        let preferred = area(safe: input, keyboard: keyboard, shortcutBar: shortcutBar, minimumHeight: minimumHeight)
         if fits(preferred) { return Region(area: preferred, yieldsShortcutBar: false, fitsEditor: true) }
         if mayYieldShortcutBar && !shortcutBar.isNull && !shortcutBar.isEmpty {
-            let withoutStrip = area(safe: input, keyboard: keyboard)
+            let withoutStrip = area(safe: input, keyboard: keyboard, minimumHeight: minimumHeight)
             if fits(withoutStrip) { return Region(area: withoutStrip, yieldsShortcutBar: true, fitsEditor: true) }
         }
         // A tall or floating keyboard may cover the input page. Use a modal
         // editor in the other genuinely free page without remounting its owner.
-        let alternate = area(safe: content, keyboard: keyboard, shortcutBar: shortcutBar)
+        let alternate = area(safe: content, keyboard: keyboard, shortcutBar: shortcutBar, minimumHeight: minimumHeight)
         if fits(alternate) { return Region(area: alternate, yieldsShortcutBar: false, fitsEditor: true) }
         let bounded = [preferred, alternate].max { $0.width * $0.height < $1.width * $1.height } ?? preferred
         return Region(area: bounded, yieldsShortcutBar: false, fitsEditor: false)
@@ -335,6 +417,7 @@ struct DirectComposerPlacement {
     private var measuredText: String?
     private var measuredWidth: CGFloat = 0
     private var measuredCategory: UIContentSizeCategory?
+    private var measuredFont: UIFont?
     private var measuredEditorHeight: CGFloat = 0
     lazy var interfaceFeedback = CompanionVNCInterfaceFeedback(view: view)
     private var grabber: UIButton?
@@ -390,11 +473,21 @@ struct DirectComposerPlacement {
             bar = view.convert(shortcutBar.bounds, from: shortcutBar)
         } else { bar = .null }
         let executionActive = (shortcutBar as? TerminalKeyboardBar)?.executionActive == true
-        let preferred = UIFont.preferredFont(forTextStyle: .body, compatibleWith: traitCollection)
-        let minimumHeight = max(112, max(44, ceil(preferred.lineHeight) + 8) + 44 + 12)
-        let decision = DirectComposerPlacement.region(safe: view.safeAreaLayoutGuide.layoutFrame,
-            division: division, keyboard: keyboardFrame, shortcutBar: bar,
-            mayYieldShortcutBar: !executionActive, minimumHeight: minimumHeight)
+        func region(includingCounter: Bool) -> DirectComposerPlacement.Region {
+            DirectComposerPlacement.region(safe: view.safeAreaLayoutGuide.layoutFrame,
+                division: division, keyboard: keyboardFrame, shortcutBar: bar,
+                mayYieldShortcutBar: !executionActive, minimumHeight: { width in
+                    let cardWidth = min(draft.docked || draft.expanded ? 640
+                        : traitCollection.preferredContentSizeCategory.isAccessibilityCategory ? 360 : 284, width)
+                    return minimumPanelHeight(width: cardWidth, includingCounter: includingCounter)
+                })
+        }
+        var decision = region(includingCounter: true)
+        if !decision.fitsEditor, draft.sizeSummary != nil {
+            // The footer can disclose the count. Still make room for the editor
+            // before accepting a cramped region with the strip left in place.
+            decision = region(includingCounter: false)
+        }
         if decision.yieldsShortcutBar, let shortcutBar {
             if yieldedShortcutBar == nil { shortcutBarAlpha = shortcutBar.alpha; yieldedShortcutBar = shortcutBar }
             shortcutBar.alpha = 0
@@ -516,20 +609,33 @@ struct DirectComposerPlacement {
         card.contentView.bringSubviewToFront(close)
     }
     private var availableHeight: CGFloat { placementArea.height }
-    private var compactHeight: CGFloat {
+    private func minimumPanelHeight(width: CGFloat, includingCounter: Bool = true) -> CGFloat {
+        let preferred = UIFont.preferredFont(forTextStyle: .body, compatibleWith: traitCollection)
+        return max(112, max(44, ceil(preferred.lineHeight) + 8) + 44 + 12 + (includingCounter ? counterHeight(width: width) : 0))
+    }
+    private func counterHeight(width: CGFloat) -> CGFloat {
+        guard let summary = draft.compactSizeSummary else { return 0 }
+        let font = UIFont.preferredFont(forTextStyle: .caption2, compatibleWith: traitCollection)
+        // The SwiftUI card has 6pt outer padding and 12pt counter padding per side.
+        let bounds = (summary as NSString).boundingRect(with: CGSize(width: max(1, width - 36), height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: font], context: nil)
+        return ceil(bounds.height) + 8
+    }
+    private var compactHeight: CGFloat { compactHeight(includingCounter: !draft.counterInDetails) }
+    private func compactHeight(includingCounter: Bool) -> CGFloat {
         let preferred = UIFont.preferredFont(forTextStyle: .body, compatibleWith: traitCollection)
         let font = draft.mode == .terminal ? UIFont.monospacedSystemFont(ofSize: preferred.pointSize, weight: .regular) : preferred
         let width = max(1, min(traitCollection.preferredContentSizeCategory.isAccessibilityCategory ? 360 : 284, placementArea.width) - 74)
         let category = traitCollection.preferredContentSizeCategory
-        if measuredText != draft.text || measuredWidth != width || measuredCategory != category {
+        if measuredText != draft.text || measuredWidth != width || measuredCategory != category || measuredFont != font {
             // Trailing line breaks need one final insertion line. Nothing leaves this owner.
             let text = draft.text.isEmpty ? " " : draft.text + "\u{200B}"
             let bounds = (text as NSString).boundingRect(with: CGSize(width: width, height: font.lineHeight * 6),
                 options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: font], context: nil)
             measuredEditorHeight = min(font.lineHeight * 6, max(font.lineHeight * 2, ceil(bounds.height)))
-            measuredText = draft.text; measuredWidth = width; measuredCategory = category
+            measuredText = draft.text; measuredWidth = width; measuredCategory = category; measuredFont = font
         }
-        return min(availableHeight, max(112, measuredEditorHeight + 64))
+        return min(availableHeight, max(112, measuredEditorHeight + 64 + (includingCounter ? counterHeight(width: width + 74) : 0)))
     }
     @objc private func back() { if usable { draft.close?() } }
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
@@ -639,13 +745,17 @@ struct DirectComposerPlacement {
         let area = placementArea
         let compact = area.height < 228 || (area.width < 360 && traitCollection.preferredContentSizeCategory.isAccessibilityCategory)
         if draft.compactLayout != compact { draft.compactLayout = compact }
-        grabberHeight?.constant = 44
-        let hasIssue = draft.issue != nil || (!draft.text.isEmpty && draft.validationIssue != nil)
-        grabberWidth?.constant = hasIssue ? -144 : -100
-        grabberCenter?.constant = hasIssue ? -22 : 0
         let accessibility = traitCollection.preferredContentSizeCategory.isAccessibilityCategory
         let expanded = draft.expanded
-        let size = CGSize(width: min(draft.docked || expanded ? 640 : accessibility ? 360 : 284, area.width),
+        let width = min(draft.docked || expanded ? 640 : accessibility ? 360 : 284, area.width)
+        let fullHeight = min(area.height, draggingHeight ?? (expanded ? area.height : compactHeight(includingCounter: true)))
+        let counterInDetails = draft.sizeSummary != nil && fullHeight < minimumPanelHeight(width: width)
+        if draft.counterInDetails != counterInDetails { draft.counterInDetails = counterInDetails }
+        grabberHeight?.constant = 44
+        let hasIssue = draft.issueMessage != nil || counterInDetails
+        grabberWidth?.constant = hasIssue ? -144 : -100
+        grabberCenter?.constant = hasIssue ? -22 : 0
+        let size = CGSize(width: width,
                           height: min(area.height, draggingHeight ?? (expanded ? area.height : compactHeight)))
         if draft.narrowLayout != (size.width < 360) { draft.narrowLayout = size.width < 360 }
         let target = DirectComposerPlacement.frame(area: area, size: size, anchor: draft.docked || expanded ? DirectComposerPlacement.dockedAnchor(area: area, keyboard: keyboardFrame) : draft.floatingAnchor)
@@ -676,7 +786,7 @@ private struct DirectTextComposerView: View {
     var reportExpansionBounds: (CGRect) -> Void
     @FocusState private var editing: Bool
     @State private var showIssue = false
-    private var issue: String? { draft.issue ?? (draft.text.isEmpty ? nil : draft.validationIssue) }
+    private var issue: String? { draft.issueMessage }
     private func confirmationMessage(_ reviewed: DirectComposedText) -> String {
         let explanation = draft.mode == .terminal
             ? "Without bracketed paste, line breaks can run commands and tabs can change terminal input."
@@ -708,23 +818,23 @@ private struct DirectTextComposerView: View {
                     .accessibilityIdentifier("compose-expand")
                     .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("composer-panel")) } action: { reportExpansionBounds($0) }
             }
+            if let summary = draft.compactSizeSummary, !draft.counterInDetails {
+                Text(summary).font(.caption2).foregroundStyle(draft.validationIssue == nil ? Color.secondary : Color.red)
+                    .lineLimit(nil).fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .trailing).padding(.horizontal, 12).padding(.top, 4)
+                    .accessibilityLabel(draft.sizeSummary ?? summary)
+                    .accessibilityIdentifier("compose-limit-count")
+            }
             HStack(spacing: 0) {
                 // Native Close occupies the first 44pt; its drag grip occupies this spacer.
                 Color.clear.frame(width: 44, height: 44).accessibilityHidden(true)
                 Spacer(minLength: 44)
-                if let issue {
+                if let details = draft.detailsMessage {
                     Button { if isCurrent() { showIssue = true } } label: {
-                        Image(systemName: "exclamationmark.circle").font(.system(size: 20))
+                        Image(systemName: issue == nil ? "info.circle" : "exclamationmark.circle").font(.system(size: 20))
                             .frame(width: 44, height: 44).contentShape(Rectangle())
                     }.buttonStyle(.plain).disabled(!isCurrent())
-                        .accessibilityLabel(issue).accessibilityIdentifier("compose-error")
-                        .popover(isPresented: $showIssue) {
-                            VStack(spacing: 12) {
-                                Text(issue)
-                                Button("Done") { showIssue = false }.frame(minHeight: 44)
-                                    .accessibilityIdentifier("compose-error-done")
-                            }.padding().presentationCompactAdaptation(.popover)
-                        }
+                        .accessibilityLabel(details).accessibilityIdentifier(issue == nil ? "compose-limit-details" : "compose-error")
                 }
                 Button { if isCurrent() { draft.requestSend() } } label: {
                     Group {
@@ -747,6 +857,9 @@ private struct DirectTextComposerView: View {
             .onChange(of: draft.issue) { _, _ in requestLayout() }
             .onChange(of: draft.sending) { _, _ in requestLayout() }
             .onChange(of: draft.active) { _, _ in requestLayout() }
+            .alert(issue == nil ? "Text limit" : "Can’t send this text", isPresented: $showIssue) {
+                Button("Done", role: .cancel) {}.accessibilityIdentifier("compose-error-done")
+            } message: { Text(draft.detailsMessage ?? "Review the text and try again.") }
             .alert("Send line breaks or tabs?", isPresented: Binding(get: { draft.confirmation != nil }, set: { if !$0 { draft.confirmation = nil } }), presenting: draft.confirmation) { reviewed in
                 Button("Send Text") { if isCurrent() { draft.confirmSend(reviewed) } }
                 Button("Cancel", role: .cancel) { draft.confirmation = nil }

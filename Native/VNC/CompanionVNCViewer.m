@@ -2801,8 +2801,11 @@
                 complete(@"The session changed. Nothing was sent."); return;
             }
             [current clearControlModifiers];
-            NSArray *events = [DirectTextComposer desktopEvents:text];
-            if (![owner tryComposedTextEvents:events completion:^(BOOL written) {
+            if (![DirectTextComposer sendDesktopText:text session:owner current:^BOOL {
+                CompanionVNCViewer *active = weak;
+                return active && owner && active.session == owner && active.textGeneration == generation
+                    && [active composedTextAvailable];
+            } completion:^(BOOL written) {
                 if (!written && weak.textGeneration == generation) weak.textSendInterrupted = YES;
                 complete(written ? nil : @"Text may have been partially sent. Check your Mac before sending it again.");
             }]) complete(@"Input is busy. Nothing was queued. Try Send Text again.");

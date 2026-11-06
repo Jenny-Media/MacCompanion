@@ -21,10 +21,45 @@ ends with a line break. No extra Return is appended.
   can run commands. Selecting Send Text does not prevent command execution.
 
 The editable draft is bounded to 16 KiB UTF-8. An oversized paste is rejected as
-a whole. A Desktop send is limited to 256 Unicode scalars by its balanced
-512-event queue; a Terminal send is limited to 4096 UTF-8 bytes before optional
-paste framing. Other C0/C1 controls are rejected. Oversized sendable content stays
-editable and is never silently truncated.
+a whole. Screen Sharing and Trackpad & Keyboard can send up to 4096 Unicode
+scalars; Terminal can send 16 KiB UTF-8 before optional paste framing. Other C0/C1
+controls are rejected. Oversized sendable content stays editable and is never
+silently truncated. These limits do not change the saved-text library bounds.
+
+The original 256-scalar Desktop cap admitted one key-down/key-up pair per scalar
+into a single 512-event queue. Longer drafts now reserve one existing exclusive
+connection-owned sequence and send at most 128 scalars per batch, waiting for
+each write before admitting the next. The user-event queue remains bounded at
+512 events. Short drafts retain compact atomic admission. A busy first batch
+sends no text; later failure stops the remainder and reports possible partial
+delivery without retry or replay.
+
+The composer stays minimal during ordinary use. The inline count and limit appear only
+at 80% of the mode's allowance, including when it is exceeded. An exceeded limit
+is marked in red; the warning button opens a full native alert instead of the
+earlier popover that could truncate its message on narrow phones. Long messages
+do not compete with the editor or Send for space in compact panes.
+
+Divided-pane selection and compact panel sizing share the counter measurement.
+The minimum editor height includes that measurement at each candidate pane's
+width, so larger accessibility text can select the roomy alternate page instead
+of clipping the editor or Send after yielding the shortcut strip. A native
+regression covers the Tabletop keyboard fixture just below the counter threshold,
+near the limit and over the limit, at six text sizes in compact and expanded
+layouts. It checks the editor and controls against the rendered card bounds.
+Editor-height caching also tracks the resolved font so Dynamic Type transitions
+cannot retain a measurement made with earlier font metrics.
+
+Flat panes use the same height-aware selection and may temporarily yield an
+inactive shortcut strip when that creates enough room. If space remains too short,
+the inline count moves into a footer limit-details button. Its native alert shows
+the full count and units without changing the draft or Send availability. Warning
+alerts and their button's accessibility label include the warning together with
+the current draft's count, limit and units, including after an oversized paste
+keeps the previous text. This
+also preserves active execution controls. Native regressions cover both strip
+states, short and taller flat panes, the counter threshold, accessibility sizes
+and expansion; a UI test opens and dismisses the complete limit details.
 
 Each draft belongs to one viewer or PTY generation. Background, app lock,
 connection replacement, mode change and session end clear it. There is no storage,
@@ -46,7 +81,33 @@ encoding and confirmation cases. Native QA covers all three entry points,
 balanced VNC packets, PTY bytes, draft retirement and explicit confirmation.
 macOS UI and the legacy Observe/Act/Control protocol are unchanged.
 
-## Verification
+## Longer drafts verification (2026-11-06)
+
+The normal iOS Simulator development build passes on Xcode 27.1 (27A9275).
+All 649 recorded build-input hashes match the final application sources.
+Focused native coverage on iOS Simulator 27.3 passes: 42 checks on iPhone 18 Pro,
+42 on iPhone Duo, and 40 on iPad Pro 11-inch (M5). Two iPad app-driven fullscreen
+rotation cases are explicitly skipped because windowed iPad scenes do not
+guarantee the requested window aspect ratio. Real device-orientation UI coverage
+replaces those assumptions and checks the near-limit counter, retained editing,
+keyboard clearance and reachable actions.
+
+Four UI checks pass on each model (12 total): a paragraph longer than the old
+limit, hidden/visible counter states, full over-limit warning and dismissal,
+expansion/collapse, and rotation with the software keyboard. Native regressions
+also cover 4096-scalar Unicode boundaries, ordered write-paced desktop batches,
+cancellation without replay, and a full 16 KiB Terminal PTY write with optional
+bracketed-paste framing. The loopback recorder's capture allowance includes the
+framing bytes rather than truncating the synthetic recording at its old default.
+
+The three existing QA Simulators were reused sequentially with explicit UUIDs:
+`55243436-5505-4B14-8BD0-645690AA6EA1`,
+`62E46C64-B73F-4C60-8BEB-ED9DB5A1A17D`, and
+`A07BA365-0A5C-4726-B43C-2EDB01B93CDC`. None was created, erased or deleted.
+Synthetic screenshots, logs and test bundles stay outside Git. These local
+checks do not establish physical Mac input acceptance.
+
+## Initial implementation verification (historical)
 
 - Stable Xcode 27.0 (27A266a): native iOS build passes; recorded hashes match all
   590 current source inputs.

@@ -323,9 +323,8 @@ def execute(args, parser, compiler):
             *(['-only-testing:DirectClientTests/DuoComparisonTests/testInteractiveCapture'] if args.duo_review else []),
             *['-only-testing:' + identifier for identifier in args.only_testing],
             '-collect-test-diagnostics', args.test_diagnostics, '-resultBundlePath', result, 'test', stdout=log, stderr=subprocess.STDOUT)
-    container = subprocess.check_output(['xcrun', 'simctl', 'get_app_container', args.simulator,
-        'dev.maccompanion.backupe2e.ios' if args.local_backup_e2e else 'dev.maccompanion.savedcontrolsqa.ios' if args.saved_controls_ui else 'dev.maccompanion.controlsqa.ios' if args.terminal_controls_ui else bundle, 'data'], text=True).strip()
     if not args.local_backup_e2e and not args.saved_controls_ui and not args.terminal_controls_ui and not args.duo_review and not args.only_testing:
+        container = subprocess.check_output(['xcrun', 'simctl', 'get_app_container', args.simulator, bundle, 'data'], text=True).strip()
         verify_external(Path(container) / 'Documents/synthetic-key-interop')
     for name in ['synthetic-ed25519', 'synthetic-ed25519.pub', 'synthetic-rsa', 'synthetic-rsa.pub']:
         (qa / name).unlink(missing_ok=True)

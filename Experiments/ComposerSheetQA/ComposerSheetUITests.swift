@@ -2,9 +2,9 @@ import XCTest
 @MainActor final class ComposerSheetUITests: XCTestCase {
     override func setUp() { super.setUp(); continueAfterFailure = false; XCUIDevice.shared.orientation = .portrait }
     override func tearDown() { XCUIDevice.shared.orientation = .portrait; super.tearDown() }
-    private func open(narrow: Bool = false, shortcutBar: Bool = false) -> XCUIApplication {
+    private func open(narrow: Bool = false, shortcutBar: Bool = false, nearLimit: Bool = false) -> XCUIApplication {
         let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.sheetqa.ios")
-        app.launchArguments = (narrow ? ["--qa-narrow-composer"] : []) + (shortcutBar ? ["--qa-shortcut-bar"] : []); app.launch()
+        app.launchArguments = (narrow ? ["--qa-narrow-composer"] : []) + (shortcutBar ? ["--qa-shortcut-bar"] : []) + (nearLimit ? ["--qa-near-limit"] : []); app.launch()
         XCTAssertTrue(app.buttons["qa-compose"].waitForExistence(timeout: 10)); app.buttons["qa-compose"].tap()
         XCTAssertTrue(app.textViews["compose-text"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5)); return app
@@ -108,8 +108,10 @@ import XCTest
         XCTAssertTrue(app.buttons["compose-error"].waitForExistence(timeout: 5))
         XCTAssertEqual(editor.value as? String, "retained draft typed")
         app.buttons["compose-error"].tap()
-        XCTAssertTrue(app.staticTexts["Synthetic delivery failure"].waitForExistence(timeout: 5))
-        app.buttons["compose-error-done"].tap(); app.buttons["compose-send"].tap()
+        let warning = app.alerts["Can’t send this text"].firstMatch
+        XCTAssertTrue(warning.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Synthetic delivery failure")).firstMatch.waitForExistence(timeout: 5))
+        warning.buttons["Done"].firstMatch.tap(); XCTAssertTrue(warning.waitForNonExistence(timeout: 5))
+        app.buttons["compose-send"].tap()
         let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: app.buttons["qa-compose"])
         XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed); XCTAssertFalse(editor.exists)
     }
@@ -210,6 +212,20 @@ import XCTest
         XCTAssertTrue(app.textViews["compose-text"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.textViews["compose-text"].value as? String, "")
     }
+    func testLongParagraphIsSendableAndCountOnlyAppearsNearLimit() {
+        for nearLimit in [false, true] {
+            let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.sheetqa.ios")
+            app.launchArguments = [nearLimit ? "--qa-near-limit" : "--qa-long-draft", "--qa-shortcut-bar"]
+            app.launch(); defer { app.terminate() }
+            XCTAssertTrue(app.buttons["qa-compose"].waitForExistence(timeout: 10)); app.buttons["qa-compose"].tap()
+            XCTAssertTrue(app.textViews["compose-text"].waitForExistence(timeout: 5))
+            XCTAssertGreaterThan((app.textViews["compose-text"].value as? String)?.unicodeScalars.count ?? 0, 256)
+            XCTAssertTrue(app.buttons["compose-send"].isEnabled)
+            XCTAssertEqual(app.staticTexts["compose-limit-count"].exists, nearLimit)
+            XCTAssertFalse(app.staticTexts["compose-inline-error"].exists)
+            capture(nearLimit ? "composer-near-limit-count" : "composer-long-paragraph-enabled", app: app)
+        }
+    }
     func testNarrowInvalidBubbleKeepsCloseErrorAndSendReachable() {
         let app = open(narrow: true); defer { app.terminate() }
         let panel = app.otherElements["compose-panel"].firstMatch, send = app.buttons["compose-send"]
@@ -219,8 +235,12 @@ import XCTest
         XCTAssertFalse(send.isEnabled); XCTAssertFalse(app.buttons["compose-more"].exists)
         let draft = app.textViews["compose-text"].value as? String
         app.buttons["compose-error"].tap()
-        XCTAssertTrue(app.staticTexts["Screen Sharing input can send up to 256 Unicode characters at once."].waitForExistence(timeout: 5))
-        app.buttons["compose-error-done"].tap()
+        XCTAssertTrue(app.alerts["Can’t send this text"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.alerts.staticTexts.containing(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "4,097", "4,096")).firstMatch.exists)
+        capture("composer-complete-limit-warning", app: app)
+        let warning = app.alerts["Can’t send this text"].firstMatch
+        warning.buttons["Done"].firstMatch.tap()
+        XCTAssertTrue(warning.waitForNonExistence(timeout: 5))
         XCTAssertEqual(app.textViews["compose-text"].value as? String, draft)
         app.buttons["compose-back"].tap(); XCTAssertTrue(app.buttons["qa-compose"].isHittable)
     }
@@ -235,28 +255,91 @@ import XCTest
         XCTAssertEqual(editor.value as? String, "retry draft")
         XCTAssertTrue(app.buttons["compose-send"].isEnabled); XCTAssertTrue(app.buttons["compose-back"].isEnabled)
         app.buttons["compose-error"].tap()
-        XCTAssertTrue(app.staticTexts["Synthetic delivery failure"].waitForExistence(timeout: 5))
-        app.buttons["compose-error-done"].tap(); app.buttons["compose-send"].tap()
+        let warning = app.alerts["Can’t send this text"].firstMatch
+        let message = warning.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Synthetic delivery failure")).firstMatch
+        XCTAssertTrue(message.waitForExistence(timeout: 5))
+        XCTAssertTrue(message.label.contains("Current draft: 11 / 4,096 characters"))
+        warning.buttons["Done"].firstMatch.tap(); XCTAssertTrue(warning.waitForNonExistence(timeout: 5))
+        app.buttons["compose-send"].tap()
         let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: app.buttons["qa-compose"])
         XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed)
         app.buttons["qa-compose"].tap(); XCTAssertTrue(editor.waitForExistence(timeout: 5))
         XCTAssertEqual(editor.value as? String, ""); XCTAssertFalse(app.buttons["compose-error"].exists)
     }
+    func testShortFlatPaneKeepsActionsAndOffersFullLimitDetails() async {
+        let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.sheetqa.ios")
+        app.launchArguments = ["--qa-short-flat-composer"]; app.launch(); defer { app.terminate() }
+        XCTAssertTrue(app.buttons["qa-compose"].waitForExistence(timeout: 10)); app.buttons["qa-compose"].tap()
+        let editor = app.textViews["compose-text"], details = app.buttons["compose-limit-details"]
+        XCTAssertTrue(details.waitForExistence(timeout: 10)); XCTAssertTrue(details.isHittable)
+        XCTAssertEqual((editor.value as? String)?.unicodeScalars.count, 3277)
+        XCTAssertFalse(app.staticTexts["compose-limit-count"].exists)
+        let panel = app.otherElements["compose-panel"].firstMatch
+        for button in [app.buttons["compose-send"], app.buttons["compose-back"], app.buttons["compose-expand"], details] {
+            XCTAssertTrue(button.isHittable); XCTAssertTrue(panel.frame.contains(button.frame))
+            XCTAssertGreaterThanOrEqual(button.frame.width, 44); XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+        }
+        XCTAssertTrue(panel.frame.contains(editor.frame)); XCTAssertGreaterThanOrEqual(editor.frame.height, 36)
+        XCTAssertTrue(app.buttons["compose-send"].isEnabled)
+        capture("short-flat-limit-button", app: app)
+        details.tap()
+        let alert = app.alerts["Text limit"].firstMatch
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        XCTAssertTrue(alert.staticTexts.containing(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "3,277", "4,096")).firstMatch.exists)
+        capture("short-flat-limit-details", app: app)
+        alert.buttons["Done"].firstMatch.tap(); XCTAssertTrue(alert.waitForNonExistence(timeout: 5))
+        XCTAssertEqual((editor.value as? String)?.unicodeScalars.count, 3277)
+        app.buttons["compose-back"].tap(); XCTAssertTrue(app.buttons["qa-compose"].isHittable)
+    }
+
+    func testShortFlatPaneRejectedPasteShowsWarningAndCurrentCountTogether() {
+        let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.sheetqa.ios")
+        app.launchArguments = ["--qa-short-flat-composer", "--qa-rejected-paste"]; app.launch(); defer { app.terminate() }
+        XCTAssertTrue(app.buttons["qa-compose"].waitForExistence(timeout: 10)); app.buttons["qa-compose"].tap()
+        let editor = app.textViews["compose-text"], warningButton = app.buttons["compose-error"]
+        XCTAssertTrue(warningButton.waitForExistence(timeout: 10)); XCTAssertTrue(warningButton.isHittable)
+        let retained = String(repeating: "x", count: 3277)
+        XCTAssertEqual(editor.value as? String, retained)
+        XCTAssertFalse(app.staticTexts["compose-limit-count"].exists)
+        XCTAssertTrue(app.buttons["compose-send"].isEnabled)
+        let warning = "This draft exceeds the 16 KB limit. Use a smaller selection. Your previous text was kept."
+        let count = "Current draft: 3,277 / 4,096 characters"
+        XCTAssertTrue(warningButton.label.contains(warning)); XCTAssertTrue(warningButton.label.contains(count))
+        warningButton.tap()
+        let alert = app.alerts["Can’t send this text"].firstMatch
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        let message = alert.staticTexts.containing(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", warning, count)).firstMatch
+        XCTAssertTrue(message.exists); XCTAssertTrue(message.isHittable)
+        capture("short-flat-rejected-paste-warning-and-count", app: app)
+        alert.buttons["Done"].firstMatch.tap(); XCTAssertTrue(alert.waitForNonExistence(timeout: 5))
+        XCTAssertEqual(editor.value as? String, retained); XCTAssertTrue(app.buttons["compose-send"].isEnabled)
+        XCTAssertTrue(warningButton.isHittable)
+        app.buttons["compose-back"].tap(); XCTAssertTrue(app.buttons["qa-compose"].isHittable)
+    }
+
     func testFloatingRotationKeepsEditorCloseAndSendAboveKeyboard() async {
-        let app = open(shortcutBar: true); defer { app.terminate() }
-        let editor = app.textViews["compose-text"]; editor.typeText("rotation draft")
+        let app = open(shortcutBar: true, nearLimit: true); defer { app.terminate() }
+        let editor = app.textViews["compose-text"]
+        let initial = editor.value as? String
+        XCTAssertEqual(initial?.unicodeScalars.count, 3277)
+        XCTAssertTrue(app.staticTexts["compose-limit-count"].exists)
         XCUIDevice.shared.orientation = .landscapeLeft
         await waitForKeyboardAndPanel(app)
         let keyboard = app.keyboards.firstMatch, panel = app.otherElements["compose-panel"].firstMatch
         XCTAssertGreaterThanOrEqual(panel.frame.minY, app.frame.minY + 8)
         XCTAssertLessThanOrEqual(panel.frame.maxY, keyboard.frame.minY + 2)
-        XCTAssertFalse(panel.frame.intersects(app.otherElements["qa-shortcut-bar"].frame))
+        let bar = app.otherElements["qa-shortcut-bar"]
+        // An inactive strip may yield in a short landscape pane. A visible
+        // strip remains an obstacle, and portrait must restore it below.
+        if bar.exists { XCTAssertFalse(panel.frame.intersects(bar.frame)) }
         XCTAssertGreaterThan(editor.frame.height, 35)
         XCTAssertTrue(app.buttons["compose-send"].isHittable); XCTAssertTrue(app.buttons["compose-back"].isHittable)
         XCTAssertFalse(editor.frame.intersects(app.buttons["compose-send"].frame))
-        app.typeText(" retained"); XCTAssertEqual(editor.value as? String, "rotation draft retained")
+        app.typeText(" retained"); XCTAssertEqual(editor.value as? String, initial.map { $0 + " retained" })
         XCUIDevice.shared.orientation = .portrait
         await waitForKeyboardAndPanel(app); XCTAssertTrue(app.buttons["compose-send"].isHittable)
-        XCTAssertFalse(panel.frame.intersects(app.otherElements["qa-shortcut-bar"].frame))
+        XCTAssertTrue(bar.waitForExistence(timeout: 5))
+        XCTAssertFalse(panel.frame.intersects(bar.frame))
+        capture("composer-near-limit-rotation", app: app)
     }
 }

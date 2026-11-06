@@ -374,7 +374,7 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         try await wait { record.received == reply + [0x71] }
     }
     func testComposerUsesCurrentPTYBracketingAndNeverAddsReturnOrReplaysAfterStop() async throws {
-        let record = SSHTestRecord(), key = NIOSSHPrivateKey(ed25519Key: .init())
+        let record = SSHTestRecord(echoInput: false, inputLimit: 32768), key = NIOSSHPrivateKey(ed25519Key: .init())
         let server = try await server(record: record, key: key)
         defer { _ = server.close() }
         let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Composer", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
@@ -405,10 +405,18 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         XCTAssertEqual(record.received, Array("中文😀".utf8), "Multiline review must send nothing")
         // SwiftUI dismisses an alert binding before invoking its captured action.
         draft.confirmation = nil; draft.confirmSend(reviewed); draft.requestSend()
-        let expected = Array("中文😀\u{1b}[200~one\n  two\n\u{1b}[201~".utf8)
+        var expected = Array("中文😀\u{1b}[200~one\n  two\n\u{1b}[201~".utf8)
         try await wait("bracketed UTF-8 write") { record.received == expected }
         try await wait("second composer dismisses") { controller.presentedViewController == nil }
         try await Task.sleep(for: .milliseconds(50)); XCTAssertEqual(record.received, expected)
+        controller.showTextComposer()
+        try await wait("large composer sheet") { controller.presentedViewController != nil }
+        let largeText = String(repeating: "😀", count: 4096)
+        draft.edit(largeText); XCTAssertTrue(draft.canSend); draft.requestSend()
+        expected += Array(("\u{1b}[200~" + largeText + "\u{1b}[201~").utf8)
+        try await wait("16 KiB bracketed composer write") { record.received == expected }
+        try await wait("large composer dismisses") { controller.presentedViewController == nil }
+        XCTAssertEqual(draft.text, "")
         let oldGeneration = session.composeGeneration
         controller.showTextComposer(); draft.edit("retire this draft"); session.stop()
         XCTAssertEqual(draft.text, ""); XCTAssertFalse(draft.active)
