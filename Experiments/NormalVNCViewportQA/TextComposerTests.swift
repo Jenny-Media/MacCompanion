@@ -174,7 +174,9 @@ import StoreKitTest
         let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
         let root = UIViewController(); window.rootViewController = root; window.makeKeyAndVisible()
         defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
-        let bar = TerminalKeyboardBar(terminal: nil, preferences: .init()); root.view.addSubview(bar)
+        let bar = TerminalKeyboardBar(terminal: nil, preferences: .init())
+        bar.translatesAutoresizingMaskIntoConstraints = true // This fixture owns the explicit strip rectangle.
+        root.view.addSubview(bar)
         let draft = DirectTextComposerDraft(macName: "Synthetic Flat Mac", mode: .desktop)
         draft.configure(available: { true }, send: { _, _ in XCTFail("Layout must never send") })
         let panel = DirectTextComposerPanel(draft: draft); panel.shortcutBar = bar
@@ -209,7 +211,7 @@ import StoreKitTest
                             }
                             let card = panel.panelFrame, send = panel.deliveryActionFrame
                             let editorFrame = editor.convert(editor.bounds, to: panel.view)
-                            let context = "\(category.rawValue), offset=\(stripOffset), active=\(active), scalars=\(count), expanded=\(expanded)"
+                            let context = "\(category.rawValue), offset=\(stripOffset), active=\(active), scalars=\(count), expanded=\(expanded), safe=\(safe), card=\(card), editor=\(editorFrame), send=\(send), bar=\(bar.frame), keyboard=\(keyboard)"
                             XCTAssertTrue(card.contains(send), "Send clipped: \(context)")
                             XCTAssertTrue(card.contains(panel.closeActionFrame), "Close clipped: \(context)")
                             XCTAssertTrue(card.contains(panel.expansionActionFrame), "Expand clipped: \(context)")
