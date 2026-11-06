@@ -40,6 +40,16 @@ is marked in red; the warning button opens a full native alert instead of the
 earlier popover that could truncate its message on narrow phones. Long messages
 do not compete with the editor or Send for space in compact panes.
 
+Divided-pane selection and compact panel sizing share the counter measurement.
+The minimum editor height includes that measurement at each candidate pane's
+width, so larger accessibility text can select the roomy alternate page instead
+of clipping the editor or Send after yielding the shortcut strip. A native
+regression covers the Tabletop keyboard fixture just below the counter threshold,
+near the limit and over the limit, at six text sizes in compact and expanded
+layouts. It checks the editor and controls against the rendered card bounds.
+Editor-height caching also tracks the resolved font so Dynamic Type transitions
+cannot retain a measurement made with earlier font metrics.
+
 Each draft belongs to one viewer or PTY generation. Background, app lock,
 connection replacement, mode change and session end clear it. There is no storage,
 sync, clipboard monitoring, diagnostic content or automatic input replay. Once a

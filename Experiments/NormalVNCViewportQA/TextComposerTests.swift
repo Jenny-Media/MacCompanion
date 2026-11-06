@@ -169,6 +169,72 @@ import StoreKitTest
         XCTAssertEqual(bar.alpha, 1, "Returning to a roomy layout restores the temporarily yielded strip")
     }
 
+    func testNearLimitCounterKeepsTabletopEditorAndActionsInsideTheirPane() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        let root = UIViewController(); window.rootViewController = root; window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        let bar = UIView(); root.view.addSubview(bar)
+        let draft = DirectTextComposerDraft(macName: "Synthetic Duo", mode: .desktop)
+        draft.configure(available: { true }, send: { _, _ in XCTFail("Layout must never send") })
+        let panel = DirectTextComposerPanel(draft: draft); panel.shortcutBar = bar
+        root.addChild(panel); root.view.addSubview(panel.view); panel.didMove(toParent: root)
+        let originalCategory = panel.traitCollection.preferredContentSizeCategory
+        defer {
+            panel.traitOverrides.preferredContentSizeCategory = originalCategory
+            panel.view.setNeedsLayout(); panel.view.layoutIfNeeded()
+        }
+        func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+        try await waitForComposerUI("the rendered editor") { descendants(panel.view).contains { $0 is UITextView } }
+        let editor = try XCTUnwrap(descendants(panel.view).compactMap { $0 as? UITextView }.first)
+        defer { editor.resignFirstResponder(); editor.inputView = nil }
+        // The fixture supplies its own keyboard; keep the ordinary Simulator's
+        // keyboard window from adding unrelated insets to the synthetic panes.
+        editor.inputView = UIView(frame: .zero); editor.reloadInputViews()
+        try await Task.sleep(for: .milliseconds(250))
+        let keyboard = CGRect(x: 0, y: 625, width: 669, height: 326)
+        let division = CGRect(x: 0, y: 465, width: 669, height: 20)
+        let epoch = draft.presentationEpoch
+        for category in [UIContentSizeCategory.large, .accessibilityMedium, .accessibilityLarge,
+                         .accessibilityExtraLarge, .accessibilityExtraExtraLarge, .accessibilityExtraExtraExtraLarge] {
+            panel.traitOverrides.preferredContentSizeCategory = category
+            for count in [3276, 3277, 4097] {
+                root.view.frame.size = .init(width: 669, height: 951); panel.view.frame = root.view.bounds
+                panel.simulatedKeyboardFrame = keyboard; panel.setDivisionForComposerTesting(NSValue(cgRect: division))
+                bar.frame = .init(x: 0, y: 573, width: 669, height: 52)
+                let text = String(repeating: "x", count: count)
+                draft.edit(text)
+                for expanded in [false, true] {
+                    draft.expanded = expanded
+                    for _ in 0..<3 {
+                        panel.view.setNeedsLayout(); panel.view.layoutIfNeeded()
+                        try await Task.sleep(for: .milliseconds(100))
+                    }
+                    let card = panel.panelFrame, send = panel.deliveryActionFrame, close = panel.closeActionFrame
+                    let editorFrame = editor.convert(editor.bounds, to: panel.view)
+                    let context = "\(category.rawValue), scalars=\(count), expanded=\(expanded)"
+                    XCTAssertTrue(card.contains(send), "Send must remain inside the card: \(context)")
+                    XCTAssertTrue(card.contains(close), "Close must remain inside the card: \(context)")
+                    XCTAssertTrue(card.contains(panel.expansionActionFrame), "Expand must remain inside the card: \(context)")
+                    XCTAssertTrue(card.contains(editorFrame), "Editor must remain inside the card: \(context)")
+                    XCTAssertGreaterThanOrEqual(editorFrame.height, 36)
+                    XCTAssertLessThanOrEqual(editorFrame.maxY, send.minY)
+                    XCTAssertFalse(card.intersects(keyboard)); XCTAssertFalse(card.intersects(division))
+                    if bar.alpha > 0 { XCTAssertFalse(card.intersects(bar.frame)) }
+                    XCTAssertEqual(send.width, 44, accuracy: 0.5); XCTAssertEqual(send.height, 44, accuracy: 0.5)
+                    XCTAssertEqual(draft.text, text); XCTAssertEqual(draft.presentationEpoch, epoch)
+                    XCTAssertEqual(draft.sizeSummary != nil, count >= 3277)
+                    if category == .accessibilityExtraLarge && count == 3277 && expanded {
+                        let proof = XCTAttachment(image: UIGraphicsImageRenderer(bounds: panel.view.bounds).image { _ in
+                            panel.view.drawHierarchy(in: panel.view.bounds, afterScreenUpdates: true)
+                        })
+                        proof.name = "tabletop-near-limit-accessibility"; proof.lifetime = .keepAlways; add(proof)
+                    }
+                }
+            }
+        }
+    }
+
     func testOpenDuoComposerKeepsActionsAndFocusAcrossActualKeyboardRotations() async throws {
         try XCTSkipIf(UIDevice.current.userInterfaceIdiom == .pad,
             "Windowed iPad rotation uses XCUIDevice in ComposerSheetUITests/testFloatingRotationKeepsEditorCloseAndSendAboveKeyboard; scene requests cannot force its window aspect ratio.")
@@ -652,7 +718,8 @@ import StoreKitTest
                     XCTAssertFalse(descendants(panel.view).contains { ["compose-dock", "compose-more", "compose-discard", "compose-destination"].contains($0.accessibilityIdentifier ?? "") })
                     if !large {
                         XCTAssertLessThanOrEqual(card.width, 284)
-                        XCTAssertLessThanOrEqual(card.height, 156, "size=\(size), category=\(panel.traitCollection.preferredContentSizeCategory.rawValue), font=\(editor.font?.pointSize ?? 0), issue=\(issue)")
+                        let measurementFont = UIFont.preferredFont(forTextStyle: .body, compatibleWith: panel.traitCollection)
+                        XCTAssertLessThanOrEqual(card.height, 156, "size=\(size), category=\(panel.traitCollection.preferredContentSizeCategory.rawValue), font=\(editor.font?.pointSize ?? 0), measurementFont=\(measurementFont.pointSize)/\(measurementFont.lineHeight), issue=\(issue)")
                     }
                 }
             }

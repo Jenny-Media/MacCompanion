@@ -343,14 +343,15 @@ struct DirectComposerPlacement {
     /// Keep a divided workspace on one page. The input page owns composition
     /// unless its unobscured area cannot hold the editor and both 44-point actions.
     static func region(safe: CGRect, division: CGRect, keyboard: CGRect,
-                       shortcutBar: CGRect, mayYieldShortcutBar: Bool, minimumHeight: CGFloat = 112) -> Region {
+                       shortcutBar: CGRect, mayYieldShortcutBar: Bool,
+                       minimumHeight: (CGFloat) -> CGFloat = { _ in 112 }) -> Region {
+        func fits(_ rect: CGRect) -> Bool { rect.width >= 264 && rect.height >= minimumHeight(rect.width) }
         var content = CGRect.null, input = CGRect.null
         guard CompanionVNCTabletopRegions(safe, division, &content, &input)
                 || CompanionVNCBookRegions(safe, division, &content, &input) else {
             let result = area(safe: safe, keyboard: keyboard, shortcutBar: shortcutBar)
-            return Region(area: result, yieldsShortcutBar: false, fitsEditor: result.width >= 264 && result.height >= minimumHeight)
+            return Region(area: result, yieldsShortcutBar: false, fitsEditor: fits(result))
         }
-        func fits(_ rect: CGRect) -> Bool { rect.width >= 264 && rect.height >= minimumHeight }
         let preferred = area(safe: input, keyboard: keyboard, shortcutBar: shortcutBar)
         if fits(preferred) { return Region(area: preferred, yieldsShortcutBar: false, fitsEditor: true) }
         if mayYieldShortcutBar && !shortcutBar.isNull && !shortcutBar.isEmpty {
@@ -405,6 +406,7 @@ struct DirectComposerPlacement {
     private var measuredText: String?
     private var measuredWidth: CGFloat = 0
     private var measuredCategory: UIContentSizeCategory?
+    private var measuredFont: UIFont?
     private var measuredEditorHeight: CGFloat = 0
     lazy var interfaceFeedback = CompanionVNCInterfaceFeedback(view: view)
     private var grabber: UIButton?
@@ -461,10 +463,15 @@ struct DirectComposerPlacement {
         } else { bar = .null }
         let executionActive = (shortcutBar as? TerminalKeyboardBar)?.executionActive == true
         let preferred = UIFont.preferredFont(forTextStyle: .body, compatibleWith: traitCollection)
-        let minimumHeight = max(112, max(44, ceil(preferred.lineHeight) + 8) + 44 + 12)
         let decision = DirectComposerPlacement.region(safe: view.safeAreaLayoutGuide.layoutFrame,
             division: division, keyboard: keyboardFrame, shortcutBar: bar,
-            mayYieldShortcutBar: !executionActive, minimumHeight: minimumHeight)
+            mayYieldShortcutBar: !executionActive, minimumHeight: { width in
+                let cardWidth = min(draft.docked || draft.expanded ? 640
+                    : traitCollection.preferredContentSizeCategory.isAccessibilityCategory ? 360 : 284, width)
+                // A counter can wrap at the candidate pane's width. Include it
+                // before accepting that pane or deciding to yield the strip.
+                return max(112, max(44, ceil(preferred.lineHeight) + 8) + 44 + 12 + counterHeight(width: cardWidth))
+            })
         if decision.yieldsShortcutBar, let shortcutBar {
             if yieldedShortcutBar == nil { shortcutBarAlpha = shortcutBar.alpha; yieldedShortcutBar = shortcutBar }
             shortcutBar.alpha = 0
@@ -586,27 +593,28 @@ struct DirectComposerPlacement {
         card.contentView.bringSubviewToFront(close)
     }
     private var availableHeight: CGFloat { placementArea.height }
+    private func counterHeight(width: CGFloat) -> CGFloat {
+        guard let summary = draft.compactSizeSummary else { return 0 }
+        let font = UIFont.preferredFont(forTextStyle: .caption2, compatibleWith: traitCollection)
+        // The SwiftUI card has 6pt outer padding and 12pt counter padding per side.
+        let bounds = (summary as NSString).boundingRect(with: CGSize(width: max(1, width - 36), height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: font], context: nil)
+        return ceil(bounds.height) + 8
+    }
     private var compactHeight: CGFloat {
         let preferred = UIFont.preferredFont(forTextStyle: .body, compatibleWith: traitCollection)
         let font = draft.mode == .terminal ? UIFont.monospacedSystemFont(ofSize: preferred.pointSize, weight: .regular) : preferred
         let width = max(1, min(traitCollection.preferredContentSizeCategory.isAccessibilityCategory ? 360 : 284, placementArea.width) - 74)
         let category = traitCollection.preferredContentSizeCategory
-        if measuredText != draft.text || measuredWidth != width || measuredCategory != category {
+        if measuredText != draft.text || measuredWidth != width || measuredCategory != category || measuredFont != font {
             // Trailing line breaks need one final insertion line. Nothing leaves this owner.
             let text = draft.text.isEmpty ? " " : draft.text + "\u{200B}"
             let bounds = (text as NSString).boundingRect(with: CGSize(width: width, height: font.lineHeight * 6),
                 options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: font], context: nil)
             measuredEditorHeight = min(font.lineHeight * 6, max(font.lineHeight * 2, ceil(bounds.height)))
-            measuredText = draft.text; measuredWidth = width; measuredCategory = category
+            measuredText = draft.text; measuredWidth = width; measuredCategory = category; measuredFont = font
         }
-        var statusHeight: CGFloat = 0
-        if let summary = draft.compactSizeSummary {
-            let font = UIFont.preferredFont(forTextStyle: .caption2, compatibleWith: traitCollection)
-            let bounds = (summary as NSString).boundingRect(with: CGSize(width: width + 50, height: .greatestFiniteMagnitude),
-                options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: font], context: nil)
-            statusHeight += ceil(bounds.height) + 8
-        }
-        return min(availableHeight, max(112, measuredEditorHeight + 64 + statusHeight))
+        return min(availableHeight, max(112, measuredEditorHeight + 64 + counterHeight(width: width + 74)))
     }
     @objc private func back() { if usable { draft.close?() } }
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
