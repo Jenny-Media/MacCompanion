@@ -210,6 +210,19 @@ import XCTest
         XCTAssertTrue(app.textViews["compose-text"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.textViews["compose-text"].value as? String, "")
     }
+    func testLongParagraphIsSendableAndCountOnlyAppearsNearLimit() {
+        for nearLimit in [false, true] {
+            let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.sheetqa.ios")
+            app.launchArguments = [nearLimit ? "--qa-near-limit" : "--qa-long-draft", "--qa-shortcut-bar"]
+            app.launch(); defer { app.terminate() }
+            XCTAssertTrue(app.buttons["qa-compose"].waitForExistence(timeout: 10)); app.buttons["qa-compose"].tap()
+            XCTAssertTrue(app.textViews["compose-text"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["compose-send"].isEnabled)
+            XCTAssertEqual(app.staticTexts["compose-limit-count"].exists, nearLimit)
+            XCTAssertFalse(app.staticTexts["compose-inline-error"].exists)
+            capture(nearLimit ? "composer-near-limit-count" : "composer-long-paragraph-enabled", app: app)
+        }
+    }
     func testNarrowInvalidBubbleKeepsCloseErrorAndSendReachable() {
         let app = open(narrow: true); defer { app.terminate() }
         let panel = app.otherElements["compose-panel"].firstMatch, send = app.buttons["compose-send"]
@@ -219,8 +232,10 @@ import XCTest
         XCTAssertFalse(send.isEnabled); XCTAssertFalse(app.buttons["compose-more"].exists)
         let draft = app.textViews["compose-text"].value as? String
         app.buttons["compose-error"].tap()
-        XCTAssertTrue(app.staticTexts["Screen Sharing input can send up to 256 Unicode characters at once."].waitForExistence(timeout: 5))
-        app.buttons["compose-error-done"].tap()
+        XCTAssertTrue(app.alerts["Can’t send this text"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.alerts.staticTexts.containing(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "4,097", "4,096")).firstMatch.exists)
+        capture("composer-complete-limit-warning", app: app)
+        app.alerts.buttons["Done"].tap()
         XCTAssertEqual(app.textViews["compose-text"].value as? String, draft)
         app.buttons["compose-back"].tap(); XCTAssertTrue(app.buttons["qa-compose"].isHittable)
     }

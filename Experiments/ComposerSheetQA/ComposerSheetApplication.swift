@@ -62,10 +62,13 @@ final class ComposerSheetRoot: UIViewController {
             draft.close = { [weak panel] in
                 panel?.willMove(toParent: nil); panel?.view.removeFromSuperview(); panel?.removeFromParent()
             }
-            draft.edit(String(repeating: "x", count: 257))
+            draft.edit(String(repeating: "x", count: 4097))
             return
         }
-        composer.present(from: self, available: { true }, send: { [weak self] _, completion in
+        let arguments = ProcessInfo.processInfo.arguments
+        let initialText = arguments.contains("--qa-long-draft") ? String(repeating: "This is a synthetic paragraph for checking longer text. ", count: 12)
+            : arguments.contains("--qa-near-limit") ? String(repeating: "x", count: 3277) : nil
+        composer.present(from: self, initialText: initialText, savedTitle: nil, available: { true }, send: { [weak self] _, completion in
             guard let self, ProcessInfo.processInfo.arguments.contains("--qa-delivery-result") else { return }
             self.sends += 1; completion(self.sends == 1 ? "Synthetic delivery failure" : nil)
         })

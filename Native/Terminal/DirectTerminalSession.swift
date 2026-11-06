@@ -553,7 +553,7 @@ private enum TerminalPTY {
         guard generation == expected, canComposeText, let writer, !data.isEmpty else {
             completion("The Terminal session changed. Nothing was sent."); return
         }
-        guard data.count <= 4108, queuedBytes + data.count <= 65536 else {
+        guard data.count <= DirectComposedText.terminalMaximumBytes + 12, queuedBytes + data.count <= 65536 else {
             completion("Input is busy or the text is too large. Nothing was queued."); return
         }
         queuedBytes += data.count

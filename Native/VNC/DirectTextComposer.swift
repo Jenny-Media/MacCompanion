@@ -5,29 +5,39 @@ import UIKit
 
 /// Plain text only. These bounds are independent of the saved-action library.
 struct DirectComposedText: Equatable {
+    static let desktopMaximumScalars = 4096
+    static let terminalMaximumBytes = 16384
+    static let draftMaximumBytes = 16384
+    static let desktopBatchMaximumScalars = 128
     let text: String
     var needsConfirmation: Bool { text.contains("\n") || text.contains("\t") }
     var endsWithNewline: Bool { text.hasSuffix("\n") }
     enum Failure: Error {
-        case empty, controls, tooLarge(DirectControlMode)
+        case empty, controls, tooLarge(DirectControlMode, Int)
         var message: String {
             switch self {
             case .empty: "Enter some text first."
             case .controls: "Remove control characters before sending. Line breaks and tabs are supported."
-            case .tooLarge(let mode): mode == .terminal ? "Terminal can send up to 4096 UTF-8 bytes at once." : "Screen Sharing input can send up to 256 Unicode characters at once."
+            case .tooLarge(let mode, let count): mode == .terminal
+                ? "This text uses \(count.formatted()) UTF-8 bytes. Send up to \(DirectComposedText.terminalMaximumBytes.formatted()) at a time. Shorten the text and try again."
+                : "This text has \(count.formatted()) characters. Send up to \(DirectComposedText.desktopMaximumScalars.formatted()) at a time. Shorten the text and try again."
             }
         }
     }
-    init(_ draft: String, mode: DirectControlMode) throws {
-        let text = draft.replacingOccurrences(of: "\r\n", with: "\n")
+    static func normalized(_ draft: String) -> String {
+        draft.replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
             .replacingOccurrences(of: "\u{2028}", with: "\n")
             .replacingOccurrences(of: "\u{2029}", with: "\n")
+    }
+    init(_ draft: String, mode: DirectControlMode) throws {
+        let text = Self.normalized(draft)
         guard !text.isEmpty else { throw Failure.empty }
         guard !text.unicodeScalars.contains(where: { scalar in
             (scalar.value < 32 && scalar.value != 9 && scalar.value != 10) || (127...159).contains(scalar.value)
         }) else { throw Failure.controls }
-        guard mode == .terminal ? text.utf8.count <= 4096 : text.unicodeScalars.count <= 256 else { throw Failure.tooLarge(mode) }
+        let count = mode == .terminal ? text.utf8.count : text.unicodeScalars.count
+        guard count <= (mode == .terminal ? Self.terminalMaximumBytes : Self.desktopMaximumScalars) else { throw Failure.tooLarge(mode, count) }
         self.text = text
     }
     var desktopEvents: [[String: Any]] {
@@ -39,6 +49,46 @@ struct DirectComposedText: Equatable {
     }
     func terminalBytes(bracketedPaste: Bool) -> [UInt8] {
         Array((bracketedPaste ? "\u{1b}[200~" + text + "\u{1b}[201~" : text).utf8)
+    }
+}
+
+/// One connection owns a long send. Only one bounded batch is queued at a time.
+@MainActor private final class DirectDesktopTextDelivery {
+    let session: CompanionVNCSession
+    let batches: [[[String: Any]]]
+    let current: () -> Bool
+    let completion: (Bool) -> Void
+    private var identifier: String?
+    private var next = 0
+    init(events: [[String: Any]], session: CompanionVNCSession, current: @escaping () -> Bool, completion: @escaping (Bool) -> Void) {
+        self.session = session; self.current = current; self.completion = completion
+        let size = DirectComposedText.desktopBatchMaximumScalars * 2
+        batches = stride(from: 0, to: events.count, by: size).map { Array(events[$0..<min($0 + size, events.count)]) }
+    }
+    func start() -> Bool {
+        guard current(), DirectAppLockV1.shared.canAccess, let owner = session.beginControlSequence() else { return false }
+        identifier = owner
+        guard enqueueNext() else {
+            identifier = nil; session.endControlSequence(owner); return false
+        }
+        return true
+    }
+    private func enqueueNext() -> Bool {
+        guard let identifier, current(), DirectAppLockV1.shared.canAccess,
+              session.ownsControlSequence(identifier), next < batches.count else { return false }
+        let batch = batches[next]; next += 1
+        return session.tryControlSequenceEvents(batch, identifier: identifier) { [self] written in
+            guard written, current(), DirectAppLockV1.shared.canAccess, session.ownsControlSequence(identifier) else { finish(false); return }
+            if next == batches.count { finish(true) }
+            else if !enqueueNext() { finish(false) }
+        }
+    }
+    private func finish(_ written: Bool) {
+        guard let identifier else { return }
+        self.identifier = nil
+        if written { session.endControlSequence(identifier) }
+        else { session.cancelControlSequence(identifier) }
+        completion(written)
     }
 }
 
@@ -71,12 +121,20 @@ struct DirectComposedText: Equatable {
         catch { return "Review the draft before sending." }
     }
     var canSend: Bool { active && !sending && validationIssue == nil }
+    var issueMessage: String? { issue ?? (text.isEmpty ? nil : validationIssue) }
+    var sizeSummary: String? {
+        let normalized = DirectComposedText.normalized(text)
+        let count = mode == .terminal ? normalized.utf8.count : normalized.unicodeScalars.count
+        let limit = mode == .terminal ? DirectComposedText.terminalMaximumBytes : DirectComposedText.desktopMaximumScalars
+        guard count * 5 >= limit * 4 else { return nil }
+        return "\(count.formatted()) / \(limit.formatted()) " + (mode == .terminal ? "UTF-8 bytes" : "characters")
+    }
     func configure(available: @escaping () -> Bool, send: @escaping (String, @escaping (String?) -> Void) -> Void) {
         epoch = UUID(); self.available = available; self.send = send; active = true; confirmation = nil; issue = nil
     }
     func edit(_ value: String) {
         guard active, !sending else { return }
-        guard value.utf8.count <= 16384 else { issue = "The draft is too large. Paste a smaller selection; no text was added."; return }
+        guard value.utf8.count <= DirectComposedText.draftMaximumBytes else { issue = "This draft exceeds the 16 KB limit. Use a smaller selection. Your previous text was kept."; return }
         text = value; issue = nil; confirmation = nil
     }
     func requestSend() {
@@ -165,6 +223,15 @@ struct DirectComposedText: Equatable {
     }
     @objc static func desktopEvents(_ text: String) -> [[String: Any]] {
         (try? DirectComposedText(text, mode: .desktop))?.desktopEvents ?? []
+    }
+    @objc static func sendDesktopText(_ text: String, session: CompanionVNCSession,
+                                     current: @escaping () -> Bool, completion: @escaping (Bool) -> Void) -> Bool {
+        guard current(), DirectAppLockV1.shared.canAccess,
+              let prepared = try? DirectComposedText(text, mode: .desktop) else { return false }
+        let events = prepared.desktopEvents
+        // Preserve compact, atomic admission for the existing short-text path.
+        if events.count <= 512 { return session.tryComposedTextEvents(events, completion: completion) }
+        return DirectDesktopTextDelivery(events: events, session: session, current: current, completion: completion).start()
     }
     @objc func present(from controller: UIViewController, available: @escaping () -> Bool,
                        send: @escaping (String, @escaping (String?) -> Void) -> Void) {
@@ -529,7 +596,20 @@ struct DirectComposerPlacement {
             measuredEditorHeight = min(font.lineHeight * 6, max(font.lineHeight * 2, ceil(bounds.height)))
             measuredText = draft.text; measuredWidth = width; measuredCategory = category
         }
-        return min(availableHeight, max(112, measuredEditorHeight + 64))
+        var statusHeight: CGFloat = 0
+        if let summary = draft.sizeSummary {
+            let font = UIFont.preferredFont(forTextStyle: .caption2, compatibleWith: traitCollection)
+            let bounds = (summary as NSString).boundingRect(with: CGSize(width: width + 50, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: font], context: nil)
+            statusHeight += ceil(bounds.height) + 8
+        }
+        if let issue = draft.issueMessage {
+            let font = UIFont.preferredFont(forTextStyle: .caption1, compatibleWith: traitCollection)
+            let bounds = (issue as NSString).boundingRect(with: CGSize(width: width + 50, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: font], context: nil)
+            statusHeight += ceil(bounds.height) + 8
+        }
+        return min(availableHeight, max(112, measuredEditorHeight + 64 + statusHeight))
     }
     @objc private func back() { if usable { draft.close?() } }
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
@@ -676,7 +756,7 @@ private struct DirectTextComposerView: View {
     var reportExpansionBounds: (CGRect) -> Void
     @FocusState private var editing: Bool
     @State private var showIssue = false
-    private var issue: String? { draft.issue ?? (draft.text.isEmpty ? nil : draft.validationIssue) }
+    private var issue: String? { draft.issueMessage }
     private func confirmationMessage(_ reviewed: DirectComposedText) -> String {
         let explanation = draft.mode == .terminal
             ? "Without bracketed paste, line breaks can run commands and tabs can change terminal input."
@@ -708,6 +788,18 @@ private struct DirectTextComposerView: View {
                     .accessibilityIdentifier("compose-expand")
                     .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("composer-panel")) } action: { reportExpansionBounds($0) }
             }
+            if let summary = draft.sizeSummary {
+                Text(summary).font(.caption2).foregroundStyle(.secondary)
+                    .lineLimit(nil).fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .trailing).padding(.horizontal, 12).padding(.top, 4)
+                    .accessibilityIdentifier("compose-limit-count")
+            }
+            if let issue {
+                Text(issue).font(.caption).foregroundStyle(.red)
+                    .lineLimit(nil).fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.top, 4)
+                    .accessibilityIdentifier("compose-inline-error")
+            }
             HStack(spacing: 0) {
                 // Native Close occupies the first 44pt; its drag grip occupies this spacer.
                 Color.clear.frame(width: 44, height: 44).accessibilityHidden(true)
@@ -718,13 +810,6 @@ private struct DirectTextComposerView: View {
                             .frame(width: 44, height: 44).contentShape(Rectangle())
                     }.buttonStyle(.plain).disabled(!isCurrent())
                         .accessibilityLabel(issue).accessibilityIdentifier("compose-error")
-                        .popover(isPresented: $showIssue) {
-                            VStack(spacing: 12) {
-                                Text(issue)
-                                Button("Done") { showIssue = false }.frame(minHeight: 44)
-                                    .accessibilityIdentifier("compose-error-done")
-                            }.padding().presentationCompactAdaptation(.popover)
-                        }
                 }
                 Button { if isCurrent() { draft.requestSend() } } label: {
                     Group {
@@ -747,6 +832,9 @@ private struct DirectTextComposerView: View {
             .onChange(of: draft.issue) { _, _ in requestLayout() }
             .onChange(of: draft.sending) { _, _ in requestLayout() }
             .onChange(of: draft.active) { _, _ in requestLayout() }
+            .alert("Can’t send this text", isPresented: $showIssue) {
+                Button("Done", role: .cancel) {}.accessibilityIdentifier("compose-error-done")
+            } message: { Text(issue ?? "Review the text and try again.") }
             .alert("Send line breaks or tabs?", isPresented: Binding(get: { draft.confirmation != nil }, set: { if !$0 { draft.confirmation = nil } }), presenting: draft.confirmation) { reviewed in
                 Button("Send Text") { if isCurrent() { draft.confirmSend(reviewed) } }
                 Button("Cancel", role: .cancel) { draft.confirmation = nil }

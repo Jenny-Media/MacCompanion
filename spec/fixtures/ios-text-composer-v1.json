@@ -1,7 +1,7 @@
 {
   "profile": "maccompanion.ios-text-composer.v1",
-  "desktopMaximumScalars": 256,
-  "terminalMaximumBytes": 4096,
+  "desktopMaximumScalars": 4096,
+  "terminalMaximumBytes": 16384,
   "draftMaximumBytes": 16384,
   "cases": [
     {
@@ -273,5 +273,6 @@
     "compactHeight": "content-dependent up to six preferred body lines; keyboard-safe clamped",
     "footerControlsDoNotOverlapEditor": true,
     "minimumGrabberHitPoints": 44
-  }
+  },
+  "desktopBatchMaximumScalars": 128
 }

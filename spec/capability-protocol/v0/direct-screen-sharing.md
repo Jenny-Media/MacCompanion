@@ -536,15 +536,25 @@ reads require an explicit native Paste action. Preserve spaces and trailing line
 breaks; normalize CRLF, CR and Unicode line/paragraph separators to LF. Reject
 other C0/C1 controls (including NUL and Escape), except Tab. Bound the editable
 draft to 16 KiB UTF-8 without silently truncating pasted content. Desktop sends
-at most 256 Unicode scalars; Terminal sends at most 4096 UTF-8 bytes, excluding
+at most 4096 Unicode scalars; Terminal sends at most 16384 UTF-8 bytes, excluding
 bracketed-paste framing. A too-large draft remains editable and cannot be sent.
 
 Desktop delivery uses balanced Unicode RFB key events, with LF represented by
 Return and Tab by the Tab keysym, clearing armed modifiers. It is typing into
 whatever currently has focus, not clipboard synchronization or semantic field
 selection. Every draft containing LF or Tab requires explicit confirmation that
-line breaks may submit content/run commands and tabs may change focus. Admit the
-whole event group into the existing bounded queue or none of it.
+line breaks may submit content/run commands and tabs may change focus. Short text
+retains the existing atomic event-group path. Longer text is preflighted in full
+and uses one exclusive connection-owned sequence, with at most 128 scalars
+(256 balanced key events) per batch. Await each local batch write before admitting
+the next; keep the existing 512-event user queue bound. Reject a busy first batch
+without sending text. Failure or a lifecycle/readiness change after admission
+cancels the remainder, reports possible partial delivery, and never retries or
+replays it. Ordinary input cannot interleave with the owned long-text sequence.
+
+The composer shows the current count and limit. A blocked send has a readable
+inline explanation and a full wrapped detail message; neither may truncate the
+limit or recovery instruction. Draft rejection preserves the previous text.
 
 Terminal sends UTF-8 to its existing PTY owner and wraps it in bracketed-paste
 markers only when the current terminal mode requests them. Every draft containing

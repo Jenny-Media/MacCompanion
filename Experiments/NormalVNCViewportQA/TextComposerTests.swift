@@ -1079,10 +1079,14 @@ import StoreKitTest
                 XCTAssertEqual(hex(prepared.terminalBytes(bracketedPaste: true)), item["bracketedHex"] as? String)
             }
         }
-        XCTAssertNoThrow(try DirectComposedText(String(repeating: "😀", count: 256), mode: .desktop))
-        XCTAssertThrowsError(try DirectComposedText(String(repeating: "😀", count: 257), mode: .trackpad))
-        XCTAssertNoThrow(try DirectComposedText(String(repeating: "😀", count: 1024), mode: .terminal))
-        XCTAssertThrowsError(try DirectComposedText(String(repeating: "😀", count: 1025), mode: .terminal))
+        XCTAssertEqual(fixture["desktopMaximumScalars"] as? Int, DirectComposedText.desktopMaximumScalars)
+        XCTAssertEqual(fixture["desktopBatchMaximumScalars"] as? Int, DirectComposedText.desktopBatchMaximumScalars)
+        XCTAssertEqual(fixture["terminalMaximumBytes"] as? Int, DirectComposedText.terminalMaximumBytes)
+        XCTAssertEqual(fixture["draftMaximumBytes"] as? Int, DirectComposedText.draftMaximumBytes)
+        XCTAssertNoThrow(try DirectComposedText(String(repeating: "😀", count: 4096), mode: .desktop))
+        XCTAssertThrowsError(try DirectComposedText(String(repeating: "😀", count: 4097), mode: .trackpad))
+        XCTAssertNoThrow(try DirectComposedText(String(repeating: "😀", count: 4096), mode: .terminal))
+        XCTAssertThrowsError(try DirectComposedText(String(repeating: "😀", count: 4097), mode: .terminal))
     }
     func testEditingAndCancelledConfirmationSendNothingAndBusyAdmissionRetainsDraft() {
         for mode in DirectControlMode.allCases {

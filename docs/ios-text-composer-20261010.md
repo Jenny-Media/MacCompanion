@@ -21,10 +21,23 @@ ends with a line break. No extra Return is appended.
   can run commands. Selecting Send Text does not prevent command execution.
 
 The editable draft is bounded to 16 KiB UTF-8. An oversized paste is rejected as
-a whole. A Desktop send is limited to 256 Unicode scalars by its balanced
-512-event queue; a Terminal send is limited to 4096 UTF-8 bytes before optional
-paste framing. Other C0/C1 controls are rejected. Oversized sendable content stays
-editable and is never silently truncated.
+a whole. Screen Sharing and Trackpad & Keyboard can send up to 4096 Unicode
+scalars; Terminal can send 16 KiB UTF-8 before optional paste framing. Other C0/C1
+controls are rejected. Oversized sendable content stays editable and is never
+silently truncated. These limits do not change the saved-text library bounds.
+
+The original 256-scalar Desktop cap admitted one key-down/key-up pair per scalar
+into a single 512-event queue. Longer drafts now reserve one existing exclusive
+connection-owned sequence and send at most 128 scalars per batch, waiting for
+each write before admitting the next. The user-event queue remains bounded at
+512 events. Short drafts retain compact atomic admission. A busy first batch
+sends no text; later failure stops the remainder and reports possible partial
+delivery without retry or replay.
+
+The composer stays minimal during ordinary use. The count and limit appear only
+at 80% of the mode's allowance, including when it is exceeded. A blocked send
+shows a wrapped inline explanation; the warning button opens a full native alert
+instead of the earlier popover that could truncate its message on narrow phones.
 
 Each draft belongs to one viewer or PTY generation. Background, app lock,
 connection replacement, mode change and session end clear it. There is no storage,
