@@ -49,7 +49,8 @@ final class ComposerSheetRoot: UIViewController {
             button.centerXAnchor.constraint(equalTo: view.centerXAnchor)])
     }
     @objc func openComposer() {
-        if ProcessInfo.processInfo.arguments.contains("--qa-narrow-composer") {
+        let shortFlat = ProcessInfo.processInfo.arguments.contains("--qa-short-flat-composer")
+        if shortFlat || ProcessInfo.processInfo.arguments.contains("--qa-narrow-composer") {
             let draft = composer.draft
             draft.configure(available: { true }, send: { _, _ in })
             let panel = DirectTextComposerPanel(draft: draft)
@@ -59,10 +60,29 @@ final class ComposerSheetRoot: UIViewController {
                 panel.view.heightAnchor.constraint(equalToConstant: 220),
                 panel.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
                 panel.view.centerXAnchor.constraint(equalTo: view.centerXAnchor)])
-            draft.close = { [weak panel] in
-                panel?.willMove(toParent: nil); panel?.view.removeFromSuperview(); panel?.removeFromParent()
+            let bar = shortFlat ? UIView() : nil
+            if let bar {
+                view.addSubview(bar); panel.shortcutBar = bar
+                panel.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
+                draft.expanded = true
+                DispatchQueue.main.async { [weak panel, weak self] in
+                    guard let panel, let self else { return }
+                    self.view.layoutIfNeeded()
+                    let safe = panel.view.safeAreaLayoutGuide.layoutFrame, stripTop = panel.view.safeAreaLayoutGuide.layoutFrame.minY + 132
+                    bar.frame = self.view.convert(CGRect(x: safe.minX, y: stripTop, width: safe.width, height: 52), from: panel.view)
+                    panel.simulatedKeyboardFrame = CGRect(x: safe.minX, y: stripTop + 52, width: safe.width,
+                        height: max(0, safe.maxY - stripTop - 52))
+                    func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+                    let editor = descendants(panel.view).compactMap { $0 as? UITextView }.first
+                    editor?.inputView = UIView(frame: .zero); editor?.reloadInputViews()
+                    panel.view.setNeedsLayout()
+                }
             }
-            draft.edit(String(repeating: "x", count: 4097))
+            draft.close = { [weak panel, weak bar] in
+                panel?.willMove(toParent: nil); panel?.view.removeFromSuperview(); panel?.removeFromParent()
+                bar?.removeFromSuperview()
+            }
+            draft.edit(String(repeating: "x", count: shortFlat ? 3277 : 4097))
             return
         }
         let arguments = ProcessInfo.processInfo.arguments

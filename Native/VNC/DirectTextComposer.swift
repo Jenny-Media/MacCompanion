@@ -103,6 +103,7 @@ struct DirectComposedText: Equatable {
     var expanded = false
     var compactLayout = false
     var narrowLayout = false
+    var counterInDetails = false
     var issue: String?
     var confirmation: DirectComposedText?
     @ObservationIgnored private var epoch = UUID()
@@ -133,7 +134,7 @@ struct DirectComposedText: Equatable {
         return includeUnits ? counter + " " + (mode == .terminal ? "UTF-8 bytes" : "characters") : counter
     }
     func configure(available: @escaping () -> Bool, send: @escaping (String, @escaping (String?) -> Void) -> Void) {
-        epoch = UUID(); self.available = available; self.send = send; active = true; confirmation = nil; issue = nil
+        epoch = UUID(); self.available = available; self.send = send; active = true; confirmation = nil; issue = nil; counterInDetails = false
     }
     func edit(_ value: String) {
         guard active, !sending else { return }
@@ -172,7 +173,7 @@ struct DirectComposedText: Equatable {
     func invalidate() {
         if sending { interrupted?() }
         epoch = UUID(); deliveryID = nil; text = ""; issue = nil; confirmation = nil; active = false; expanded = false; docked = false; floatingAnchor = CGPoint(x: 0.5, y: 1)
-        sending = false; available = { false }; send = nil; sendingChanged?(false); close?()
+        sending = false; counterInDetails = false; available = { false }; send = nil; sendingChanged?(false); close?()
     }
 }
 
@@ -307,14 +308,15 @@ struct DirectComposerPlacement {
         let top = safe.minY + (room < 284 ? 8 : 48)
         return CGRect(x: safe.minX + 8, y: top, width: max(0, safe.width - 16), height: max(0, keyboardTop - 8 - top))
     }
-    static func area(safe: CGRect, keyboard: CGRect, shortcutBar: CGRect = .null) -> CGRect {
+    static func area(safe: CGRect, keyboard: CGRect, shortcutBar: CGRect = .null,
+                     minimumHeight: (CGFloat) -> CGFloat = { _ in 112 }) -> CGRect {
         // Keep separate obstacles separate: an undocked keyboard can sit near
         // the top while the app's shortcut row remains at the bottom.
         let obstacles = [keyboard, shortcutBar].map { $0.intersection(safe) }
             .filter { !$0.isNull && !$0.isEmpty }
         guard let ceiling = obstacles.map(\.minY).min() else { return area(safe: safe, keyboardTop: safe.maxY) }
         let above = area(safe: safe, keyboardTop: ceiling)
-        if above.height >= 180 { return above }
+        if above.height >= max(180, minimumHeight(above.width)) { return above }
         let base = area(safe: safe, keyboardTop: safe.maxY)
         let free = obstacles.reduce([base]) { regions, obstacle in
             regions.flatMap { region -> [CGRect] in
@@ -330,7 +332,7 @@ struct DirectComposerPlacement {
             }
         }
         let candidates = [above] + free
-        let readable = candidates.filter { $0.width >= 264 && $0.height >= 112 }
+        let readable = candidates.filter { $0.width >= 264 && $0.height >= minimumHeight($0.width) }
         return (readable.isEmpty ? candidates : readable).max {
             $0.width * min(324, $0.height) < $1.width * min(324, $1.height)
         } ?? above
@@ -349,18 +351,22 @@ struct DirectComposerPlacement {
         var content = CGRect.null, input = CGRect.null
         guard CompanionVNCTabletopRegions(safe, division, &content, &input)
                 || CompanionVNCBookRegions(safe, division, &content, &input) else {
-            let result = area(safe: safe, keyboard: keyboard, shortcutBar: shortcutBar)
+            let result = area(safe: safe, keyboard: keyboard, shortcutBar: shortcutBar, minimumHeight: minimumHeight)
+            if !fits(result), mayYieldShortcutBar, !shortcutBar.isNull, !shortcutBar.isEmpty {
+                let withoutStrip = area(safe: safe, keyboard: keyboard, minimumHeight: minimumHeight)
+                if fits(withoutStrip) { return Region(area: withoutStrip, yieldsShortcutBar: true, fitsEditor: true) }
+            }
             return Region(area: result, yieldsShortcutBar: false, fitsEditor: fits(result))
         }
-        let preferred = area(safe: input, keyboard: keyboard, shortcutBar: shortcutBar)
+        let preferred = area(safe: input, keyboard: keyboard, shortcutBar: shortcutBar, minimumHeight: minimumHeight)
         if fits(preferred) { return Region(area: preferred, yieldsShortcutBar: false, fitsEditor: true) }
         if mayYieldShortcutBar && !shortcutBar.isNull && !shortcutBar.isEmpty {
-            let withoutStrip = area(safe: input, keyboard: keyboard)
+            let withoutStrip = area(safe: input, keyboard: keyboard, minimumHeight: minimumHeight)
             if fits(withoutStrip) { return Region(area: withoutStrip, yieldsShortcutBar: true, fitsEditor: true) }
         }
         // A tall or floating keyboard may cover the input page. Use a modal
         // editor in the other genuinely free page without remounting its owner.
-        let alternate = area(safe: content, keyboard: keyboard, shortcutBar: shortcutBar)
+        let alternate = area(safe: content, keyboard: keyboard, shortcutBar: shortcutBar, minimumHeight: minimumHeight)
         if fits(alternate) { return Region(area: alternate, yieldsShortcutBar: false, fitsEditor: true) }
         let bounded = [preferred, alternate].max { $0.width * $0.height < $1.width * $1.height } ?? preferred
         return Region(area: bounded, yieldsShortcutBar: false, fitsEditor: false)
@@ -462,16 +468,21 @@ struct DirectComposerPlacement {
             bar = view.convert(shortcutBar.bounds, from: shortcutBar)
         } else { bar = .null }
         let executionActive = (shortcutBar as? TerminalKeyboardBar)?.executionActive == true
-        let preferred = UIFont.preferredFont(forTextStyle: .body, compatibleWith: traitCollection)
-        let decision = DirectComposerPlacement.region(safe: view.safeAreaLayoutGuide.layoutFrame,
-            division: division, keyboard: keyboardFrame, shortcutBar: bar,
-            mayYieldShortcutBar: !executionActive, minimumHeight: { width in
-                let cardWidth = min(draft.docked || draft.expanded ? 640
-                    : traitCollection.preferredContentSizeCategory.isAccessibilityCategory ? 360 : 284, width)
-                // A counter can wrap at the candidate pane's width. Include it
-                // before accepting that pane or deciding to yield the strip.
-                return max(112, max(44, ceil(preferred.lineHeight) + 8) + 44 + 12 + counterHeight(width: cardWidth))
-            })
+        func region(includingCounter: Bool) -> DirectComposerPlacement.Region {
+            DirectComposerPlacement.region(safe: view.safeAreaLayoutGuide.layoutFrame,
+                division: division, keyboard: keyboardFrame, shortcutBar: bar,
+                mayYieldShortcutBar: !executionActive, minimumHeight: { width in
+                    let cardWidth = min(draft.docked || draft.expanded ? 640
+                        : traitCollection.preferredContentSizeCategory.isAccessibilityCategory ? 360 : 284, width)
+                    return minimumPanelHeight(width: cardWidth, includingCounter: includingCounter)
+                })
+        }
+        var decision = region(includingCounter: true)
+        if !decision.fitsEditor, draft.sizeSummary != nil {
+            // The footer can disclose the count. Still make room for the editor
+            // before accepting a cramped region with the strip left in place.
+            decision = region(includingCounter: false)
+        }
         if decision.yieldsShortcutBar, let shortcutBar {
             if yieldedShortcutBar == nil { shortcutBarAlpha = shortcutBar.alpha; yieldedShortcutBar = shortcutBar }
             shortcutBar.alpha = 0
@@ -593,6 +604,10 @@ struct DirectComposerPlacement {
         card.contentView.bringSubviewToFront(close)
     }
     private var availableHeight: CGFloat { placementArea.height }
+    private func minimumPanelHeight(width: CGFloat, includingCounter: Bool = true) -> CGFloat {
+        let preferred = UIFont.preferredFont(forTextStyle: .body, compatibleWith: traitCollection)
+        return max(112, max(44, ceil(preferred.lineHeight) + 8) + 44 + 12 + (includingCounter ? counterHeight(width: width) : 0))
+    }
     private func counterHeight(width: CGFloat) -> CGFloat {
         guard let summary = draft.compactSizeSummary else { return 0 }
         let font = UIFont.preferredFont(forTextStyle: .caption2, compatibleWith: traitCollection)
@@ -601,7 +616,8 @@ struct DirectComposerPlacement {
             options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: font], context: nil)
         return ceil(bounds.height) + 8
     }
-    private var compactHeight: CGFloat {
+    private var compactHeight: CGFloat { compactHeight(includingCounter: !draft.counterInDetails) }
+    private func compactHeight(includingCounter: Bool) -> CGFloat {
         let preferred = UIFont.preferredFont(forTextStyle: .body, compatibleWith: traitCollection)
         let font = draft.mode == .terminal ? UIFont.monospacedSystemFont(ofSize: preferred.pointSize, weight: .regular) : preferred
         let width = max(1, min(traitCollection.preferredContentSizeCategory.isAccessibilityCategory ? 360 : 284, placementArea.width) - 74)
@@ -614,7 +630,7 @@ struct DirectComposerPlacement {
             measuredEditorHeight = min(font.lineHeight * 6, max(font.lineHeight * 2, ceil(bounds.height)))
             measuredText = draft.text; measuredWidth = width; measuredCategory = category; measuredFont = font
         }
-        return min(availableHeight, max(112, measuredEditorHeight + 64 + counterHeight(width: width + 74)))
+        return min(availableHeight, max(112, measuredEditorHeight + 64 + (includingCounter ? counterHeight(width: width + 74) : 0)))
     }
     @objc private func back() { if usable { draft.close?() } }
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
@@ -724,13 +740,17 @@ struct DirectComposerPlacement {
         let area = placementArea
         let compact = area.height < 228 || (area.width < 360 && traitCollection.preferredContentSizeCategory.isAccessibilityCategory)
         if draft.compactLayout != compact { draft.compactLayout = compact }
-        grabberHeight?.constant = 44
-        let hasIssue = draft.issue != nil || (!draft.text.isEmpty && draft.validationIssue != nil)
-        grabberWidth?.constant = hasIssue ? -144 : -100
-        grabberCenter?.constant = hasIssue ? -22 : 0
         let accessibility = traitCollection.preferredContentSizeCategory.isAccessibilityCategory
         let expanded = draft.expanded
-        let size = CGSize(width: min(draft.docked || expanded ? 640 : accessibility ? 360 : 284, area.width),
+        let width = min(draft.docked || expanded ? 640 : accessibility ? 360 : 284, area.width)
+        let fullHeight = min(area.height, draggingHeight ?? (expanded ? area.height : compactHeight(includingCounter: true)))
+        let counterInDetails = draft.sizeSummary != nil && fullHeight < minimumPanelHeight(width: width)
+        if draft.counterInDetails != counterInDetails { draft.counterInDetails = counterInDetails }
+        grabberHeight?.constant = 44
+        let hasIssue = draft.issueMessage != nil || counterInDetails
+        grabberWidth?.constant = hasIssue ? -144 : -100
+        grabberCenter?.constant = hasIssue ? -22 : 0
+        let size = CGSize(width: width,
                           height: min(area.height, draggingHeight ?? (expanded ? area.height : compactHeight)))
         if draft.narrowLayout != (size.width < 360) { draft.narrowLayout = size.width < 360 }
         let target = DirectComposerPlacement.frame(area: area, size: size, anchor: draft.docked || expanded ? DirectComposerPlacement.dockedAnchor(area: area, keyboard: keyboardFrame) : draft.floatingAnchor)
@@ -793,7 +813,7 @@ private struct DirectTextComposerView: View {
                     .accessibilityIdentifier("compose-expand")
                     .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("composer-panel")) } action: { reportExpansionBounds($0) }
             }
-            if let summary = draft.compactSizeSummary {
+            if let summary = draft.compactSizeSummary, !draft.counterInDetails {
                 Text(summary).font(.caption2).foregroundStyle(draft.validationIssue == nil ? Color.secondary : Color.red)
                     .lineLimit(nil).fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .trailing).padding(.horizontal, 12).padding(.top, 4)
@@ -804,12 +824,12 @@ private struct DirectTextComposerView: View {
                 // Native Close occupies the first 44pt; its drag grip occupies this spacer.
                 Color.clear.frame(width: 44, height: 44).accessibilityHidden(true)
                 Spacer(minLength: 44)
-                if let issue {
+                if let details = issue ?? (draft.counterInDetails ? draft.sizeSummary : nil) {
                     Button { if isCurrent() { showIssue = true } } label: {
-                        Image(systemName: "exclamationmark.circle").font(.system(size: 20))
+                        Image(systemName: issue == nil ? "info.circle" : "exclamationmark.circle").font(.system(size: 20))
                             .frame(width: 44, height: 44).contentShape(Rectangle())
                     }.buttonStyle(.plain).disabled(!isCurrent())
-                        .accessibilityLabel(issue).accessibilityIdentifier("compose-error")
+                        .accessibilityLabel(details).accessibilityIdentifier(issue == nil ? "compose-limit-details" : "compose-error")
                 }
                 Button { if isCurrent() { draft.requestSend() } } label: {
                     Group {
@@ -832,9 +852,9 @@ private struct DirectTextComposerView: View {
             .onChange(of: draft.issue) { _, _ in requestLayout() }
             .onChange(of: draft.sending) { _, _ in requestLayout() }
             .onChange(of: draft.active) { _, _ in requestLayout() }
-            .alert("Can’t send this text", isPresented: $showIssue) {
+            .alert(issue == nil ? "Text limit" : "Can’t send this text", isPresented: $showIssue) {
                 Button("Done", role: .cancel) {}.accessibilityIdentifier("compose-error-done")
-            } message: { Text(issue ?? "Review the text and try again.") }
+            } message: { Text(issue ?? draft.sizeSummary ?? "Review the text and try again.") }
             .alert("Send line breaks or tabs?", isPresented: Binding(get: { draft.confirmation != nil }, set: { if !$0 { draft.confirmation = nil } }), presenting: draft.confirmation) { reviewed in
                 Button("Send Text") { if isCurrent() { draft.confirmSend(reviewed) } }
                 Button("Cancel", role: .cancel) { draft.confirmation = nil }

@@ -260,6 +260,32 @@ import XCTest
         app.buttons["qa-compose"].tap(); XCTAssertTrue(editor.waitForExistence(timeout: 5))
         XCTAssertEqual(editor.value as? String, ""); XCTAssertFalse(app.buttons["compose-error"].exists)
     }
+    func testShortFlatPaneKeepsActionsAndOffersFullLimitDetails() async {
+        let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.sheetqa.ios")
+        app.launchArguments = ["--qa-short-flat-composer"]; app.launch(); defer { app.terminate() }
+        XCTAssertTrue(app.buttons["qa-compose"].waitForExistence(timeout: 10)); app.buttons["qa-compose"].tap()
+        let editor = app.textViews["compose-text"], details = app.buttons["compose-limit-details"]
+        XCTAssertTrue(details.waitForExistence(timeout: 10)); XCTAssertTrue(details.isHittable)
+        XCTAssertEqual((editor.value as? String)?.unicodeScalars.count, 3277)
+        XCTAssertFalse(app.staticTexts["compose-limit-count"].exists)
+        let panel = app.otherElements["compose-panel"].firstMatch
+        for button in [app.buttons["compose-send"], app.buttons["compose-back"], app.buttons["compose-expand"], details] {
+            XCTAssertTrue(button.isHittable); XCTAssertTrue(panel.frame.contains(button.frame))
+            XCTAssertGreaterThanOrEqual(button.frame.width, 44); XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+        }
+        XCTAssertTrue(panel.frame.contains(editor.frame)); XCTAssertGreaterThanOrEqual(editor.frame.height, 36)
+        XCTAssertTrue(app.buttons["compose-send"].isEnabled)
+        capture("short-flat-limit-button", app: app)
+        details.tap()
+        let alert = app.alerts["Text limit"].firstMatch
+        XCTAssertTrue(alert.waitForExistence(timeout: 5))
+        XCTAssertTrue(alert.staticTexts.containing(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "3,277", "4,096")).firstMatch.exists)
+        capture("short-flat-limit-details", app: app)
+        alert.buttons["Done"].firstMatch.tap(); XCTAssertTrue(alert.waitForNonExistence(timeout: 5))
+        XCTAssertEqual((editor.value as? String)?.unicodeScalars.count, 3277)
+        app.buttons["compose-back"].tap(); XCTAssertTrue(app.buttons["qa-compose"].isHittable)
+    }
+
     func testFloatingRotationKeepsEditorCloseAndSendAboveKeyboard() async {
         let app = open(shortcutBar: true, nearLimit: true); defer { app.terminate() }
         let editor = app.textViews["compose-text"]
@@ -271,14 +297,18 @@ import XCTest
         let keyboard = app.keyboards.firstMatch, panel = app.otherElements["compose-panel"].firstMatch
         XCTAssertGreaterThanOrEqual(panel.frame.minY, app.frame.minY + 8)
         XCTAssertLessThanOrEqual(panel.frame.maxY, keyboard.frame.minY + 2)
-        XCTAssertFalse(panel.frame.intersects(app.otherElements["qa-shortcut-bar"].frame))
+        let bar = app.otherElements["qa-shortcut-bar"]
+        // An inactive strip may yield in a short landscape pane. A visible
+        // strip remains an obstacle, and portrait must restore it below.
+        if bar.exists { XCTAssertFalse(panel.frame.intersects(bar.frame)) }
         XCTAssertGreaterThan(editor.frame.height, 35)
         XCTAssertTrue(app.buttons["compose-send"].isHittable); XCTAssertTrue(app.buttons["compose-back"].isHittable)
         XCTAssertFalse(editor.frame.intersects(app.buttons["compose-send"].frame))
         app.typeText(" retained"); XCTAssertEqual(editor.value as? String, initial.map { $0 + " retained" })
         XCUIDevice.shared.orientation = .portrait
         await waitForKeyboardAndPanel(app); XCTAssertTrue(app.buttons["compose-send"].isHittable)
-        XCTAssertFalse(panel.frame.intersects(app.otherElements["qa-shortcut-bar"].frame))
+        XCTAssertTrue(bar.waitForExistence(timeout: 5))
+        XCTAssertFalse(panel.frame.intersects(bar.frame))
         capture("composer-near-limit-rotation", app: app)
     }
 }

@@ -169,6 +169,77 @@ import StoreKitTest
         XCTAssertEqual(bar.alpha, 1, "Returning to a roomy layout restores the temporarily yielded strip")
     }
 
+    func testNearLimitCounterKeepsFlatEditorAndActionsInsideTheirPane() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        let root = UIViewController(); window.rootViewController = root; window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        let bar = TerminalKeyboardBar(terminal: nil, preferences: .init()); root.view.addSubview(bar)
+        let draft = DirectTextComposerDraft(macName: "Synthetic Flat Mac", mode: .desktop)
+        draft.configure(available: { true }, send: { _, _ in XCTFail("Layout must never send") })
+        let panel = DirectTextComposerPanel(draft: draft); panel.shortcutBar = bar
+        root.addChild(panel); root.view.addSubview(panel.view); panel.didMove(toParent: root)
+        let originalCategory = panel.traitCollection.preferredContentSizeCategory
+        defer { panel.traitOverrides.preferredContentSizeCategory = originalCategory; panel.viewDidDisappear(false) }
+        func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+        try await waitForComposerUI("the flat editor") { descendants(panel.view).contains { $0 is UITextView } }
+        let editor = try XCTUnwrap(descendants(panel.view).compactMap { $0 as? UITextView }.first)
+        editor.inputView = UIView(frame: .zero); editor.reloadInputViews()
+        defer { editor.resignFirstResponder(); editor.inputView = nil }
+        try await Task.sleep(for: .milliseconds(250))
+        let epoch = draft.presentationEpoch
+        for category in [UIContentSizeCategory.large, .accessibilityExtraLarge, .accessibilityExtraExtraExtraLarge] {
+            panel.traitOverrides.preferredContentSizeCategory = category
+            for stripOffset: CGFloat in [132, 160] {
+                for active in [false, true] {
+                    bar.executionActive = active
+                    for count in [3276, 3277, 4097] {
+                        let text = String(repeating: "x", count: count); draft.edit(text)
+                        for expanded in [false, true] {
+                            root.view.frame.size = .init(width: 844, height: 400); panel.view.frame = root.view.bounds
+                            panel.setDivisionForComposerTesting(NSValue(cgRect: CGRect.null))
+                            let safe = panel.view.safeAreaLayoutGuide.layoutFrame, stripTop = safe.minY + stripOffset
+                            let keyboard = CGRect(x: safe.minX, y: stripTop + 52, width: safe.width,
+                                height: max(0, safe.maxY - stripTop - 52))
+                            bar.frame = CGRect(x: safe.minX, y: stripTop, width: safe.width, height: 52)
+                            panel.simulatedKeyboardFrame = keyboard; draft.expanded = expanded
+                            for _ in 0..<3 {
+                                panel.view.setNeedsLayout(); panel.view.layoutIfNeeded()
+                                try await Task.sleep(for: .milliseconds(100))
+                            }
+                            let card = panel.panelFrame, send = panel.deliveryActionFrame
+                            let editorFrame = editor.convert(editor.bounds, to: panel.view)
+                            let context = "\(category.rawValue), offset=\(stripOffset), active=\(active), scalars=\(count), expanded=\(expanded)"
+                            XCTAssertTrue(card.contains(send), "Send clipped: \(context)")
+                            XCTAssertTrue(card.contains(panel.closeActionFrame), "Close clipped: \(context)")
+                            XCTAssertTrue(card.contains(panel.expansionActionFrame), "Expand clipped: \(context)")
+                            XCTAssertTrue(card.contains(editorFrame), "Editor clipped: \(context)")
+                            XCTAssertGreaterThanOrEqual(editorFrame.height, 36)
+                            XCTAssertLessThanOrEqual(editorFrame.maxY, send.minY)
+                            XCTAssertFalse(card.intersects(keyboard))
+                            if bar.alpha > 0 { XCTAssertFalse(card.intersects(bar.frame)) }
+                            if active { XCTAssertEqual(bar.alpha, 1, "Active execution controls must remain visible") }
+                            if !active && category == .accessibilityExtraExtraExtraLarge && count == 3277 && stripOffset == 132 {
+                                XCTAssertGreaterThanOrEqual(editorFrame.height,
+                                    UIFont.preferredFont(forTextStyle: .body, compatibleWith: panel.traitCollection).lineHeight)
+                            }
+                            XCTAssertEqual(send.width, 44, accuracy: 0.5); XCTAssertEqual(send.height, 44, accuracy: 0.5)
+                            XCTAssertEqual(draft.text, text); XCTAssertEqual(draft.presentationEpoch, epoch)
+                            XCTAssertTrue(descendants(panel.view).contains { $0 === editor })
+                            if category == .accessibilityExtraExtraExtraLarge && count == 3277 && expanded && !active {
+                                let proof = XCTAttachment(image: UIGraphicsImageRenderer(bounds: panel.view.bounds).image { _ in
+                                    panel.view.drawHierarchy(in: panel.view.bounds, afterScreenUpdates: true)
+                                })
+                                proof.name = stripOffset == 132 ? "flat-limit-details" : "flat-inline-counter"
+                                proof.lifetime = .keepAlways; add(proof)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     func testNearLimitCounterKeepsTabletopEditorAndActionsInsideTheirPane() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)

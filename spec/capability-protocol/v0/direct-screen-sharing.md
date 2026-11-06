@@ -556,9 +556,13 @@ The composer shows the current count and limit only at 80% of the allowance or
 above; an exceeded limit is marked inline. The warning button opens a full wrapped
 native alert that cannot truncate the limit or recovery instruction. Keep status
 content clear of the editor and Send in compact layouts. Draft rejection
-preserves the previous text. Divided-pane admission MUST include the visible
+preserves the previous text. Flat and divided-pane admission MUST include the visible
 counter's measured height at that pane's available width, including Dynamic Type
 and wrapping, before yielding the shortcut strip or selecting an alternate pane.
+Only an inactive shortcut strip may yield, and only when doing so creates a fitting
+region. If the inline count still cannot fit, expose the complete count and limit
+through an accessible limit-details button in the fixed footer instead of adding
+the counter row. Keep the editor and 44-point actions clear and preserve the draft.
 
 Terminal sends UTF-8 to its existing PTY owner and wraps it in bracketed-paste
 markers only when the current terminal mode requests them. Every draft containing

@@ -50,6 +50,14 @@ layouts. It checks the editor and controls against the rendered card bounds.
 Editor-height caching also tracks the resolved font so Dynamic Type transitions
 cannot retain a measurement made with earlier font metrics.
 
+Flat panes use the same height-aware selection and may temporarily yield an
+inactive shortcut strip when that creates enough room. If space remains too short,
+the inline count moves into a footer limit-details button. Its native alert shows
+the full count and units without changing the draft or Send availability. This
+also preserves active execution controls. Native regressions cover both strip
+states, short and taller flat panes, the counter threshold, accessibility sizes
+and expansion; a UI test opens and dismisses the complete limit details.
+
 Each draft belongs to one viewer or PTY generation. Background, app lock,
 connection replacement, mode change and session end clear it. There is no storage,
 sync, clipboard monitoring, diagnostic content or automatic input replay. Once a
