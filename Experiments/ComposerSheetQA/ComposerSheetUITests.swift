@@ -108,8 +108,10 @@ import XCTest
         XCTAssertTrue(app.buttons["compose-error"].waitForExistence(timeout: 5))
         XCTAssertEqual(editor.value as? String, "retained draft typed")
         app.buttons["compose-error"].tap()
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Synthetic delivery failure")).firstMatch.waitForExistence(timeout: 5))
-        app.buttons["compose-error-done"].tap(); app.buttons["compose-send"].tap()
+        let warning = app.alerts["Can’t send this text"].firstMatch
+        XCTAssertTrue(warning.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Synthetic delivery failure")).firstMatch.waitForExistence(timeout: 5))
+        warning.buttons["Done"].firstMatch.tap(); XCTAssertTrue(warning.waitForNonExistence(timeout: 5))
+        app.buttons["compose-send"].tap()
         let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: app.buttons["qa-compose"])
         XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed); XCTAssertFalse(editor.exists)
     }
@@ -253,8 +255,12 @@ import XCTest
         XCTAssertEqual(editor.value as? String, "retry draft")
         XCTAssertTrue(app.buttons["compose-send"].isEnabled); XCTAssertTrue(app.buttons["compose-back"].isEnabled)
         app.buttons["compose-error"].tap()
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Synthetic delivery failure")).firstMatch.waitForExistence(timeout: 5))
-        app.buttons["compose-error-done"].tap(); app.buttons["compose-send"].tap()
+        let warning = app.alerts["Can’t send this text"].firstMatch
+        let message = warning.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Synthetic delivery failure")).firstMatch
+        XCTAssertTrue(message.waitForExistence(timeout: 5))
+        XCTAssertTrue(message.label.contains("Current draft: 11 / 4,096 characters"))
+        warning.buttons["Done"].firstMatch.tap(); XCTAssertTrue(warning.waitForNonExistence(timeout: 5))
+        app.buttons["compose-send"].tap()
         let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: app.buttons["qa-compose"])
         XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed)
         app.buttons["qa-compose"].tap(); XCTAssertTrue(editor.waitForExistence(timeout: 5))
