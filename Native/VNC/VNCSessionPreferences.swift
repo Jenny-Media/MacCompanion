@@ -154,8 +154,37 @@ struct VNCQuickAction: Codable, Identifiable, Equatable, Sendable {
     }
     static func setDesktopSize(_ value: Int, mac id: UUID) {
         guard (0...3).contains(value) else { return }
+        #if os(iOS)
+        let rememberedSize = value == 0 ? virtualDesktopSize(id) : value
+        setVirtualDesktopSize(rememberedSize, mac: id)
+        #endif
         UserDefaults.standard.set(value, forKey: desktopSizeKey(id))
     }
+    #if os(iOS)
+    static func virtualDesktopSize(_ id: UUID) -> Int {
+        if let saved = UserDefaults.standard.object(forKey: prefix(id) + "virtual-desktop-size") as? Int,
+           (1...3).contains(saved) { return saved }
+        let legacy = desktopSize(id)
+        return legacy == 0 ? 2 : legacy
+    }
+    static func setVirtualDesktopSize(_ value: Int?, mac id: UUID) {
+        if let value, !(1...3).contains(value) { return }
+        UserDefaults.standard.set(value, forKey: prefix(id) + "virtual-desktop-size")
+    }
+    static func displayShortcutsKey(_ id: UUID) -> String { prefix(id) + "display-shortcuts" }
+    static func displayShortcuts(from data: Data?) -> DirectMacDisplayShortcuts {
+        guard let data, let shortcuts = try? JSONDecoder().decode(DirectMacDisplayShortcuts.self, from: data)
+        else { return .init() }
+        return shortcuts
+    }
+    static func displayShortcuts(_ id: UUID) -> DirectMacDisplayShortcuts {
+        displayShortcuts(from: UserDefaults.standard.data(forKey: displayShortcutsKey(id)))
+    }
+    static func setDisplayShortcuts(_ value: DirectMacDisplayShortcuts, mac id: UUID) {
+        let data = value == .init() ? nil : try? JSONEncoder().encode(value)
+        UserDefaults.standard.set(data, forKey: displayShortcutsKey(id))
+    }
+    #endif
     static func fullscreen(_ id: UUID) -> Bool { UserDefaults.standard.bool(forKey: prefix(id) + "fullscreen") }
     static func setFullscreen(_ value: Bool, mac id: UUID) { UserDefaults.standard.set(value, forKey: prefix(id) + "fullscreen"); changed(id) }
     static func trackpad(_ id: UUID) -> Bool { UserDefaults.standard.bool(forKey: prefix(id) + "trackpad") }
@@ -221,7 +250,10 @@ struct VNCQuickAction: Codable, Identifiable, Equatable, Sendable {
         clear(id)
     }
     static func clear(_ id: UUID) {
-        for suffix in ["speed", "display", "trackpad", "follow-cursor", "fullscreen", "desktop-size"] { UserDefaults.standard.removeObject(forKey: prefix(id) + suffix) }
+        for suffix in ["speed", "display", "trackpad", "follow-cursor", "fullscreen", "desktop-size",
+                       "virtual-desktop-size", "display-shortcuts"] {
+            UserDefaults.standard.removeObject(forKey: prefix(id) + suffix)
+        }
         SecItemDelete(query(id) as CFDictionary)
     }
 }

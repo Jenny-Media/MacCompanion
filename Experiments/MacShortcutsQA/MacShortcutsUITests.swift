@@ -162,6 +162,30 @@ import XCTest
         XCTAssertFalse(app.buttons["mac-swipe-left-" + first].exists)
         XCTAssertFalse(app.buttons["mac-manage-" + first].exists)
     }
+    func testMirrorAndVirtualLaunchIndependentlyFromTheSameMac() {
+        let app = launch(); defer { app.terminate() }
+        edit(app, first); openSheet(app)
+        choose("mac-open-on-tap", "mirror", app: app)
+        choose("mac-swipe-right", "virtual", app: app)
+        done(app); app.buttons["Save"].tap()
+
+        let row = app.buttons["mac-connect-" + first]
+        let opened = app.staticTexts["qa-shortcut-route"]
+        row.tap()
+        XCTAssertEqual(opened.label, "First Mac · Mirror Mac Screen")
+        row.swipeRight()
+        let swipe = app.buttons["mac-swipe-right-" + first]
+        XCTAssertTrue(swipe.waitForExistence(timeout: 3))
+        swipe.tap()
+        XCTAssertEqual(opened.label, "First Mac · Virtual Display")
+
+        app.buttons["mac-manage-" + first].tap()
+        app.buttons["Mirror Mac Screen"].tap()
+        XCTAssertEqual(opened.label, "First Mac · Mirror Mac Screen")
+        app.buttons["mac-manage-" + first].tap()
+        app.buttons["Virtual Display"].tap()
+        XCTAssertEqual(opened.label, "First Mac · Virtual Display")
+    }
     func testLargeTextDarkSheetKeepsPreviewAndAllChoicesReachable() {
         let app = launch(large: true, dark: true); defer { app.terminate() }
         edit(app, first); openSheet(app)

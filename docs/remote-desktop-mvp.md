@@ -566,6 +566,14 @@ for this viewer. Mirror preserves physical resolution; Virtual stays landscape a
 may blank the Mac's physical screens. Desktop Size retains three sizes; rotation and
 keyboard use do not resize. Display mode changes ask for confirmation and fully
 retire the native/SSH owner before reconnecting with the active transient login.
+
+On iOS, My Macs offers both display modes as direct launch choices in Connect
+and in Tap & Swipe Shortcuts. Existing Screen Sharing shortcuts use the Mac's
+saved display setting. An explicit launch applies to that session and remembers
+the last virtual size separately from mirroring. Gesture display overrides
+stay on the device. Shared Mac records use the Screen Sharing fallback, and
+local backups carry the overrides and virtual size as optional preferences.
+
 Virtual creation allows twenty seconds for layout, then requires fresh complete
 pixels. Mirror includes a sixteen-second quiet allowance and at most one further
 unexpected-virtual recovery. The replacement must confirm the target layout and

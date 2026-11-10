@@ -35,7 +35,9 @@ import XCTest
         let window = UIWindow(windowScene: scene)
         defer { window.isHidden = true; previous?.makeKeyAndVisible() }
         for category in [DynamicTypeSize.large, .accessibility3] {
-            let host = UIHostingController(rootView: Form { DirectDesktopDisplaySection(selection: .constant(2)) }.environment(\.dynamicTypeSize, category))
+            let host = UIHostingController(rootView: Form {
+                DirectDesktopDisplaySection(selection: .constant(2), virtualSize: .constant(2))
+            }.environment(\.dynamicTypeSize, category))
             window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
             window.rootViewController = host; window.makeKeyAndVisible()
             host.view.layoutIfNeeded()
@@ -43,6 +45,21 @@ import XCTest
             XCTAssertGreaterThan(host.view.bounds.width, 0)
             XCTAssertEqual(VNCSessionPreferences.desktopSize(id), 0, "Rendering/editing a draft must not change saved preferences")
         }
+    }
+
+    func testMirrorDoesNotForgetVirtualSizeOrChangeTheLegacyDefault() {
+        let id = UUID()
+        defer { VNCSessionPreferences.clear(id) }
+        UserDefaults.standard.set(3, forKey: VNCSessionPreferences.desktopSizeKey(id))
+        XCTAssertEqual(VNCSessionPreferences.virtualDesktopSize(id), 3)
+        VNCSessionPreferences.setDesktopSize(0, mac: id)
+        XCTAssertEqual(VNCSessionPreferences.virtualDesktopSize(id), 3)
+        VNCSessionPreferences.setVirtualDesktopSize(1, mac: id)
+        XCTAssertEqual(VNCSessionPreferences.desktopSize(id), 0)
+        XCTAssertEqual(DirectDesktopLaunchMode.mirror.preset(virtualSize: 1), 0)
+        XCTAssertEqual(DirectDesktopLaunchMode.virtual.preset(virtualSize: VNCSessionPreferences.virtualDesktopSize(id)), 1)
+        VNCSessionPreferences.setVirtualDesktopSize(nil, mac: id)
+        XCTAssertEqual(VNCSessionPreferences.virtualDesktopSize(id), 2)
     }
 }
 #endif

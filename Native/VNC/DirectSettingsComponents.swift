@@ -20,41 +20,44 @@ struct DirectMacLibraryRow: View {
     let mac: DirectMacRecordV1
     let reordering: Bool
     let canChooseFreeMac: Bool
-    let open: (DirectMacConnection) -> Void
+    let open: (DirectMacLaunchAction) -> Void
     let browseFiles: () -> Void
     let edit: () -> Void
     let remove: () -> Void
     let chooseFreeMac: () -> Void
     @ScaledMetric(relativeTo: .title2) private var menuIconSize = 22
     @AppStorage private var desktopSize: Int
+    @AppStorage private var displayShortcutData: Data?
 
     init(mac: DirectMacRecordV1, reordering: Bool, canChooseFreeMac: Bool,
-         open: @escaping (DirectMacConnection) -> Void, browseFiles: @escaping () -> Void,
+         open: @escaping (DirectMacLaunchAction) -> Void, browseFiles: @escaping () -> Void,
          edit: @escaping () -> Void, remove: @escaping () -> Void, chooseFreeMac: @escaping () -> Void) {
         self.mac = mac; self.reordering = reordering; self.canChooseFreeMac = canChooseFreeMac
         self.open = open; self.browseFiles = browseFiles; self.edit = edit
         self.remove = remove; self.chooseFreeMac = chooseFreeMac
         _desktopSize = AppStorage(wrappedValue: 2, VNCSessionPreferences.desktopSizeKey(mac.id))
+        _displayShortcutData = AppStorage(VNCSessionPreferences.displayShortcutsKey(mac.id))
     }
+    private var shortcuts: DirectMacDisplayShortcuts { VNCSessionPreferences.displayShortcuts(from: displayShortcutData) }
+    private var tapAction: DirectMacLaunchAction { .init(.init(connection: mac.preferredConnection), displayMode: shortcuts.tap) }
     private var displayMode: String { desktopSize == 0 ? "Mirror Mac Screen" : "Virtual Display" }
     private var connectionSummary: String {
-        mac.preferredConnection == .desktop ? displayMode : mac.preferredConnection.title
+        tapAction == .desktop ? displayMode : tapAction.title
     }
     var body: some View {
         HStack(spacing: 12) {
-            Button { open(mac.preferredConnection) } label: { DirectMacListRowLabel(mac: mac, connectionSummary: connectionSummary) }
+            Button { open(tapAction) } label: { DirectMacListRowLabel(mac: mac, connectionSummary: connectionSummary) }
                 .buttonStyle(.plain).disabled(reordering)
-                .accessibilityLabel("Connect to " + mac.name + " using " + mac.preferredConnection.title)
-                .accessibilityValue(mac.preferredConnection == .desktop ? displayMode : "")
+                .accessibilityLabel("Connect to " + mac.name + " using " + tapAction.title)
+                .accessibilityValue(tapAction == .desktop ? displayMode : "")
                 .accessibilityHint(mac.family.title)
                 .accessibilityIdentifier("mac-connect-" + mac.id.uuidString)
             if !reordering {
                 Menu {
                     Section("Connect") {
-                        Button("Screen Sharing", systemImage: DirectMacConnection.desktop.symbol) { open(.desktop) }
-                            .accessibilityHint("View and control this Mac")
-                        Button("Trackpad & Keyboard", systemImage: DirectMacConnection.trackpad.symbol) { open(.trackpad) }
-                        Button("Terminal", systemImage: DirectMacConnection.terminal.symbol) { open(.terminal) }
+                        ForEach([DirectMacLaunchAction.mirror, .virtual, .terminal, .trackpad]) { action in
+                            Button(action.title, systemImage: action.symbol) { open(action) }
+                        }
                     }
                     Button("Browse Files", systemImage: "folder", action: browseFiles)
                     Section("Manage Mac") {
@@ -69,15 +72,17 @@ struct DirectMacLibraryRow: View {
             }
         }.padding(.vertical, 4)
             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                if !reordering, let connection = mac.swipeLeft.connection {
-                    Button(connection.title, systemImage: connection.symbol) { open(connection) }
-                        .tint(connection.shortcutColor).accessibilityIdentifier("mac-swipe-left-" + mac.id.uuidString)
+                let action = DirectMacLaunchAction(mac.swipeLeft, displayMode: shortcuts.left)
+                if !reordering, action != .disabled {
+                    Button(action.title, systemImage: action.symbol) { open(action) }
+                        .tint(action.shortcutColor).accessibilityIdentifier("mac-swipe-left-" + mac.id.uuidString)
                 }
             }
             .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                if !reordering, let connection = mac.swipeRight.connection {
-                    Button(connection.title, systemImage: connection.symbol) { open(connection) }
-                        .tint(connection.shortcutColor).accessibilityIdentifier("mac-swipe-right-" + mac.id.uuidString)
+                let action = DirectMacLaunchAction(mac.swipeRight, displayMode: shortcuts.right)
+                if !reordering, action != .disabled {
+                    Button(action.title, systemImage: action.symbol) { open(action) }
+                        .tint(action.shortcutColor).accessibilityIdentifier("mac-swipe-right-" + mac.id.uuidString)
                 }
             }
     }
@@ -86,20 +91,22 @@ struct DirectMacLibraryRow: View {
 /// A draft binding keeps Cancel independent from the saved per-Mac preference.
 struct DirectDesktopDisplaySection: View {
     @Binding var selection: Int
+    @Binding var virtualSize: Int
     var body: some View {
         Section {
             choice("Virtual Display", detail: "Landscape desktop sized for remote use.", symbol: "display", selected: selection != 0) {
-                if selection == 0 { selection = 2 }
+                if selection == 0 { selection = virtualSize }
             }
             choice("Mirror Mac Screen", detail: "Use the Mac’s screen resolution and layout.", symbol: "display.2", selected: selection == 0) { selection = 0 }
-            if selection != 0 {
-                DisclosureGroup("Advanced") {
-                    Picker("Desktop Size", selection: $selection) {
-                        Text("Larger Text").tag(1)
-                        Text("Balanced").tag(2)
-                        Text("More Space").tag(3)
-                    }.accessibilityIdentifier("mac-desktop-size")
-                }
+            DisclosureGroup("Advanced") {
+                Picker("Virtual Display Size", selection: Binding(get: { virtualSize }, set: { size in
+                    virtualSize = size
+                    if selection != 0 { selection = size }
+                })) {
+                    Text("Larger Text").tag(1)
+                    Text("Balanced").tag(2)
+                    Text("More Space").tag(3)
+                }.accessibilityIdentifier("mac-desktop-size")
             }
         } header: { Text("Screen Sharing Display") }
         footer: {
@@ -129,6 +136,10 @@ extension DirectMacConnection {
     var shortcutColor: Color {
         switch self { case .desktop: .blue; case .terminal: .purple; case .trackpad: .teal }
     }
+}
+
+private extension DirectMacLaunchAction {
+    var shortcutColor: Color { fallback.connection?.shortcutColor ?? .secondary }
 }
 
 /// All three mappings are edited together; changes remain the editor's draft
@@ -164,25 +175,25 @@ struct DirectMacShortcutsSheet: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let macName: String
     let family: DirectMacFamily
-    @Binding var tap: DirectMacConnection
-    @Binding var swipeLeft: DirectMacSwipeAction
-    @Binding var swipeRight: DirectMacSwipeAction
+    @Binding var tap: DirectMacLaunchAction
+    @Binding var swipeLeft: DirectMacLaunchAction
+    @Binding var swipeRight: DirectMacLaunchAction
     @State private var tried: DirectMacShortcutGesture?
     @State private var highlighted: DirectMacShortcutGesture?
     @State private var attempt = 0
     @ScaledMetric(relativeTo: .body) private var iconWidth = 24.0
     private var name: String { macName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "This Mac" : macName }
-    private func action(_ gesture: DirectMacShortcutGesture) -> DirectMacSwipeAction {
-        switch gesture { case .tap: .init(connection: tap); case .left: swipeLeft; case .right: swipeRight }
+    private func action(_ gesture: DirectMacShortcutGesture) -> DirectMacLaunchAction {
+        switch gesture { case .tap: tap; case .left: swipeLeft; case .right: swipeRight }
     }
-    private func choose(_ value: DirectMacSwipeAction, for gesture: DirectMacShortcutGesture) {
+    private func choose(_ value: DirectMacLaunchAction, for gesture: DirectMacShortcutGesture) {
         guard value != action(gesture) else { return }
-        switch gesture { case .tap: if let connection = value.connection { tap = connection }; case .left: swipeLeft = value; case .right: swipeRight = value }
+        switch gesture { case .tap: tap = value; case .left: swipeLeft = value; case .right: swipeRight = value }
         tried = nil; highlighted = nil; attempt += 1
         CompanionVNCPlayInterfaceFeedback("selection")
     }
     private func practice(_ gesture: DirectMacShortcutGesture) {
-        guard action(gesture).connection != nil else { return }
+        guard action(gesture) != .disabled else { return }
         tried = gesture; highlighted = gesture; attempt += 1
         CompanionVNCPlayInterfaceFeedback("open")
         UIAccessibility.post(notification: .announcement, argument: result)
@@ -206,19 +217,19 @@ struct DirectMacShortcutsSheet: View {
                         .accessibilityHint("Tap to preview " + tap.title + ". Swipe actions preview your other shortcuts without connecting.")
                         .accessibilityIdentifier("mac-swipe-preview")
                         .accessibilityActions {
-                            if swipeLeft.connection != nil { Button("Preview Swipe Left") { practice(.left) } }
-                            if swipeRight.connection != nil { Button("Preview Swipe Right") { practice(.right) } }
+                            if swipeLeft != .disabled { Button("Preview Swipe Left") { practice(.left) } }
+                            if swipeRight != .disabled { Button("Preview Swipe Right") { practice(.right) } }
                         }
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                            if let connection = swipeLeft.connection {
-                                Button(connection.title, systemImage: connection.symbol) { practice(.left) }
-                                    .tint(connection.shortcutColor).accessibilityIdentifier("mac-preview-left")
+                            if swipeLeft != .disabled {
+                                Button(swipeLeft.title, systemImage: swipeLeft.symbol) { practice(.left) }
+                                    .tint(swipeLeft.shortcutColor).accessibilityIdentifier("mac-preview-left")
                             }
                         }
                         .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                            if let connection = swipeRight.connection {
-                                Button(connection.title, systemImage: connection.symbol) { practice(.right) }
-                                    .tint(connection.shortcutColor).accessibilityIdentifier("mac-preview-right")
+                            if swipeRight != .disabled {
+                                Button(swipeRight.title, systemImage: swipeRight.symbol) { practice(.right) }
+                                    .tint(swipeRight.shortcutColor).accessibilityIdentifier("mac-preview-right")
                             }
                         }
                         // A changed assignment closes any revealed old action.
@@ -228,14 +239,14 @@ struct DirectMacShortcutsSheet: View {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Image(systemName: tried?.symbol ?? "hand.draw").accessibilityHidden(true)
                             Text(result).accessibilityIdentifier("mac-preview-status")
-                        }.foregroundStyle(tried.flatMap { action($0).connection?.shortcutColor } ?? .secondary)
+                        }.foregroundStyle(tried.map { action($0).shortcutColor } ?? .secondary)
                         Text("Preview only. No connection will open. Swipe fully, or swipe partway and tap.")
                     }
                 }
                 Section {
                     ForEach(DirectMacShortcutGesture.allCases) { gesture in
                         shortcut(gesture)
-                            .listRowBackground(highlighted == gesture ? (action(gesture).connection?.shortcutColor ?? .secondary).opacity(0.12) : Color(uiColor: .secondarySystemGroupedBackground))
+                            .listRowBackground(highlighted == gesture ? action(gesture).shortcutColor.opacity(0.12) : Color(uiColor: .secondarySystemGroupedBackground))
                     }
                 } header: { Text("Open This Mac With") } footer: {
                     Text("Changes are saved when you tap Save in Edit Mac.")
@@ -253,7 +264,7 @@ struct DirectMacShortcutsSheet: View {
     }
     private func shortcut(_ gesture: DirectMacShortcutGesture) -> some View {
         Menu {
-            ForEach(DirectMacSwipeAction.allCases.filter { gesture != .tap || $0 != .disabled }) { value in
+            ForEach(DirectMacLaunchAction.allCases.filter { gesture != .tap || $0 != .disabled }) { value in
                 Button { choose(value, for: gesture) } label: {
                     Label(value.title, systemImage: action(gesture) == value ? "checkmark" : value.symbol)
                 }.accessibilityIdentifier("mac-shortcut-option-" + value.rawValue)
@@ -264,7 +275,7 @@ struct DirectMacShortcutsSheet: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(gesture.title).foregroundStyle(Color.primary)
                     Label(action(gesture).title, systemImage: action(gesture).symbol)
-                        .font(.subheadline).foregroundStyle(action(gesture).connection?.shortcutColor ?? .secondary)
+                        .font(.subheadline).foregroundStyle(action(gesture).shortcutColor)
                 }.frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
                 Image(systemName: "chevron.up.chevron.down").font(.footnote).foregroundStyle(Color.secondary.opacity(0.5)).accessibilityHidden(true)
             }.padding(.vertical, 4)

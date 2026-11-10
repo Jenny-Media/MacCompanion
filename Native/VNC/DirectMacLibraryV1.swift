@@ -400,6 +400,9 @@ struct DirectMacSessionSelection: Identifiable {
     var autoConnect = true
     var saveAfterConnect = false
     var temporary = false
+    #if os(iOS)
+    var displayMode: DirectDesktopLaunchMode?
+    #endif
 }
 
 #if os(iOS)
@@ -413,7 +416,7 @@ struct DirectMacLibraryRootV1: View {
     private let accessTimeout: Duration
     private enum LibraryAction {
         case edit(DirectMacRecordV1?)
-        case open(DirectMacRecordV1, DirectMacConnection, Bool)
+        case open(DirectMacRecordV1, DirectMacConnection, Bool, displayMode: DirectDesktopLaunchMode? = nil)
         case connect(DirectQuickConnectRequest)
     }
     private struct PendingAccess { let id = UUID(); let action: LibraryAction }
@@ -509,7 +512,10 @@ struct DirectMacLibraryRootV1: View {
                         ForEach(visibleMacs) { mac in
                             DirectMacLibraryRow(mac: mac, reordering: editMode.isEditing,
                                 canChooseFreeMac: !pro.hasPro,
-                                open: { open(mac, connection: $0) }, browseFiles: { files = mac },
+                                open: { action in
+                                    guard let connection = action.fallback.connection else { return }
+                                    request(.open(mac, connection, true, displayMode: action.displayMode))
+                                }, browseFiles: { files = mac },
                                 edit: { edit(mac) }, remove: { removing = mac },
                                 chooseFreeMac: { pro.chooseFreeMac(mac.id) })
                         }.onMove { offsets, destination in
@@ -600,7 +606,7 @@ struct DirectMacLibraryRootV1: View {
             .onChange(of: library.macs.map(\.id)) { _, ids in
                 updateTemporaryCleanup()
                 guard let pending = pendingAccess else { return }
-                if case .open(let mac, _, _) = pending.action, !ids.contains(mac.id) { cancelAccess() }
+                if case .open(let mac, _, _, _) = pending.action, !ids.contains(mac.id) { cancelAccess() }
             }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active {
@@ -640,7 +646,8 @@ struct DirectMacLibraryRootV1: View {
                             connectionEstablished: { saveConnectedMac(selection) }, exit: { endSession(selection) })
                     case .desktop, .trackpad:
                         DirectDesktopSessionView(mac: selection.mac, inputOnly: selection.connection.inputOnly,
-                            autoConnect: selection.autoConnect, connectionMacNames: library.macs.map(\.name), libraryURL: library.storageURL,
+                            autoConnect: selection.autoConnect, displayMode: selection.displayMode,
+                            connectionMacNames: library.macs.map(\.name), libraryURL: library.storageURL,
                             connectionPanel: connectionPanel, loginRetentionAllowed: !selection.temporary || selection.saveAfterConnect,
                             connectionEstablished: { saveConnectedMac(selection) }, showMacs: { endSession(selection) })
                             .ignoresSafeArea(.container, edges: .bottom)
@@ -707,9 +714,6 @@ struct DirectMacLibraryRootV1: View {
         request(.open(mac, route.kind == .terminal ? .terminal : .desktop, route.automaticallyConnect), deferUntilActive: true)
     }
     private func edit(_ mac: DirectMacRecordV1?) { request(.edit(mac)) }
-    private func open(_ mac: DirectMacRecordV1, connection: DirectMacConnection, autoConnect: Bool = true) {
-        request(.open(mac, connection, autoConnect))
-    }
     private func cancelAccess() {
         accessDeadline?.cancel(); accessDeadline = nil; pendingAccess = nil; accessTimedOut = false
     }
@@ -768,12 +772,13 @@ struct DirectMacLibraryRootV1: View {
             }
             guard pro.ready else { return false }
             connectionPanel.presentSecondary(UIHostingController(rootView: DirectProView().directAppearance()))
-        case .open(let mac, let connection, let autoConnect):
+        case .open(let mac, let connection, let autoConnect, let displayMode):
             guard let current = library.macs.first(where: { $0.id == mac.id }) else { return true }
             if pro.canUseMac(mac.id, among: library.macs.map(\.id)) {
                 CompanionVNCPlayInterfaceFeedback("open")
                 quickConnect = false; library.discovery.stop()
-                session = DirectMacSessionSelection(mac: current, connection: connection, autoConnect: autoConnect); return true
+                session = DirectMacSessionSelection(mac: current, connection: connection, autoConnect: autoConnect,
+                    displayMode: displayMode); return true
             }
             guard pro.ready else { return false }
             if quickConnect { connectionPanel.presentSecondary(UIHostingController(rootView: DirectProView().directAppearance())) }
@@ -792,10 +797,11 @@ struct DirectMacEditorV1: View {
     private struct Draft: Identifiable { let id = UUID(); var address: String }
     @State private var name: String
     @State private var usesAutomaticName: Bool
-    @State private var preferredConnection: DirectMacConnection
-    @State private var swipeLeft: DirectMacSwipeAction
-    @State private var swipeRight: DirectMacSwipeAction
+    @State private var tapAction: DirectMacLaunchAction
+    @State private var swipeLeft: DirectMacLaunchAction
+    @State private var swipeRight: DirectMacLaunchAction
     @State private var desktopSize: Int
+    @State private var virtualDesktopSize: Int
     @State private var credentialAction: CredentialAction?
     private enum CredentialAction: String, Identifiable {
         case desktop, terminal, serverKey
@@ -830,10 +836,12 @@ struct DirectMacEditorV1: View {
         self.mac = mac; self.library = library
         _name = State(initialValue: mac?.name ?? "My Mac")
         _usesAutomaticName = State(initialValue: mac?.usesAutomaticName ?? true)
-        _preferredConnection = State(initialValue: mac?.preferredConnection ?? .desktop)
-        _swipeLeft = State(initialValue: mac?.swipeLeft ?? .terminal)
-        _swipeRight = State(initialValue: mac?.swipeRight ?? .trackpad)
+        let shortcuts = mac.map { VNCSessionPreferences.displayShortcuts($0.id) } ?? .init()
+        _tapAction = State(initialValue: .init(.init(connection: mac?.preferredConnection ?? .desktop), displayMode: shortcuts.tap))
+        _swipeLeft = State(initialValue: .init(mac?.swipeLeft ?? .terminal, displayMode: shortcuts.left))
+        _swipeRight = State(initialValue: .init(mac?.swipeRight ?? .trackpad, displayMode: shortcuts.right))
         _desktopSize = State(initialValue: mac.map { VNCSessionPreferences.desktopSize($0.id) } ?? 2)
+        _virtualDesktopSize = State(initialValue: mac.map { VNCSessionPreferences.virtualDesktopSize($0.id) } ?? 2)
         _addresses = State(initialValue: (mac?.addresses ?? [""]).map { Draft(address: $0) })
         _sshPort = State(initialValue: mac.map { $0.sshPort == 22 ? "" : String($0.sshPort) } ?? "")
         _port = State(initialValue: mac.map { $0.port == 5900 ? "" : String($0.port) } ?? "")
@@ -915,7 +923,7 @@ struct DirectMacEditorV1: View {
                     }
                 }
                 DirectMacShortcutsSection { sshSheet = .shortcuts }
-                DirectDesktopDisplaySection(selection: $desktopSize)
+                DirectDesktopDisplaySection(selection: $desktopSize, virtualSize: $virtualDesktopSize)
                 if discoveryKey != nil {
                     Section {
                         DisclosureGroup("Mac Details") {
@@ -961,7 +969,7 @@ struct DirectMacEditorV1: View {
                 switch selection {
                 case .shortcuts:
                     DirectMacShortcutsSheet(macName: name, family: mac?.family ?? .unknown,
-                                            tap: $preferredConnection, swipeLeft: $swipeLeft, swipeRight: $swipeRight)
+                                            tap: $tapAction, swipeLeft: $swipeLeft, swipeRight: $swipeRight)
                         .dynamicTypeSize(dynamicTypeSize)
                 case .keys(let mac): TerminalKeySettings(mac: mac)
                 case .install(let mac): TerminalKeyInstallView(mac: mac, changed: { refreshSelectedKey() })
@@ -996,8 +1004,16 @@ struct DirectMacEditorV1: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         if mac == nil && !DirectProAccess.shared.canAddMac(count: library.macs.count) { sshSheet = .pro; return }
-                        if let resolvedPort, library.save(id: mac?.id, name: name, addresses: addresses.map(\.address), port: resolvedPort, sshPort: resolvedSSHPort, usesAutomaticName: usesAutomaticName, preferredConnection: preferredConnection, swipeLeft: swipeLeft, swipeRight: swipeRight, requiresExisting: mac != nil) {
-                            if let id = mac?.id ?? library.macs.last?.id { VNCSessionPreferences.setDesktopSize(desktopSize, mac: id) }
+                        if let resolvedPort, library.save(id: mac?.id, name: name, addresses: addresses.map(\.address),
+                            port: resolvedPort, sshPort: resolvedSSHPort, usesAutomaticName: usesAutomaticName,
+                            preferredConnection: tapAction.fallback.connection, swipeLeft: swipeLeft.fallback,
+                            swipeRight: swipeRight.fallback, requiresExisting: mac != nil) {
+                            if let id = mac?.id ?? library.macs.last?.id {
+                                VNCSessionPreferences.setDesktopSize(desktopSize, mac: id)
+                                VNCSessionPreferences.setVirtualDesktopSize(virtualDesktopSize, mac: id)
+                                VNCSessionPreferences.setDisplayShortcuts(
+                                    .init(tap: tapAction.displayMode, left: swipeLeft.displayMode, right: swipeRight.displayMode), mac: id)
+                            }
                             CompanionVNCPlayInterfaceFeedback("success"); startAutomaticDiscovery(); dismiss()
                         }
                         else { CompanionVNCPlayInterfaceFeedback("error") }

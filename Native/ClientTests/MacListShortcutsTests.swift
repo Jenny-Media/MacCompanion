@@ -83,6 +83,29 @@ import XCTest
         try library.applyCloud([mac])
         XCTAssertEqual(DirectMacLibraryV1(url: library.storageURL).macs, [mac])
     }
+
+    func testDisplayLaunchChoicesUseLegacyScreenSharingInTheSharedRecord() throws {
+        let id = UUID()
+        defer { VNCSessionPreferences.clear(id) }
+        var mac = DirectMacRecordV1(id: id, name: "Synthetic Mac", addresses: ["screen.invalid"])
+        let tap = DirectMacLaunchAction.mirror, right = DirectMacLaunchAction.virtual
+        mac.preferredConnection = try XCTUnwrap(tap.fallback.connection)
+        mac.swipeRight = right.fallback
+        VNCSessionPreferences.setDisplayShortcuts(.init(tap: tap.displayMode, right: right.displayMode), mac: id)
+
+        let bytes = try JSONEncoder().encode(mac)
+        let fields = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+        XCTAssertEqual(fields["preferredConnection"] as? String, "desktop")
+        XCTAssertEqual(fields["swipeRight"] as? String, "desktop")
+        XCTAssertNil(fields["displayShortcuts"])
+        let restored = try JSONDecoder().decode(DirectMacRecordV1.self, from: bytes)
+        let shortcuts = VNCSessionPreferences.displayShortcuts(id)
+        XCTAssertEqual(DirectMacLaunchAction(.init(connection: restored.preferredConnection), displayMode: shortcuts.tap), .mirror)
+        XCTAssertEqual(DirectMacLaunchAction(restored.swipeRight, displayMode: shortcuts.right), .virtual)
+        XCTAssertEqual(DirectMacLaunchAction(restored.swipeRight), .desktop)
+        XCTAssertEqual(DirectMacLaunchAction(.terminal, displayMode: shortcuts.right), .terminal)
+        XCTAssertEqual(DirectMacLaunchAction(.disabled, displayMode: shortcuts.right), .disabled)
+    }
 }
 
 private final class RecordingInterfaceFeedback: CompanionVNCInterfaceFeedback {
