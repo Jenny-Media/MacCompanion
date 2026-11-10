@@ -2168,7 +2168,10 @@
     if ([kind isEqual:@"viewMenu"]) { [self showViewMenu]; return; }
     if ([kind isEqual:@"desktopSizeMenu"]) { [self showDesktopSizeMenu]; return; }
     if ([kind isEqual:@"mirrorDisplay"]) { [self confirmDisplayModePreset:0]; return; }
-    if ([kind isEqual:@"virtualDisplay"]) { [self confirmDisplayModePreset:self.restoredDesktopSizePreset > 0 ? self.restoredDesktopSizePreset : 2]; return; }
+    if ([kind isEqual:@"virtualDisplay"]) {
+        NSInteger preset = self.restoredDesktopSizePreset > 0 ? self.restoredDesktopSizePreset : self.preferredVirtualDesktopSizePreset;
+        [self confirmDisplayModePreset:(preset >= 1 && preset <= 3) ? preset : 2]; return;
+    }
     if ([kind isEqual:@"desktopSize"]) {
         NSInteger preset = [action[@"preset"] integerValue];
         BOOL changed = ![self desktopSizeMatchesPreset:preset];
@@ -2641,6 +2644,7 @@
 - (void)retainDesktopSizePreset:(NSInteger)preset {
     self.desktopSizeRestored = YES;
     self.restoredDesktopSizePreset = preset;
+    if (preset > 0) self.preferredVirtualDesktopSizePreset = preset;
     if (self.desktopSizeSelectionHandler) self.desktopSizeSelectionHandler(preset);
 }
 - (BOOL)applyDesktopSizePreset:(NSInteger)preset {

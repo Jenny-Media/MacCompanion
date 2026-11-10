@@ -17,6 +17,7 @@ struct DirectDesktopSessionView: View {
     let mac: DirectMacRecordV1
     var inputOnly = false
     var autoConnect = true
+    var displayMode: DirectDesktopLaunchMode?
     var connectionMacNames: [String] = []
     let showMacs: @MainActor () -> Void
     var connectionPanel: DirectConnectionPanelHost?
@@ -25,16 +26,18 @@ struct DirectDesktopSessionView: View {
     @State private var immersive = false
     @State private var appearance = DirectAppearanceV1.shared
     @State private var files: DirectFilesSession
-    init(mac: DirectMacRecordV1, inputOnly: Bool = false, autoConnect: Bool = true, connectionMacNames: [String] = [], files: DirectFilesSession? = nil, libraryURL: URL = DirectMacLibraryV1.defaultURL, connectionPanel: DirectConnectionPanelHost? = nil, loginRetentionAllowed: Bool = true, connectionEstablished: @escaping @MainActor () -> Bool = { true }, showMacs: @escaping @MainActor () -> Void) {
+    init(mac: DirectMacRecordV1, inputOnly: Bool = false, autoConnect: Bool = true, displayMode: DirectDesktopLaunchMode? = nil, connectionMacNames: [String] = [], files: DirectFilesSession? = nil, libraryURL: URL = DirectMacLibraryV1.defaultURL, connectionPanel: DirectConnectionPanelHost? = nil, loginRetentionAllowed: Bool = true, connectionEstablished: @escaping @MainActor () -> Bool = { true }, showMacs: @escaping @MainActor () -> Void) {
         self.connectionPanel = connectionPanel; self.loginRetentionAllowed = loginRetentionAllowed; self.connectionEstablished = connectionEstablished
-        self.mac = mac; self.inputOnly = inputOnly; self.autoConnect = autoConnect; self.connectionMacNames = connectionMacNames; self.showMacs = showMacs
+        self.mac = mac; self.inputOnly = inputOnly; self.autoConnect = autoConnect; self.displayMode = displayMode
+        self.connectionMacNames = connectionMacNames; self.showMacs = showMacs
         _files = State(initialValue: files ?? DirectFilesWorkspace.session(mac, libraryURL: libraryURL))
     }
     var body: some View {
         ZStack {
             (immersive ? Color.black : connectionPanel == nil ? Color(uiColor: .systemBackground) : Color.clear).ignoresSafeArea()
             if !files.macRemoved {
-                VNCRemoteDesktopView(mac: mac, inputOnly: inputOnly, autoConnect: autoConnect, connectionMacNames: connectionMacNames, files: files,
+                VNCRemoteDesktopView(mac: mac, inputOnly: inputOnly, autoConnect: autoConnect, displayMode: displayMode,
+                                     connectionMacNames: connectionMacNames, files: files,
                                      showMacs: showMacs, connectionPanel: connectionPanel, loginRetentionAllowed: loginRetentionAllowed, connectionEstablished: connectionEstablished, chromeChanged: { immersive = $0 })
                     .directDesktopSafeArea()
             }
@@ -51,6 +54,7 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
     let mac: DirectMacRecordV1
     var inputOnly = false
     var autoConnect = true
+    var displayMode: DirectDesktopLaunchMode?
     var connectionMacNames: [String] = []
     let files: DirectFilesSession
     let showMacs: @MainActor () -> Void
@@ -83,9 +87,14 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         viewer.showsTouchPoints = VNCSessionPreferences.showsTouchPoints
         viewer.trackpadHapticsEnabled = VNCSessionPreferences.trackpadHaptics
         viewer.restoredDisplayID = VNCSessionPreferences.display(mac.id)
-        viewer.restoredDesktopSizePreset = VNCSessionPreferences.desktopSize(mac.id)
+        let virtualSize = VNCSessionPreferences.virtualDesktopSize(mac.id)
+        viewer.preferredVirtualDesktopSizePreset = virtualSize
+        viewer.restoredDesktopSizePreset = displayMode?.preset(virtualSize: virtualSize) ?? VNCSessionPreferences.desktopSize(mac.id)
         viewer.desktopSizeSelectionHandler = { selected in
-            MainActor.assumeIsolated { VNCSessionPreferences.setDesktopSize(selected, mac: mac.id) }
+            MainActor.assumeIsolated {
+                if displayMode == nil { VNCSessionPreferences.setDesktopSize(selected, mac: mac.id) }
+                else if selected > 0 { VNCSessionPreferences.setVirtualDesktopSize(selected, mac: mac.id) }
+            }
         }
         viewer.fullscreen = VNCSessionPreferences.fullscreen(mac.id)
         viewer.presentationHandler = { value in MainActor.assumeIsolated { VNCSessionPreferences.setFullscreen(value, mac: mac.id) } }

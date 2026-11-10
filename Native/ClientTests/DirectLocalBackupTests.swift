@@ -325,6 +325,11 @@ import Security
         var mac = try fixture.service.makeBackup().macs[0]
         mac.pointerSpeed = 2.25; mac.display = 9; mac.fullscreen = true
         mac.trackpad = true; mac.followCursor = false; mac.desktopSize = 1
+        mac.swipeRight = .desktop
+        mac.displayShortcuts = .init(tap: .mirror, right: .virtual)
+        mac.virtualDesktopSize = 3
+        mac = try JSONDecoder().decode(DirectLocalBackup.Mac.self, from: JSONEncoder().encode(mac))
+        XCTAssertEqual(try mac.record(id: id).swipeRight, .desktop)
         defaults.set(false, forKey: DirectCloudSyncV1.enabledKey)
         mac.applyPreferences(to: id)
         try DirectLocalBackupStore.persistStandardPreferences()
@@ -333,6 +338,14 @@ import Security
         XCTAssertEqual(VNCSessionPreferences.display(id)?.uint32Value, 9)
         XCTAssertTrue(VNCSessionPreferences.fullscreen(id)); XCTAssertTrue(VNCSessionPreferences.trackpad(id))
         XCTAssertFalse(VNCSessionPreferences.followCursor(id)); XCTAssertEqual(VNCSessionPreferences.desktopSize(id), 1)
+        XCTAssertEqual(VNCSessionPreferences.virtualDesktopSize(id), 3)
+        XCTAssertEqual(VNCSessionPreferences.displayShortcuts(id), .init(tap: .mirror, right: .virtual))
+
+        mac.displayShortcuts = nil; mac.virtualDesktopSize = nil
+        mac = try JSONDecoder().decode(DirectLocalBackup.Mac.self, from: JSONEncoder().encode(mac))
+        mac.applyPreferences(to: id)
+        XCTAssertEqual(VNCSessionPreferences.displayShortcuts(id), .init())
+        XCTAssertEqual(VNCSessionPreferences.virtualDesktopSize(id), 1)
     }
     func testPreviousDataFreezesPreferencesBeforeHigherRevisionCloudUpdate() async throws {
         let source = try BackupFixture(name: "Backup Mac"), target = try BackupFixture(name: "Current Mac")

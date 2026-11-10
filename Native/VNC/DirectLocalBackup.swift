@@ -35,6 +35,8 @@ struct DirectLocalBackup: Codable {
         var trackpad: Bool
         var followCursor: Bool
         var desktopSize: Int
+        var virtualDesktopSize: Int?
+        var displayShortcuts: DirectMacDisplayShortcuts?
 
         @MainActor init(_ record: DirectMacRecordV1) {
             name = record.name; addresses = record.addresses; port = record.port; sshPort = record.sshPort
@@ -47,6 +49,9 @@ struct DirectLocalBackup: Codable {
             trackpad = VNCSessionPreferences.trackpad(record.id)
             followCursor = VNCSessionPreferences.followCursor(record.id)
             desktopSize = VNCSessionPreferences.desktopSize(record.id)
+            virtualDesktopSize = VNCSessionPreferences.virtualDesktopSize(record.id)
+            let shortcuts = VNCSessionPreferences.displayShortcuts(record.id).matching(record)
+            displayShortcuts = shortcuts == .init() ? nil : shortcuts
         }
         func record(id: UUID = UUID()) throws -> DirectMacRecordV1 {
             var value = try DirectMacRecordV1.normalized(id: id, name: name, addresses: addresses, port: port, sshPort: sshPort)
@@ -55,6 +60,8 @@ struct DirectLocalBackup: Codable {
             value.usesAutomaticName = usesAutomaticName; value.detectedName = detectedName
             value.modelIdentifier = modelIdentifier; value.preferredConnection = preferredConnection
             value.swipeLeft = swipeLeft; value.swipeRight = swipeRight
+            guard virtualDesktopSize.map({ (1...3).contains($0) }) ?? true,
+                  displayShortcuts.map({ $0.matching(value) == $0 }) ?? true else { throw Failure.invalid }
             return try value.validated()
         }
         @MainActor func applyPreferences(to id: UUID) {
@@ -64,6 +71,8 @@ struct DirectLocalBackup: Codable {
             VNCSessionPreferences.setTrackpad(trackpad, mac: id)
             VNCSessionPreferences.setFollowCursor(followCursor, mac: id)
             VNCSessionPreferences.setDesktopSize(desktopSize, mac: id)
+            VNCSessionPreferences.setVirtualDesktopSize(virtualDesktopSize, mac: id)
+            VNCSessionPreferences.setDisplayShortcuts(displayShortcuts ?? .init(), mac: id)
         }
     }
 

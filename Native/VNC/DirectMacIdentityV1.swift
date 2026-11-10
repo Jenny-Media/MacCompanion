@@ -29,6 +29,74 @@ enum DirectMacSwipeAction: String, Codable, CaseIterable, Identifiable, Sendable
     var symbol: String { connection?.symbol ?? "minus" }
 }
 
+#if os(iOS)
+enum DirectDesktopLaunchMode: String, Codable, Equatable {
+    case mirror, virtual
+
+    func preset(virtualSize: Int) -> Int { self == .mirror ? 0 : virtualSize }
+}
+
+/// A local launch choice. The shared library continues to encode only the
+/// existing action, with an optional display override stored on this device.
+enum DirectMacLaunchAction: String, CaseIterable, Identifiable {
+    case desktop, mirror, virtual, terminal, trackpad
+    case disabled = "none"
+
+    init(_ fallback: DirectMacSwipeAction, displayMode: DirectDesktopLaunchMode? = nil) {
+        switch fallback {
+        case .desktop:
+            switch displayMode {
+            case .mirror: self = .mirror
+            case .virtual: self = .virtual
+            case nil: self = .desktop
+            }
+        case .terminal: self = .terminal
+        case .trackpad: self = .trackpad
+        case .disabled: self = .disabled
+        }
+    }
+
+    var id: String { rawValue }
+    var fallback: DirectMacSwipeAction {
+        switch self {
+        case .desktop, .mirror, .virtual: .desktop
+        case .terminal: .terminal
+        case .trackpad: .trackpad
+        case .disabled: .disabled
+        }
+    }
+    var displayMode: DirectDesktopLaunchMode? {
+        switch self { case .mirror: .mirror; case .virtual: .virtual; default: nil }
+    }
+    var title: String {
+        switch self {
+        case .mirror: "Mirror Mac Screen"
+        case .virtual: "Virtual Display"
+        default: fallback.title
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .mirror: "display.2"
+        case .virtual: "display"
+        default: fallback.symbol
+        }
+    }
+}
+
+struct DirectMacDisplayShortcuts: Codable, Equatable {
+    var tap: DirectDesktopLaunchMode?
+    var left: DirectDesktopLaunchMode?
+    var right: DirectDesktopLaunchMode?
+
+    func matching(_ mac: DirectMacRecordV1) -> Self {
+        .init(tap: mac.preferredConnection == .desktop ? tap : nil,
+              left: mac.swipeLeft == .desktop ? left : nil,
+              right: mac.swipeRight == .desktop ? right : nil)
+    }
+}
+#endif
+
 enum DirectMacFamily: String {
     case unknown, macBook, macBookAir, macBookPro, iMac, macMini, macStudio, macPro
     var title: String {
