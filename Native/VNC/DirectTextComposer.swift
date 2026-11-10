@@ -53,7 +53,7 @@ struct DirectComposedText: Equatable {
     }
 }
 
-/// One connection owns a long send. Pace balanced pairs without blocking its reader.
+/// One connection owns a text send. Pace balanced pairs without blocking its reader.
 @MainActor final class DirectDesktopTextDelivery {
     typealias Schedule = (TimeInterval, @escaping @MainActor () -> Void) -> Void
     let session: CompanionVNCSession
@@ -249,8 +249,6 @@ struct DirectComposedText: Equatable {
         guard current(), DirectAppLockV1.shared.canAccess,
               let prepared = try? DirectComposedText(text, mode: .desktop) else { return false }
         let events = prepared.desktopEvents
-        // Preserve compact, atomic admission for the existing short-text path.
-        if events.count <= 512 { return session.tryComposedTextEvents(events, completion: completion) }
         return DirectDesktopTextDelivery(events: events, session: session, current: current, completion: completion).start()
     }
     @objc func present(from controller: UIViewController, available: @escaping () -> Bool,

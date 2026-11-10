@@ -275,5 +275,6 @@
     "minimumGrabberHitPoints": 44
   },
   "desktopBatchMaximumScalars": 1,
-  "desktopCharacterDelayMilliseconds": 10
+  "desktopCharacterDelayMilliseconds": 10,
+  "desktopPacedMinimumScalars": 1
 }

@@ -80,31 +80,48 @@ private final class ComposerBatchSession: CompanionVNCSession {
         XCTAssertEqual(actual, expected)
         XCTAssertEqual(results, [true])
     }
-    func testProductionLongSendWaitsAfterThePreviousCharacterWrite() async {
+    func testSingleCharacterUsesOwnedDeliveryAndCompletesOnce() {
         let session = ComposerBatchSession()
         var results: [Bool] = []
-        XCTAssertTrue(DirectTextComposer.sendDesktopText(String(repeating: "a", count: 257), session: session,
+        XCTAssertTrue(DirectTextComposer.sendDesktopText("a", session: session,
             current: { true }) { results.append($0) })
-        XCTAssertEqual(session.groups.first?.count, 2)
-        let next = expectation(description: "Next character after pacing delay")
-        let writtenAt = ProcessInfo.processInfo.systemUptime
-        session.admitted = {
-            XCTAssertGreaterThanOrEqual(ProcessInfo.processInfo.systemUptime - writtenAt, 0.01)
-            next.fulfill()
-        }
+        XCTAssertNotNil(session.owner)
+        let reply = session.pending
         session.complete(true)
+        reply?(true)
         XCTAssertEqual(session.groups.count, 1)
-        await fulfillment(of: [next], timeout: 1)
-        XCTAssertEqual(session.groups.count, 2)
-        session.complete(false)
-        XCTAssertEqual(results, [false])
+        XCTAssertEqual(results, [true])
         XCTAssertNil(session.owner)
     }
+    func testProductionShortAndLongSendsWaitAfterThePreviousCharacterWrite() async {
+        for count in [2, 255, 256, 257] {
+            let session = ComposerBatchSession()
+            var results: [Bool] = []
+            XCTAssertTrue(DirectTextComposer.sendDesktopText(String(repeating: "a", count: count), session: session,
+                current: { true }) { results.append($0) })
+            XCTAssertEqual(session.groups.first?.count, 2)
+            let next = expectation(description: "Next character after pacing delay for \(count) scalars")
+            let writtenAt = ProcessInfo.processInfo.systemUptime
+            session.admitted = {
+                XCTAssertGreaterThanOrEqual(ProcessInfo.processInfo.systemUptime - writtenAt, 0.01)
+                next.fulfill()
+            }
+            session.complete(true)
+            XCTAssertEqual(session.groups.count, 1)
+            await fulfillment(of: [next], timeout: 1)
+            XCTAssertEqual(session.groups.count, 2)
+            session.complete(false)
+            XCTAssertEqual(results, [false])
+            XCTAssertNil(session.owner)
+        }
+    }
     func testBusyFirstBatchSendsNothingAndKeepsCompletionForTheCaller() {
-        let session = ComposerBatchSession(); session.rejectBatch = 0
-        var results: [Bool] = []
-        XCTAssertFalse(DirectTextComposer.sendDesktopText(String(repeating: "x", count: 600), session: session, current: { true }) { results.append($0) })
-        XCTAssertTrue(session.groups.isEmpty); XCTAssertTrue(results.isEmpty); XCTAssertNil(session.owner)
+        for count in [1, 2, 256, 600] {
+            let session = ComposerBatchSession(); session.rejectBatch = 0
+            var results: [Bool] = []
+            XCTAssertFalse(DirectTextComposer.sendDesktopText(String(repeating: "x", count: count), session: session, current: { true }) { results.append($0) })
+            XCTAssertTrue(session.groups.isEmpty); XCTAssertTrue(results.isEmpty); XCTAssertNil(session.owner)
+        }
     }
     func testBusyLaterBatchOrFailedWriteStopsTheRemainder() {
         for failedWrite in [false, true] {
