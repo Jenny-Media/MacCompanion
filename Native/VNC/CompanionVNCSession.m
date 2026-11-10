@@ -212,6 +212,7 @@ static const NSUInteger CompanionVNCInputCapacity = 512;
 - (BOOL)servicePendingInput:(rfbClient *)client;
 #if TARGET_OS_IOS
 - (BOOL)writeKeyEvent:(uint32_t)key down:(BOOL)down client:(rfbClient *)client;
+- (BOOL)writeKeyPair:(uint32_t)key client:(rfbClient *)client;
 - (void)cancelComposedTextLocked;
 - (void)enqueueControlCleanupLocked;
 #endif
@@ -929,7 +930,9 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 - (BOOL)sendInputEvents:(NSArray<NSDictionary *> *)events client:(rfbClient *)client inputEpoch:(NSUInteger)inputEpoch {
     BOOL healthy = [self releaseRetiredNativeGestures:client];
     if (!healthy) return NO;
-    for (NSDictionary *event in events) {
+    for (NSUInteger index = 0; index < events.count; index++) {
+        NSDictionary *event = events[index];
+        NSUInteger sentCount = 1;
         [self->_lock lock]; BOOL currentBatch = inputEpoch == self->_inputEpoch; BOOL acceptsInput = self->_inputReady && !self->_reviewInputSuspended && !self->_displayHandoffInputBlocked && !self->_interruptionInputSuspended && !self->_paused && !self->_stopping;
 #if TARGET_OS_IOS
         NSString *textID = event[@"composedTextID"];
@@ -966,7 +969,18 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
         } else if (event[@"key"]) {
             uint32_t key = [event[@"key"] unsignedIntValue]; BOOL down = [event[@"down"] boolValue];
 #if TARGET_OS_IOS
-            healthy = [self writeKeyEvent:key down:down client:client];
+            NSDictionary *release = index + 1 < events.count ? events[index + 1] : nil;
+            BOOL pair = textID && down && [event[@"composedTextPair"] boolValue]
+                && [release[@"composedTextID"] isEqual:textID]
+                && [release[@"key"] isEqual:event[@"key"]] && ![release[@"down"] boolValue];
+            if (pair) {
+                healthy = [self writeKeyPair:key client:client];
+                if (healthy) {
+                    // Both messages have been written. Complete through the
+                    // release event, preserving its group identity and end tag.
+                    index++; event = release; down = NO; sentCount = 2;
+                }
+            } else healthy = [self writeKeyEvent:key down:down client:client];
 #else
             healthy = SendKeyEvent(client, key, down);
 #endif
@@ -976,7 +990,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
             self->_lastY = MAX(0, MIN(client->height - 1, [event[@"y"] integerValue]));
             healthy = SendPointerEvent(client, (int)self->_lastX, (int)self->_lastY, [event[@"mask"] intValue]);
         }
-        [self->_lock lock]; self->_inputs++; [self->_lock unlock];
+        [self->_lock lock]; self->_inputs += sentCount; [self->_lock unlock];
 #if TARGET_OS_IOS
         if (healthy && [event[@"composedTextEnd"] boolValue]) [self completeComposedText:textID written:YES];
 #endif
@@ -1802,6 +1816,14 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 - (BOOL)writeKeyEvent:(uint32_t)key down:(BOOL)down client:(rfbClient *)client {
     return SendKeyEvent(client, key, down);
 }
+- (BOOL)writeKeyPair:(uint32_t)key client:(rfbClient *)client {
+    if (!SupportsClient2Server(client, rfbKeyEvent)) return YES;
+    rfbKeyEventMsg pair[2] = {0};
+    pair[0].type = pair[1].type = rfbKeyEvent;
+    pair[0].down = 1;
+    pair[0].key = pair[1].key = rfbClientSwap32IfLE(key);
+    return WriteToRFBServer(client, (const char *)pair, 2 * sz_rfbKeyEventMsg);
+}
 - (BOOL)composedTextReadyLocked {
     return !_reviewInputSuspended && !_displayHandoffInputBlocked && !_interruptionInputSuspended && CompanionVNCConnectionReady(_running, _inputReady, _inputOnly,
         _paused, _stopping, _overflow, _awaitingResumeFrame, _baselinePresented);
@@ -1844,11 +1866,17 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     dispatch_semaphore_signal(_wake);
 }
 - (void)enqueueComposedTextEventsLocked:(NSArray<NSDictionary *> *)events completion:(void (^)(BOOL))completion {
+        NSDictionary *press = events.firstObject, *release = events.lastObject;
+        BOOL pair = events.count == 2 && press[@"key"] && [press[@"key"] isEqual:release[@"key"]]
+            && [press[@"down"] boolValue] && ![release[@"down"] boolValue];
         NSString *identifier = NSUUID.UUID.UUIDString;
         _composedTextReplies[identifier] = [completion copy];
         NSMutableArray *group = [NSMutableArray arrayWithCapacity:events.count];
         for (NSDictionary *event in events) {
             NSMutableDictionary *annotated = [event mutableCopy]; annotated[@"composedTextID"] = identifier;
+            // Preserve the pair boundary when the worker copies it together
+            // with earlier input or the reservation's cleanup marker.
+            annotated[@"composedTextPair"] = @(pair);
             [group addObject:annotated];
         }
         group.lastObject[@"composedTextEnd"] = @YES; [_events addObjectsFromArray:group];

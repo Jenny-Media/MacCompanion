@@ -276,5 +276,6 @@
   },
   "desktopBatchMaximumScalars": 1,
   "desktopCharacterDelayMilliseconds": 10,
-  "desktopPacedMinimumScalars": 1
+  "desktopPacedMinimumScalars": 1,
+  "desktopKeyPairSingleWrite": true
 }

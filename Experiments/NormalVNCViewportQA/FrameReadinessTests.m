@@ -6,6 +6,7 @@
 #import <sys/socket.h>
 #import <unistd.h>
 #import <zlib.h>
+#import <errno.h>
 
 @interface CompanionVNCSession (Diagnosis)
 - (void)configureClient:(rfbClient *)client;
@@ -15,6 +16,7 @@
 - (BOOL)registerSocket:(int)socket;
 - (BOOL)requestFullDesktop:(rfbClient *)client;
 - (BOOL)writeKeyEvent:(uint32_t)key down:(BOOL)down client:(rfbClient *)client;
+- (BOOL)sendInputEvents:(NSArray<NSDictionary *> *)events client:(rfbClient *)client inputEpoch:(NSUInteger)inputEpoch;
 @end
 @interface StalledComposerSession : CompanionVNCSession
 @property(nonatomic, strong) dispatch_semaphore_t firstWrite, continueWrite;
@@ -36,6 +38,55 @@
 @interface FrameReadinessTests : XCTestCase
 @end
 @implementation FrameReadinessTests
+- (void)testComposedCharacterPressAndReleaseShareOneTransportWrite {
+    NSURL *url = [[NSBundle bundleForClass:self.class] URLForResource:@"ios-text-composer-v1" withExtension:@"json"];
+    NSDictionary *fixture = [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:url] options:0 error:NULL];
+    XCTAssertEqualObjects(fixture[@"desktopKeyPairSingleWrite"], @YES);
+    int pair[2];
+    // Datagram boundaries expose separate write calls without a live Mac or
+    // timing assumptions. The payload remains the ordinary RFB byte stream.
+    XCTAssertEqual(socketpair(AF_UNIX, SOCK_DGRAM, 0, pair), 0);
+    CompanionVNCSession *session = [CompanionVNCSession new];
+    session.inputOnly = YES;
+    for (NSString *key in @[@"running", @"established", @"inputReady"]) [session setValue:@YES forKey:key];
+    rfbClient *client = rfbGetClient(8, 3, 4); client->sock = pair[0]; client->width = 2; client->height = 2;
+    client->supportedMessages.client2server[0] |= (1 << rfbKeyEvent) | (1 << rfbPointerEvent);
+    NSString *owner = [session beginControlSequence]; XCTAssertNotNil(owner);
+    NSUInteger total = 0;
+    for (NSDictionary *vector in fixture[@"cases"]) total += [vector[@"desktopKeys"] count];
+    XCTestExpectation *written = [self expectationWithDescription:@"Every indexed character completes once"];
+    written.expectedFulfillmentCount = total;
+    for (NSDictionary *vector in fixture[@"cases"]) {
+        for (NSNumber *key in vector[@"desktopKeys"]) {
+            NSArray *events = @[@{@"key": key, @"down": @YES}, @{@"key": key, @"down": @NO}];
+            XCTAssertTrue([session tryControlSequenceEvents:events identifier:owner completion:^(BOOL success) {
+                XCTAssertTrue(success); [written fulfill];
+            }]);
+            NSMutableArray *queue = [session valueForKey:@"events"];
+            NSArray *batch = queue.copy; [queue removeAllObjects];
+            XCTAssertTrue([session sendInputEvents:batch client:client inputEpoch:[[session valueForKey:@"inputEpoch"] unsignedIntegerValue]]);
+            uint32_t value = key.unsignedIntValue;
+            uint8_t expected[] = {4, 1, 0, 0, value >> 24, value >> 16, value >> 8, value,
+                                 4, 0, 0, 0, value >> 24, value >> 16, value >> 8, value};
+            uint8_t actual[32] = {0};
+            if ([batch.firstObject[@"controlCleanup"] boolValue]) {
+                // The first character still needs a single write when its
+                // reservation cleanup is in the same worker snapshot.
+                XCTAssertEqual(recv(pair[1], actual, sizeof(actual), MSG_DONTWAIT), 6);
+                XCTAssertEqual(actual[0], rfbPointerEvent);
+            }
+            ssize_t count = recv(pair[1], actual, sizeof(actual), MSG_DONTWAIT);
+            XCTAssertEqual(count, sizeof(expected), @"%@", vector[@"name"]);
+            XCTAssertEqual(memcmp(actual, expected, sizeof(expected)), 0);
+            XCTAssertEqual(recv(pair[1], actual, sizeof(actual), MSG_DONTWAIT), -1);
+            XCTAssertEqual(errno, EAGAIN);
+            XCTAssertEqual([(NSSet *)[session valueForKey:@"heldKeys"] count], 0);
+        }
+    }
+    [self waitForExpectations:@[written] timeout:1];
+    [session endControlSequence:owner];
+    [session stop]; rfbClientCleanup(client); close(pair[1]);
+}
 - (void)testCopiedComposerGroupIsRetiredAcrossTrackpadPauseResumeAndFreshTextStillSends {
     [self assertCopiedComposerGroupRetired:NO];
 }

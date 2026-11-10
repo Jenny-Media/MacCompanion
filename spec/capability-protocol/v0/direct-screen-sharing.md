@@ -546,7 +546,12 @@ selection. Every draft containing LF or Tab requires explicit confirmation that
 line breaks may submit content/run commands and tabs may change focus. Preflight
 the entire draft before reserving one exclusive connection-owned sequence for
 every send, including short drafts. Send one scalar's balanced
-key-down/key-up pair per batch. After each local pair write, wait at least 10 ms
+key-down/key-up pair per batch. Encode both RFB KeyEvent messages into one
+16-byte buffer and submit them together through the existing transport writer.
+This avoids separate client writes leaving the release queued behind the press
+on a stalled link. A locally admitted pair write may finish both messages after
+cancellation; retire the remaining characters and release any held input if a
+write fails partway. After each local pair write, wait at least 10 ms
 before admitting the next character, yielding without blocking the socket reader
 or UI. This bounds bursts of synthesized typing reaching the focused Mac app.
 Keep the existing 512-event user queue bound. Reject a busy first batch

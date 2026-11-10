@@ -30,6 +30,9 @@ Every Desktop draft reserves one existing exclusive connection-owned sequence
 and sends one scalar's balanced key-down/key-up pair at a time. After each local
 pair write, delivery waits at least 10 ms before admitting the next character,
 giving the receiving Mac app time between synthesized keys.
+The press and release are encoded together in one 16-byte transport write so a
+mobile-link stall cannot fall between two separate client write calls. Partial
+write failure retires the remaining text and releases held input.
 The wait yields to the UI and socket reader. Long drafts consequently take longer
 to arrive. Short drafts use the same pacing, including drafts below the former
 256-scalar cutoff. The user-event queue remains bounded at 512 events. A busy
