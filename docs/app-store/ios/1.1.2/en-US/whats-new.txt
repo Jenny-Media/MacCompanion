@@ -1,0 +1,3 @@
+• More reliable Compose Text, including over mobile networks.
+• See which address is connected.
+• New Mirror Mac Screen and Virtual Display shortcuts.

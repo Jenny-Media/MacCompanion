@@ -171,6 +171,10 @@ for metadata in sorted(MATERIALS.glob('*/metadata.json')):
     assert manifest['releaseType'] == 'MANUAL'
     if base.name in ['1.0', '1.1']:
         assert manifest['whatsNew'] is None, 'Do not populate an initial-release-only record with update copy'
+    if manifest.get('whatsNew'):
+        update = (base / manifest['whatsNew']).resolve()
+        assert update.is_relative_to(base.resolve()), 'Update notes must remain inside their version materials'
+        check_text(update, 4000)
     if manifest.get('whatsNewDraft'):
         draft = (base / manifest['whatsNewDraft']).resolve()
         assert draft.is_relative_to(base.resolve()), 'Draft must remain inside its version materials'
