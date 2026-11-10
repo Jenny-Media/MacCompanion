@@ -1,0 +1,1 @@
+remote,desktop,ssh,terminal,trackpad,keyboard,screen sharing,vnc,sftp,files,shortcuts,backup,sync

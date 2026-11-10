@@ -1,0 +1,3 @@
+Please check Compose Text with a paragraph containing single spaces, punctuation, repeated letters, and Unicode on both Wi-Fi and mobile data. Compare the Mac output with the iPhone draft exactly. Use a blank disposable document. Tabs and line breaks require confirmation and can activate controls or submit content in the focused Mac app.
+
+Check that the connection indicator shows the address used to connect. Add Mirror Mac Screen and Virtual Display to a Mac's swipe and tap shortcuts, then open each action and confirm the expected display mode. Check existing Screen Sharing shortcuts and their saved display choice.

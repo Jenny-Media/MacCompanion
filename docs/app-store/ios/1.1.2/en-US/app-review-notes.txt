@@ -1,0 +1,19 @@
+Mac Companion connects directly to a Mac selected by the user. Desktop and Trackpad & Keyboard use built-in Screen Sharing (RFB/VNC) forwarded through SSH to that Mac's loopback Screen Sharing port. Terminal uses SSH; Files uses SFTP. There is no plaintext desktop fallback. No Mac Companion account, server, helper, hosted Mac or app catalog is required. Mirrored software runs on the Mac. No vendor demo account is needed; use an account on a reviewer-controlled Mac.
+
+Setup on iPhone or iPad, iOS/iPadOS 26+:
+1. Keep a test Mac awake and unlocked on the same trusted LAN, with a notebook lid open. In System Settings > General > Sharing, enable Remote Login and Screen Sharing and allow the test Mac account in both. Screen Sharing and Remote Management cannot be enabled together.
+2. Tap Add Mac, enter the Mac hostname or IP address without a URL prefix, and tap Connect. Allow Local Network access and enter the test Mac account's short username and password. Saving the login is optional.
+3. Independently compare the displayed SHA256 SSH fingerprint with the matching host public key on the Mac before trusting it. For Ed25519 use: ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub -E sha256. Stop on an unexplained mismatch.
+4. Open a blank test document on the Mac. In Desktop or Trackpad & Keyboard, open Keyboard & Input > Compose Text. Enter a paragraph and choose Send Text. Close keeps the unsent draft for that session.
+
+Changes in 1.1.2
+- Compose Text sends each character's press and release together and waits between characters. The owner confirmed exact English text, spaces and punctuation in Codex over mobile data on iPhone 18 Pro Max. Review with a disposable paragraph in a blank Mac document.
+- A connection indicator identifies the saved Mac address used by the current connection.
+- Mirror Mac Screen and Virtual Display can be assigned directly to the Mac's swipe and tap shortcuts. Existing Screen Sharing shortcuts retain their saved display choice.
+
+Editing sends no remote input. Every draft containing a line break or tab requires confirmation. These can press Return or Tab on the Mac, change focus, submit content or run commands. No extra Return is added. Use only disposable text and safe test contexts. A connection interruption can leave partial delivery; there is no automatic retry or replay.
+
+Compose Text is free. One saved Mac, one SSH key, core modes, Files and local backup remain free. Lifetime Pro adds multiple Macs and named keys, custom controls, saved text and key installation. The optional 14-day trial does not renew or charge automatically. Restore Purchases is in Settings > Pro. Use Apple's review purchase environment.
+
+Support: https://mac.jenny.media/support/
+Privacy: https://mac.jenny.media/privacy/
