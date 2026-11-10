@@ -209,18 +209,21 @@ final class DirectDesktopSSHTunnel: @unchecked Sendable {
     static func open(addresses: [String], sshPort: Int, screenSharingPort: Int,
                      username: String, password: String,
                      validateHost: @escaping @MainActor @Sendable (String) async throws -> Void,
+                     attemptingAddress: @escaping @MainActor @Sendable (String) -> Void = { _ in },
                      progress: @escaping @MainActor @Sendable (String) -> Void = { _ in }) async throws -> DirectDesktopSSHTunnel {
         let opening = DesktopSSHOpening()
         return try await withTaskCancellationHandler {
             do {
                 return try await openUnchecked(addresses: addresses, sshPort: sshPort, screenSharingPort: screenSharingPort,
-                    username: username, password: password, validateHost: validateHost, progress: progress, opening: opening)
+                    username: username, password: password, validateHost: validateHost, attemptingAddress: attemptingAddress,
+                    progress: progress, opening: opening)
             } catch { opening.cancel(); throw error }
         } onCancel: { opening.cancel() }
     }
     private static func openUnchecked(addresses: [String], sshPort: Int, screenSharingPort: Int,
                                       username: String, password: String,
                                       validateHost: @escaping @MainActor @Sendable (String) async throws -> Void,
+                                      attemptingAddress: @escaping @MainActor @Sendable (String) -> Void,
                                       progress: @escaping @MainActor @Sendable (String) -> Void,
                                       opening: DesktopSSHOpening) async throws -> DirectDesktopSSHTunnel {
         guard (1...65535).contains(sshPort), (1...65535).contains(screenSharingPort),
@@ -229,12 +232,21 @@ final class DirectDesktopSSHTunnel: @unchecked Sendable {
         await progress("Connecting to Remote Login…")
         // The established C resolver validates each numeric sockaddr and dials
         // that exact address. It stops fallback before SSH authentication.
+        let attempts = AsyncStream<String>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let publishAttempts = Task { @MainActor in
+            for await address in attempts.stream { attemptingAddress(address) }
+        }
         let (fd, failure) = await Task.detached { () -> (Int32, Int) in
             var failure = 0
             let fd = CompanionVNCConnectAddresses(addresses, sshPort, { opening.isCancelled },
-                { opening.registerSocket($0) }, { _, _ in }, &failure)
+                { opening.registerSocket($0) }, { number, _ in
+                    attempts.continuation.yield(addresses[Int(number) - 1])
+                }, &failure)
             return (fd, failure)
         }.value
+        attempts.continuation.finish()
+        // Deliver the last attempted address before the connected socket is handed off.
+        await publishAttempts.value
         guard fd >= 0 else {
             if opening.isCancelled { throw CancellationError() }
             throw failure == 10 ? TerminalConnectionFailure.lookup : DesktopSSHFailure.socket

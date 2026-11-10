@@ -89,6 +89,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)showConnectionFailure;
 - (void)showConnectionFailureStage:(NSInteger)stage;
 - (void)showConnectionProgress:(NSString *)message;
+- (void)showAttemptingAddress:(nullable NSString *)address;
 - (void)showRecoveryStage:(NSInteger)stage;
 - (void)showInvalidLogin;
 - (void)showLoginRetentionFailure;
