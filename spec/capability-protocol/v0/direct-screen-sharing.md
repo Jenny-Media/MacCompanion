@@ -545,9 +545,11 @@ whatever currently has focus, not clipboard synchronization or semantic field
 selection. Every draft containing LF or Tab requires explicit confirmation that
 line breaks may submit content/run commands and tabs may change focus. Short text
 retains the existing atomic event-group path. Longer text is preflighted in full
-and uses one exclusive connection-owned sequence, with at most 128 scalars
-(256 balanced key events) per batch. Await each local batch write before admitting
-the next; keep the existing 512-event user queue bound. Reject a busy first batch
+and uses one exclusive connection-owned sequence, with one scalar's balanced
+key-down/key-up pair per batch. After each local pair write, wait at least 10 ms
+before admitting the next character, yielding without blocking the socket reader
+or UI. This bounds bursts of synthesized typing reaching the focused Mac app.
+Keep the existing 512-event user queue bound. Reject a busy first batch
 without sending text. Failure or a lifecycle/readiness change after admission
 cancels the remainder, reports possible partial delivery, and never retries or
 replays it. Ordinary input cannot interleave with the owned long-text sequence.

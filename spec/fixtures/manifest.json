@@ -825,7 +825,7 @@
       "path": "ios-text-composer-v1.json",
       "kind": "client.iosTextComposer.v1",
       "expect": "valid",
-      "canonicalSHA256": "b23777b6138bbe8798ef531316ae052033f0d055cad1bb8a812148ec79f01478"
+      "canonicalSHA256": "d685f75f1943309ac1d54420ee02ff04eedefb0c580d2ae9a26700dd190bff24"
     },
     {
       "path": "ios-dynamic-resolution-prototype-v1.json",

@@ -28,8 +28,11 @@ silently truncated. These limits do not change the saved-text library bounds.
 
 The original 256-scalar Desktop cap admitted one key-down/key-up pair per scalar
 into a single 512-event queue. Longer drafts now reserve one existing exclusive
-connection-owned sequence and send at most 128 scalars per batch, waiting for
-each write before admitting the next. The user-event queue remains bounded at
+connection-owned sequence and send one scalar's balanced key-down/key-up pair
+at a time. After each local pair write, they wait at least 10 ms before admitting
+the next character, giving the receiving Mac app time between synthesized keys.
+The wait yields to the UI and socket reader. Long drafts consequently take longer
+to arrive. The user-event queue remains bounded at
 512 events. Short drafts retain compact atomic admission. A busy first batch
 sends no text; later failure stops the remainder and reports possible partial
 delivery without retry or replay.
