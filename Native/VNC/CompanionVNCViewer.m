@@ -75,6 +75,7 @@
 @property CGRect layoutCrop;
 @property CGRect tabletopInputRegion;
 @property UILabel *progressLabel;
+@property UILabel *attemptAddressLabel;
 @property UIActivityIndicatorView *spinner;
 @property CompanionVNCControls *controls;
 @property CompanionVNCInterfaceFeedback *keyFeedback;
@@ -430,7 +431,15 @@
     self.spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
     self.progressLabel = [UILabel new]; self.progressLabel.numberOfLines = 0;
     self.progressLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline]; self.progressLabel.textAlignment = NSTextAlignmentCenter;
-    self.progressRow = [[UIStackView alloc] initWithArrangedSubviews:@[self.spinner, self.progressLabel]];
+    self.attemptAddressLabel = [UILabel new];
+    self.attemptAddressLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
+    self.attemptAddressLabel.adjustsFontForContentSizeCategory = YES;
+    self.attemptAddressLabel.numberOfLines = 0;
+    self.attemptAddressLabel.textAlignment = NSTextAlignmentCenter;
+    self.attemptAddressLabel.textColor = UIColor.secondaryLabelColor;
+    self.attemptAddressLabel.accessibilityIdentifier = @"connection-progress-address";
+    self.attemptAddressLabel.hidden = YES;
+    self.progressRow = [[UIStackView alloc] initWithArrangedSubviews:@[self.spinner, self.progressLabel, self.attemptAddressLabel]];
     self.progressRow.axis = UILayoutConstraintAxisVertical; self.progressRow.alignment = UIStackViewAlignmentCenter; self.progressRow.spacing = 16;
     self.progressRow.layoutMarginsRelativeArrangement = YES; self.progressRow.layoutMargins = UIEdgeInsetsMake(24,0,24,0);
     self.loginDetails = [self button:@"Connection Details" action:@selector(showLoginDetails)];
@@ -775,10 +784,15 @@
     if (UIAccessibilityIsReduceMotionEnabled()) update();
     else [UIView animateWithDuration:.22 delay:0 options:UIViewAnimationOptionBeginFromCurrentState | UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionCurveEaseInOut animations:update completion:nil];
 }
+- (nullable NSString *)activeConnectionAddress {
+    return self.session.connected ? self.connectionProgress.routeAddress : nil;
+}
 - (NSString *)configuredConnectionDetails {
     NSMutableArray<NSString *> *lines = [NSMutableArray new];
+    NSString *activeAddress = [self activeConnectionAddress];
     [self.connectionAddresses enumerateObjectsUsingBlock:^(NSString *address, NSUInteger index, BOOL *stop) {
-        [lines addObject:[NSString stringWithFormat:index == 0 ? @"Address: %@" : @"Fallback: %@", address]];
+        NSString *label = [address isEqualToString:activeAddress] ? @"In use" : (index == 0 ? @"Preferred address" : @"Fallback address");
+        [lines addObject:[NSString stringWithFormat:@"%@: %@", label, address]];
     }];
     [lines addObject:[NSString stringWithFormat:@"Remote Login · SSH: %ld", (long)self.sshPort]];
     [lines addObject:[NSString stringWithFormat:@"Screen Sharing: %ld", (long)self.servicePort]];
@@ -870,6 +884,14 @@
     self.recoveryInputOnlyAction = inputOnly;
     self.loginIssueDetails = [DirectRecoveryBridgeV1 desktopDetailsWithStage:stage hadFrame:self.lastFramebuffer != nil port:((stage == 10 || stage == 11 || (stage >= 110 && stage <= 115)) ? self.sshPort ?: 22 : self.servicePort ?: 5900)];
     [self updateConnectionChrome];
+}
+- (void)showAttemptingAddress:(NSString *)address {
+    [self.connectionProgress recordRouteAddress:address];
+    [self updateAttemptAddressLabel];
+}
+- (void)updateAttemptAddressLabel {
+    self.attemptAddressLabel.text = self.starting ? self.connectionProgress.tryingAddressText : nil;
+    self.attemptAddressLabel.hidden = !self.attemptAddressLabel.text.length;
 }
 - (void)showConnectionProgress:(NSString *)message {
     if (!self.starting || self.exited) return;
@@ -2008,6 +2030,7 @@
     [self.connect setTitleColor:UIColor.secondaryLabelColor forState:UIControlStateDisabled];
     [self.connect setTitle:self.failedDisplayModePreset ? @"Reconnect" : self.recoveryController ? @"Try Again" : @"Connect" forState:UIControlStateNormal];
     self.progressRow.hidden = !progress && !self.progressLabel.text.length; self.spinner.hidden = !progress;
+    [self updateAttemptAddressLabel];
     // Let validation feedback fill the card width and grow vertically. A
     // hidden spinner in a horizontal stack can retain a one-line label height.
     self.progressRow.axis = UILayoutConstraintAxisVertical;
@@ -2821,10 +2844,13 @@
     [self presentViewController:details animated:YES completion:nil];
 }
 - (void)showSessionMenu {
+    NSMutableDictionary *details = [@{@"kind": @"details", @"title": @"Connection Details", @"symbol": @"info.circle"} mutableCopy];
+    NSString *address = [self activeConnectionAddress];
+    if (address.length) details[@"subtitle"] = [NSString stringWithFormat:@"In use · %@", address];
     [self presentMenu:self.macName ?: @"Session" sections:@[
         @{@"title": @"Session", @"items": @[
+            details,
             @{@"kind": @"files", @"title": self.filesStatus.length ? [@"Files · " stringByAppendingString:self.filesStatus] : @"Files", @"symbol": @"folder", @"submenu": @YES},
-            @{@"kind": @"details", @"title": @"Connection Details", @"symbol": @"info.circle"},
             @{@"kind": @"appSettings", @"title": @"App Settings", @"symbol": @"gearshape", @"submenu": @YES}]},
         @{@"title": @"", @"items": @[@{@"kind": @"exit", @"title": @"Disconnect", @"symbol": @"xmark.circle", @"destructive": @YES}]}]];
 }

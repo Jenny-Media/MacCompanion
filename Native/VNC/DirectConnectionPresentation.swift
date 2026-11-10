@@ -187,13 +187,20 @@ struct DirectConnectionDisclosure<Content: View>: View {
     private(set) var stage = Stage.contacting
     private(set) var encrypted = false
     private(set) var restoresDisplays = false
+    @objc private(set) var routeAddress: String?
     private(set) var startedAt = ProcessInfo.processInfo.systemUptime
+
+    @objc var tryingAddressText: String? {
+        routeAddress.map { String(localized: "Trying \($0)") }
+    }
 
     @objc(beginWaitingForDisplays:) func begin(waitingForDisplays: Bool) {
         attempt = UUID(); startedAt = ProcessInfo.processInfo.systemUptime
+        routeAddress = nil
         restoresDisplays = waitingForDisplays; encrypted = false
         stage = waitingForDisplays ? .restoringDisplays : .contacting
     }
+    @objc func recordRouteAddress(_ address: String?) { routeAddress = address }
     func advance(to next: Stage) {
         guard next.rawValue > stage.rawValue else { return }
         stage = next
@@ -265,7 +272,15 @@ struct DirectConnectionProgress: View {
                         }
                     Spacer(minLength: 24)
                     VStack(spacing: 20) {
-                        Text(message).font(.title3.weight(.semibold)).multilineTextAlignment(.center)
+                        VStack(spacing: 6) {
+                            Text(message).font(.title3.weight(.semibold))
+                            if let address = progress.tryingAddressText {
+                                Text(address)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                    .accessibilityIdentifier("connection-progress-address")
+                            }
+                        }.multilineTextAlignment(.center)
                             .fixedSize(horizontal: false, vertical: true)
                         VStack(spacing: 0) {
                             ForEach(progress.steps(service: service)) { step in
@@ -327,8 +342,11 @@ struct DirectConnectionProgress: View {
     }
     private var details: some View {
         VStack(spacing: 0) {
-            if let first = addresses.first { detailRow("Configured address", value: first) }
-            if addresses.count > 1 { detailRow("Other addresses", value: addresses.dropFirst().joined(separator: ", ")) }
+            ForEach(addresses, id: \.self) { address in
+                let label = progress.routeAddress == address ? "Trying" :
+                    (address == addresses.first ? "Preferred address" : "Fallback address")
+                detailRow(label, value: address)
+            }
             detailRow("Remote Login", value: "SSH · \(sshPort)")
             if let screenSharingPort { detailRow("Screen Sharing", value: "Port \(screenSharingPort)") }
             detailRow("Encryption", value: progress.encrypted ? "Encrypted" : "Establishing…", last: true)

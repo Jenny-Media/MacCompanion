@@ -358,6 +358,9 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
                         validateHost: { [weak self] key in
                             guard let self else { throw CancellationError() }
                             try await self.verifyHost(key, generation: token)
+                        }, attemptingAddress: { [weak self] address in
+                            guard let self, self.generation == token else { return }
+                            self.viewer?.showAttemptingAddress(address)
                         }, progress: { [weak self] message in
                             guard let self, self.generation == token else { return }
                             self.viewer?.showConnectionProgress(message)
@@ -473,6 +476,7 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         func disconnect() {
             let pendingConnection = work
             generation = UUID(); work?.cancel(); work = nil; answerTrust(false)
+            viewer?.showAttemptingAddress(nil)
             let native = viewer?.session
             native?.stop(); login = nil; remember = false
             let lease = accessLease; accessLease = nil
