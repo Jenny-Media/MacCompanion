@@ -1243,6 +1243,8 @@ import StoreKitTest
         }
         XCTAssertEqual(fixture["desktopMaximumScalars"] as? Int, DirectComposedText.desktopMaximumScalars)
         XCTAssertEqual(fixture["desktopBatchMaximumScalars"] as? Int, DirectComposedText.desktopBatchMaximumScalars)
+        XCTAssertEqual(fixture["desktopCharacterDelayMilliseconds"] as? Int, DirectComposedText.desktopCharacterDelayMilliseconds)
+        XCTAssertEqual(fixture["desktopPacedMinimumScalars"] as? Int, 1)
         XCTAssertEqual(fixture["terminalMaximumBytes"] as? Int, DirectComposedText.terminalMaximumBytes)
         XCTAssertEqual(fixture["draftMaximumBytes"] as? Int, DirectComposedText.draftMaximumBytes)
         XCTAssertNoThrow(try DirectComposedText(String(repeating: "😀", count: 4096), mode: .desktop))

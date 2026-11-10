@@ -8,7 +8,8 @@ struct DirectComposedText: Equatable {
     static let desktopMaximumScalars = 4096
     static let terminalMaximumBytes = 16384
     static let draftMaximumBytes = 16384
-    static let desktopBatchMaximumScalars = 128
+    static let desktopBatchMaximumScalars = 1
+    static let desktopCharacterDelayMilliseconds = 10
     let text: String
     var needsConfirmation: Bool { text.contains("\n") || text.contains("\t") }
     var endsWithNewline: Bool { text.hasSuffix("\n") }
@@ -52,16 +53,22 @@ struct DirectComposedText: Equatable {
     }
 }
 
-/// One connection owns a long send. Only one bounded batch is queued at a time.
-@MainActor private final class DirectDesktopTextDelivery {
+/// One connection owns a text send. Pace balanced pairs without blocking its reader.
+@MainActor final class DirectDesktopTextDelivery {
+    typealias Schedule = (TimeInterval, @escaping @MainActor () -> Void) -> Void
     let session: CompanionVNCSession
     let batches: [[[String: Any]]]
     let current: () -> Bool
     let completion: (Bool) -> Void
+    private let schedule: Schedule
     private var identifier: String?
     private var next = 0
-    init(events: [[String: Any]], session: CompanionVNCSession, current: @escaping () -> Bool, completion: @escaping (Bool) -> Void) {
+    init(events: [[String: Any]], session: CompanionVNCSession, current: @escaping () -> Bool,
+         schedule: @escaping Schedule = { delay, action in
+             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: action)
+         }, completion: @escaping (Bool) -> Void) {
         self.session = session; self.current = current; self.completion = completion
+        self.schedule = schedule
         let size = DirectComposedText.desktopBatchMaximumScalars * 2
         batches = stride(from: 0, to: events.count, by: size).map { Array(events[$0..<min($0 + size, events.count)]) }
     }
@@ -80,7 +87,11 @@ struct DirectComposedText: Equatable {
         return session.tryControlSequenceEvents(batch, identifier: identifier) { [self] written in
             guard written, current(), DirectAppLockV1.shared.canAccess, session.ownsControlSequence(identifier) else { finish(false); return }
             if next == batches.count { finish(true) }
-            else if !enqueueNext() { finish(false) }
+            else {
+                schedule(TimeInterval(DirectComposedText.desktopCharacterDelayMilliseconds) / 1000) { [self] in
+                    if !enqueueNext() { finish(false) }
+                }
+            }
         }
     }
     private func finish(_ written: Bool) {
@@ -238,8 +249,6 @@ struct DirectComposedText: Equatable {
         guard current(), DirectAppLockV1.shared.canAccess,
               let prepared = try? DirectComposedText(text, mode: .desktop) else { return false }
         let events = prepared.desktopEvents
-        // Preserve compact, atomic admission for the existing short-text path.
-        if events.count <= 512 { return session.tryComposedTextEvents(events, completion: completion) }
         return DirectDesktopTextDelivery(events: events, session: session, current: current, completion: completion).start()
     }
     @objc func present(from controller: UIViewController, available: @escaping () -> Bool,

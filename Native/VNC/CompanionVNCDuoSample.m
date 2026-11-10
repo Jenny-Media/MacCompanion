@@ -9,6 +9,7 @@
 
 /// No transport is opened and no input contents are retained by this fixture.
 @interface CompanionVNCDuoSampleSession : CompanionVNCSession
+@property(nonatomic, copy) NSString *sampleSequence;
 @end
 @implementation CompanionVNCDuoSampleSession
 - (BOOL)running { return YES; }
@@ -25,8 +26,19 @@
 - (void)keyEvents:(NSArray<NSDictionary *> *)events {}
 - (BOOL)tryKeyEvents:(NSArray<NSDictionary *> *)events { return YES; }
 - (BOOL)tryComposedTextEvents:(NSArray<NSDictionary *> *)events completion:(void (^)(BOOL))completion { if (completion) completion(YES); return YES; }
-- (void)stop {}
-- (void)pauseWithCompletion:(void (^)(void))completion { if (completion) completion(); }
+- (NSString *)beginControlSequence {
+    if (self.sampleSequence) return nil;
+    self.sampleSequence = NSUUID.UUID.UUIDString; return self.sampleSequence;
+}
+- (BOOL)ownsControlSequence:(NSString *)identifier { return [self.sampleSequence isEqual:identifier]; }
+- (BOOL)tryControlSequenceEvents:(NSArray<NSDictionary *> *)events identifier:(NSString *)identifier completion:(void (^)(BOOL))completion {
+    if (![self ownsControlSequence:identifier]) return NO;
+    if (completion) completion(YES); return YES;
+}
+- (void)endControlSequence:(NSString *)identifier { if ([self ownsControlSequence:identifier]) self.sampleSequence = nil; }
+- (void)cancelControlSequence:(NSString *)identifier { [self endControlSequence:identifier]; }
+- (void)stop { self.sampleSequence = nil; }
+- (void)pauseWithCompletion:(void (^)(void))completion { self.sampleSequence = nil; if (completion) completion(); }
 @end
 
 @interface CompanionVNCDuoSampleViewer : CompanionVNCViewer

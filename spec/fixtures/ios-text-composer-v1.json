@@ -274,5 +274,8 @@
     "footerControlsDoNotOverlapEditor": true,
     "minimumGrabberHitPoints": 44
   },
-  "desktopBatchMaximumScalars": 128
+  "desktopBatchMaximumScalars": 1,
+  "desktopCharacterDelayMilliseconds": 10,
+  "desktopPacedMinimumScalars": 1,
+  "desktopKeyPairSingleWrite": true
 }

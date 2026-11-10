@@ -26,13 +26,18 @@ scalars; Terminal can send 16 KiB UTF-8 before optional paste framing. Other C0/
 controls are rejected. Oversized sendable content stays editable and is never
 silently truncated. These limits do not change the saved-text library bounds.
 
-The original 256-scalar Desktop cap admitted one key-down/key-up pair per scalar
-into a single 512-event queue. Longer drafts now reserve one existing exclusive
-connection-owned sequence and send at most 128 scalars per batch, waiting for
-each write before admitting the next. The user-event queue remains bounded at
-512 events. Short drafts retain compact atomic admission. A busy first batch
-sends no text; later failure stops the remainder and reports possible partial
-delivery without retry or replay.
+Every Desktop draft reserves one existing exclusive connection-owned sequence
+and sends one scalar's balanced key-down/key-up pair at a time. After each local
+pair write, delivery waits at least 10 ms before admitting the next character,
+giving the receiving Mac app time between synthesized keys.
+The press and release are encoded together in one 16-byte transport write so a
+mobile-link stall cannot fall between two separate client write calls. Partial
+write failure retires the remaining text and releases held input.
+The wait yields to the UI and socket reader. Long drafts consequently take longer
+to arrive. Short drafts use the same pacing, including drafts below the former
+256-scalar cutoff. The user-event queue remains bounded at 512 events. A busy
+first batch sends no text; later failure stops the remainder and reports possible
+partial delivery without retry or replay.
 
 The composer stays minimal during ordinary use. The inline count and limit appear only
 at 80% of the mode's allowance, including when it is exceeded. An exceeded limit

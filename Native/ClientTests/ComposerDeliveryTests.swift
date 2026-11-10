@@ -8,6 +8,7 @@ private final class ComposerBatchSession: CompanionVNCSession {
     var pending: ((Bool) -> Void)?
     var rejectBatch: Int?
     var cancelled = false
+    var admitted: (() -> Void)?
     override func beginControlSequence() -> String? {
         guard owner == nil else { return nil }
         let value = UUID().uuidString; owner = value; return value
@@ -15,7 +16,7 @@ private final class ComposerBatchSession: CompanionVNCSession {
     override func ownsControlSequence(_ identifier: String) -> Bool { owner == identifier }
     override func tryControlSequenceEvents(_ events: [[AnyHashable: Any]], identifier: String, completion: @escaping (Bool) -> Void) -> Bool {
         guard owner == identifier, pending == nil, rejectBatch != groups.count else { return false }
-        groups.append(events); pending = completion; return true
+        groups.append(events); pending = completion; admitted?(); return true
     }
     override func endControlSequence(_ identifier: String) { if owner == identifier { owner = nil } }
     override func cancelControlSequence(_ identifier: String) {
@@ -24,37 +25,117 @@ private final class ComposerBatchSession: CompanionVNCSession {
     func complete(_ written: Bool) { let reply = pending; pending = nil; reply?(written) }
 }
 
+@MainActor private final class ComposerDeliveryClock {
+    var pending: (@MainActor () -> Void)?
+    var delays: [TimeInterval] = []
+    func schedule(_ delay: TimeInterval, action: @escaping @MainActor () -> Void) {
+        XCTAssertNil(pending)
+        delays.append(delay)
+        pending = action
+    }
+    func advance() { let action = pending; pending = nil; action?() }
+}
+
 @MainActor final class ComposerDeliveryTests: XCTestCase {
     func testLongUnicodeTextWaitsForEachBalancedBatchAndCompletesOnce() throws {
         let session = ComposerBatchSession()
+        let clock = ComposerDeliveryClock()
         let text = String(repeating: "中😀", count: 2000)
         var results: [Bool] = []
-        XCTAssertTrue(DirectTextComposer.sendDesktopText(text, session: session, current: { true }) { results.append($0) })
+        let delivery = DirectDesktopTextDelivery(events: DirectTextComposer.desktopEvents(text), session: session,
+            current: { true }, schedule: clock.schedule) { results.append($0) }
+        XCTAssertTrue(delivery.start())
         XCTAssertEqual(session.groups.count, 1)
         XCTAssertNotNil(session.owner); XCTAssertTrue(results.isEmpty)
         while session.pending != nil {
-            XCTAssertTrue(session.groups.allSatisfy { $0.count <= 256 && $0.count.isMultiple(of: 2) })
+            XCTAssertEqual(session.groups.last?.count, 2)
+            let count = session.groups.count
             session.complete(true)
+            XCTAssertEqual(session.groups.count, count)
+            XCTAssertNil(session.pending)
+            clock.advance()
         }
         let actual = session.groups.flatMap { $0 }.map { NSDictionary(dictionary: $0) }
         let expected = try DirectComposedText(text, mode: .desktop).desktopEvents.map { NSDictionary(dictionary: $0) }
         XCTAssertEqual(actual, expected)
+        XCTAssertEqual(clock.delays, Array(repeating: 0.01, count: 3999))
+        XCTAssertNil(clock.pending)
         XCTAssertEqual(results, [true]); XCTAssertNil(session.owner); XCTAssertFalse(session.cancelled)
     }
-    func testBusyFirstBatchSendsNothingAndKeepsCompletionForTheCaller() {
-        let session = ComposerBatchSession(); session.rejectBatch = 0
+    func testLongEnglishTextKeepsEveryAdjacentLetterInOrderAcrossDelays() throws {
+        let session = ComposerBatchSession(), clock = ComposerDeliveryClock()
+        let text = String(repeating: "abcdefghijklmnopqrstuvwxyz 0123456789. ", count: 60)
         var results: [Bool] = []
-        XCTAssertFalse(DirectTextComposer.sendDesktopText(String(repeating: "x", count: 600), session: session, current: { true }) { results.append($0) })
-        XCTAssertTrue(session.groups.isEmpty); XCTAssertTrue(results.isEmpty); XCTAssertNil(session.owner)
+        let delivery = DirectDesktopTextDelivery(events: DirectTextComposer.desktopEvents(text), session: session,
+            current: { true }, schedule: clock.schedule) { results.append($0) }
+        XCTAssertTrue(delivery.start())
+        while session.pending != nil {
+            XCTAssertEqual(session.groups.last?.count, 2)
+            session.complete(true)
+            XCTAssertNil(session.pending)
+            clock.advance()
+        }
+        let actual = session.groups.flatMap { $0 }.map { NSDictionary(dictionary: $0) }
+        let expected = try DirectComposedText(text, mode: .desktop).desktopEvents.map { NSDictionary(dictionary: $0) }
+        XCTAssertEqual(actual, expected)
+        XCTAssertEqual(results, [true])
+    }
+    func testSingleCharacterUsesOwnedDeliveryAndCompletesOnce() {
+        let session = ComposerBatchSession()
+        var results: [Bool] = []
+        XCTAssertTrue(DirectTextComposer.sendDesktopText("a", session: session,
+            current: { true }) { results.append($0) })
+        XCTAssertNotNil(session.owner)
+        let reply = session.pending
+        session.complete(true)
+        reply?(true)
+        XCTAssertEqual(session.groups.count, 1)
+        XCTAssertEqual(results, [true])
+        XCTAssertNil(session.owner)
+    }
+    func testProductionShortAndLongSendsWaitAfterThePreviousCharacterWrite() async {
+        for count in [2, 255, 256, 257] {
+            let session = ComposerBatchSession()
+            var results: [Bool] = []
+            XCTAssertTrue(DirectTextComposer.sendDesktopText(String(repeating: "a", count: count), session: session,
+                current: { true }) { results.append($0) })
+            XCTAssertEqual(session.groups.first?.count, 2)
+            let next = expectation(description: "Next character after pacing delay for \(count) scalars")
+            let writtenAt = ProcessInfo.processInfo.systemUptime
+            session.admitted = {
+                XCTAssertGreaterThanOrEqual(ProcessInfo.processInfo.systemUptime - writtenAt, 0.01)
+                next.fulfill()
+            }
+            session.complete(true)
+            XCTAssertEqual(session.groups.count, 1)
+            await fulfillment(of: [next], timeout: 1)
+            XCTAssertEqual(session.groups.count, 2)
+            session.complete(false)
+            XCTAssertEqual(results, [false])
+            XCTAssertNil(session.owner)
+        }
+    }
+    func testBusyFirstBatchSendsNothingAndKeepsCompletionForTheCaller() {
+        for count in [1, 2, 256, 600] {
+            let session = ComposerBatchSession(); session.rejectBatch = 0
+            var results: [Bool] = []
+            XCTAssertFalse(DirectTextComposer.sendDesktopText(String(repeating: "x", count: count), session: session, current: { true }) { results.append($0) })
+            XCTAssertTrue(session.groups.isEmpty); XCTAssertTrue(results.isEmpty); XCTAssertNil(session.owner)
+        }
     }
     func testBusyLaterBatchOrFailedWriteStopsTheRemainder() {
         for failedWrite in [false, true] {
             let session = ComposerBatchSession(); session.rejectBatch = failedWrite ? nil : 1
+            let clock = ComposerDeliveryClock()
             var results: [Bool] = []
-            XCTAssertTrue(DirectTextComposer.sendDesktopText(String(repeating: "x", count: 600), session: session, current: { true }) { results.append($0) })
+            let delivery = DirectDesktopTextDelivery(events: DirectTextComposer.desktopEvents(String(repeating: "x", count: 600)),
+                session: session, current: { true }, schedule: clock.schedule) { results.append($0) }
+            XCTAssertTrue(delivery.start())
             session.complete(!failedWrite)
+            clock.advance()
             XCTAssertEqual(session.groups.count, 1); XCTAssertEqual(results, [false])
             XCTAssertTrue(session.cancelled); XCTAssertNil(session.owner); XCTAssertNil(session.pending)
+            XCTAssertNil(clock.pending)
         }
     }
     func testChangedSessionBetweenBatchesNeverContinuesOrReplays() {
@@ -66,6 +147,25 @@ private final class ComposerBatchSession: CompanionVNCSession {
         XCTAssertEqual(session.groups.count, 1); XCTAssertEqual(results, [false]); XCTAssertNil(session.owner)
         current = true; staleReply?(true)
         XCTAssertEqual(session.groups.count, 1); XCTAssertEqual(results, [false]); XCTAssertNil(session.owner)
+    }
+    func testLostReservationDuringDelayDoesNotContinueOrCancelAnotherOwner() {
+        let session = ComposerBatchSession(), clock = ComposerDeliveryClock()
+        var results: [Bool] = []
+        let delivery = DirectDesktopTextDelivery(events: DirectTextComposer.desktopEvents(String(repeating: "x", count: 600)),
+            session: session, current: { true }, schedule: clock.schedule) { results.append($0) }
+        XCTAssertTrue(delivery.start())
+        let staleReply = session.pending
+        session.complete(true)
+        XCTAssertNotNil(clock.pending)
+        let replacement = UUID().uuidString
+        session.owner = replacement
+        clock.advance()
+        staleReply?(true)
+        XCTAssertEqual(session.groups.count, 1)
+        XCTAssertEqual(results, [false])
+        XCTAssertEqual(session.owner, replacement)
+        XCTAssertFalse(session.cancelled)
+        XCTAssertNil(clock.pending)
     }
     func testCountsStayHiddenUntilNearTheActualPerModeLimit() {
         for mode in DirectControlMode.allCases {

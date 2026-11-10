@@ -6,6 +6,7 @@ import XCTest
 
 private final class SavedTextSession: CompanionVNCSession {
     var sent: [[AnyHashable: Any]] = []
+    private var owner: String?
     override var connected: Bool { true }
     override var running: Bool { false }
     override var composedTextReady: Bool { true }
@@ -13,6 +14,17 @@ private final class SavedTextSession: CompanionVNCSession {
     override func tryComposedTextEvents(_ events: [[AnyHashable: Any]], completion: @escaping (Bool) -> Void) -> Bool {
         sent += events; completion(true); return true
     }
+    override func beginControlSequence() -> String? {
+        guard owner == nil else { return nil }
+        let identifier = UUID().uuidString; owner = identifier; return identifier
+    }
+    override func ownsControlSequence(_ identifier: String) -> Bool { owner == identifier }
+    override func tryControlSequenceEvents(_ events: [[AnyHashable: Any]], identifier: String, completion: @escaping (Bool) -> Void) -> Bool {
+        guard owner == identifier else { return false }
+        sent += events; completion(true); return true
+    }
+    override func endControlSequence(_ identifier: String) { if owner == identifier { owner = nil } }
+    override func cancelControlSequence(_ identifier: String) { endControlSequence(identifier) }
 }
 
 @MainActor final class SavedTextReviewTests: XCTestCase {
@@ -107,6 +119,7 @@ private final class SavedTextSession: CompanionVNCSession {
             XCTAssertEqual(try f.store.load().actions.first { $0.id == f.saved.id }?.text, f.saved.text)
             capture(f, name: "saved-text-editable-draft")
             composer.draft.requestSend()
+            try await waitFor { !composer.draft.sending }
             let keys = f.session.sent.compactMap { ($0["key"] as? NSNumber)?.uint32Value }
             XCTAssertEqual(keys, "edited greeting".unicodeScalars.flatMap { [$0.value, $0.value] })
             XCTAssertFalse(keys.contains(0xff0d), "Send Text must not append Return")
