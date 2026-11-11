@@ -848,7 +848,10 @@
         self.login.hidden = YES; self.image.alpha = .4;
         UIScrollView *panel = [UIScrollView new]; self.recoveryPanel = panel;
         panel.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
-        panel.translatesAutoresizingMaskIntoConstraints = NO; [self.view addSubview:panel]; [panel addSubview:controller.view];
+        panel.translatesAutoresizingMaskIntoConstraints = NO;
+        // The open session menu must receive touches above the recovery card.
+        [self.view insertSubview:panel belowSubview:self.controls];
+        [panel addSubview:controller.view];
         NSLayoutConstraint *preferredWidth = [panel.widthAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.widthAnchor constant:-32];
         preferredWidth.priority = UILayoutPriorityDefaultHigh;
         // Fit the card when it fits the safe area. Otherwise leave the content

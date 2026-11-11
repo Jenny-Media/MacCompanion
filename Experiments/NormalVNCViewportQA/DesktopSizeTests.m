@@ -1644,6 +1644,57 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     }
 }
 
+- (void)testRecoveryCardAllowsDisplayAndSessionMenuTaps {
+    UIWindowScene *scene=(UIWindowScene *)UIApplication.sharedApplication.connectedScenes.anyObject;
+    XCTAssertNotNil(scene);
+    if (!scene) return;
+    UIWindow *previous=scene.keyWindow, *window=[[UIWindow alloc] initWithWindowScene:scene];
+    UIViewController *root=[UIViewController new]; window.rootViewController=root;
+    DesktopSizeViewer *viewer=[DesktopSizeViewer new];
+    viewer.preventsAutomaticConnection=YES;
+    viewer.traitOverrides.preferredContentSizeCategory=UIContentSizeCategoryLarge;
+    [root addChildViewController:viewer];
+    viewer.view.frame=CGRectMake(0,0,390,740);
+    [root.view addSubview:viewer.view]; [viewer didMoveToParentViewController:root];
+    [window makeKeyAndVisible];
+    @try {
+        UIImage *image=[[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(8,8)] imageWithActions:^(UIGraphicsImageRendererContext *context){
+            [UIColor.blackColor setFill]; UIRectFill(CGRectMake(0,0,8,8));
+        }];
+        [viewer setValue:image forKey:@"lastFramebuffer"];
+        [UIView performWithoutAnimation:^{ [viewer showConnectionFailureStage:117]; }];
+        [window layoutIfNeeded]; [viewer.view layoutIfNeeded];
+        UIView *recovery=[viewer valueForKey:@"recoveryPanel"];
+        CompanionVNCControls *controls=[viewer valueForKey:@"controls"];
+        [UIView performWithoutAnimation:^{ [controls.button sendActionsForControlEvents:UIControlEventTouchUpInside]; }];
+        XCTAssertTrue(controls.menuOpen);
+
+        UIButton *display=nil;
+        NSArray<UIButton *> *choices=[controls valueForKey:@"choices"];
+        for (UIButton *choice in choices) {
+            if ([choice.accessibilityIdentifier isEqualToString:@"session-action-viewMenu"]) display=choice;
+            else if (![choice.accessibilityIdentifier isEqualToString:@"session-action-session"]) continue;
+            CGPoint center=[choice convertPoint:CGPointMake(CGRectGetMidX(choice.bounds),CGRectGetMidY(choice.bounds)) toView:viewer.view];
+            XCTAssertTrue(CGRectContainsPoint(recovery.frame,center),@"The menu tile overlaps the card in this layout");
+            UIView *hit=[viewer.view hitTest:center withEvent:nil];
+            XCTAssertTrue(hit == choice || [hit isDescendantOfView:choice],@"Touches must reach %@",choice.accessibilityIdentifier);
+        }
+        XCTAssertNotNil(display);
+        if (!display) return;
+        CGPoint center=[display convertPoint:CGPointMake(CGRectGetMidX(display.bounds),CGRectGetMidY(display.bounds)) toView:viewer.view];
+        UIView *hit=[viewer.view hitTest:center withEvent:nil];
+        if (hit != display && ![hit isDescendantOfView:display]) return;
+        [UIView performWithoutAnimation:^{ [display sendActionsForControlEvents:UIControlEventTouchUpInside]; }];
+        XCTAssertEqualObjects(viewer.menuTitle,@"Display");
+        XCTAssertTrue([[self kindsInSections:viewer.menuSections] containsObject:@"inputOnly"]);
+        XCTAssertFalse(controls.menuOpen);
+        hit=[viewer.view hitTest:center withEvent:nil];
+        XCTAssertTrue(hit == recovery || [hit isDescendantOfView:recovery],@"The closed menu must pass touches to recovery");
+    } @finally {
+        [viewer stopViewer]; window.hidden=YES; window.rootViewController=nil; [previous makeKeyAndVisible];
+    }
+}
+
 - (void)testDisplayMenuOpensIndependentInputOnlyAfterDisplayFailure {
     for (NSNumber *target in @[@0,@2]) {
         CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
