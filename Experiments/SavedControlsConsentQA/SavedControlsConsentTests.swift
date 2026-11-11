@@ -3,9 +3,10 @@ import XCTest
 @MainActor final class SavedControlsConsentTests: XCTestCase {
     override func setUp() { super.setUp(); continueAfterFailure = false; XCUIDevice.shared.orientation = .portrait }
     override func tearDown() { XCUIDevice.shared.orientation = .portrait; super.tearDown() }
-    private func launch(large: Bool) -> XCUIApplication {
+    private func launch(large: Bool, restoreFailures: Bool = false) -> XCUIApplication {
         let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.savedcontrolsqa.ios")
         if large { app.launchArguments = ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXL"] }
+        if restoreFailures { app.launchArguments.append("--qa-backup-restore-failures") }
         app.launch(); return app
     }
     private func capture(_ name: String) {
@@ -88,6 +89,40 @@ import XCTest
             assertBackupMacs("Current Mac", app: app)
             app.terminate()
         }
+    }
+    func testRestoreFailureAlertsWithoutScrollingAndAllowsRetry() {
+        let app = launch(large: true, restoreFailures: true)
+        defer { app.terminate() }
+        let previewRoute = app.buttons["fixture-backupPreview"]
+        reveal(previewRoute, app: app)
+        previewRoute.tap()
+
+        func verifyFailureAndRetry(title: String) {
+            let preview = app.navigationBars[title]
+            XCTAssertTrue(preview.waitForExistence(timeout: 8))
+            let restore = app.buttons["backup-confirm-restore"]
+            XCTAssertTrue(restore.isHittable)
+            restore.tap()
+
+            let failure = app.alerts["Couldn’t restore"].firstMatch
+            XCTAssertTrue(failure.waitForExistence(timeout: 5))
+            XCTAssertTrue(failure.staticTexts["Wait for iCloud deletion to finish, then restore the backup."].exists)
+            failure.buttons["OK"].tap()
+            XCTAssertTrue(failure.waitForNonExistence(timeout: 5))
+            XCTAssertTrue(preview.exists)
+            XCTAssertTrue(restore.isHittable)
+            restore.tap()
+            XCTAssertTrue(preview.waitForNonExistence(timeout: 8))
+        }
+
+        verifyFailureAndRetry(title: "Restore Backup")
+        let previous = app.buttons["backup-previous"]
+        reveal(previous, app: app)
+        previous.tap()
+        verifyFailureAndRetry(title: "Previous Data")
+        reveal(app.staticTexts["backup-status"], app: app)
+        dismissBackupHome(app)
+        assertBackupMacs("Current Mac", app: app)
     }
     private func dismissBackupPreview(_ app: XCUIApplication) {
         let cancel = app.buttons["backup-cancel"]
