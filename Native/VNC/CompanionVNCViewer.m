@@ -37,7 +37,6 @@
 @property DirectDesktopLoginState *credentialState;
 @property UIViewController *recoveryController;
 @property BOOL macSaveFailureVisible;
-@property(nonatomic, copy) void (^recoveryInputOnlyAction)(void);
 @property(nonatomic, copy) NSString *loginIssueDetails;
 @property UIViewController *loginBackdrop;
 @property UIScrollView *recoveryPanel;
@@ -57,7 +56,7 @@
 @property UIButton *loginDetails;
 @property UILabel *loginDetailsText;
 @property BOOL loginDetailsExpanded;
-@property UIButton *loginClose, *loginCancel, *loginTrackpad;
+@property UIButton *loginClose, *loginCancel;
 @property UIImageView *loginIcon;
 @property NSLayoutConstraint *loginIconHeight, *loginIconWidth, *loginTop, *loginBottom, *loginMaxWidth;
 @property NSLayoutConstraint *loginContentTop;
@@ -397,11 +396,7 @@
     [cancel.heightAnchor constraintGreaterThanOrEqualToConstant:48].active = YES;
     self.connect.backgroundColor = UIColor.systemBlueColor; [self.connect setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     self.connect.layer.cornerRadius = 16; self.connect.accessibilityIdentifier = @"mac-login-connect";
-    self.loginTrackpad = [self button:@"Use Trackpad & Keyboard" action:@selector(useInputOnlyConnection)];
-    self.loginTrackpad.backgroundColor = UIColor.clearColor; self.loginTrackpad.tintColor = UIColor.systemBlueColor;
-    self.loginTrackpad.accessibilityIdentifier = @"connection-inputOnly";
-    self.loginTrackpad.titleLabel.numberOfLines = 0; self.loginTrackpad.titleLabel.textAlignment = NSTextAlignmentCenter;
-    UIStackView *actions = [[UIStackView alloc] initWithArrangedSubviews:@[self.connect, self.loginTrackpad, cancel]];
+    UIStackView *actions = [[UIStackView alloc] initWithArrangedSubviews:@[self.connect, cancel]];
     self.loginActions = actions;
     actions.axis = UILayoutConstraintAxisVertical; actions.spacing = 0;
     self.loginFields = [[UIStackView alloc] initWithArrangedSubviews:@[self.credentialColumns, saveRow]];
@@ -837,7 +832,7 @@
 }
 - (void)clearRecovery {
     self.macSaveFailureVisible = NO;
-    self.recoveryInputOnlyAction = nil; self.loginIssueDetails = nil;
+    self.loginIssueDetails = nil;
     if (!self.recoveryController) return;
     [self.recoveryController willMoveToParentViewController:nil];
     [self.login removeArrangedSubview:self.recoveryController.view];
@@ -852,12 +847,22 @@
     if (overFrame) {
         self.login.hidden = YES; self.image.alpha = .4;
         UIScrollView *panel = [UIScrollView new]; self.recoveryPanel = panel;
+        panel.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
         panel.translatesAutoresizingMaskIntoConstraints = NO; [self.view addSubview:panel]; [panel addSubview:controller.view];
+        NSLayoutConstraint *preferredWidth = [panel.widthAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.widthAnchor constant:-32];
+        preferredWidth.priority = UILayoutPriorityDefaultHigh;
+        // Fit the card when it fits the safe area. Otherwise leave the content
+        // at its natural height so the panel can scroll instead of compressing it.
+        NSLayoutConstraint *contentHeight = [panel.heightAnchor constraintEqualToAnchor:panel.contentLayoutGuide.heightAnchor];
+        contentHeight.priority = UILayoutPriorityDefaultLow;
         [NSLayoutConstraint activateConstraints:@[
-            [panel.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor constant:16],
-            [panel.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-16],
+            [panel.leadingAnchor constraintGreaterThanOrEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor constant:16],
+            [panel.trailingAnchor constraintLessThanOrEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor constant:-16],
+            [panel.centerXAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.centerXAnchor],
+            [panel.widthAnchor constraintLessThanOrEqualToConstant:520], preferredWidth,
+            [panel.topAnchor constraintGreaterThanOrEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor constant:16],
             [panel.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.bottomAnchor constant:-72],
-            [panel.heightAnchor constraintEqualToConstant:MIN(320, self.view.bounds.size.height * .5)],
+            contentHeight,
             [controller.view.leadingAnchor constraintEqualToAnchor:panel.contentLayoutGuide.leadingAnchor],
             [controller.view.trailingAnchor constraintEqualToAnchor:panel.contentLayoutGuide.trailingAnchor],
             [controller.view.topAnchor constraintEqualToAnchor:panel.contentLayoutGuide.topAnchor],
@@ -870,18 +875,11 @@
 - (void)editRecoveryLogin { [self finishCredentialSession]; [self clearRecovery]; self.login.hidden = NO; self.starting = NO; [self updateConnectionChrome]; [self.username becomeFirstResponder]; }
 - (void)showRecoveryStage:(NSInteger)stage {
     __weak CompanionVNCViewer *weak = self;
-    __weak CompanionVNCSession *owner = self.session;
-    NSNumber *failed = self.failedDisplayModePreset;
-    void (^inputOnly)(void) = nil;
-    if (failed && !self.inputOnly && [DirectRecoveryBridgeV1 canOfferInputOnlyRecoveryAtStage:stage]) inputOnly = ^{
-        if (weak.session == owner && [weak.failedDisplayModePreset isEqual:failed]) weak.inputOnly = YES;
-    };
     UIViewController *card = [DirectRecoveryBridgeV1 desktopWithStage:stage hadFrame:self.lastFramebuffer != nil port:((stage == 10 || stage == 11 || (stage >= 110 && stage <= 115)) ? self.sshPort ?: 22 : self.servicePort ?: 5900) textInterrupted:self.textSendInterrupted retry:^{
         if (weak.failedDisplayModePreset) [weak restartDisplayModePreset:weak.failedDisplayModePreset.integerValue];
         else [weak start];
-    } edit:^{ [weak editRecoveryLogin]; } inputOnly:inputOnly];
+    } edit:^{ [weak editRecoveryLogin]; }];
     [self showRecoveryController:card overFrame:self.lastFramebuffer != nil];
-    self.recoveryInputOnlyAction = inputOnly;
     self.loginIssueDetails = [DirectRecoveryBridgeV1 desktopDetailsWithStage:stage hadFrame:self.lastFramebuffer != nil port:((stage == 10 || stage == 11 || (stage >= 110 && stage <= 115)) ? self.sshPort ?: 22 : self.servicePort ?: 5900)];
     [self updateConnectionChrome];
 }
@@ -2019,9 +2017,6 @@
     self.loginDetails.accessibilityValue = self.loginDetailsExpanded ? @"Expanded" : @"Collapsed";
     self.connect.hidden = progress;
     self.loginClose.hidden = YES; self.loginCancel.hidden = NO;
-    // Input-only is a recovery action, never a competing action during normal progress.
-    self.loginTrackpad.hidden = YES;
-    self.loginTrackpad.enabled = self.connectionForegroundAvailable;
     BOOL canRetryMode = self.failedDisplayModePreset != nil && [self.credentialState loginForResume] != nil;
     self.connect.enabled = !progress && ((self.username.text.length > 0 && self.password.text.length > 0) || canRetryMode);
     self.connect.alpha = 1;
@@ -2086,9 +2081,6 @@
         if (value) [self setTrackpadModeEnabled:YES];
         [self applyPresentation];
     }
-}
-- (void)useInputOnlyConnection {
-    if (self.connectionForegroundAvailable && self.starting && self.changingDisplayMode && !self.inputOnly) self.inputOnly = YES;
 }
 - (void)restartInputOnlyConnection {
     if (!self.connectionForegroundAvailable || self.textReview) return;

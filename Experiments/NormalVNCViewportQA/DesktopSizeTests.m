@@ -1377,7 +1377,7 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     XCTAssertTrue(session.displayHandoffInputBlocked, @"A virtual result must not reopen remote input");
     XCTAssertFalse([[viewer valueForKey:@"changingDisplayMode"] boolValue]);
     XCTAssertEqualObjects([viewer valueForKey:@"mirrorRestoreOutcome"],@3);
-    XCTAssertTrue([[viewer valueForKey:@"loginIssueDetails"] containsString:@"Mirror Mac Screen couldn’t be opened"]);
+    XCTAssertTrue([[viewer valueForKey:@"loginIssueDetails"] containsString:@"still using a virtual display"]);
     viewer.disconnectHandler=nil; [viewer stopViewer];
 }
 - (void)testExplicitMirrorRequestsOneFullCleanupWithoutDelayForPhysicalMonitorSwitch {
@@ -1520,7 +1520,7 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     XCTAssertEqual(viewer.restoredDesktopSizePreset,0); XCTAssertEqual(saves,0);
     XCTAssertEqualObjects([viewer valueForKey:@"lastConnectionFailure"][@"displayModeFailureStage"],@117);
     XCTAssertNil(session.stateHandler); XCTAssertNil(session.frameHandler);
-    XCTAssertTrue([[viewer valueForKey:@"loginIssueDetails"] containsString:@"virtual display"]);
+    XCTAssertTrue([[[viewer valueForKey:@"loginIssueDetails"] lowercaseString] containsString:@"virtual display"]);
     XCTAssertNotNil([(id<DesktopLoginRecoveryTesting>)[viewer valueForKey:@"credentialState"] loginForResume]);
     [viewer stopViewer];
 }
@@ -1644,22 +1644,21 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     }
 }
 
-- (void)testFailedDisplayRecoveryOpensIndependentInputOnlyBeforeOrAfterPixels {
-    for (NSNumber *target in @[@0,@2]) for (NSNumber *hadFrame in @[@NO,@YES]) {
+- (void)testDisplayMenuOpensIndependentInputOnlyAfterDisplayFailure {
+    for (NSNumber *target in @[@0,@2]) {
         CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
         id<DesktopLoginRecoveryTesting> login=[viewer valueForKey:@"credentialState"];
         [login editWithUsername:@"synthetic" password:@"transient" remember:NO]; [login beginLogin]; [login authenticated];
-        if (hadFrame.boolValue) {
-            UIImage *image=[[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(8,8)] imageWithActions:^(UIGraphicsImageRendererContext *context){
-                [UIColor.blackColor setFill]; UIRectFill(CGRectMake(0,0,8,8));
-            }];
-            [viewer setValue:image forKey:@"lastFramebuffer"];
-        }
+        UIImage *image=[[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(8,8)] imageWithActions:^(UIGraphicsImageRendererContext *context){
+            [UIColor.blackColor setFill]; UIRectFill(CGRectMake(0,0,8,8));
+        }];
+        [viewer setValue:image forKey:@"lastFramebuffer"];
         [viewer setValue:@YES forKey:@"changingDisplayMode"]; [viewer setValue:@YES forKey:@"mirrorFullRestartUsed"];
         [viewer setValue:target forKey:@"modeTargetPreset"]; [viewer setValue:@1 forKey:@"modePreviousPreset"];
         [viewer showConnectionFailureStage:target.intValue == 0 ? 116 : 117];
         CompanionVNCSession *old=viewer.session;
-        void (^fallback)(void)=[viewer valueForKey:@"recoveryInputOnlyAction"]; XCTAssertNotNil(fallback);
+        NSDictionary *action=[viewer displayMenuSections].lastObject[@"items"][0];
+        XCTAssertEqualObjects(action[@"kind"],@"inputOnly"); XCTAssertFalse([action[@"disabled"] boolValue]);
         __block NSUInteger connects=0,disconnects=0,saves=0;
         viewer.disconnectHandler=^{ disconnects++; };
         viewer.desktopSizeSelectionHandler=^(NSInteger preset){ saves++; };
@@ -1668,14 +1667,13 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
             connects++; XCTAssertEqualObjects(user,@"synthetic"); XCTAssertEqualObjects(password,@"transient"); XCTAssertFalse(remember);
             [weakViewer prepareConnection];
         };
-        fallback();
+        [viewer performControlAction:action];
         XCTAssertTrue(viewer.inputOnly); XCTAssertTrue(viewer.session.inputOnly); XCTAssertNotEqual(viewer.session,old);
         XCTAssertEqual(connects,1); XCTAssertEqual(disconnects,1); XCTAssertEqual(saves,0);
         XCTAssertEqual(viewer.restoredDesktopSizePreset,1); XCTAssertEqual(viewer.mirrorRetirementDelay,0);
         XCTAssertNil(old.stateHandler); XCTAssertNil(old.frameHandler); XCTAssertNil(old.displayLayoutHandler);
         XCTAssertNil([viewer valueForKey:@"failedDisplayModePreset"]); XCTAssertNil([viewer valueForKey:@"lastFramebuffer"]);
         for (NSString *key in @[@"changingDisplayMode",@"restoreViewportPending",@"checkingResume",@"awaitingReplacementLayout"]) XCTAssertFalse([[viewer valueForKey:key] boolValue]);
-        fallback(); XCTAssertEqual(connects,1, @"The retired recovery card cannot restart the replacement");
         rfbClient *client=rfbGetClient(8,3,4); client->width=2; client->height=2;
         [viewer.session configureClient:client]; XCTAssertTrue([viewer.session allocate:client]);
         for (NSString *key in @[@"running",@"established",@"inputReady"]) [viewer.session setValue:@YES forKey:key];
@@ -1692,29 +1690,13 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
         [viewer stopViewer]; rfbClientCleanup(client);
     }
 }
-- (void)testStaleOrInactiveInputOnlyRecoveryCannotReplaceAnotherConnection {
-    for (NSString *boundary in @[@"replacement",@"inactive",@"exit"]) {
-        CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
-        id<DesktopLoginRecoveryTesting> login=[viewer valueForKey:@"credentialState"];
-        [login editWithUsername:@"synthetic" password:@"transient" remember:NO]; [login beginLogin]; [login authenticated];
-        [viewer setValue:@YES forKey:@"changingDisplayMode"]; [viewer setValue:@2 forKey:@"modeTargetPreset"];
-        [viewer showConnectionFailureStage:117];
-        void (^fallback)(void)=[viewer valueForKey:@"recoveryInputOnlyAction"]; XCTAssertNotNil(fallback);
-        __block NSUInteger connects=0; viewer.connectHandler=^(NSString *u,NSString *p,BOOL remember){ connects++; };
-        if ([boundary isEqualToString:@"replacement"]) [viewer prepareConnection];
-        else if ([boundary isEqualToString:@"inactive"]) [viewer becameInactive];
-        else [viewer stopViewer];
-        fallback(); XCTAssertEqual(connects,0); XCTAssertFalse(viewer.inputOnly);
-        viewer.connectHandler=nil; [viewer stopViewer];
-    }
-}
-- (void)testInputOnlyRecoveryConfirmsActiveFilesAndRejectsStaleConfirmation {
+- (void)testInputOnlyMenuActionConfirmsActiveFilesAndRejectsStaleConfirmation {
     for (NSString *boundary in @[@"accept",@"cancel",@"replacement",@"inactive",@"exit"]) {
         DesktopSizeSession *old=[DesktopSizeSession new]; DesktopSizeViewer *viewer=[self viewerWithSession:old];
         [viewer setValue:@5 forKey:@"pendingStreamDisplayID"];
         __block NSUInteger retires=0; viewer.disconnectHandler=^{retires++;};
         viewer.filesTransferActiveHandler=^{return YES;};
-        viewer.inputOnly=YES; // Never retire a borrowed transfer before confirmation.
+        [viewer performControlAction:[viewer displayMenuSections].lastObject[@"items"][0]];
         XCTAssertFalse(viewer.inputOnly); XCTAssertEqual(retires,0); XCTAssertFalse(viewer.requestedResume);
         [viewer cancelDisplayModeConfirmation];
         UIAlertController *alert=[viewer inputOnlyConfirmation]; XCTAssertNotNil(alert);
@@ -1733,68 +1715,54 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
         viewer.disconnectHandler=nil; viewer.filesTransferActiveHandler=nil; [viewer stopViewer];
     }
 }
-- (void)testPendingDisplayProgressKeepsOneActionAndFailureOffersIndependentInputOnly {
+- (void)testPendingDisplayProgressShowsCancelAndFailureRestoresRetry {
     XCTAssertFalse([self.fixture[@"displayModeHandoffPolicy"][@"pendingNoFrameInputOnlyAction"] boolValue]);
     for (NSNumber *hadInitialFrame in @[@NO,@YES]) {
-    CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
-    id<DesktopLoginRecoveryTesting> login=[viewer valueForKey:@"credentialState"];
-    [login editWithUsername:@"synthetic" password:@"transient" remember:NO]; [login beginLogin];
-    [viewer setValue:@YES forKey:@"starting"]; [viewer setValue:@YES forKey:@"changingDisplayMode"];
-    [viewer setValue:@2 forKey:@"modeTargetPreset"]; [viewer setValue:@0 forKey:@"modePreviousPreset"];
-    if (hadInitialFrame.boolValue) {
-        UIImage *image=[[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(8,8)] imageWithActions:^(UIGraphicsImageRendererContext *context){ [UIColor.blueColor setFill]; UIRectFill(CGRectMake(0,0,8,8)); }];
-        [viewer frame:image];
-    }
-    [viewer updateConnectionChrome];
-    XCTAssertEqual([viewer valueForKey:@"lastFramebuffer"] != nil,hadInitialFrame.boolValue);
-    XCTAssertFalse(((UIView *)[viewer valueForKey:@"loginScroll"]).hidden);
-    XCTAssertTrue(((UIView *)[viewer valueForKey:@"controls"]).hidden);
-    NSMutableArray<UIView *> *views=[NSMutableArray arrayWithObject:viewer.view]; UIButton *action=nil;
-    for (NSUInteger i=0;i<views.count;i++) {
-        UIView *view=views[i]; [views addObjectsFromArray:view.subviews];
-        if ([view.accessibilityIdentifier isEqualToString:@"connection-inputOnly"] && [view isKindOfClass:UIButton.class]) action=(UIButton *)view;
-    }
-    XCTAssertNotNil(action); if (!action) { [viewer stopViewer]; return; }
-    XCTAssertTrue(action.hidden);
-    [viewer showConnectionFailureStage:117]; // Only a display failure offers video-free recovery.
-    void (^fallback)(void)=[viewer valueForKey:@"recoveryInputOnlyAction"]; XCTAssertNotNil(fallback);
-    if (!fallback) { [viewer stopViewer]; return; }
-    CompanionVNCSession *old=viewer.session; __block NSUInteger connects=0,retires=0,saves=0;
-    __weak CompanionVNCViewer *weak=viewer;
-    viewer.connectHandler=^(NSString *u,NSString *p,BOOL remember){ connects++; XCTAssertEqualObjects(u,@"synthetic"); XCTAssertEqualObjects(p,@"transient"); XCTAssertFalse(remember); [weak prepareConnection]; };
-    viewer.disconnectHandler=^{retires++;}; viewer.desktopSizeSelectionHandler=^(NSInteger preset){saves++;};
-    fallback();
-    XCTAssertEqual(connects,1); XCTAssertEqual(retires,1); XCTAssertEqual(saves,0);
-    XCTAssertNotEqual(viewer.session,old); XCTAssertTrue(viewer.session.inputOnly); XCTAssertTrue(viewer.inputOnly);
-    XCTAssertNil(old.stateHandler); XCTAssertNil(old.frameHandler); XCTAssertNil(old.displayLayoutHandler);
-    XCTAssertNil([viewer valueForKey:@"failedDisplayModePreset"]); XCTAssertFalse([[viewer valueForKey:@"changingDisplayMode"] boolValue]);
-    XCTAssertEqual(viewer.restoredDesktopSizePreset,0); XCTAssertTrue(action.hidden);
-    viewer.connectHandler=nil; viewer.disconnectHandler=nil; [viewer stopViewer];
+        CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
+        id<DesktopLoginRecoveryTesting> login=[viewer valueForKey:@"credentialState"];
+        [login editWithUsername:@"synthetic" password:@"transient" remember:NO]; [login beginLogin];
+        [viewer setValue:@YES forKey:@"starting"]; [viewer setValue:@YES forKey:@"changingDisplayMode"];
+        [viewer setValue:@2 forKey:@"modeTargetPreset"]; [viewer setValue:@0 forKey:@"modePreviousPreset"];
+        if (hadInitialFrame.boolValue) {
+            UIImage *image=[[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(8,8)] imageWithActions:^(UIGraphicsImageRendererContext *context){
+                [UIColor.blueColor setFill]; UIRectFill(CGRectMake(0,0,8,8));
+            }];
+            [viewer frame:image];
+        }
+        [viewer updateConnectionChrome];
+        XCTAssertEqual([viewer valueForKey:@"lastFramebuffer"] != nil,hadInitialFrame.boolValue);
+        XCTAssertFalse(((UIView *)[viewer valueForKey:@"loginScroll"]).hidden);
+        XCTAssertTrue(((UIView *)[viewer valueForKey:@"controls"]).hidden);
+        UIStackView *actions=[viewer valueForKey:@"loginActions"];
+        XCTAssertEqualObjects([actions.arrangedSubviews valueForKey:@"accessibilityIdentifier"],(@[@"mac-login-connect",@"mac-login-cancel"]));
+        UIButton *connect=[viewer valueForKey:@"connect"], *cancel=[viewer valueForKey:@"loginCancel"];
+        XCTAssertTrue(connect.hidden); XCTAssertFalse(cancel.hidden);
+        [viewer showConnectionFailureStage:117];
+        XCTAssertNotNil([viewer valueForKey:@"recoveryController"]);
+        XCTAssertEqualObjects([viewer valueForKey:@"failedDisplayModePreset"],@2);
+        XCTAssertFalse(viewer.inputOnly);
+        if (!hadInitialFrame.boolValue) {
+            XCTAssertFalse(connect.hidden); XCTAssertEqualObjects(connect.currentTitle,@"Reconnect");
+            XCTAssertFalse(cancel.hidden);
+        }
+        [viewer stopViewer];
     }
 }
-- (void)testInputOnlyRecoveryWithoutSessionCredentialsShowsItsOwnLogin {
+- (void)testInputOnlyMenuActionWithoutSessionCredentialsShowsItsOwnLogin {
     CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
+    UIImage *image=[[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(8,8)] imageWithActions:^(UIGraphicsImageRendererContext *context){
+        [UIColor.blackColor setFill]; UIRectFill(CGRectMake(0,0,8,8));
+    }];
+    [viewer setValue:image forKey:@"lastFramebuffer"];
     [viewer setValue:@YES forKey:@"changingDisplayMode"]; [viewer setValue:@2 forKey:@"modeTargetPreset"];
     [viewer showConnectionFailureStage:118]; // No retained login; input-only must show its own fields.
     __block NSUInteger connects=0; viewer.connectHandler=^(NSString *u,NSString *p,BOOL remember){ connects++; };
-    void (^fallback)(void)=[viewer valueForKey:@"recoveryInputOnlyAction"]; XCTAssertNotNil(fallback);
-    if (!fallback) { [viewer stopViewer]; return; }
-    fallback();
+    [viewer performControlAction:[viewer displayMenuSections].lastObject[@"items"][0]];
     XCTAssertEqual(connects,0); XCTAssertTrue(viewer.inputOnly); XCTAssertNil([viewer valueForKey:@"failedDisplayModePreset"]);
-    XCTAssertFalse(((UIView *)[viewer valueForKey:@"login"]).hidden); XCTAssertNil([viewer valueForKey:@"recoveryInputOnlyAction"]);
+    XCTAssertFalse(((UIView *)[viewer valueForKey:@"login"]).hidden); XCTAssertNil([viewer valueForKey:@"recoveryController"]);
     XCTAssertEqualObjects(((UITextField *)[viewer valueForKey:@"username"]).text,@"");
     XCTAssertEqualObjects(((UITextField *)[viewer valueForKey:@"password"]).text,@"");
     viewer.connectHandler=nil; [viewer stopViewer];
-}
-
-- (void)testNonDisplayFailuresDoNotOfferInputOnlyAsAnAuthenticationBypass {
-    for (NSNumber *stage in @[@0,@111,@112,@113,@114,@115]) {
-        CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
-        [viewer setValue:@YES forKey:@"changingDisplayMode"]; [viewer setValue:@2 forKey:@"modeTargetPreset"];
-        [viewer showConnectionFailureStage:stage.integerValue];
-        XCTAssertNil([viewer valueForKey:@"recoveryInputOnlyAction"],@"stage %@",stage);
-        XCTAssertFalse(viewer.inputOnly); [viewer stopViewer];
-    }
 }
 
 - (void)testDisplayRecoveryDoesNotPermanentlyDisableInputOnly {

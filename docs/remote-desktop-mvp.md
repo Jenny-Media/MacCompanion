@@ -147,7 +147,7 @@ accepted session option changes, composer expansion/docking and committed edge s
 use selection feedback. Reselecting an option, cancelled gestures and restoring
 settings stay silent. Remote key buttons dim while input is unavailable and resume
 without queued presses or armed modifiers. Local keyboard visibility, presentation,
-settings and input-only recovery remain available during a temporary input pause.
+settings and the Display menu's input-only action remain available during a temporary input pause.
 Session key menus close when input becomes unavailable;
 deferred menu choices cannot act on a retired or replacement connection. Desktop-size
 feedback compares the live geometry without changing verified preference saving.
@@ -598,8 +598,9 @@ progress readable without changing authentication or remote admission policy.
 Sign-in and connecting panels sit near the bottom of the available region,
 above the keyboard. Compact, folded and accessibility layouts can scroll.
 Connecting keeps the Mac identity, progress and Cancel, without credential
-management or a competing Trackpad action. Failed display-mode recovery keeps
-its independent Trackpad & Keyboard action. Saved Login is managed in Mac
+management or a competing Trackpad action. Failed display-mode recovery offers a
+retry and connection details. Trackpad & Keyboard is available from My Macs and
+the Display menu. Saved Login is managed in Mac
 Settings; opening Terminal sign-in settings preserves the unsaved shared draft,
 and cancelling or entering the background clears it without saving.
 

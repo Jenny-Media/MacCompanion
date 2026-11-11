@@ -49,16 +49,16 @@ the failed target using session login recovery. Transport failures during an
 active mode restart retain this private recovery without refilling unremembered
 form fields; credential/trust rejection and explicit cancellation still end it.
 Deliberate form edits discard the old private recovery before a new attempt.
-Trackpad & Keyboard is available from My Macs and display-failure recovery,
-independently of display setup. Selecting it abandons that operation, retires its native and SSH owners,
-and opens a fresh input-only connection using the existing bounded login recovery.
-No virtual-display request, physical-display verification, pixel baseline or host
-cleanup delay is required. Keep the previous saved display choice. Offer this action
-on the failure card even before an image arrives. Normal connection progress shows
-identity, status and Cancel only; input-only remains a separate list/menu action
-and a failure-recovery action. Stale recovery actions, background,
-app lock and exit cannot start a replacement. If session credentials are unavailable,
-show the normal input-only login form; never bypass authentication or server trust.
+The display failure card offers a retry and connection details. Normal connection
+progress shows identity, status and Cancel only. Trackpad & Keyboard is available
+from My Macs and the Display menu. Selecting it from the Display menu during a
+failed display transition abandons that operation, retires its native and SSH
+owners, and opens a fresh input-only connection using the existing bounded login
+recovery. No virtual-display request, physical-display verification, pixel baseline
+or host cleanup delay is required. Keep the previous saved display choice.
+Background, app lock and exit cannot start a replacement. If session credentials
+are unavailable, show the normal input-only login form; never bypass authentication
+or server trust.
 If replacing that owner will interrupt an active borrowed Files transfer, confirm
 that interruption first. Cancellation leaves its owner and transfer unchanged; a
 confirmation cannot cross owner replacement, backgrounding or exit.
