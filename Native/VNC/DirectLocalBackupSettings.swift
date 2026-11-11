@@ -117,7 +117,15 @@ struct DirectLocalBackupSettings: View {
                     if let problem = store.problem {
                         Section { Label(problem, systemImage: "exclamationmark.circle").foregroundStyle(.red) }
                     }
-                    Section {
+                }
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    DirectConnectionFooter {
+                        if !connections.entries.isEmpty {
+                            Text("Disconnect active Mac sessions to restore this backup.")
+                                .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("backup-restore-active-sessions")
+                        }
                         Button(role: .destructive) {
                             Task {
                                 if selected.previous { await store.restorePrevious() }
@@ -125,12 +133,16 @@ struct DirectLocalBackupSettings: View {
                                 if store.problem == nil { selection = nil }
                             }
                         } label: {
-                            if store.busy { HStack { ProgressView(); Text("Restoring…") } }
-                            else { Text(selected.previous ? "Restore Previous Data" : "Restore Backup") }
-                        }.disabled(working || !lock.canAccess || !connections.entries.isEmpty)
+                            Group {
+                                if store.busy { HStack { ProgressView(); Text("Restoring…") } }
+                                else { Text(selected.previous ? "Restore Previous Data" : "Restore Backup") }
+                            }.frame(maxWidth: .infinity, minHeight: 32)
+                        }.buttonStyle(.bordered).controlSize(.large)
+                            .disabled(working || !lock.canAccess || !connections.entries.isEmpty)
                             .accessibilityIdentifier("backup-confirm-restore")
                     }
-                }.navigationTitle(selected.previous ? "Previous Data" : "Restore Backup").directInlineNavigationTitle()
+                }
+                .navigationTitle(selected.previous ? "Previous Data" : "Restore Backup").directInlineNavigationTitle()
                     .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { selection = nil }.disabled(store.busy).accessibilityIdentifier("backup-cancel") } }
             }.directAppearance().interactiveDismissDisabled(store.busy)
         }

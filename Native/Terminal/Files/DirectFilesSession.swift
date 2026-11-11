@@ -51,6 +51,8 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     private(set) var preparedUploads: [URL] = []
     private(set) var busy = false
     var message: String?
+    private(set) var requiresSavedLogin = false
+    private(set) var requiresIdentityVerification = false
     var trust: Trust?
     var conflict: Conflict?
     #if os(iOS)
@@ -60,6 +62,15 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     private var borrowedIsCurrent: (@MainActor () -> Bool)?
     private var borrowedGeneration: UUID?
     var isBorrowed: Bool { borrowedGeneration != nil }
+    func requireSavedLogin(_ message: String) {
+        requiresSavedLogin = true
+        self.message = message
+    }
+    func clearSavedLoginRequirement() {
+        guard requiresSavedLogin else { return }
+        requiresSavedLogin = false
+        message = nil
+    }
     func disconnectBorrowed(_ owner: UUID) {
         if borrowedGeneration == owner { disconnect(message: "The parent session ended. Completed downloads are kept; reconnect before retrying interrupted transfers.") }
     }
@@ -337,11 +348,12 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                 let openingFiles = ssh != nil
                 retire(); phase = .interrupted
                 if let failure = error as? TerminalSecretStore.Failure, failure == .changedKey {
+                    requiresIdentityVerification = true
                     message = "The Mac’s SSH identity changed. Verify it before reconnecting. Existing trust is kept."
                 } else if let failure = error as? TerminalSecretStore.Failure, failure == .rejectedKey {
                     message = "Server identity was not approved. No file connection was opened."
                 } else if DirectTerminalSession.reason(for: error, keyLogin: key != nil) == .loginRejected || DirectTerminalSession.reason(for: error, keyLogin: key != nil) == .keyRejected {
-                    message = "Remote Login did not accept this account or key. Check the login and allowed users on the Mac."
+                    requireSavedLogin("Your Mac didn’t accept this login. Check the saved account or SSH key and the users allowed in Remote Login.")
                 } else if openingFiles { message = "SSH connected, but Files could not open. Check SFTP availability and this account’s folder permissions." }
                 else { message = "Couldn’t connect to Remote Login. Check the network, saved SSH port and Remote Login settings on your Mac." }
                 status = "Sign In Required"
@@ -544,6 +556,8 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     }
     private func retire() {
         establishedIndependentLogin = false
+        requiresSavedLogin = false
+        requiresIdentityVerification = false
         #if os(iOS)
         let pendingWork = work
         #endif
