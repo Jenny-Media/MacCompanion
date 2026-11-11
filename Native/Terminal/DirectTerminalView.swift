@@ -63,6 +63,7 @@ struct DirectTerminalView: View {
         }
     }
     @State private var sheet: Sheet?
+    @State private var filesSheetPresented = false
     @State private var confirmingExit = false
     @State private var controlsReloadPending = false
     @State private var controlsContextImage: UIImage?
@@ -184,7 +185,7 @@ struct DirectTerminalView: View {
                 TerminalSurface(session: session, style: appearance.terminal.style(app: appearance.app), customize: { sheet = .keyboard }, contextImage: { controlsContextImage = $0 }, filesStatus: files.transferActive ? files.activityTitle : "", action: handleControls)
                     .ignoresSafeArea(.container, edges: session.connected ? .top : [])
                     .opacity(session.connected ? 1 : 0).allowsHitTesting(session.connected).accessibilityHidden(!session.connected)
-                if !isClosing && !session.macRemoved && !session.connected && !session.completedNormally {
+                if !isClosing && !session.macRemoved && !session.connected && !session.completedNormally && !filesSheetPresented {
                     if let connectionPanel {
                         DirectConnectionPanelContent(host: connectionPanel, cancel: closeSession, preferredHeight: showsConnectionProgress ? nativeProgressHeight : nativeFormHeight + nativeFooterHeight, preventsDismissal: showsConnectionProgress) {
                             nativeLoginContent
@@ -209,7 +210,13 @@ struct DirectTerminalView: View {
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
-            .sheet(item: Binding(get: { connectionPanel != nil && !session.connected ? nil : sheet }, set: { sheet = $0 }), onDismiss: { refreshControlsAfterDismissal(); if let updated = macLibrary?.macs.first(where: { $0.id == mac.id }) { session.updateMac(updated) } }) { destination in
+            .sheet(item: Binding(get: {
+                connectionPanel != nil && !session.connected && !filesSheetPresented ? nil : sheet
+            }, set: { sheet = $0 }), onDismiss: {
+                filesSheetPresented = false
+                refreshControlsAfterDismissal()
+                if let updated = macLibrary?.macs.first(where: { $0.id == mac.id }) { session.updateMac(updated) }
+            }) { destination in
                 secondarySheet(destination)
             }
             .sheet(item: Binding(get: { connectionPanel == nil ? session.trust : nil }, set: { session.trust = $0 })) { request in
@@ -219,7 +226,7 @@ struct DirectTerminalView: View {
         // Keep the mounted session owner, but let the real Mac list show through
         // while its login/progress content lives in the native sheet. Removed-Mac
         // downloads stay visible in this owner until they are saved or discarded.
-        .opacity(connectionPanel != nil && !session.connected && !session.macRemoved ? 0 : 1)
+        .opacity(connectionPanel != nil && !session.connected && !session.macRemoved && !filesSheetPresented ? 0 : 1)
         // The native terminal owns keyboard avoidance through its layout guide.
         // Keep SwiftUI from shrinking the same connected surface a second time;
         // the sign-in card still uses SwiftUI's normal keyboard avoidance.
@@ -327,7 +334,10 @@ struct DirectTerminalView: View {
     }
     private func handleControls(_ action: String) {
         switch action {
-        case "files": sheet = .files
+        case "files":
+            // A lost shell leaves this presenter in charge until Files is dismissed.
+            filesSheetPresented = true
+            sheet = .files
         case "connectionInfo": sheet = .connectionInfo
         case "appSettings": sheet = .appSettings
         case "macSettings": sheet = .macSettings

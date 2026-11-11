@@ -103,7 +103,7 @@ struct DirectFilesView: View {
                     Menu("More", systemImage: "ellipsis.circle") {
                         Button("Setup Guide", systemImage: "questionmark.circle") { sheet = .setup }
                         #if os(iOS)
-                        if standaloneRecovery == .rejectedLogin, !session.busy, !session.macRemoved {
+                        if standaloneRecovery?.reason == .rejectedLogin, !session.busy, !session.macRemoved {
                             Button("Try Again", systemImage: "arrow.clockwise", action: connectCompanion)
                                 .accessibilityIdentifier("files-retry-saved-login")
                         }
@@ -230,7 +230,9 @@ struct DirectFilesView: View {
         #endif
         .onChange(of: accessAllowed()) { _, allowed in
             if !allowed {
-                suspendSignIn(); session.disconnect(); sheet = nil
+                suspendSignIn()
+                session.pauseConnection(message: "Files stopped when the app locked. Reconnect after unlocking.")
+                sheet = nil
                 key = nil; keyName = ""; newFolder = false; folderName = ""
             }
             else { resumeSignIn() }
@@ -309,7 +311,7 @@ struct DirectFilesView: View {
         contextProvider == nil ? session.connectionRecovery : nil
     }
     private var requiresSavedLogin: Bool {
-        standaloneRecovery == .missingLogin || standaloneRecovery == .rejectedLogin
+        standaloneRecovery?.reason == .missingLogin || standaloneRecovery?.reason == .rejectedLogin
     }
     private var needsSessionReconnect: Bool {
         guard let contextProvider else { return false }
@@ -328,14 +330,14 @@ struct DirectFilesView: View {
                 } else if needsSessionReconnect {
                     Label("Mac session ended", systemImage: "rectangle.connected.to.line.below")
                     Text("Reconnect your Mac session, then reopen Files.").foregroundStyle(.secondary)
-                } else if standaloneRecovery == .identityChanged {
+                } else if let recovery = standaloneRecovery, recovery.reason == .identityChanged {
                     Label("Verify your Mac", systemImage: "lock.shield")
-                    if let message = session.message { Text(message).foregroundStyle(.secondary) }
+                    Text(recovery.message).foregroundStyle(.secondary)
                 } else {
                     Label(requiresSavedLogin ? "Check your Mac login" : "Files for " + mac.name,
                           systemImage: requiresSavedLogin ? "person.badge.key" : "folder")
-                    if let message = session.message {
-                        Text(standaloneRecovery == .rejectedLogin
+                    if let message = standaloneRecovery?.message ?? session.message {
+                        Text(standaloneRecovery?.reason == .rejectedLogin
                             ? message + " If you changed Remote Login on your Mac, choose More → Try Again."
                             : message).foregroundStyle(.secondary)
                     } else {
@@ -359,7 +361,7 @@ struct DirectFilesView: View {
                             .accessibilityIdentifier("files-cancel-connection")
                     } else if needsSessionReconnect {
                         filesConnectionButton("Back to Session", symbol: "arrow.backward", identifier: "files-back-to-session", action: finishDismissal)
-                    } else if standaloneRecovery == .identityChanged {
+                    } else if standaloneRecovery?.reason == .identityChanged {
                         filesConnectionButton("How to Verify", symbol: "lock.shield", identifier: "files-verify-identity") { sheet = .identity }
                     } else if requiresSavedLogin {
                         filesConnectionButton("Saved Login", symbol: "person.badge.key", identifier: "files-saved-login") { sheet = .access }

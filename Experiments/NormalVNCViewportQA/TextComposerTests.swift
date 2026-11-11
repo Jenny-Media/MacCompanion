@@ -169,6 +169,39 @@ import StoreKitTest
         XCTAssertEqual(bar.alpha, 1, "Returning to a roomy layout restores the temporarily yielded strip")
     }
 
+    func testDeliveryWarningKeepsTightEditorAboveShortcutBar() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
+        let root = UIViewController(); window.rootViewController = root; window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible() }
+        let bar = TerminalKeyboardBar(terminal: nil, preferences: .init())
+        root.view.addSubview(bar)
+        let draft = DirectTextComposerDraft(macName: "Synthetic Mac", mode: .desktop)
+        draft.configure(available: { true }, send: { _, complete in
+            complete("Text may have been partially sent. Check your Mac before sending it again.")
+        })
+        draft.edit("test draft")
+        let panel = DirectTextComposerPanel(draft: draft); panel.shortcutBar = bar
+        root.addChild(panel); root.view.addSubview(panel.view); panel.didMove(toParent: root)
+        panel.traitOverrides.preferredContentSizeCategory = .large
+        panel.view.frame = .init(x: 0, y: 0, width: 390, height: 400)
+        panel.view.layoutIfNeeded()
+        panel.setDivisionForComposerTesting(NSValue(cgRect: .null))
+        let safe = panel.view.safeAreaLayoutGuide.layoutFrame, stripTop = safe.minY + 144
+        let strip = CGRect(x: safe.minX, y: stripTop, width: safe.width, height: 52)
+        bar.frame = panel.view.convert(strip, to: root.view)
+        panel.simulatedKeyboardFrame = CGRect(x: safe.minX, y: strip.maxY, width: safe.width,
+            height: safe.maxY - strip.maxY)
+        let originalArea = panel.placementArea
+        XCTAssertEqual(bar.alpha, 1)
+
+        draft.requestSend()
+        panel.view.setNeedsLayout(); panel.view.layoutIfNeeded()
+        XCTAssertEqual(panel.placementArea, originalArea)
+        XCTAssertEqual(bar.alpha, 1)
+        XCTAssertTrue(draft.deliveryIssueInDetails)
+    }
+
     func testNearLimitCounterKeepsFlatEditorAndActionsInsideTheirPane() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)

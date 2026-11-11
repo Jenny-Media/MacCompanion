@@ -249,14 +249,19 @@ import XCTest
         let editor = app.textViews["compose-text"]
         XCTAssertTrue(editor.waitForExistence(timeout: 5))
         XCTAssertEqual(editor.value as? String, "retry draft")
-        app.buttons["compose-send"].tap()
         let warning = app.alerts["Text delivery"].firstMatch
         let message = warning.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Synthetic delivery failure")).firstMatch
-        XCTAssertTrue(message.waitForExistence(timeout: 5))
-        XCTAssertTrue(message.label.contains("Current draft: 11 / 4,096 characters"))
-        warning.buttons["Done"].firstMatch.tap(); XCTAssertTrue(warning.waitForNonExistence(timeout: 5))
-        XCTAssertEqual(editor.value as? String, "retry draft")
-        XCTAssertTrue(app.buttons["compose-send"].isEnabled); XCTAssertTrue(app.buttons["compose-back"].isEnabled)
+        for attempt in 1...2 {
+            app.buttons["compose-send"].tap()
+            guard message.waitForExistence(timeout: 5) else {
+                XCTFail("Expected a compact alert for failed attempt \(attempt)")
+                return
+            }
+            XCTAssertTrue(message.label.contains("Current draft: 11 / 4,096 characters"))
+            warning.buttons["Done"].firstMatch.tap(); XCTAssertTrue(warning.waitForNonExistence(timeout: 5))
+            XCTAssertEqual(editor.value as? String, "retry draft")
+            XCTAssertTrue(app.buttons["compose-send"].isEnabled); XCTAssertTrue(app.buttons["compose-back"].isEnabled)
+        }
         app.buttons["compose-send"].tap()
         let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: app.buttons["qa-compose"])
         XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed)
@@ -300,7 +305,7 @@ import XCTest
         XCTAssertEqual(editor.value as? String, retained)
         XCTAssertFalse(app.staticTexts["compose-limit-count"].exists)
         XCTAssertTrue(app.buttons["compose-send"].isEnabled)
-        let warning = "Paste too large. Your previous text was kept. Use a selection up to 16 KB."
+        let warning = "Drafts can contain up to 16 KB. Your previous text was kept."
         let count = "Current draft: 3,277 / 4,096 characters"
         XCTAssertTrue(warningButton.label.contains(warning)); XCTAssertTrue(warningButton.label.contains(count))
         warningButton.tap()

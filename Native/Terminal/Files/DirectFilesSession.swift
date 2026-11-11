@@ -17,7 +17,11 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
 
 @MainActor @Observable final class DirectFilesSession {
     enum Phase: String { case signIn = "Sign In Required", connecting = "Connecting", ready = "Ready", interrupted = "Disconnected" }
-    enum ConnectionRecovery { case missingLogin, rejectedLogin, identityChanged }
+    struct ConnectionRecovery {
+        enum Reason { case missingLogin, rejectedLogin, identityChanged }
+        let reason: Reason
+        let message: String
+    }
     enum ConflictChoice { case keepBoth, replace, cancel }
     struct Trust: Identifiable { let id = UUID(); let fingerprint: String }
     struct Conflict: Identifiable { let id = UUID(); let name: String; let replaceAllowed: Bool }
@@ -51,7 +55,11 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     private(set) var resultsAccount = ""
     private(set) var preparedUploads: [URL] = []
     private(set) var busy = false
-    var message: String?
+    private var statusMessage: String?
+    var message: String? {
+        get { statusMessage ?? connectionRecovery?.message }
+        set { statusMessage = newValue }
+    }
     private(set) var connectionRecovery: ConnectionRecovery?
     var trust: Trust?
     var conflict: Conflict?
@@ -62,14 +70,12 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     private var borrowedIsCurrent: (@MainActor () -> Bool)?
     private var borrowedGeneration: UUID?
     var isBorrowed: Bool { borrowedGeneration != nil }
-    func reportConnectionRecovery(_ recovery: ConnectionRecovery, message: String) {
-        connectionRecovery = recovery
-        self.message = message
+    func reportConnectionRecovery(_ reason: ConnectionRecovery.Reason, message: String) {
+        statusMessage = nil
+        connectionRecovery = .init(reason: reason, message: message)
     }
     func clearConnectionRecovery() {
-        guard connectionRecovery != nil else { return }
         connectionRecovery = nil
-        message = nil
     }
     func disconnectBorrowed(_ owner: UUID) {
         if borrowedGeneration == owner { disconnect(message: "The parent session ended. Completed downloads are kept; reconnect before retrying interrupted transfers.") }
@@ -117,7 +123,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
             MainActor.assumeIsolated {
                 guard let self, !self.closed, !self.macRemoved else { return }
                 self.loginDraft.suspend()
-                self.disconnect(message: "Files paused. Reconnect, then Retry any interrupted transfer.")
+                self.pauseConnection(message: "Files paused. Reconnect, then Retry any interrupted transfer.")
             }
         }
     }
@@ -129,7 +135,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                 guard let self, !self.closed, !self.macRemoved else { return }
                 if !self.canAccess() {
                     self.loginDraft.suspend()
-                    self.disconnect(message: "Files stopped when the app locked. Reconnect after unlocking.")
+                    self.pauseConnection(message: "Files stopped when the app locked. Reconnect after unlocking.")
                 }
                 self.observeAccess()
             }
@@ -547,6 +553,10 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         }
         disconnect(message: "Transfer stopped. Reconnect and Retry when ready.")
         return false
+    }
+    func pauseConnection(message: String) {
+        guard phase == .connecting || phase == .ready else { return }
+        disconnect(message: message)
     }
     func disconnect(message: String? = nil) {
         if establishedIndependentLogin { loginDraft.passwordSessionEnded() }

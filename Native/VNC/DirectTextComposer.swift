@@ -116,7 +116,12 @@ struct DirectComposedText: Equatable {
     var narrowLayout = false
     var counterInDetails = false
     var deliveryIssueInDetails = false
-    private(set) var deliveryIssue: String?
+    struct DeliveryFailure {
+        let attempt: UUID
+        let message: String
+    }
+    private(set) var deliveryFailure: DeliveryFailure?
+    var deliveryIssue: String? { deliveryFailure?.message }
     var issue: String?
     var confirmation: DirectComposedText?
     @ObservationIgnored private var epoch = UUID()
@@ -163,10 +168,10 @@ struct DirectComposedText: Equatable {
     func edit(_ value: String) {
         guard active, !sending else { return }
         guard value.utf8.count <= DirectComposedText.draftMaximumBytes else {
-            issue = "Paste too large. Your previous text was kept. Use a selection up to 16 KB."
+            issue = "Drafts can contain up to 16 KB. Your previous text was kept."
             return
         }
-        text = value; issue = nil; deliveryIssue = nil; confirmation = nil
+        text = value; issue = nil; deliveryFailure = nil; confirmation = nil
     }
     func requestSend() {
         guard canSend else { return }
@@ -188,18 +193,21 @@ struct DirectComposedText: Equatable {
         guard canSend, available(), let send else { invalidate(); return }
         let token = epoch, delivery = UUID()
         deliveryID = delivery
-        sending = true; issue = nil; deliveryIssue = nil; sendingChanged?(true)
+        sending = true; issue = nil; deliveryFailure = nil; sendingChanged?(true)
         send(prepared.text) { [weak self] error in
             guard let self, self.epoch == token, self.active, self.sending, self.deliveryID == delivery else { return }
             guard self.available() else { self.invalidate(); return }
             self.deliveryID = nil; self.sending = false; self.sendingChanged?(false)
-            if let error { self.deliveryIssue = error; self.feedback("error") }
+            if let error {
+                self.deliveryFailure = .init(attempt: delivery, message: error)
+                self.feedback("error")
+            }
             else { self.feedback("success"); self.text = ""; self.close?() }
         }
     }
     func invalidate() {
         if sending { interrupted?() }
-        epoch = UUID(); deliveryID = nil; text = ""; issue = nil; deliveryIssue = nil; confirmation = nil; active = false; expanded = false; docked = false; floatingAnchor = CGPoint(x: 0.5, y: 1)
+        epoch = UUID(); deliveryID = nil; text = ""; issue = nil; deliveryFailure = nil; confirmation = nil; active = false; expanded = false; docked = false; floatingAnchor = CGPoint(x: 0.5, y: 1)
         sending = false; counterInDetails = false; available = { false }; send = nil; sendingChanged?(false); close?()
     }
 }
@@ -493,12 +501,13 @@ struct DirectComposerPlacement {
             bar = view.convert(shortcutBar.bounds, from: shortcutBar)
         } else { bar = .null }
         let executionActive = (shortcutBar as? TerminalKeyboardBar)?.executionActive == true
-        func region(includingCounter: Bool, includingDeliveryIssue: Bool = true) -> DirectComposerPlacement.Region {
+        // Choose the editor region first. Warnings can use its footer or alert
+        // without changing panes or yielding the shortcut bar.
+        func region(includingCounter: Bool) -> DirectComposerPlacement.Region {
             DirectComposerPlacement.region(safe: view.safeAreaLayoutGuide.layoutFrame,
                 division: division, keyboard: keyboardFrame, shortcutBar: bar,
                 mayYieldShortcutBar: !executionActive, minimumHeight: { width in
-                    minimumPanelHeight(width: panelWidth(in: width), includingCounter: includingCounter,
-                        includingDeliveryIssue: includingDeliveryIssue)
+                    minimumPanelHeight(width: panelWidth(in: width), includingCounter: includingCounter)
                 })
         }
         var decision = region(includingCounter: true)
@@ -506,9 +515,6 @@ struct DirectComposerPlacement {
             // The footer can disclose the count. Still make room for the editor
             // before accepting a cramped region with the strip left in place.
             decision = region(includingCounter: false)
-        }
-        if !decision.fitsEditor, draft.deliveryIssue != nil {
-            decision = region(includingCounter: false, includingDeliveryIssue: false)
         }
         if decision.yieldsShortcutBar, let shortcutBar {
             if yieldedShortcutBar == nil { shortcutBarAlpha = shortcutBar.alpha; yieldedShortcutBar = shortcutBar }
@@ -636,10 +642,9 @@ struct DirectComposerPlacement {
         let accessibility = traitCollection.preferredContentSizeCategory.isAccessibilityCategory
         return min(width, accessibility ? 360 : 284)
     }
-    private func minimumPanelHeight(width: CGFloat, includingCounter: Bool, includingDeliveryIssue: Bool) -> CGFloat {
+    private func minimumPanelHeight(width: CGFloat, includingCounter: Bool) -> CGFloat {
         let preferred = UIFont.preferredFont(forTextStyle: .body, compatibleWith: traitCollection)
         return max(112, max(44, ceil(preferred.lineHeight) + 8) + 44 + 12 + (includingCounter ? counterHeight(width: width) : 0))
-            + (includingDeliveryIssue ? deliveryIssueHeight(width: width) : 0)
     }
     private func counterHeight(width: CGFloat) -> CGFloat {
         guard let summary = draft.compactSizeSummary else { return 0 }
@@ -787,11 +792,12 @@ struct DirectComposerPlacement {
         let expanded = draft.expanded
         let width = panelWidth(in: area.width)
         let fullHeight = min(area.height, draggingHeight ?? (expanded ? area.height : compactHeight(includingCounter: true, includingDeliveryIssue: true)))
-        let deliveryIssueInDetails = draft.deliveryIssue != nil
-            && fullHeight < minimumPanelHeight(width: width, includingCounter: false, includingDeliveryIssue: true)
+        let warningHeight = deliveryIssueHeight(width: width)
+        let deliveryIssueInDetails = warningHeight > 0
+            && fullHeight < minimumPanelHeight(width: width, includingCounter: false) + warningHeight
         if draft.deliveryIssueInDetails != deliveryIssueInDetails { draft.deliveryIssueInDetails = deliveryIssueInDetails }
         let counterInDetails = draft.sizeSummary != nil
-            && fullHeight < minimumPanelHeight(width: width, includingCounter: true, includingDeliveryIssue: !deliveryIssueInDetails)
+            && fullHeight < minimumPanelHeight(width: width, includingCounter: true) + (deliveryIssueInDetails ? 0 : warningHeight)
         if draft.counterInDetails != counterInDetails { draft.counterInDetails = counterInDetails }
         grabberHeight?.constant = 44
         let hasIssue = draft.footerIssue != nil || counterInDetails
@@ -828,10 +834,11 @@ private struct DirectTextComposerView: View {
     var reportExpansionBounds: (CGRect) -> Void
     @FocusState private var editing: Bool
     @State private var showIssue = false
+    @State private var lastAutomaticDeliveryAlert: UUID?
     private var issue: String? { draft.footerIssue }
-    private var deliveryIssueInDetails: String? { draft.deliveryIssueInDetails ? draft.deliveryIssue : nil }
+    private var compactDeliveryAttempt: UUID? { draft.deliveryIssueInDetails ? draft.deliveryFailure?.attempt : nil }
     private var issueTitle: String {
-        if draft.issue == nil, deliveryIssueInDetails != nil { return "Text delivery" }
+        if draft.issue == nil, compactDeliveryAttempt != nil { return "Text delivery" }
         return issue == nil ? "Text limit" : "Can’t send this text"
     }
     private func confirmationMessage(_ reviewed: DirectComposedText) -> String {
@@ -909,8 +916,12 @@ private struct DirectTextComposerView: View {
             .onAppear { editing = true }
             .onChange(of: draft.text) { _, _ in requestLayout() }
             .onChange(of: draft.issue) { _, _ in requestLayout() }
-            .onChange(of: draft.deliveryIssue) { _, _ in requestLayout() }
-            .onChange(of: deliveryIssueInDetails) { _, message in if message != nil { showIssue = true } }
+            .onChange(of: draft.deliveryFailure?.attempt) { _, _ in requestLayout() }
+            .onChange(of: compactDeliveryAttempt, initial: true) { _, attempt in
+                guard let attempt, attempt != lastAutomaticDeliveryAlert else { return }
+                lastAutomaticDeliveryAlert = attempt
+                showIssue = true
+            }
             .onChange(of: draft.sending) { _, _ in requestLayout() }
             .onChange(of: draft.active) { _, _ in requestLayout() }
             .alert(issueTitle, isPresented: $showIssue) {

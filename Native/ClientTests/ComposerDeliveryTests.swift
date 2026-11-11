@@ -197,7 +197,7 @@ private final class ComposerBatchSession: CompanionVNCSession {
                     XCTAssertEqual(draft.detailsMessage, counterInDetails ? draft.sizeSummary : nil)
                     draft.edit(String(repeating: "x", count: DirectComposedText.draftMaximumBytes + 1))
                     XCTAssertEqual(draft.text, retained); XCTAssertTrue(draft.canSend)
-                    let warning = "Paste too large. Your previous text was kept. Use a selection up to 16 KB."
+                    let warning = "Drafts can contain up to 16 KB. Your previous text was kept."
                     XCTAssertEqual(draft.issueMessage, warning)
                     let count = mode == .terminal ? retained.utf8.count : retained.unicodeScalars.count
                     let limit = mode == .terminal ? DirectComposedText.terminalMaximumBytes : DirectComposedText.desktopMaximumScalars
@@ -222,10 +222,19 @@ private final class ComposerBatchSession: CompanionVNCSession {
         draft.edit(String(repeating: "x", count: DirectComposedText.draftMaximumBytes + 1))
 
         let details = try XCTUnwrap(draft.detailsMessage)
-        XCTAssertTrue(details.hasPrefix("Paste too large. Your previous text was kept."))
+        XCTAssertTrue(details.hasPrefix("Drafts can contain up to 16 KB. Your previous text was kept."))
         XCTAssertTrue(details.contains(delivery))
         XCTAssertEqual(draft.text, "retained draft")
         XCTAssertTrue(draft.canSend)
+    }
+    func testDraftLimitAppliesToExistingTextPlusPaste() {
+        let draft = DirectTextComposerDraft(macName: "Synthetic Mac", mode: .terminal)
+        draft.configure(available: { true }, send: { _, _ in XCTFail("Editing must not send text") })
+        let retained = String(repeating: "a", count: 12 * 1024)
+        draft.edit(retained)
+        draft.edit(retained + String(repeating: "b", count: 8 * 1024))
+        XCTAssertEqual(draft.text, retained)
+        XCTAssertEqual(draft.issueMessage, "Drafts can contain up to 16 KB. Your previous text was kept.")
     }
 }
 #endif

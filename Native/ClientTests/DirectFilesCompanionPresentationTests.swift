@@ -94,7 +94,7 @@ import Vision
 
         files.reportConnectionRecovery(.identityChanged, message: "The Mac’s SSH identity changed.")
         files.reportConnectionRecovery(.missingLogin, message: "Add a saved login.")
-        XCTAssertEqual(files.connectionRecovery, .missingLogin)
+        XCTAssertEqual(files.connectionRecovery?.reason, .missingLogin)
         files.reportConnectionRecovery(.identityChanged, message: "The Mac’s SSH identity changed.")
         files.connectBorrowed(.init(client: client, macID: mac.id, account: "another-account", keyID: nil, generation: UUID()))
         XCTAssertNil(files.connectionRecovery, "A standalone login failure cannot override a verified parent")
@@ -111,6 +111,94 @@ import Vision
         XCTAssertTrue(files.shouldCloseAfterRemoval)
         XCTAssertTrue(DirectFilesWorkspace.recoverableDownloads(libraryURL: library.storageURL).isEmpty)
     }
+    func testTerminalDropKeepsPresentedFilesUntilDismissal() async throws {
+        let probe = FilesDirectoryTestProbe(), bytes = Data([7, 8, 9])
+        let server = try await filesDirectoryTestServer(probe: probe, downloadBytes: bytes)
+        defer { Task { await probe.shutdown(); try? await server.close().get() } }
+        let root = try DirectFilesLocalStore.root(); defer { try? FileManager.default.removeItem(at: root) }
+        let library = DirectMacLibraryV1(url: root.appendingPathComponent("macs.json"), removeLogin: { _ in })
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Terminal Mac", addresses: ["127.0.0.1"],
+            sshPort: try XCTUnwrap(server.localAddress?.port))
+        XCTAssertTrue(library.save(id: mac.id, name: mac.name, addresses: mac.addresses, sshPort: mac.sshPort))
+        let client = try await SSHClient.connect(to: .init(host: "127.0.0.1", port: mac.sshPort,
+            authenticationMethod: { .passwordBased(username: "synthetic", password: "synthetic-only") }, hostKeyValidator: .acceptAnything()))
+        defer { Task { try? await client.close() } }
+        let files = DirectFilesWorkspace.session(mac, libraryURL: library.storageURL)
+        let terminal = DirectTerminalSession(mac: mac, libraryURL: library.storageURL)
+        defer { files.close(); terminal.stop() }
+        let context = DirectFilesConnectionContext(client: client, macID: mac.id, account: "synthetic", keyID: nil, generation: UUID())
+        files.connectBorrowed(context)
+        try await wait { files.phase == .ready }
+        files.download(.init(name: "sample.bin", kind: .file, size: UInt64(bytes.count)))
+        try await wait { files.hasUnsavedDownloads }
+        let download = try XCTUnwrap(files.results.first?.localDownload)
+        terminal.connected = true
+
+        let panel = DirectConnectionPanelHost()
+        let mount = try CompanionFilesMount(TerminalDownloadRecoveryHarness(mac: mac, library: library,
+            terminal: terminal, files: files, panel: panel, exited: { XCTFail("A dropped shell should offer recovery") }).directAppearance())
+        func terminalController(in controller: UIViewController) -> TerminalController? {
+            (controller as? TerminalController) ?? controller.children.lazy.compactMap { terminalController(in: $0) }.first
+        }
+        do {
+            let presenter = try XCTUnwrap(mount.window.rootViewController)
+            try await waitForRecovery("Terminal controls") { terminalController(in: presenter) != nil }
+            try XCTUnwrap(terminalController(in: presenter)?.controls.actionHandler)(["kind": "files"])
+            try await waitForRecovery("Files sheet") { presenter.presentedViewController?.viewIfLoaded?.window != nil }
+            let filesSheet = try XCTUnwrap(presenter.presentedViewController)
+            try await waitForRecovery("Files presentation to settle") { !filesSheet.isBeingPresented }
+
+            terminal.stop()
+            files.disconnectBorrowed(context.generation)
+            try await Task.sleep(for: .milliseconds(600))
+            XCTAssertTrue(presenter.presentedViewController === filesSheet)
+            XCTAssertFalse(panel.isVisible)
+            let recovery = try mount.recognizedText(in: mount.snapshot())
+            XCTAssertTrue(recovery.contains("Back to Session"), recovery)
+            XCTAssertTrue(recovery.contains("sample.bin Save"), recovery)
+            XCTAssertEqual(try Data(contentsOf: download), bytes)
+
+            if presenter.presentedViewController === filesSheet {
+                filesSheet.dismiss(animated: true)
+                try await waitForRecovery("Terminal login after Files closes") { panel.isVisible && presenter.presentedViewController !== filesSheet }
+            }
+        } catch {
+            await mount.close(afterDismissing: panel)
+            throw error
+        }
+        await mount.close(afterDismissing: panel)
+    }
+
+    func testStandaloneRecoverySurvivesBackgroundAndDiscard() async throws {
+        let probe = FilesDirectoryTestProbe()
+        let server = try await filesDirectoryTestServer(probe: probe, downloadBytes: Data([1]))
+        defer { Task { await probe.shutdown(); try? await server.close().get() } }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Files Mac", addresses: ["127.0.0.1"],
+            sshPort: try XCTUnwrap(server.localAddress?.port))
+        let client = try await SSHClient.connect(to: .init(host: "127.0.0.1", port: mac.sshPort,
+            authenticationMethod: { .passwordBased(username: "synthetic", password: "synthetic-only") }, hostKeyValidator: .acceptAnything()))
+        defer { Task { try? await client.close() } }
+        let files = DirectFilesSession(mac: mac); defer { files.close() }
+        let context = DirectFilesConnectionContext(client: client, macID: mac.id, account: "synthetic", keyID: nil, generation: UUID())
+        files.connectBorrowed(context)
+        try await wait { files.phase == .ready }
+        files.download(.init(name: "sample.bin", kind: .file, size: 1))
+        try await wait { files.hasUnsavedDownloads }
+        files.disconnectBorrowed(context.generation)
+
+        for reason in [DirectFilesSession.ConnectionRecovery.Reason.identityChanged, .rejectedLogin] {
+            let message = "Synthetic connection recovery explanation"
+            files.reportConnectionRecovery(reason, message: message)
+            NotificationCenter.default.post(name: DirectClientPlatformV1.didEnterBackground, object: nil)
+            XCTAssertEqual(files.connectionRecovery?.reason, reason)
+            XCTAssertEqual(files.message, message)
+            files.discardResults()
+            XCTAssertEqual(files.connectionRecovery?.reason, reason)
+            XCTAssertEqual(files.message, message)
+        }
+        XCTAssertFalse(files.hasUnsavedDownloads)
+    }
+
     func testRemovedMacDownloadsReplaceNativeTerminalLoginUntilSavedOrDiscarded() async throws {
         for save in [false, true] {
             let outcome = save ? "export" : "discard"
