@@ -1,4 +1,5 @@
 #if os(iOS) && MACCOMPANION_VNC_DEVELOPMENT
+import Observation
 import SwiftUI
 import UIKit
 
@@ -155,10 +156,10 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         coordinator.viewer?.stop()
     }
 
-    @MainActor final class Coordinator {
+    @MainActor @Observable final class Coordinator {
         let files: DirectFilesSession
         let mac: DirectMacRecordV1
-        weak var viewer: CompanionVNCViewer?
+        @ObservationIgnored weak var viewer: CompanionVNCViewer?
         private let accessOwnerID = UUID()
         private var accessLease: UUID?
         private var authenticatedAccount = ""
@@ -317,6 +318,7 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
             }
             catch { viewer?.showLoginRetentionFailure(); return }
             let token = UUID(); generation = token
+            viewer?.identityVerificationGuide = nil
             authenticatedAccount = user; authenticatedGeneration = token
             accessLease = DirectMacConnections.shared.begin(macID: mac.id, kind: "desktop", ownerID: accessOwnerID,
                 pendingAccessChange: DirectMacAccessStore.willRetainChange(macID: mac.id, username: user, password: password, key: nil, ssh: false, remember: remember), disconnect: { [weak self] in self?.disconnect() })
@@ -396,7 +398,18 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
                             // private credentials and cleanup requirement on return.
                             viewer.background(completion: {})
                         } else {
-                            disconnect(); viewer.showConnectionFailureStage(error is CancellationError ? 113 : DirectDesktopSSHTunnel.failureStage(error))
+                            disconnect()
+                            if let mismatch = error as? TerminalSecretStore.HostKeyMismatch {
+                                let macName = mac.name
+                                let library = DirectMacLibraryV1(url: files.libraryURL)
+                                let temporary = library.readable && !library.macs.contains { $0.id == mac.id }
+                                viewer.identityVerificationGuide = {
+                                    MainActor.assumeIsolated {
+                                        DirectRecoveryBridgeV1.verificationGuide(macName: macName, presentedIdentity: mismatch.presented, temporary: temporary)
+                                    }
+                                }
+                            }
+                            viewer.showConnectionFailureStage(error is CancellationError ? 113 : DirectDesktopSSHTunnel.failureStage(error))
                         }
                     }
                 }
@@ -433,7 +446,12 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
             guard let viewer, viewer.presentedViewController == nil, DirectAppLockV1.shared.canAccess else { return }
             let controller = UIHostingController(rootView: DirectFilesView(mac: mac, session: files, retainWhenDismissed: true).usingConnection { [weak self] in
                 guard let self, let tunnel = self.tunnel, self.viewer?.session.running == true else { return nil }
-                return .init(client: tunnel.client, macID: self.mac.id, ownerID: self.accessOwnerID, account: self.authenticatedAccount, keyID: nil, generation: self.authenticatedGeneration)
+                let generation = self.authenticatedGeneration
+                return .init(client: tunnel.client, macID: self.mac.id, ownerID: self.accessOwnerID, account: self.authenticatedAccount,
+                    keyID: nil, generation: generation, isCurrent: { [weak self, weak tunnel] in
+                        guard let self, let tunnel else { return false }
+                        return self.tunnel === tunnel && self.authenticatedGeneration == generation && self.viewer?.session.running == true
+                    })
             }.directAppearance())
             controller.modalPresentationStyle = .pageSheet
             controller.sheetPresentationController?.detents = [.medium(), .large()]
@@ -449,9 +467,7 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         }
         private func verifyHost(_ key: String, generation token: UUID) async throws {
             guard generation == token, !Task.isCancelled, DirectAppLockV1.shared.canAccess else { throw CancellationError() }
-            if let saved = try TerminalSecretStore.hostKey(mac.id) {
-                guard saved == key else { throw TerminalSecretStore.Failure.changedKey }
-            } else {
+            if try !TerminalSecretStore.matchesTrustedHostKey(key, id: mac.id) {
                 guard let fingerprint = TerminalSecretStore.fingerprint(key), let viewer else { throw TerminalSecretStore.Failure.rejectedKey }
                 // UIKit reports an ancestor's presented connection sheet here.
                 // The shared panel replaces its contents for trust; only the
@@ -471,7 +487,8 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
                 }
                 guard generation == token, !Task.isCancelled, DirectAppLockV1.shared.canAccess else { throw CancellationError() }
                 guard accepted else { throw TerminalSecretStore.Failure.rejectedKey }
-                try TerminalSecretStore.approveHostKey(key, id: mac.id)
+                do { try TerminalSecretStore.approveHostKey(key, id: mac.id) }
+                catch TerminalSecretStore.Failure.changedKey { throw TerminalSecretStore.HostKeyMismatch(key: key) }
             }
             viewer?.showConnectionProgress("Verifying SSH server…")
         }
@@ -489,8 +506,8 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
             let native = viewer?.session
             native?.stop(); login = nil; remember = false
             let lease = accessLease; accessLease = nil
-            files.disconnectBorrowed(authenticatedGeneration)
             let retired = tunnel; tunnel = nil
+            files.disconnectBorrowed(authenticatedGeneration)
             let earlier = retirement
             retirement = Task {
                 await earlier?.value

@@ -34,7 +34,7 @@ struct DirectRecoveryNotice: Equatable, Sendable {
         case .addressNotFound: copy = ("Address couldn’t be found", "Check the saved hostname or use a reachable local or private VPN address.", .warning)
         case .macUnreachable: copy = ("Couldn’t reach this Mac", "The sharing service didn’t respond. Check the Mac’s network route, sharing settings and service port.", .warning)
         case .desktopUnavailable: copy = ("Couldn’t open the desktop", "Screen Sharing ended before the desktop was ready. Your login and view settings are kept.", .warning)
-        case .desktopDisconnected: copy = ("Screen Sharing disconnected", "Reconnect to continue. Your display and zoom will be restored when the Mac’s display layout is compatible.", .warning)
+        case .desktopDisconnected: copy = ("Screen Sharing disconnected", "Your display and zoom will be restored if the Mac’s display layout still matches.", .warning)
         case .terminalEnded: copy = ("Terminal session ended", "Open a new shell to continue. The previous shell won’t be restored and input won’t be replayed.", .information)
         case .inputPaused: copy = ("Input paused", "The connection couldn’t accept more input. Reconnect before continuing; input won’t be replayed.", .warning)
         case .serverChanged: copy = ("This Mac’s identity changed", "Login was stopped because the SSH server key differs from the one you trusted. Independently verify the Mac before changing saved server trust.", .critical)
@@ -810,20 +810,21 @@ struct DirectRecoveryCard: View {
     let notice: DirectRecoveryNotice
     var primary: DirectRecoveryAction? = nil
     var secondary: DirectRecoveryAction? = nil
-    var displayModeRecovery = false
+    var connectionSymbol: String? = nil
     private var color: Color {
         switch notice.severity { case .information: .blue; case .warning: .orange; case .critical: .red; case .success: .green }
     }
     private var symbol: String {
         switch notice.severity { case .information: "info.circle"; case .warning: "exclamationmark.circle"; case .critical: "exclamationmark.shield"; case .success: "checkmark.circle" }
     }
+    private var connectionAccent: Color { notice.severity == .critical ? color : .blue }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if displayModeRecovery {
+            if let connectionSymbol {
                 HStack(spacing: 12) {
                     if !dynamicTypeSize.isAccessibilitySize {
-                        Image(systemName: "display").font(.title2).foregroundStyle(.blue)
-                            .padding(10).background(.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
+                        Image(systemName: connectionSymbol).font(.title2).foregroundStyle(connectionAccent)
+                            .padding(10).background(connectionAccent.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
                             .accessibilityHidden(true)
                     }
                     Text(notice.title).font(.headline).fixedSize(horizontal: false, vertical: true)
@@ -838,7 +839,7 @@ struct DirectRecoveryCard: View {
             if let primary { action(primary, prominent: true) }
             if let secondary { action(secondary, prominent: false) }
             if !notice.details.isEmpty {
-                DisclosureGroup(displayModeRecovery ? "Connection Details" : "Details") {
+                DisclosureGroup(connectionSymbol == nil ? "Details" : "Connection Details") {
                     VStack(alignment: .leading, spacing: 10) {
                         ForEach(Array(notice.details.enumerated()), id: \.offset) { _, detail in
                             VStack(alignment: .leading, spacing: 3) {
@@ -850,10 +851,10 @@ struct DirectRecoveryCard: View {
                 }.font(.footnote).frame(minHeight: 44).tint(.secondary)
             }
         }.padding(17).frame(maxWidth: .infinity, alignment: .leading)
-            .fixedSize(horizontal: false, vertical: displayModeRecovery)
-            .background(color.opacity(displayModeRecovery ? 0 : 0.09), in: RoundedRectangle(cornerRadius: 18))
+            .fixedSize(horizontal: false, vertical: connectionSymbol != nil)
+            .background(color.opacity(connectionSymbol == nil ? 0.09 : 0), in: RoundedRectangle(cornerRadius: 18))
             .background(recoveryBackground, in: RoundedRectangle(cornerRadius: 18))
-            .overlay(RoundedRectangle(cornerRadius: 18).stroke(displayModeRecovery ? Color.primary.opacity(0.08) : color.opacity(0.17)))
+            .overlay(RoundedRectangle(cornerRadius: 18).stroke(connectionSymbol == nil ? color.opacity(0.17) : Color.primary.opacity(0.08)))
             .accessibilityIdentifier("recovery-" + notice.reason.rawValue)
             .onAppear { announce() }
             .onChange(of: notice.reason) { _, _ in announce() }
@@ -1006,10 +1007,10 @@ struct TerminalServerTrustView: View {
         let notice = desktopNotice(stage: stage, hadFrame: hadFrame, port: port)
         return ([notice.title, notice.message] + notice.details.map { "\($0.name): \($0.value)" }).joined(separator: "\n")
     }
-    @objc static func desktop(stage: Int, hadFrame: Bool, port: Int, retry: @escaping @MainActor @Sendable () -> Void, edit: @escaping @MainActor @Sendable () -> Void) -> UIViewController {
-        desktop(stage: stage, hadFrame: hadFrame, port: port, textInterrupted: false, retry: retry, edit: edit)
-    }
-    @objc static func desktop(stage: Int, hadFrame: Bool, port: Int, textInterrupted: Bool, retry: @escaping @MainActor @Sendable () -> Void, edit: @escaping @MainActor @Sendable () -> Void) -> UIViewController {
+    @objc static func desktop(stage: Int, hadFrame: Bool, port: Int, textInterrupted: Bool,
+                              retry: @escaping @MainActor @Sendable () -> Void,
+                              edit: @escaping @MainActor @Sendable () -> Void,
+                              verify: @escaping @MainActor @Sendable () -> Void) -> UIViewController {
         let modeFailure = (116...118).contains(stage)
         let original = desktopNotice(stage: stage, hadFrame: hadFrame, port: port)
         let notice = textInterrupted ? DirectRecoveryNotice(reason: original.reason, title: original.title,
@@ -1017,16 +1018,41 @@ struct TerminalServerTrustView: View {
             severity: original.severity, details: original.details) : original
         let reason = notice.reason
         if !hadFrame {
+            if modeFailure {
+                let summary = DirectRecoveryNotice(reason: reason, title: notice.title, message: notice.message, severity: notice.severity)
+                let controller = UIHostingController(rootView: DirectRecoveryCard(notice: summary, connectionSymbol: "display").directAppearance())
+                controller.sizingOptions = .intrinsicContentSize; controller.view.backgroundColor = .clear
+                return controller
+            }
             let controller = UIHostingController(rootView: DirectConnectionNotice(notice: notice).directAppearance())
             controller.sizingOptions = .intrinsicContentSize; controller.view.backgroundColor = .clear
             return controller
         }
+        let action: DirectRecoveryAction
+        let symbol: String
+        switch reason {
+        case .loginRejected:
+            action = .init(title: "Edit Login", perform: edit)
+            symbol = "person.badge.key"
+        case .serverChanged:
+            action = .init(title: "How to Verify", perform: verify)
+            symbol = "lock.shield"
+        default:
+            action = .init(title: modeFailure ? "Try Again" : "Reconnect", symbol: "arrow.clockwise", perform: retry)
+            symbol = modeFailure ? "display" : "network.slash"
+        }
         let controller = UIHostingController(rootView: DirectRecoveryCard(notice: notice,
-            primary: .init(title: reason == .loginRejected ? "Edit Login" : modeFailure ? "Try Again" : "Reconnect", symbol: modeFailure ? "arrow.clockwise" : nil, perform: reason == .loginRejected ? edit : retry),
-            secondary: reason == .loginRejected || modeFailure ? nil : .init(title: "Edit Login", perform: edit),
-            displayModeRecovery: modeFailure).directAppearance())
+            primary: action, connectionSymbol: symbol).directAppearance())
         controller.sizingOptions = .intrinsicContentSize
         controller.view.backgroundColor = .clear
+        return controller
+    }
+    @objc static func verificationGuide(macName: String) -> UIViewController {
+        verificationGuide(macName: macName, presentedIdentity: nil, temporary: false)
+    }
+    static func verificationGuide(macName: String, presentedIdentity: TerminalSecretStore.HostIdentity?, temporary: Bool) -> UIViewController {
+        let controller = UIHostingController(rootView: TerminalIdentityGuide(macName: macName, presentedIdentity: presentedIdentity, temporary: temporary).directAppearance())
+        controller.modalPresentationStyle = .formSheet
         return controller
     }
     @objc static func interruptedText(done: @escaping @MainActor @Sendable () -> Void) -> UIViewController {

@@ -49,7 +49,7 @@ import SwiftUI
 }
 
 struct DirectMacAccessView: View {
-    private let saved: () -> Void
+    private let profileSaved: (DirectMacAccessProfile, DirectMacAccessProfile) -> Void
     let mac: DirectMacRecordV1
     @State private var draft: DirectMacAccessDraft
     @State private var connections = DirectMacConnections.shared
@@ -61,7 +61,12 @@ struct DirectMacAccessView: View {
     @State private var passwordVisible = false
     @State private var sshPasswordVisible = false
     @Environment(\.dismiss) private var dismiss
-    init(mac: DirectMacRecordV1, saved: @escaping () -> Void = {}) { self.saved = saved; self.mac = mac; _draft = State(initialValue: DirectMacAccessDraft(macID: mac.id)) }
+    init(mac: DirectMacRecordV1, saved: @escaping () -> Void = {}) {
+        self.init(mac: mac, profileSaved: { _, _ in saved() })
+    }
+    init(mac: DirectMacRecordV1, profileSaved: @escaping (DirectMacAccessProfile, DirectMacAccessProfile) -> Void) {
+        self.profileSaved = profileSaved; self.mac = mac; _draft = State(initialValue: DirectMacAccessDraft(macID: mac.id))
+    }
     private var busy: Bool { connections.isActive(mac.id) }
     private var username: Binding<String> { .init(get: { draft.value.login?.username ?? "" }, set: { draft.value.login = .init(username: $0, password: draft.value.login?.password ?? "") }) }
     private var password: Binding<String> { .init(get: { draft.value.login?.password ?? "" }, set: { draft.value.login = .init(username: draft.value.login?.username ?? "", password: $0) }) }
@@ -106,7 +111,12 @@ struct DirectMacAccessView: View {
             .navigationTitle("Saved Login").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) { Button("Save") { if draft.save(onSaved: saved) { dismiss() } }.disabled(!draft.editable).accessibilityIdentifier("access-save") }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        guard let previous = draft.original, draft.save() else { return }
+                        profileSaved(previous, draft.value); dismiss()
+                    }.disabled(!draft.editable).accessibilityIdentifier("access-save")
+                }
             }
             .onAppear(perform: load)
             .task { if !DirectProAccess.shared.ready { await DirectProAccess.shared.refresh() } }
@@ -126,7 +136,8 @@ struct DirectMacAccessView: View {
             } message: { Text(connections.hasTransfers(mac.id) ? "Active file transfers will be interrupted. Completed downloads are kept so you can save them." : "Screen Sharing, Terminal and Files connections to this Mac will close. Other Macs stay connected.") }
             .confirmationDialog("Forget this Mac’s saved login?", isPresented: $forgetConfirmation, titleVisibility: .visible) {
                 Button("Forget Saved Login", role: .destructive) {
-                    if draft.forget(onForgotten: saved) { dismiss() }
+                    guard let previous = draft.original, draft.forget() else { return }
+                    profileSaved(previous, draft.value); dismiss()
                 }.accessibilityIdentifier("access-confirm-forget-login")
             } message: { Text("Saved passwords and this Mac’s key selection are removed. Keys in the library and the verified SSH server identity are kept.") }
         }.directAppearance()

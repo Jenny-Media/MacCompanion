@@ -5,6 +5,20 @@ import CryptoKit
 
 enum TerminalSecretStore {
     struct Login: Codable { var username: String; var password: String }
+    struct HostIdentity: Equatable, Sendable {
+        let keyType: String
+        let fingerprint: String
+
+        init?(key: String) {
+            guard let type = key.split(separator: " ").first, let fingerprint = TerminalSecretStore.fingerprint(key) else { return nil }
+            self.keyType = String(type)
+            self.fingerprint = fingerprint
+        }
+    }
+    struct HostKeyMismatch: Error {
+        let presented: HostIdentity?
+        init(key: String) { presented = HostIdentity(key: key) }
+    }
     private static func query(_ id: UUID, _ kind: String) -> [String: Any] {
         var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "media.jenny.maccompanion.ssh-\(kind).v1",
          kSecAttrAccount as String: id.uuidString.lowercased(), kSecAttrSynchronizable as String: false]
@@ -63,6 +77,11 @@ enum TerminalSecretStore {
         guard let data = try read(id, kind: "host-key") else { return nil }
         guard let key = String(data: data, encoding: .utf8), fingerprint(key) != nil else { throw Failure.storage }
         return key
+    }
+    static func matchesTrustedHostKey(_ key: String, id: UUID) throws -> Bool {
+        guard let saved = try hostKey(id) else { return false }
+        guard saved == key else { throw HostKeyMismatch(key: key) }
+        return true
     }
     /// Approval may have waited while another session established shared trust.
     /// Add atomically: never update a pin belonging to another approval.

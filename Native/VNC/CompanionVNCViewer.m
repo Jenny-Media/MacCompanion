@@ -36,6 +36,7 @@
 @property UITextField *host, *username, *password;
 @property DirectDesktopLoginState *credentialState;
 @property UIViewController *recoveryController;
+@property NSInteger recoveryStage;
 @property BOOL macSaveFailureVisible;
 @property(nonatomic, copy) NSString *loginIssueDetails;
 @property UIViewController *loginBackdrop;
@@ -765,7 +766,8 @@
 }
 - (void)connectionAction {
     if (!self.session.running && !self.starting) {
-        if (self.failedDisplayModePreset) [self restartDisplayModePreset:self.failedDisplayModePreset.integerValue];
+        if (self.recoveryStage == 112) [self showRecoveryVerification];
+        else if (self.failedDisplayModePreset) [self restartDisplayModePreset:self.failedDisplayModePreset.integerValue];
         else [self start];
     }
 }
@@ -832,6 +834,7 @@
 }
 - (void)clearRecovery {
     self.macSaveFailureVisible = NO;
+    self.recoveryStage = 0;
     self.loginIssueDetails = nil;
     if (!self.recoveryController) return;
     [self.recoveryController willMoveToParentViewController:nil];
@@ -840,7 +843,11 @@
     self.recoveryController = nil; [self.recoveryPanel removeFromSuperview]; self.recoveryPanel = nil;
 }
 - (void)showRecoveryController:(UIViewController *)controller overFrame:(BOOL)overFrame {
+    [self showRecoveryController:controller overFrame:overFrame stage:0 details:nil];
+}
+- (void)showRecoveryController:(UIViewController *)controller overFrame:(BOOL)overFrame stage:(NSInteger)stage details:(NSString *)details {
     [self clearRecovery]; self.recoveryController = controller;
+    self.recoveryStage = stage; self.loginIssueDetails = details;
     UIViewController *parent = !overFrame && self.connectionPanelHost ? self.loginPanelContent : self;
     [parent addChildViewController:controller];
     controller.view.translatesAutoresizingMaskIntoConstraints = NO;
@@ -876,15 +883,23 @@
     [self updateConnectionChrome];
 }
 - (void)editRecoveryLogin { [self finishCredentialSession]; [self clearRecovery]; self.login.hidden = NO; self.starting = NO; [self updateConnectionChrome]; [self.username becomeFirstResponder]; }
+- (void)showRecoveryVerification {
+    if (self.recoveryStage != 112 || !self.connectionForegroundAvailable) return;
+    UIViewController *guide = self.identityVerificationGuide ? self.identityVerificationGuide()
+        : [DirectRecoveryBridgeV1 verificationGuideWithMacName:self.macName ?: @"Mac"];
+    if (self.connectionPanelHost && !self.login.hidden) [self.connectionPanelHost presentSecondary:guide];
+    else if (!self.presentedViewController) [self presentViewController:guide animated:YES completion:nil];
+}
 - (void)showRecoveryStage:(NSInteger)stage {
     __weak CompanionVNCViewer *weak = self;
-    UIViewController *card = [DirectRecoveryBridgeV1 desktopWithStage:stage hadFrame:self.lastFramebuffer != nil port:((stage == 10 || stage == 11 || (stage >= 110 && stage <= 115)) ? self.sshPort ?: 22 : self.servicePort ?: 5900) textInterrupted:self.textSendInterrupted retry:^{
+    BOOL hadFrame = self.lastFramebuffer != nil;
+    NSInteger port = (stage == 10 || stage == 11 || (stage >= 110 && stage <= 115)) ? self.sshPort ?: 22 : self.servicePort ?: 5900;
+    UIViewController *card = [DirectRecoveryBridgeV1 desktopWithStage:stage hadFrame:hadFrame port:port textInterrupted:self.textSendInterrupted retry:^{
         if (weak.failedDisplayModePreset) [weak restartDisplayModePreset:weak.failedDisplayModePreset.integerValue];
         else [weak start];
-    } edit:^{ [weak editRecoveryLogin]; }];
-    [self showRecoveryController:card overFrame:self.lastFramebuffer != nil];
-    self.loginIssueDetails = [DirectRecoveryBridgeV1 desktopDetailsWithStage:stage hadFrame:self.lastFramebuffer != nil port:((stage == 10 || stage == 11 || (stage >= 110 && stage <= 115)) ? self.sshPort ?: 22 : self.servicePort ?: 5900)];
-    [self updateConnectionChrome];
+    } edit:^{ [weak editRecoveryLogin]; } verify:^{ [weak showRecoveryVerification]; }];
+    NSString *details = [DirectRecoveryBridgeV1 desktopDetailsWithStage:stage hadFrame:hadFrame port:port];
+    [self showRecoveryController:card overFrame:hadFrame stage:stage details:details];
 }
 - (void)showAttemptingAddress:(NSString *)address {
     [self.connectionProgress recordRouteAddress:address];
@@ -2008,11 +2023,14 @@
         } else [self.connectionPanelHost hideOwner:self.loginPanelOwner];
     }
     [self updateTrackpadFeedback];
-    // Keep the fields mounted so editing retains identity, but give an active
-    // attempt one progress indicator and Cancel instead of disabled form chrome.
-    self.loginPurpose.hidden = progress || self.inputOnly;
-    self.loginFields.hidden = progress;
-    self.loginFields.userInteractionEnabled = !progress;
+    BOOL verifyIdentity = self.recoveryStage == 112;
+    BOOL displayFailure = self.recoveryStage >= 116 && self.recoveryStage <= 118;
+    BOOL canRetryMode = self.failedDisplayModePreset != nil && [self.credentialState loginForResume] != nil;
+    // Keep the editors mounted so they can reappear with the same state if login is needed.
+    BOOL hideFields = progress || verifyIdentity || (displayFailure && canRetryMode);
+    self.loginPurpose.hidden = hideFields || self.inputOnly;
+    self.loginFields.hidden = hideFields;
+    self.loginFields.userInteractionEnabled = !hideFields;
     self.loginDetails.hidden = progress || !self.loginIssueDetails.length;
     self.loginDetailsText.text = self.loginIssueDetails.length ? [NSString stringWithFormat:@"%@\n\n%@", [self configuredConnectionDetails], self.loginIssueDetails] : [self configuredConnectionDetails];
     self.loginDetailsText.hidden = self.loginDetails.hidden || !self.loginDetailsExpanded;
@@ -2020,13 +2038,17 @@
     self.loginDetails.accessibilityValue = self.loginDetailsExpanded ? @"Expanded" : @"Collapsed";
     self.connect.hidden = progress;
     self.loginClose.hidden = YES; self.loginCancel.hidden = NO;
-    BOOL canRetryMode = self.failedDisplayModePreset != nil && [self.credentialState loginForResume] != nil;
-    self.connect.enabled = !progress && ((self.username.text.length > 0 && self.password.text.length > 0) || canRetryMode);
+    self.connect.enabled = !progress && (verifyIdentity || canRetryMode || (self.username.text.length > 0 && self.password.text.length > 0));
     self.connect.alpha = 1;
     self.connect.backgroundColor = self.connect.enabled ? UIColor.systemBlueColor : UIColor.tertiarySystemFillColor;
     [self.connect setTitleColor:self.connect.enabled ? UIColor.whiteColor : UIColor.secondaryLabelColor forState:UIControlStateNormal];
     [self.connect setTitleColor:UIColor.secondaryLabelColor forState:UIControlStateDisabled];
-    [self.connect setTitle:self.failedDisplayModePreset ? @"Reconnect" : self.recoveryController ? @"Try Again" : @"Connect" forState:UIControlStateNormal];
+    NSString *connectTitle = @"Connect";
+    if (verifyIdentity) connectTitle = @"How to Verify";
+    else if (displayFailure) connectTitle = @"Try Again";
+    else if (self.failedDisplayModePreset) connectTitle = @"Reconnect";
+    else if (self.recoveryController) connectTitle = @"Try Again";
+    [self.connect setTitle:connectTitle forState:UIControlStateNormal];
     self.progressRow.hidden = !progress && !self.progressLabel.text.length; self.spinner.hidden = !progress;
     [self updateAttemptAddressLabel];
     // Let validation feedback fill the card width and grow vertically. A

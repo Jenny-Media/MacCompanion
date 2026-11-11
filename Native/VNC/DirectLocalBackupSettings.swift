@@ -28,6 +28,7 @@ struct DirectLocalBackupSettings: View {
     @State private var issue: String?
     @State private var importGeneration = UUID()
     @State private var selection: RestoreSelection?
+    @State private var restoreFailure: String?
     private struct RestoreSelection: Identifiable {
         let id = UUID()
         var backup: DirectLocalBackup
@@ -80,7 +81,7 @@ struct DirectLocalBackupSettings: View {
         .onChange(of: lock.canAccess) { _, allowed in
             store.refreshRecoveryCopy()
             if !allowed {
-                importGeneration = UUID(); selection = nil; document = nil
+                importGeneration = UUID(); selection = nil; restoreFailure = nil; document = nil
                 exporting = false; picking = false; preparing = false; notice = nil; issue = nil
             }
         }
@@ -97,7 +98,7 @@ struct DirectLocalBackupSettings: View {
         .fileImporter(isPresented: $picking, allowedContentTypes: [.json], allowsMultipleSelection: false) { [generation = importGeneration] result in
             readSelection(result, generation: generation)
         }
-        .sheet(item: $selection) { selected in
+        .sheet(item: $selection, onDismiss: { restoreFailure = nil }) { selected in
             NavigationStack {
                 Form {
                     Section {
@@ -114,26 +115,47 @@ struct DirectLocalBackupSettings: View {
                         if !selected.previous { Label("Sign in and confirm restored Macs again.", systemImage: "key") }
                         Label("iCloud Sync turns off. Existing iCloud data is kept.", systemImage: "icloud.slash")
                     }
-                    if let problem = store.problem {
-                        Section { Label(problem, systemImage: "exclamationmark.circle").foregroundStyle(.red) }
-                    }
-                    Section {
+                }
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    DirectConnectionFooter {
+                        if !connections.entries.isEmpty {
+                            Text("Disconnect active Mac sessions to restore this backup.")
+                                .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("backup-restore-active-sessions")
+                        }
                         Button(role: .destructive) {
-                            Task {
-                                if selected.previous { await store.restorePrevious() }
-                                else { await store.restore(selected.backup) }
-                                if store.problem == nil { selection = nil }
-                            }
+                            Task { await restore(selected) }
                         } label: {
-                            if store.busy { HStack { ProgressView(); Text("Restoring…") } }
-                            else { Text(selected.previous ? "Restore Previous Data" : "Restore Backup") }
-                        }.disabled(working || !lock.canAccess || !connections.entries.isEmpty)
+                            Group {
+                                if store.busy { HStack { ProgressView(); Text("Restoring…") } }
+                                else { Text(selected.previous ? "Restore Previous Data" : "Restore Backup") }
+                            }.frame(maxWidth: .infinity, minHeight: 32)
+                        }.buttonStyle(.bordered).controlSize(.large)
+                            .disabled(working || !lock.canAccess || !connections.entries.isEmpty)
                             .accessibilityIdentifier("backup-confirm-restore")
                     }
-                }.navigationTitle(selected.previous ? "Previous Data" : "Restore Backup").directInlineNavigationTitle()
+                }
+                .navigationTitle(selected.previous ? "Previous Data" : "Restore Backup").directInlineNavigationTitle()
                     .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { selection = nil }.disabled(store.busy).accessibilityIdentifier("backup-cancel") } }
             }.directAppearance().interactiveDismissDisabled(store.busy)
+                .alert("Couldn’t restore", isPresented: Binding(
+                    get: { restoreFailure != nil },
+                    set: { if !$0 { restoreFailure = nil } }
+                ), presenting: restoreFailure) { _ in
+                    Button("OK", role: .cancel) {}
+                } message: { failure in
+                    Text(failure)
+                }
         }
+    }
+    private func restore(_ selected: RestoreSelection) async {
+        guard selection?.id == selected.id, !working, lock.canAccess else { return }
+        if selected.previous { await store.restorePrevious() }
+        else { await store.restore(selected.backup) }
+        guard selection?.id == selected.id, lock.canAccess else { return }
+        if let problem = store.problem { restoreFailure = problem }
+        else { selection = nil }
     }
     private func exportBackup() {
         guard !working, lock.canAccess else { return }

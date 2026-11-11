@@ -63,6 +63,7 @@ struct DirectTerminalView: View {
         }
     }
     @State private var sheet: Sheet?
+    @State private var filesSheetPresented = false
     @State private var confirmingExit = false
     @State private var controlsReloadPending = false
     @State private var controlsContextImage: UIImage?
@@ -164,7 +165,7 @@ struct DirectTerminalView: View {
     }
     private func recoveryAction(_ notice: DirectRecoveryNotice) -> DirectRecoveryAction {
         switch notice.reason {
-        case .keyRejected: .init(title: "Set Up Key", symbol: "key", pro: true, perform: setupKey)
+        case .keyRejected: .init(title: "Use Password", symbol: "person.badge.key") { selectLoginMethod(.password) }
         case .loginRejected: .init(title: "Try Again") { connect() }
         case .serverChanged: .init(title: "How to Verify", symbol: "lock.shield") { sheet = .verifyGuide }
         case .savedDataUnavailable: .init(title: "Retry", symbol: "arrow.clockwise") { loadLogin(); session.clearRecovery() }
@@ -174,7 +175,7 @@ struct DirectTerminalView: View {
         }
     }
     private func secondaryAction(_ notice: DirectRecoveryNotice) -> DirectRecoveryAction? {
-        if notice.reason == .keyRejected { return .init(title: "Use Password", symbol: "person.badge.key") { selectLoginMethod(.password) } }
+        if notice.reason == .keyRejected { return .init(title: "Set Up Key", pro: true, perform: setupKey) }
         return nil
     }
     var body: some View {
@@ -184,7 +185,7 @@ struct DirectTerminalView: View {
                 TerminalSurface(session: session, style: appearance.terminal.style(app: appearance.app), customize: { sheet = .keyboard }, contextImage: { controlsContextImage = $0 }, filesStatus: files.transferActive ? files.activityTitle : "", action: handleControls)
                     .ignoresSafeArea(.container, edges: session.connected ? .top : [])
                     .opacity(session.connected ? 1 : 0).allowsHitTesting(session.connected).accessibilityHidden(!session.connected)
-                if !isClosing && !session.macRemoved && !session.connected && !session.completedNormally {
+                if !isClosing && !session.macRemoved && !session.connected && !session.completedNormally && !filesSheetPresented {
                     if let connectionPanel {
                         DirectConnectionPanelContent(host: connectionPanel, cancel: closeSession, preferredHeight: showsConnectionProgress ? nativeProgressHeight : nativeFormHeight + nativeFooterHeight, preventsDismissal: showsConnectionProgress) {
                             nativeLoginContent
@@ -201,15 +202,21 @@ struct DirectTerminalView: View {
                 }
                 else if let notice = session.controlsRecovery {
                     VStack { DirectRecoveryCard(notice: notice,
-                        primary: .init(title: "Keyboard Settings", perform: { sheet = .keyboard }),
-                        secondary: .init(title: "Use Standard Controls", perform: { session.controlsRecovery = nil })).padding(12); Spacer() }
+                        primary: .init(title: "Continue with Standard Controls", perform: { session.controlsRecovery = nil }),
+                        secondary: .init(title: "Keyboard Settings", perform: { sheet = .keyboard })).padding(12); Spacer() }
                 }
                 if session.macRemoved, files.hasUnsavedDownloads {
                     DirectFilesView(mac: mac, session: files, closeOwnerWindow: closeSession)
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
-            .sheet(item: Binding(get: { connectionPanel != nil && !session.connected ? nil : sheet }, set: { sheet = $0 }), onDismiss: { refreshControlsAfterDismissal(); if let updated = macLibrary?.macs.first(where: { $0.id == mac.id }) { session.updateMac(updated) } }) { destination in
+            .sheet(item: Binding(get: {
+                connectionPanel != nil && !session.connected && !filesSheetPresented ? nil : sheet
+            }, set: { sheet = $0 }), onDismiss: {
+                filesSheetPresented = false
+                refreshControlsAfterDismissal()
+                if let updated = macLibrary?.macs.first(where: { $0.id == mac.id }) { session.updateMac(updated) }
+            }) { destination in
                 secondarySheet(destination)
             }
             .sheet(item: Binding(get: { connectionPanel == nil ? session.trust : nil }, set: { session.trust = $0 })) { request in
@@ -219,7 +226,7 @@ struct DirectTerminalView: View {
         // Keep the mounted session owner, but let the real Mac list show through
         // while its login/progress content lives in the native sheet. Removed-Mac
         // downloads stay visible in this owner until they are saved or discarded.
-        .opacity(connectionPanel != nil && !session.connected && !session.macRemoved ? 0 : 1)
+        .opacity(connectionPanel != nil && !session.connected && !session.macRemoved && !filesSheetPresented ? 0 : 1)
         // The native terminal owns keyboard avoidance through its layout guide.
         // Keep SwiftUI from shrinking the same connected surface a second time;
         // the sign-in card still uses SwiftUI's normal keyboard avoidance.
@@ -274,7 +281,16 @@ struct DirectTerminalView: View {
     @ViewBuilder private func secondarySheet(_ destination: Sheet) -> some View {
                 switch destination {
                 case .files: DirectFilesView(mac: mac, session: files, retainWhenDismissed: true).usingConnection { session.filesContext }
-                case .keys, .access: DirectMacAccessView(mac: mac, saved: { loadLogin(reload: true) }).onDisappear { loadLogin() }
+                case .keys, .access:
+                    DirectMacAccessView(mac: mac, saved: {
+                        let previousKey = key?.fingerprint
+                        let previousUsername = username
+                        loadLogin(reload: true)
+                        if session.recovery?.reason == .keyRejected, loginIssue == nil,
+                           !useKey || key?.fingerprint != previousKey || username != previousUsername {
+                            session.clearRecovery()
+                        }
+                    }).onDisappear { loadLogin() }
                 case .install: TerminalKeyInstallView(mac: mac, initialUsername: username, changed: { loadKey(preferSelected: true); session.clearRecovery() })
                 case .manual: TerminalManualKeySetupView(mac: mac)
                 case .macSettings:
@@ -318,7 +334,10 @@ struct DirectTerminalView: View {
     }
     private func handleControls(_ action: String) {
         switch action {
-        case "files": sheet = .files
+        case "files":
+            // A lost shell leaves this presenter in charge until Files is dismissed.
+            filesSheetPresented = true
+            sheet = .files
         case "connectionInfo": sheet = .connectionInfo
         case "appSettings": sheet = .appSettings
         case "macSettings": sheet = .macSettings
@@ -422,7 +441,12 @@ struct DirectTerminalView: View {
             let action = loginIssue != nil ? DirectRecoveryAction(title: "Retry", perform: { loadLogin() }) : recoveryAction(notice)
             connectionButton(action.title, symbol: action.symbol, enabled: ![.loginRejected, .terminalEnded, .inputPaused].contains(notice.reason) || canConnect, perform: action.perform)
             if let secondary = secondaryAction(notice) {
-                Button(secondary.title, action: secondary.perform).font(.subheadline).foregroundStyle(.secondary).frame(maxWidth: .infinity, minHeight: 44)
+                Button(action: secondary.perform) {
+                    HStack(spacing: 6) {
+                        Text(secondary.title)
+                        if secondary.pro { DirectProBadge() }
+                    }.font(.subheadline).frame(maxWidth: .infinity, minHeight: 44)
+                }.accessibilityIdentifier("terminal-key-recovery-setup")
             }
         } else { connectionButton("Connect", enabled: canConnect, perform: connect) }
     }
@@ -463,9 +487,16 @@ struct DirectTerminalView: View {
         }
     }
     private var selectedKeyView: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Button { sheet = .keys } label: {
-                HStack { Label(key == nil ? "Choose SSH Key" : keyName, systemImage: "key"); Spacer(); Image(systemName: "chevron.right") }
+        let rejectedKey = session.recovery?.reason == .keyRejected && key != nil
+        return Button { sheet = .keys } label: {
+            HStack {
+                Image(systemName: "key").accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(rejectedKey ? "Choose Another Key" : key == nil ? "Choose SSH Key" : keyName)
+                    if rejectedKey { Text(keyName).font(.caption).foregroundStyle(.secondary) }
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right").accessibilityHidden(true)
             }.frame(minHeight: 44)
         }.padding(14).frame(maxWidth: .infinity, alignment: .leading)
             .background(Color(uiColor: DirectConnectionStyle.field), in: RoundedRectangle(cornerRadius: 16))

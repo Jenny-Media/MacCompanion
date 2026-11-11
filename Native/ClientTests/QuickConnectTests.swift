@@ -474,6 +474,29 @@ import LocalAuthentication
             }
         }
     }
+    func testChangedDesktopIdentityOpensVerificationWithoutConnecting() throws {
+        let mount = try PanelMount(); defer { mount.close() }
+        let viewer = CompanionVNCViewer()
+        viewer.connectionPanelHost = mount.host
+        viewer.preventsAutomaticConnection = true
+        viewer.loadViewIfNeeded(); viewer.view.frame = mount.window.bounds
+        mount.anchor.addChild(viewer); mount.anchor.view.addSubview(viewer.view); viewer.didMove(toParent: mount.anchor)
+        defer { viewer.stop(); viewer.willMove(toParent: nil); viewer.view.removeFromSuperview(); viewer.removeFromParent() }
+        viewer.connectHandler = { _, _, _ in XCTFail("Identity recovery must open the guide") }
+        viewer.showConnectionFailureStage(112)
+        let verify = try XCTUnwrap(viewer.value(forKey: "connect") as? UIButton)
+        let fields = try XCTUnwrap(viewer.value(forKey: "loginFields") as? UIView)
+        XCTAssertEqual(verify.currentTitle, "How to Verify")
+        XCTAssertTrue(verify.isEnabled)
+        XCTAssertTrue(fields.isHidden)
+        let attached = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in verify.window != nil }, object: nil)
+        wait(for: [attached], timeout: 3)
+        verify.sendActions(for: .touchUpInside)
+        let guide = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            mount.anchor.presentedViewController?.presentedViewController != nil
+        }, object: nil)
+        wait(for: [guide], timeout: 3)
+    }
     func testGroupedRowKeepsItsEditorAndDraftAcrossNarrowWidthsAndLargeText() async throws {
         let mount = try PanelMount(); defer { mount.close() }
         let content = UIHostingController(rootView: DirectCredentialRow {

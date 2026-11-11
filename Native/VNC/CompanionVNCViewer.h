@@ -35,6 +35,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy, nullable) void (^filesHandler)(void);
 @property(nonatomic, copy, nullable) BOOL (^filesTransferActiveHandler)(void);
 @property(nonatomic, copy, nullable) void (^accessHandler)(void);
+@property(nonatomic, copy, nullable) UIViewController * (^identityVerificationGuide)(void);
 @property(nonatomic, copy, nullable) BOOL (^accessEditingAllowed)(void);
 @property(nonatomic, copy, nullable) BOOL (^requestExitHandler)(void);
 - (void)reloadAccessUsername:(NSString *)username password:(NSString *)password;

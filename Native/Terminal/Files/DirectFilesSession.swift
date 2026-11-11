@@ -17,6 +17,12 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
 
 @MainActor @Observable final class DirectFilesSession {
     enum Phase: String { case signIn = "Sign In Required", connecting = "Connecting", ready = "Ready", interrupted = "Disconnected" }
+    struct ConnectionRecovery {
+        enum Reason { case missingLogin, rejectedLogin, identityChanged }
+        let reason: Reason
+        let message: String
+        let presentedIdentity: TerminalSecretStore.HostIdentity?
+    }
     enum ConflictChoice { case keepBoth, replace, cancel }
     struct Trust: Identifiable { let id = UUID(); let fingerprint: String }
     struct Conflict: Identifiable { let id = UUID(); let name: String; let replaceAllowed: Bool }
@@ -50,7 +56,12 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     private(set) var resultsAccount = ""
     private(set) var preparedUploads: [URL] = []
     private(set) var busy = false
-    var message: String?
+    private var statusMessage: String?
+    var message: String? {
+        get { statusMessage ?? connectionRecovery?.message }
+        set { statusMessage = newValue }
+    }
+    private(set) var connectionRecovery: ConnectionRecovery?
     var trust: Trust?
     var conflict: Conflict?
     #if os(iOS)
@@ -60,6 +71,41 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     private var borrowedIsCurrent: (@MainActor () -> Bool)?
     private var borrowedGeneration: UUID?
     var isBorrowed: Bool { borrowedGeneration != nil }
+    func reportConnectionRecovery(_ reason: ConnectionRecovery.Reason, message: String, presentedIdentity: TerminalSecretStore.HostIdentity? = nil) {
+        statusMessage = nil
+        connectionRecovery = .init(reason: reason, message: message, presentedIdentity: presentedIdentity)
+    }
+    func clearConnectionRecovery() {
+        connectionRecovery = nil
+    }
+    #if os(iOS)
+    enum SavedLogin: Equatable {
+        case password(DirectMacAccessProfile.Password)
+        case key(id: UUID, account: String)
+        case missing(String)
+
+        init(profile: DirectMacAccessProfile, useSSH: Bool) {
+            if useSSH && profile.sshMethod == .key {
+                guard let id = profile.keyID else { self = .missing("Choose an available SSH key in Saved Login."); return }
+                let account = profile.keyUsername
+                guard !account.isEmpty, account.utf8.count <= 255, !account.contains("\0") else {
+                    self = .missing("Add the Terminal account for this SSH key in Saved Login.")
+                    return
+                }
+                self = .key(id: id, account: account)
+            } else if let login = useSSH ? profile.passwordLogin : profile.login, login.valid {
+                self = .password(login)
+            } else {
+                self = .missing("Add the login you use for this Mac to open Files.")
+            }
+        }
+    }
+    func updateSavedLoginRecovery(previous: SavedLogin, current: SavedLogin) {
+        guard let reason = connectionRecovery?.reason, reason == .missingLogin || reason == .rejectedLogin else { return }
+        if case .missing(let message) = current { reportConnectionRecovery(.missingLogin, message: message) }
+        else if reason == .missingLogin || previous != current { clearConnectionRecovery() }
+    }
+    #endif
     func disconnectBorrowed(_ owner: UUID) {
         if borrowedGeneration == owner { disconnect(message: "The parent session ended. Completed downloads are kept; reconnect before retrying interrupted transfers.") }
     }
@@ -106,7 +152,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
             MainActor.assumeIsolated {
                 guard let self, !self.closed, !self.macRemoved else { return }
                 self.loginDraft.suspend()
-                self.disconnect(message: "Files paused. Reconnect, then Retry any interrupted transfer.")
+                self.pauseConnection(message: "Files paused. Reconnect, then Retry any interrupted transfer.")
             }
         }
     }
@@ -118,7 +164,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                 guard let self, !self.closed, !self.macRemoved else { return }
                 if !self.canAccess() {
                     self.loginDraft.suspend()
-                    self.disconnect(message: "Files stopped when the app locked. Reconnect after unlocking.")
+                    self.pauseConnection(message: "Files stopped when the app locked. Reconnect after unlocking.")
                 }
                 self.observeAccess()
             }
@@ -154,6 +200,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     func connectBorrowed(_ context: DirectFilesConnectionContext) {
         guard context.macID == mac.id, context.isCurrent(), !closed, !macRemoved, canAccess(), DirectClientPlatformV1.sessionAvailable, !busy else { return }
         if phase == .ready, borrowedGeneration == context.generation, account == context.account { return }
+        clearConnectionRecovery()
         guard !transferActive else { message = "A transfer is still running for " + account + ". Finish or cancel it first."; return }
         guard !hasPendingResults || resultsAccount.isEmpty || resultsAccount == context.account else {
             message = "Save or discard the files for " + resultsAccount + " before opening another account."; return
@@ -196,6 +243,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     }
     func connect(username: String, password: String, key: TerminalSSHKey?, remember: Bool, keyFileID: UUID? = nil, useMacLogin: Bool = false) {
         guard !closed, !macRemoved, canAccess(), !busy, phase != .ready else { return }
+        clearConnectionRecovery()
         guard !username.isEmpty, username.utf8.count <= 255, !username.contains("\0"),
               (key != nil || !password.isEmpty), password.utf8.count <= 4096, !password.contains("\0") else {
             message = "Enter a Mac account and password, or choose its SSH key."; return
@@ -272,15 +320,14 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                 self.channel = channel
                 let validator = TerminalHostValidator { [weak self] publicKey in
                     guard let self else { throw CancellationError() }; try self.check(token)
-                    if let saved = try TerminalSecretStore.hostKey(self.mac.id) {
-                        guard saved == publicKey else { throw TerminalSecretStore.Failure.changedKey }; return
-                    }
+                    if try TerminalSecretStore.matchesTrustedHostKey(publicKey, id: self.mac.id) { return }
                     guard let fingerprint = TerminalSecretStore.fingerprint(publicKey) else { throw TerminalSecretStore.Failure.rejectedKey }
                     self.status = "Verify this Mac’s identity"; self.trust = .init(fingerprint: fingerprint)
                     let accepted = await withCheckedContinuation { self.trustReply = $0 }
                     self.trust = nil; try self.check(token)
                     guard accepted else { throw TerminalSecretStore.Failure.rejectedKey }
-                    try TerminalSecretStore.approveHostKey(publicKey, id: self.mac.id)
+                    do { try TerminalSecretStore.approveHostKey(publicKey, id: self.mac.id) }
+                    catch TerminalSecretStore.Failure.changedKey { throw TerminalSecretStore.HostKeyMismatch(key: publicKey) }
                 }
                 var settings = SSHClientSettings(host: addresses.first ?? "", port: port,
                     authenticationMethod: authentication, hostKeyValidator: .custom(validator))
@@ -336,12 +383,13 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                 guard generation == token else { return }
                 let openingFiles = ssh != nil
                 retire(); phase = .interrupted
-                if let failure = error as? TerminalSecretStore.Failure, failure == .changedKey {
-                    message = "The Mac’s SSH identity changed. Verify it before reconnecting. Existing trust is kept."
+                if let mismatch = error as? TerminalSecretStore.HostKeyMismatch {
+                    reportConnectionRecovery(.identityChanged, message: "The Mac’s SSH identity changed. Verify it before reconnecting. Existing trust is kept.",
+                        presentedIdentity: mismatch.presented)
                 } else if let failure = error as? TerminalSecretStore.Failure, failure == .rejectedKey {
                     message = "Server identity was not approved. No file connection was opened."
                 } else if DirectTerminalSession.reason(for: error, keyLogin: key != nil) == .loginRejected || DirectTerminalSession.reason(for: error, keyLogin: key != nil) == .keyRejected {
-                    message = "Remote Login did not accept this account or key. Check the login and allowed users on the Mac."
+                    reportConnectionRecovery(.rejectedLogin, message: "Your Mac didn’t accept this login. Check the saved account or SSH key and the users allowed in Remote Login.")
                 } else if openingFiles { message = "SSH connected, but Files could not open. Check SFTP availability and this account’s folder permissions." }
                 else { message = "Couldn’t connect to Remote Login. Check the network, saved SSH port and Remote Login settings on your Mac." }
                 status = "Sign In Required"
@@ -535,6 +583,10 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         disconnect(message: "Transfer stopped. Reconnect and Retry when ready.")
         return false
     }
+    func pauseConnection(message: String) {
+        guard phase == .connecting || phase == .ready else { return }
+        disconnect(message: message)
+    }
     func disconnect(message: String? = nil) {
         if establishedIndependentLogin { loginDraft.passwordSessionEnded() }
         retire(); phase = .interrupted; status = "Sign In Required"; self.message = message
@@ -544,6 +596,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     }
     private func retire() {
         establishedIndependentLogin = false
+        connectionRecovery = nil
         #if os(iOS)
         let pendingWork = work
         #endif

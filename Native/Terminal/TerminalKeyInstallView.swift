@@ -55,6 +55,10 @@ struct TerminalKeyInstallView: View {
         recoveryPrimary
         #endif
     }
+    private var showsManualRecoveryAction: Bool {
+        guard let reason = session.recovery?.reason else { return false }
+        return reason != .setupVerified && reason != .serverChanged
+    }
     var body: some View {
         NavigationStack {
             Form {
@@ -68,7 +72,7 @@ struct TerminalKeyInstallView: View {
                 }.listRowBackground(Color.clear)
                 if let notice = session.recovery {
                     Section { DirectRecoveryCard(notice: notice, primary: cardPrimary,
-                        secondary: [.setupVerified, .serverChanged].contains(notice.reason) ? nil : .init(title: "Manual Steps") { manual = true }) }
+                        secondary: showsManualRecoveryAction ? .init(title: "Manual Key Setup") { manual = true } : nil) }
                         .listRowInsets(EdgeInsets()).listRowBackground(Color.clear)
                 }
                 if let notice = library.recovery { Section { DirectRecoveryCard(notice: notice, primary: .init(title: "Retry") { load() }) } }
@@ -119,7 +123,9 @@ struct TerminalKeyInstallView: View {
                         }
                     }.listRowBackground(Color.clear)
                 } else { Section { Text("Your preferred Terminal key is saved. Tap Done to return.").foregroundStyle(.secondary) } }
-                Section { Button("Manual Key Setup") { manual = true } }
+                if !showsManualRecoveryAction {
+                    Section { Button("Manual Key Setup") { manual = true } }
+                }
             }
             .safeAreaInset(edge: .bottom) {
                 #if os(iOS)

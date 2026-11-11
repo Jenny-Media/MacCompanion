@@ -1599,7 +1599,7 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
         connects++; XCTAssertEqualObjects(user,@"synthetic"); XCTAssertEqualObjects(password,@"transient"); XCTAssertFalse(remember);
     };
     UIButton *retry=[viewer valueForKey:@"connect"]; XCTAssertTrue(retry.enabled);
-    XCTAssertEqualObjects([retry titleForState:UIControlStateNormal],@"Reconnect");
+    XCTAssertEqualObjects([retry titleForState:UIControlStateNormal],@"Try Again");
     [viewer connectionAction]; XCTAssertEqual(connects,1); XCTAssertEqual(viewer.mirrorRetirementDelay,16);
     XCTAssertEqualObjects([viewer valueForKey:@"lastConnectionFailure"][@"displayModeFailureStage"],@116);
     viewer.connectHandler=nil; [viewer stopViewer]; XCTAssertNil([login loginForResume]);
@@ -1628,7 +1628,7 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
         XCTAssertEqualObjects([viewer valueForKey:@"failedDisplayModePreset"],@(target));
         XCTAssertFalse(((UIView *)[viewer valueForKey:@"controls"]).hidden, @"Recovery over a cached frame keeps the controls menu reachable");
         NSDictionary *action=[viewer displayMenuSections].lastObject[@"items"][0];
-        XCTAssertFalse([action[@"disabled"] boolValue], @"Input-only is an independent escape, while Reconnect still retries the display target");
+        XCTAssertFalse([action[@"disabled"] boolValue], @"Input-only is available while Try Again retries the display target");
         XCTAssertNotNil([login loginForResume]);
         XCTAssertEqualObjects(((UITextField *)[viewer valueForKey:@"username"]).text,@"");
         XCTAssertEqualObjects(((UITextField *)[viewer valueForKey:@"password"]).text,@"");
@@ -1793,11 +1793,22 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
         XCTAssertEqualObjects([viewer valueForKey:@"failedDisplayModePreset"],@2);
         XCTAssertFalse(viewer.inputOnly);
         if (!hadInitialFrame.boolValue) {
-            XCTAssertFalse(connect.hidden); XCTAssertEqualObjects(connect.currentTitle,@"Reconnect");
+            XCTAssertFalse(connect.hidden); XCTAssertTrue(connect.enabled); XCTAssertEqualObjects(connect.currentTitle,@"Try Again");
+            XCTAssertTrue(((UIView *)[viewer valueForKey:@"loginFields"]).hidden);
+            XCTAssertFalse(((UIView *)[viewer valueForKey:@"loginDetails"]).hidden);
             XCTAssertFalse(cancel.hidden);
         }
         [viewer stopViewer];
     }
+}
+- (void)testDisplayFailureShowsTheLoginFormWhenRetryNeedsCredentials {
+    CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
+    [viewer setValue:@YES forKey:@"changingDisplayMode"]; [viewer setValue:@2 forKey:@"modeTargetPreset"];
+    [viewer showConnectionFailureStage:117];
+    XCTAssertFalse(((UIView *)[viewer valueForKey:@"loginFields"]).hidden);
+    UIButton *retry=[viewer valueForKey:@"connect"];
+    XCTAssertEqualObjects(retry.currentTitle,@"Try Again"); XCTAssertFalse(retry.enabled);
+    [viewer stopViewer];
 }
 - (void)testInputOnlyMenuActionWithoutSessionCredentialsShowsItsOwnLogin {
     CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];

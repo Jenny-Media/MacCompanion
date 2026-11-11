@@ -160,8 +160,8 @@ private final class FilesDirectoryTestHandler: ChannelInboundHandler, @unchecked
 }
 
 func filesDirectoryTestServer(plan: FilesDirectoryTestPlan = .empty, probe: FilesDirectoryTestProbe,
-                              responseDelay: TimeAmount = .nanoseconds(0), downloadBytes: Data? = nil) async throws -> Channel {
-    let hostKey = NIOSSHPrivateKey(ed25519Key: .init())
+                              responseDelay: TimeAmount = .nanoseconds(0), downloadBytes: Data? = nil,
+                              hostKey: NIOSSHPrivateKey = NIOSSHPrivateKey(ed25519Key: .init())) async throws -> Channel {
     return try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton).childChannelInitializer { channel in
         probe.opened(channel)
         return channel.pipeline.addHandler(NIOSSHHandler(role: .server(.init(hostKeys: [hostKey], userAuthDelegate: FilesDirectoryTestAuth(probe: probe))),

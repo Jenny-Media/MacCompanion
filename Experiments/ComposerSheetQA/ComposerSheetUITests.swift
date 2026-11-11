@@ -105,12 +105,10 @@ import XCTest
         app.buttons["compose-back"].tap(); app.buttons["qa-compose"].tap()
         XCTAssertTrue(editor.waitForExistence(timeout: 5)); XCTAssertEqual(editor.value as? String, "retained draft typed")
         app.buttons["compose-send"].tap()
-        XCTAssertTrue(app.buttons["compose-error"].waitForExistence(timeout: 5))
+        let warning = app.staticTexts["compose-delivery-warning"]
+        XCTAssertTrue(warning.waitForExistence(timeout: 5))
+        XCTAssertEqual(warning.label, "Synthetic delivery failure")
         XCTAssertEqual(editor.value as? String, "retained draft typed")
-        app.buttons["compose-error"].tap()
-        let warning = app.alerts["Can’t send this text"].firstMatch
-        XCTAssertTrue(warning.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Synthetic delivery failure")).firstMatch.waitForExistence(timeout: 5))
-        warning.buttons["Done"].firstMatch.tap(); XCTAssertTrue(warning.waitForNonExistence(timeout: 5))
         app.buttons["compose-send"].tap()
         let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: app.buttons["qa-compose"])
         XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed); XCTAssertFalse(editor.exists)
@@ -244,27 +242,44 @@ import XCTest
         XCTAssertEqual(app.textViews["compose-text"].value as? String, draft)
         app.buttons["compose-back"].tap(); XCTAssertTrue(app.buttons["qa-compose"].isHittable)
     }
-    func testDeliveryErrorCanBeReviewedRetriedAndSuccessClearsDraft() {
+    func testCompactDeliveryAlertAllowsRetryAndSuccessClearsDraft() {
         let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.sheetqa.ios")
-        app.launchArguments = ["--qa-delivery-result"]; app.launch(); defer { app.terminate() }
+        app.launchArguments = ["--qa-short-flat-composer", "--qa-delivery-result"]; app.launch(); defer { app.terminate() }
         XCTAssertTrue(app.buttons["qa-compose"].waitForExistence(timeout: 10)); app.buttons["qa-compose"].tap()
         let editor = app.textViews["compose-text"]
-        XCTAssertTrue(editor.waitForExistence(timeout: 5)); editor.typeText("retry draft")
-        app.buttons["compose-send"].tap()
-        XCTAssertTrue(app.buttons["compose-error"].waitForExistence(timeout: 5))
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
         XCTAssertEqual(editor.value as? String, "retry draft")
-        XCTAssertTrue(app.buttons["compose-send"].isEnabled); XCTAssertTrue(app.buttons["compose-back"].isEnabled)
-        app.buttons["compose-error"].tap()
-        let warning = app.alerts["Can’t send this text"].firstMatch
+        let warning = app.alerts["Text delivery"].firstMatch
         let message = warning.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "Synthetic delivery failure")).firstMatch
-        XCTAssertTrue(message.waitForExistence(timeout: 5))
-        XCTAssertTrue(message.label.contains("Current draft: 11 / 4,096 characters"))
-        warning.buttons["Done"].firstMatch.tap(); XCTAssertTrue(warning.waitForNonExistence(timeout: 5))
+        for attempt in 1...2 {
+            app.buttons["compose-send"].tap()
+            guard message.waitForExistence(timeout: 5) else {
+                XCTFail("Expected a compact alert for failed attempt \(attempt)")
+                return
+            }
+            XCTAssertTrue(message.label.contains("Current draft: 11 / 4,096 characters"))
+            warning.buttons["Done"].firstMatch.tap(); XCTAssertTrue(warning.waitForNonExistence(timeout: 5))
+            XCTAssertEqual(editor.value as? String, "retry draft")
+            XCTAssertTrue(app.buttons["compose-send"].isEnabled); XCTAssertTrue(app.buttons["compose-back"].isEnabled)
+            if attempt == 1 {
+                app.buttons["compose-back"].tap()
+                XCTAssertTrue(app.buttons["qa-compose"].isHittable)
+                app.buttons["qa-compose"].tap()
+                XCTAssertTrue(editor.waitForExistence(timeout: 5))
+                XCTAssertEqual(editor.value as? String, "retry draft")
+                XCTAssertFalse(warning.waitForExistence(timeout: 1), "Reopening the same draft must not repeat an acknowledged alert")
+                app.buttons["compose-error"].tap()
+                XCTAssertTrue(message.waitForExistence(timeout: 5))
+                warning.buttons["Done"].firstMatch.tap()
+                XCTAssertTrue(warning.waitForNonExistence(timeout: 5))
+            }
+        }
         app.buttons["compose-send"].tap()
         let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: app.buttons["qa-compose"])
         XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed)
         app.buttons["qa-compose"].tap(); XCTAssertTrue(editor.waitForExistence(timeout: 5))
         XCTAssertEqual(editor.value as? String, ""); XCTAssertFalse(app.buttons["compose-error"].exists)
+        XCTAssertFalse(app.staticTexts["compose-delivery-warning"].exists)
     }
     func testShortFlatPaneKeepsActionsAndOffersFullLimitDetails() async {
         let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.sheetqa.ios")
@@ -302,7 +317,7 @@ import XCTest
         XCTAssertEqual(editor.value as? String, retained)
         XCTAssertFalse(app.staticTexts["compose-limit-count"].exists)
         XCTAssertTrue(app.buttons["compose-send"].isEnabled)
-        let warning = "This draft exceeds the 16 KB limit. Use a smaller selection. Your previous text was kept."
+        let warning = "Drafts can contain up to 16 KB. Your previous text was kept."
         let count = "Current draft: 3,277 / 4,096 characters"
         XCTAssertTrue(warningButton.label.contains(warning)); XCTAssertTrue(warningButton.label.contains(count))
         warningButton.tap()

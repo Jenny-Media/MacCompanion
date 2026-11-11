@@ -45,9 +45,15 @@ private struct CopyAuditHome: View {
         terminalStore.read = { terminal }; terminalStore.write = { terminal = $0 }
         remoteStore.read = { remote }; remoteStore.write = { remote = $0 }
         terminalStore.legacyIDs = { [] }; terminalStore.legacyActions = { [] }
+        let injectRestoreFailures = ProcessInfo.processInfo.arguments.contains("--qa-backup-restore-failures")
+        var failAttempt = true
         return DirectLocalBackupStore(library: library, stores: [.terminal: terminalStore, .remoteMac: remoteStore],
             directory: root.appending(path: "recovery"), canAccess: { true }, sessionsActive: { false },
-            pauseSync: {}, applyPreferences: { _, _ in })
+            pauseSync: {
+                guard injectRestoreFailures else { return }
+                defer { failAttempt.toggle() }
+                if failAttempt { throw DirectLocalBackupStore.Failure.cloudRemovalInProgress }
+            }, applyPreferences: { _, _ in })
     }
     private func backupPreview() -> DirectLocalBackup {
         var file = try! backup.makeBackup()

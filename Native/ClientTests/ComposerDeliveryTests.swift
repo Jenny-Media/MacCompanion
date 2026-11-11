@@ -197,7 +197,7 @@ private final class ComposerBatchSession: CompanionVNCSession {
                     XCTAssertEqual(draft.detailsMessage, counterInDetails ? draft.sizeSummary : nil)
                     draft.edit(String(repeating: "x", count: DirectComposedText.draftMaximumBytes + 1))
                     XCTAssertEqual(draft.text, retained); XCTAssertTrue(draft.canSend)
-                    let warning = "This draft exceeds the 16 KB limit. Use a smaller selection. Your previous text was kept."
+                    let warning = "Drafts can contain up to 16 KB. Your previous text was kept."
                     XCTAssertEqual(draft.issueMessage, warning)
                     let count = mode == .terminal ? retained.utf8.count : retained.unicodeScalars.count
                     let limit = mode == .terminal ? DirectComposedText.terminalMaximumBytes : DirectComposedText.desktopMaximumScalars
@@ -211,6 +211,30 @@ private final class ComposerBatchSession: CompanionVNCSession {
                 }
             }
         }
+    }
+    func testRejectedPasteTakesPriorityOverCompactDeliveryWarning() throws {
+        let draft = DirectTextComposerDraft(macName: "Synthetic Mac", mode: .desktop)
+        let delivery = "Text may have been partially sent. Check your Mac before sending it again."
+        draft.configure(available: { true }, send: { _, complete in complete(delivery) })
+        draft.edit("retained draft")
+        draft.requestSend()
+        draft.deliveryIssueInDetails = true
+        draft.edit(String(repeating: "x", count: DirectComposedText.draftMaximumBytes + 1))
+
+        let details = try XCTUnwrap(draft.detailsMessage)
+        XCTAssertTrue(details.hasPrefix("Drafts can contain up to 16 KB. Your previous text was kept."))
+        XCTAssertTrue(details.contains(delivery))
+        XCTAssertEqual(draft.text, "retained draft")
+        XCTAssertTrue(draft.canSend)
+    }
+    func testDraftLimitAppliesToExistingTextPlusPaste() {
+        let draft = DirectTextComposerDraft(macName: "Synthetic Mac", mode: .terminal)
+        draft.configure(available: { true }, send: { _, _ in XCTFail("Editing must not send text") })
+        let retained = String(repeating: "a", count: 12 * 1024)
+        draft.edit(retained)
+        draft.edit(retained + String(repeating: "b", count: 8 * 1024))
+        XCTAssertEqual(draft.text, retained)
+        XCTAssertEqual(draft.issueMessage, "Drafts can contain up to 16 KB. Your previous text was kept.")
     }
 }
 #endif
