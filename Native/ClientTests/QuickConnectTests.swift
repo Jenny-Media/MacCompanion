@@ -19,14 +19,6 @@ import LocalAuthentication
         context.biometrics = true; context.deviceAuthentication = true; context.kind = .faceID
         XCTAssertEqual(DirectUnlockMethod.current(context: context), .faceID, "Availability can recover after Settings or biometric lockout")
     }
-    func testTrackpadRecoveryOnlyAppliesToDisplayFailures() {
-        for stage in [7, 8, 10, 11, 110, 111, 112, 113, 114, 115] {
-            XCTAssertFalse(DirectRecoveryBridgeV1.canOfferInputOnlyRecovery(stage: stage), "stage \(stage)")
-        }
-        for stage in [9, 103, 116, 117, 118] {
-            XCTAssertTrue(DirectRecoveryBridgeV1.canOfferInputOnlyRecovery(stage: stage), "stage \(stage)")
-        }
-    }
     func testDraftValidatesWithoutSavingAndKeepsAStableIdentity() throws {
         var draft = DirectQuickConnectDraft(); draft.host = " EXAMPLE.local "
         let id = draft.id

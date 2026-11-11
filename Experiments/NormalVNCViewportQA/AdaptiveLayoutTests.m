@@ -369,7 +369,6 @@ static char keyboardDuringScaleUpdateKey;
         CGFloat signInHeight = card.bounds.size.height;
         [viewer setValue:@YES forKey:@"starting"]; [viewer updateConnectionChrome]; [viewer.view layoutIfNeeded];
         XCTAssertLessThan(card.bounds.size.height, signInHeight);
-        XCTAssertTrue(((UIView *)[viewer valueForKey:@"loginTrackpad"]).hidden);
         XCTAssertTrue(((UIView *)[viewer valueForKey:@"loginPurpose"]).hidden);
         XCTAssertEqualWithAccuracy(CGRectGetMaxY(card.frame), CGRectGetMaxY(scroll.bounds) - 12, 2);
         XCTAssertTrue(((UIView *)[viewer valueForKey:@"loginFields"]).hidden);

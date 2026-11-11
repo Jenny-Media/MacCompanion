@@ -806,9 +806,11 @@ struct DirectNoticeMessage: View {
 }
 
 struct DirectRecoveryCard: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let notice: DirectRecoveryNotice
     var primary: DirectRecoveryAction? = nil
     var secondary: DirectRecoveryAction? = nil
+    var displayModeRecovery = false
     private var color: Color {
         switch notice.severity { case .information: .blue; case .warning: .orange; case .critical: .red; case .success: .green }
     }
@@ -817,12 +819,26 @@ struct DirectRecoveryCard: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label(notice.title, systemImage: symbol).font(.headline).foregroundStyle(.primary)
-            DirectNoticeMessage(message: notice.message).font(.subheadline)
+            if displayModeRecovery {
+                HStack(spacing: 12) {
+                    if !dynamicTypeSize.isAccessibilitySize {
+                        Image(systemName: "display").font(.title2).foregroundStyle(.blue)
+                            .padding(10).background(.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
+                            .accessibilityHidden(true)
+                    }
+                    Text(notice.title).font(.headline).fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading).accessibilityAddTraits(.isHeader)
+                }
+                Text(notice.message).font(.subheadline).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Label(notice.title, systemImage: symbol).font(.headline).foregroundStyle(.primary)
+                DirectNoticeMessage(message: notice.message).font(.subheadline)
+            }
             if let primary { action(primary, prominent: true) }
             if let secondary { action(secondary, prominent: false) }
             if !notice.details.isEmpty {
-                DisclosureGroup("Details") {
+                DisclosureGroup(displayModeRecovery ? "Connection Details" : "Details") {
                     VStack(alignment: .leading, spacing: 10) {
                         ForEach(Array(notice.details.enumerated()), id: \.offset) { _, detail in
                             VStack(alignment: .leading, spacing: 3) {
@@ -834,9 +850,10 @@ struct DirectRecoveryCard: View {
                 }.font(.footnote).frame(minHeight: 44).tint(.secondary)
             }
         }.padding(17).frame(maxWidth: .infinity, alignment: .leading)
-            .background(color.opacity(0.09), in: RoundedRectangle(cornerRadius: 18))
+            .fixedSize(horizontal: false, vertical: displayModeRecovery)
+            .background(color.opacity(displayModeRecovery ? 0 : 0.09), in: RoundedRectangle(cornerRadius: 18))
             .background(recoveryBackground, in: RoundedRectangle(cornerRadius: 18))
-            .overlay(RoundedRectangle(cornerRadius: 18).stroke(color.opacity(0.17)))
+            .overlay(RoundedRectangle(cornerRadius: 18).stroke(displayModeRecovery ? Color.primary.opacity(0.08) : color.opacity(0.17)))
             .accessibilityIdentifier("recovery-" + notice.reason.rawValue)
             .onAppear { announce() }
             .onChange(of: notice.reason) { _, _ in announce() }
@@ -857,7 +874,8 @@ struct DirectRecoveryCard: View {
         let button = Button(action: value.perform) {
             HStack {
                 if let symbol = value.symbol { Image(systemName: symbol) }
-                Text(value.title).multilineTextAlignment(.center)
+                Text(value.title).multilineTextAlignment(.center).lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
                 if value.pro { Spacer(minLength: 4); DirectProBadge() }
             }.frame(maxWidth: .infinity, minHeight: 32)
         }.controlSize(.large)
@@ -944,9 +962,6 @@ struct TerminalServerTrustView: View {
 #if os(iOS)
 /// UIKit Desktop uses the same copy and actions as the SwiftUI recovery screens.
 @objc(DirectRecoveryBridgeV1) @MainActor final class DirectRecoveryBridgeV1: NSObject {
-    @objc(canOfferInputOnlyRecoveryAtStage:) static func canOfferInputOnlyRecovery(stage: Int) -> Bool {
-        [9, 103, 116, 117, 118].contains(stage)
-    }
     static func desktopReason(stage: Int, hadFrame: Bool) -> DirectRecoveryNotice.Reason {
         switch stage {
         case 10: return .addressNotFound
@@ -969,15 +984,23 @@ struct TerminalServerTrustView: View {
         case 111: message = "The Mac didn’t accept this account and password for Remote Login. Check the login and allow this account in Remote Login settings."
         case 114: message = "SSH connected, but Screen Sharing wasn’t available through it. Enable Screen Sharing, check its saved port, and allow SSH forwarding on the Mac."
         case 115: message = "The SSH server trust couldn’t be read or saved. Unlock this iPhone and retry. The saved Mac is kept."
-        case 116: message = "The Mac is still using a virtual display. Mirror Mac Screen couldn’t be opened. Reconnect to try again."
-        case 117: message = "The Mac didn’t finish opening the virtual display. Reconnect to try again."
-        case 118: message = "The Mac didn’t provide display information for this mode. Reconnect to try again."
+        case 116: message = "Your Mac is still using a virtual display."
+        case 117: message = "Your Mac didn’t finish setting it up."
+        case 118: message = "Your Mac didn’t provide the information needed to open this display."
         case 103: message = "The desktop image couldn’t be decoded. Reconnect to request a fresh image. Your login and view settings are kept."
         case 9: message = "This desktop exceeds the supported size limit. Reduce the Mac’s shared desktop size before retrying."
         default: message = nil
         }
-        return DirectRecoveryNotice.make(reason, message: message,
+        let notice = DirectRecoveryNotice.make(reason, message: message,
             details: [.init(name: "Service", value: (stage == 10 || stage == 11 || (110...115).contains(stage)) ? "Remote Login (SSH)" : "Screen Sharing over SSH"), .init(name: "Port", value: String(port)), .init(name: "Stage", value: String(stage))])
+        let title: String
+        switch stage {
+        case 116: title = "Mac screen isn’t ready"
+        case 117: title = "Virtual display isn’t ready"
+        case 118: title = "Display isn’t ready"
+        default: return notice
+        }
+        return .init(reason: reason, title: title, message: notice.message, details: notice.details)
     }
     @objc static func desktopDetails(stage: Int, hadFrame: Bool, port: Int) -> String {
         let notice = desktopNotice(stage: stage, hadFrame: hadFrame, port: port)
@@ -987,32 +1010,21 @@ struct TerminalServerTrustView: View {
         desktop(stage: stage, hadFrame: hadFrame, port: port, textInterrupted: false, retry: retry, edit: edit)
     }
     @objc static func desktop(stage: Int, hadFrame: Bool, port: Int, textInterrupted: Bool, retry: @escaping @MainActor @Sendable () -> Void, edit: @escaping @MainActor @Sendable () -> Void) -> UIViewController {
-        desktop(stage: stage, hadFrame: hadFrame, port: port, textInterrupted: textInterrupted, retry: retry, edit: edit, inputOnly: nil)
-    }
-    @objc static func desktop(stage: Int, hadFrame: Bool, port: Int, textInterrupted: Bool, retry: @escaping @MainActor @Sendable () -> Void, edit: @escaping @MainActor @Sendable () -> Void, inputOnly: (@MainActor @Sendable () -> Void)?) -> UIViewController {
-        let inputOnly = canOfferInputOnlyRecovery(stage: stage) ? inputOnly : nil
         let modeFailure = (116...118).contains(stage)
-        let base = desktopNotice(stage: stage, hadFrame: hadFrame, port: port)
-        let original = modeFailure ? DirectRecoveryNotice(reason: base.reason, title: "Couldn’t switch display mode", message: base.message, details: base.details) : base
-        let notice = textInterrupted ? DirectRecoveryNotice.make(original.reason,
-            message: original.message + " Text may have been partially sent. Check your Mac before sending it again; input won’t be replayed.", details: original.details) : original
+        let original = desktopNotice(stage: stage, hadFrame: hadFrame, port: port)
+        let notice = textInterrupted ? DirectRecoveryNotice(reason: original.reason, title: original.title,
+            message: original.message + " Text may have been partially sent. Check your Mac before sending it again; input won’t be replayed.",
+            severity: original.severity, details: original.details) : original
         let reason = notice.reason
         if !hadFrame {
-            let controller = UIHostingController(rootView: VStack(alignment: .leading, spacing: 12) {
-                DirectConnectionNotice(notice: notice)
-                if let inputOnly {
-                    Button("Use Trackpad & Keyboard", action: inputOnly)
-                        .buttonStyle(.bordered).frame(maxWidth: .infinity, minHeight: 44)
-                        .accessibilityIdentifier("recovery-inputOnly")
-                }
-            }.directAppearance())
+            let controller = UIHostingController(rootView: DirectConnectionNotice(notice: notice).directAppearance())
             controller.sizingOptions = .intrinsicContentSize; controller.view.backgroundColor = .clear
             return controller
         }
         let controller = UIHostingController(rootView: DirectRecoveryCard(notice: notice,
-            primary: .init(title: reason == .loginRejected ? "Edit Login" : hadFrame ? "Reconnect" : "Try Again", perform: reason == .loginRejected ? edit : retry),
-            secondary: inputOnly.map { .init(title: "Use Trackpad & Keyboard", perform: $0) }
-                ?? (reason == .loginRejected || modeFailure ? nil : .init(title: "Edit Login", perform: edit))).directAppearance())
+            primary: .init(title: reason == .loginRejected ? "Edit Login" : modeFailure ? "Try Again" : "Reconnect", symbol: modeFailure ? "arrow.clockwise" : nil, perform: reason == .loginRejected ? edit : retry),
+            secondary: reason == .loginRejected || modeFailure ? nil : .init(title: "Edit Login", perform: edit),
+            displayModeRecovery: modeFailure).directAppearance())
         controller.sizingOptions = .intrinsicContentSize
         controller.view.backgroundColor = .clear
         return controller
