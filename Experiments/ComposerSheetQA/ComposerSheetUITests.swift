@@ -261,6 +261,18 @@ import XCTest
             warning.buttons["Done"].firstMatch.tap(); XCTAssertTrue(warning.waitForNonExistence(timeout: 5))
             XCTAssertEqual(editor.value as? String, "retry draft")
             XCTAssertTrue(app.buttons["compose-send"].isEnabled); XCTAssertTrue(app.buttons["compose-back"].isEnabled)
+            if attempt == 1 {
+                app.buttons["compose-back"].tap()
+                XCTAssertTrue(app.buttons["qa-compose"].isHittable)
+                app.buttons["qa-compose"].tap()
+                XCTAssertTrue(editor.waitForExistence(timeout: 5))
+                XCTAssertEqual(editor.value as? String, "retry draft")
+                XCTAssertFalse(warning.waitForExistence(timeout: 1), "Reopening the same draft must not repeat an acknowledged alert")
+                app.buttons["compose-error"].tap()
+                XCTAssertTrue(message.waitForExistence(timeout: 5))
+                warning.buttons["Done"].firstMatch.tap()
+                XCTAssertTrue(warning.waitForNonExistence(timeout: 5))
+            }
         }
         app.buttons["compose-send"].tap()
         let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: app.buttons["qa-compose"])

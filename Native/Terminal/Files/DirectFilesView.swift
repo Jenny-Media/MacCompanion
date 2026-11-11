@@ -123,12 +123,13 @@ struct DirectFilesView: View {
                     TerminalKeySettings(mac: mac, changed: { loadLogin(preferSelected: true, includePassword: false, preserveUnchangedSelection: true) }).directAppearance()
                     #endif
                 case .setup: DirectMacSetupGuide().directAppearance()
-                case .identity: TerminalIdentityGuide(macName: mac.name).directAppearance()
+                case .identity:
+                    TerminalIdentityGuide(macName: mac.name, presentedIdentity: session.connectionRecovery?.presentedIdentity).directAppearance()
                 case .upload: uploadReview
                 case .pro: DirectProView().directAppearance()
                 case .access:
                     #if os(iOS)
-                    DirectMacAccessView(mac: mac, saved: savedCompanionLogin)
+                    DirectMacAccessView(mac: mac, profileSaved: savedCompanionLogin)
                     #else
                     EmptyView()
                     #endif
@@ -346,7 +347,10 @@ struct DirectFilesView: View {
                     if contextProvider == nil, hasMacLogin, hasSSHOverride {
                         Toggle("Use Terminal Sign-In", isOn: $standaloneSSH).disabled(session.busy)
                             .accessibilityIdentifier("files-ssh-override")
-                            .onChange(of: standaloneSSH) { _, _ in refreshSavedLoginRequirement() }
+                            .onChange(of: standaloneSSH) { previous, _ in
+                                guard requiresSavedLogin, let profile = try? DirectMacAccessStore.load(mac.id) else { return }
+                                refreshSavedLoginRequirement(previous: profile, previouslyUsedSSH: previous, current: profile)
+                            }
                     }
                     if !session.busy, contextProvider == nil, !requiresSavedLogin {
                         Button("Saved Login", systemImage: "person.badge.key") { sheet = .access }
@@ -602,33 +606,23 @@ struct DirectFilesView: View {
             Label(title, systemImage: symbol).font(.headline).frame(maxWidth: .infinity, minHeight: 32)
         }.buttonStyle(.borderedProminent).controlSize(.large).accessibilityIdentifier(identifier)
     }
-    private enum CompanionLogin {
-        case password(DirectMacAccessProfile.Password, useMacLogin: Bool)
-        case key(TerminalSSHKey, account: String)
-        case missing(String)
+    private func usableSavedKey() throws -> TerminalSSHKey? {
+        guard let selected = try TerminalKeyLibraryStore.selected(mac.id), try TerminalKeyLibraryStore.canUse(selected) else { return nil }
+        return selected.key
     }
-    private func companionLogin() throws -> CompanionLogin {
-        let profile = try DirectMacAccessStore.load(mac.id)
-        let useSSH = standaloneSSH || profile.login == nil
-        if useSSH && profile.sshMethod == .key {
-            guard let selected = try TerminalKeyLibraryStore.selected(mac.id), try TerminalKeyLibraryStore.canUse(selected) else {
-                return .missing("Choose an available SSH key in Saved Login.")
-            }
-            return .key(selected.key, account: profile.keyUsername)
+    private func refreshSavedLoginRequirement(previous: DirectMacAccessProfile, previouslyUsedSSH: Bool, current: DirectMacAccessProfile) {
+        guard requiresSavedLogin else { return }
+        let oldLogin = DirectFilesSession.SavedLogin(profile: previous, useSSH: previouslyUsedSSH || previous.login == nil)
+        var newLogin = DirectFilesSession.SavedLogin(profile: current, useSSH: standaloneSSH || current.login == nil)
+        if case .key = newLogin, (try? usableSavedKey()) == nil {
+            newLogin = .missing("Choose an available SSH key in Saved Login.")
         }
-        guard let login = useSSH ? profile.passwordLogin : profile.login, login.valid else {
-            return .missing("Add the login you use for this Mac to open Files.")
-        }
-        return .password(login, useMacLogin: !useSSH)
+        session.updateSavedLoginRecovery(previous: oldLogin, current: newLogin)
     }
-    private func refreshSavedLoginRequirement() {
-        guard requiresSavedLogin, let login = try? companionLogin() else { return }
-        if case .missing(let message) = login { session.reportConnectionRecovery(.missingLogin, message: message) }
-        else { session.clearConnectionRecovery() }
-    }
-    private func savedCompanionLogin() {
+    private func savedCompanionLogin(previous: DirectMacAccessProfile, current: DirectMacAccessProfile) {
+        let previouslyUsedSSH = standaloneSSH
         refreshCompanionAccounts()
-        refreshSavedLoginRequirement()
+        refreshSavedLoginRequirement(previous: previous, previouslyUsedSSH: previouslyUsedSSH, current: current)
     }
     private func refreshCompanionAccounts() {
         guard contextProvider == nil, accessAllowed(), sessionAvailable(), let profile = try? DirectMacAccessStore.load(mac.id) else { return }
@@ -663,11 +657,17 @@ struct DirectFilesView: View {
             return
         }
         do {
-            switch try companionLogin() {
-            case .key(let key, let account):
+            let profile = try DirectMacAccessStore.load(mac.id)
+            let useSSH = standaloneSSH || profile.login == nil
+            switch DirectFilesSession.SavedLogin(profile: profile, useSSH: useSSH) {
+            case .key(_, let account):
+                guard let key = try usableSavedKey() else {
+                    session.reportConnectionRecovery(.missingLogin, message: "Choose an available SSH key in Saved Login.")
+                    return
+                }
                 session.connect(username: account, password: "", key: key, remember: false)
-            case .password(let login, let useMacLogin):
-                session.connect(username: login.username, password: login.password, key: nil, remember: true, useMacLogin: useMacLogin)
+            case .password(let login):
+                session.connect(username: login.username, password: login.password, key: nil, remember: true, useMacLogin: !useSSH)
             case .missing(let message):
                 session.reportConnectionRecovery(.missingLogin, message: message)
             }

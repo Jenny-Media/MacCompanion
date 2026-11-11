@@ -318,6 +318,7 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
             }
             catch { viewer?.showLoginRetentionFailure(); return }
             let token = UUID(); generation = token
+            viewer?.identityVerificationGuide = nil
             authenticatedAccount = user; authenticatedGeneration = token
             accessLease = DirectMacConnections.shared.begin(macID: mac.id, kind: "desktop", ownerID: accessOwnerID,
                 pendingAccessChange: DirectMacAccessStore.willRetainChange(macID: mac.id, username: user, password: password, key: nil, ssh: false, remember: remember), disconnect: { [weak self] in self?.disconnect() })
@@ -397,7 +398,18 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
                             // private credentials and cleanup requirement on return.
                             viewer.background(completion: {})
                         } else {
-                            disconnect(); viewer.showConnectionFailureStage(error is CancellationError ? 113 : DirectDesktopSSHTunnel.failureStage(error))
+                            disconnect()
+                            if let mismatch = error as? TerminalSecretStore.HostKeyMismatch {
+                                let macName = mac.name
+                                let library = DirectMacLibraryV1(url: files.libraryURL)
+                                let temporary = library.readable && !library.macs.contains { $0.id == mac.id }
+                                viewer.identityVerificationGuide = {
+                                    MainActor.assumeIsolated {
+                                        DirectRecoveryBridgeV1.verificationGuide(macName: macName, presentedIdentity: mismatch.presented, temporary: temporary)
+                                    }
+                                }
+                            }
+                            viewer.showConnectionFailureStage(error is CancellationError ? 113 : DirectDesktopSSHTunnel.failureStage(error))
                         }
                     }
                 }
@@ -455,9 +467,7 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         }
         private func verifyHost(_ key: String, generation token: UUID) async throws {
             guard generation == token, !Task.isCancelled, DirectAppLockV1.shared.canAccess else { throw CancellationError() }
-            if let saved = try TerminalSecretStore.hostKey(mac.id) {
-                guard saved == key else { throw TerminalSecretStore.Failure.changedKey }
-            } else {
+            if try !TerminalSecretStore.matchesTrustedHostKey(key, id: mac.id) {
                 guard let fingerprint = TerminalSecretStore.fingerprint(key), let viewer else { throw TerminalSecretStore.Failure.rejectedKey }
                 // UIKit reports an ancestor's presented connection sheet here.
                 // The shared panel replaces its contents for trust; only the
@@ -477,7 +487,8 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
                 }
                 guard generation == token, !Task.isCancelled, DirectAppLockV1.shared.canAccess else { throw CancellationError() }
                 guard accepted else { throw TerminalSecretStore.Failure.rejectedKey }
-                try TerminalSecretStore.approveHostKey(key, id: mac.id)
+                do { try TerminalSecretStore.approveHostKey(key, id: mac.id) }
+                catch TerminalSecretStore.Failure.changedKey { throw TerminalSecretStore.HostKeyMismatch(key: key) }
             }
             viewer?.showConnectionProgress("Verifying SSH server…")
         }

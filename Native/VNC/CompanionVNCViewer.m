@@ -885,7 +885,8 @@
 - (void)editRecoveryLogin { [self finishCredentialSession]; [self clearRecovery]; self.login.hidden = NO; self.starting = NO; [self updateConnectionChrome]; [self.username becomeFirstResponder]; }
 - (void)showRecoveryVerification {
     if (self.recoveryStage != 112 || !self.connectionForegroundAvailable) return;
-    UIViewController *guide = [DirectRecoveryBridgeV1 verificationGuideWithMacName:self.macName ?: @"Mac"];
+    UIViewController *guide = self.identityVerificationGuide ? self.identityVerificationGuide()
+        : [DirectRecoveryBridgeV1 verificationGuideWithMacName:self.macName ?: @"Mac"];
     if (self.connectionPanelHost && !self.login.hidden) [self.connectionPanelHost presentSecondary:guide];
     else if (!self.presentedViewController) [self presentViewController:guide animated:YES completion:nil];
 }

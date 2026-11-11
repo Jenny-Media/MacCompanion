@@ -21,6 +21,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         enum Reason { case missingLogin, rejectedLogin, identityChanged }
         let reason: Reason
         let message: String
+        let presentedIdentity: TerminalSecretStore.HostIdentity?
     }
     enum ConflictChoice { case keepBoth, replace, cancel }
     struct Trust: Identifiable { let id = UUID(); let fingerprint: String }
@@ -70,13 +71,41 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     private var borrowedIsCurrent: (@MainActor () -> Bool)?
     private var borrowedGeneration: UUID?
     var isBorrowed: Bool { borrowedGeneration != nil }
-    func reportConnectionRecovery(_ reason: ConnectionRecovery.Reason, message: String) {
+    func reportConnectionRecovery(_ reason: ConnectionRecovery.Reason, message: String, presentedIdentity: TerminalSecretStore.HostIdentity? = nil) {
         statusMessage = nil
-        connectionRecovery = .init(reason: reason, message: message)
+        connectionRecovery = .init(reason: reason, message: message, presentedIdentity: presentedIdentity)
     }
     func clearConnectionRecovery() {
         connectionRecovery = nil
     }
+    #if os(iOS)
+    enum SavedLogin: Equatable {
+        case password(DirectMacAccessProfile.Password)
+        case key(id: UUID, account: String)
+        case missing(String)
+
+        init(profile: DirectMacAccessProfile, useSSH: Bool) {
+            if useSSH && profile.sshMethod == .key {
+                guard let id = profile.keyID else { self = .missing("Choose an available SSH key in Saved Login."); return }
+                let account = profile.keyUsername
+                guard !account.isEmpty, account.utf8.count <= 255, !account.contains("\0") else {
+                    self = .missing("Add the Terminal account for this SSH key in Saved Login.")
+                    return
+                }
+                self = .key(id: id, account: account)
+            } else if let login = useSSH ? profile.passwordLogin : profile.login, login.valid {
+                self = .password(login)
+            } else {
+                self = .missing("Add the login you use for this Mac to open Files.")
+            }
+        }
+    }
+    func updateSavedLoginRecovery(previous: SavedLogin, current: SavedLogin) {
+        guard let reason = connectionRecovery?.reason, reason == .missingLogin || reason == .rejectedLogin else { return }
+        if case .missing(let message) = current { reportConnectionRecovery(.missingLogin, message: message) }
+        else if reason == .missingLogin || previous != current { clearConnectionRecovery() }
+    }
+    #endif
     func disconnectBorrowed(_ owner: UUID) {
         if borrowedGeneration == owner { disconnect(message: "The parent session ended. Completed downloads are kept; reconnect before retrying interrupted transfers.") }
     }
@@ -291,15 +320,14 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                 self.channel = channel
                 let validator = TerminalHostValidator { [weak self] publicKey in
                     guard let self else { throw CancellationError() }; try self.check(token)
-                    if let saved = try TerminalSecretStore.hostKey(self.mac.id) {
-                        guard saved == publicKey else { throw TerminalSecretStore.Failure.changedKey }; return
-                    }
+                    if try TerminalSecretStore.matchesTrustedHostKey(publicKey, id: self.mac.id) { return }
                     guard let fingerprint = TerminalSecretStore.fingerprint(publicKey) else { throw TerminalSecretStore.Failure.rejectedKey }
                     self.status = "Verify this Mac’s identity"; self.trust = .init(fingerprint: fingerprint)
                     let accepted = await withCheckedContinuation { self.trustReply = $0 }
                     self.trust = nil; try self.check(token)
                     guard accepted else { throw TerminalSecretStore.Failure.rejectedKey }
-                    try TerminalSecretStore.approveHostKey(publicKey, id: self.mac.id)
+                    do { try TerminalSecretStore.approveHostKey(publicKey, id: self.mac.id) }
+                    catch TerminalSecretStore.Failure.changedKey { throw TerminalSecretStore.HostKeyMismatch(key: publicKey) }
                 }
                 var settings = SSHClientSettings(host: addresses.first ?? "", port: port,
                     authenticationMethod: authentication, hostKeyValidator: .custom(validator))
@@ -355,8 +383,9 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                 guard generation == token else { return }
                 let openingFiles = ssh != nil
                 retire(); phase = .interrupted
-                if let failure = error as? TerminalSecretStore.Failure, failure == .changedKey {
-                    reportConnectionRecovery(.identityChanged, message: "The Mac’s SSH identity changed. Verify it before reconnecting. Existing trust is kept.")
+                if let mismatch = error as? TerminalSecretStore.HostKeyMismatch {
+                    reportConnectionRecovery(.identityChanged, message: "The Mac’s SSH identity changed. Verify it before reconnecting. Existing trust is kept.",
+                        presentedIdentity: mismatch.presented)
                 } else if let failure = error as? TerminalSecretStore.Failure, failure == .rejectedKey {
                     message = "Server identity was not approved. No file connection was opened."
                 } else if DirectTerminalSession.reason(for: error, keyLogin: key != nil) == .loginRejected || DirectTerminalSession.reason(for: error, keyLogin: key != nil) == .keyRejected {

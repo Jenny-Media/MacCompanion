@@ -1048,7 +1048,10 @@ struct TerminalServerTrustView: View {
         return controller
     }
     @objc static func verificationGuide(macName: String) -> UIViewController {
-        let controller = UIHostingController(rootView: TerminalIdentityGuide(macName: macName).directAppearance())
+        verificationGuide(macName: macName, presentedIdentity: nil, temporary: false)
+    }
+    static func verificationGuide(macName: String, presentedIdentity: TerminalSecretStore.HostIdentity?, temporary: Bool) -> UIViewController {
+        let controller = UIHostingController(rootView: TerminalIdentityGuide(macName: macName, presentedIdentity: presentedIdentity, temporary: temporary).directAppearance())
         controller.modalPresentationStyle = .formSheet
         return controller
     }

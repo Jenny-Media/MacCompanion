@@ -191,6 +191,7 @@ final class DirectDesktopSSHTunnel: @unchecked Sendable {
         }.get()
     }
     static func failureStage(_ error: Error) -> Int {
+        if error is TerminalSecretStore.HostKeyMismatch { return 112 }
         if let error = error as? TerminalSecretStore.Failure {
             switch error {
             case .changedKey: return 112

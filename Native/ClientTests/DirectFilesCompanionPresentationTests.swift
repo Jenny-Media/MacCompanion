@@ -4,10 +4,117 @@ import Observation
 import SwiftUI
 import UIKit
 import Vision
+import NIOSSH
 @preconcurrency @testable import Citadel
 @testable import Mac_Companion
 
 @MainActor final class DirectFilesCompanionPresentationTests: XCTestCase {
+    func testIdentityMismatchProvidesVerificationBeforeAuthentication() async throws {
+        let probe = FilesDirectoryTestProbe()
+        let hostKey = NIOSSHPrivateKey(ed25519Key: .init())
+        let server = try await filesDirectoryTestServer(probe: probe, hostKey: hostKey)
+        defer { Task { await probe.shutdown(); try? await server.close().get() } }
+        let offered = String(openSSHPublicKey: hostKey.publicKey)
+        let oldPin = TerminalSSHKey.create().publicKey
+        let root = try DirectFilesLocalStore.root(); defer { try? FileManager.default.removeItem(at: root) }
+        let library = DirectMacLibraryV1(url: root.appendingPathComponent("macs.json"), removeLogin: { _ in })
+
+        for temporary in [false, true] {
+            let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Mac", addresses: ["127.0.0.1"],
+                sshPort: try XCTUnwrap(server.localAddress?.port))
+            try TerminalSecretStore.approveHostKey(oldPin, id: mac.id)
+            defer { try? TerminalSecretStore.removeTemporaryIdentity(mac.id) }
+            if !temporary {
+                XCTAssertTrue(library.save(id: mac.id, name: mac.name, addresses: mac.addresses, sshPort: mac.sshPort))
+            }
+            let files = DirectFilesSession(mac: mac, libraryURL: library.storageURL)
+            defer { files.close() }
+            if !temporary {
+                files.connect(username: "synthetic", password: "synthetic-only", key: nil, remember: true)
+                try await wait { !files.busy }
+                XCTAssertEqual(files.connectionRecovery?.reason, .identityChanged)
+                XCTAssertEqual(files.connectionRecovery?.presentedIdentity?.fingerprint, TerminalSecretStore.fingerprint(offered))
+                XCTAssertEqual(files.connectionRecovery?.presentedIdentity?.keyType, "ssh-ed25519")
+                try await wait { !DirectMacConnections.shared.isActive(mac.id) }
+            }
+
+            let panel = DirectConnectionPanelHost()
+            let presenter = UIViewController()
+            let mount = try CompanionFilesMount(controller: presenter)
+            let coordinator = VNCRemoteDesktopView.Coordinator(mac: mac, files: files)
+            let viewer = CompanionVNCViewer()
+            do {
+                panel.attach(presenter)
+                viewer.connectionPanelHost = panel
+                viewer.preventsAutomaticConnection = true
+                viewer.macName = mac.name
+                viewer.sshPort = mac.sshPort
+                presenter.addChild(viewer); viewer.view.frame = mount.window.bounds
+                presenter.view.addSubview(viewer.view); viewer.didMove(toParent: presenter)
+                viewer.foregrounded()
+                coordinator.viewer = viewer
+                coordinator.connect(user: "synthetic", password: "synthetic-only", remember: false)
+                let verify = try XCTUnwrap(viewer.value(forKey: "connect") as? UIButton)
+                try await waitForRecovery("desktop identity mismatch") {
+                    verify.currentTitle == "How to Verify" && verify.window != nil && presenter.presentedViewController?.isBeingPresented == false
+                }
+                verify.sendActions(for: .touchUpInside)
+                try await waitForRecovery("verification guide") {
+                    presenter.presentedViewController?.presentedViewController?.isBeingPresented == false
+                }
+                var text = ""
+                let step = temporary ? "End the temporary session" : "Forget the old key"
+                try await waitForRecovery(step, diagnostics: { text }) {
+                    text = (try? mount.recognizedText(in: mount.snapshot())) ?? ""
+                    return text.contains("Presented by the server") && text.contains("ssh-ed25519") && text.contains("SHA256:") && text.contains(step)
+                }
+                XCTAssertEqual(probe.authentications, 0)
+                XCTAssertEqual(try TerminalSecretStore.hostKey(mac.id), oldPin)
+                XCTAssertEqual(library.macs.contains { $0.id == mac.id }, !temporary)
+                try await wait { !DirectMacConnections.shared.isActive(mac.id) }
+            } catch {
+                viewer.stop()
+                await mount.close(afterDismissing: panel)
+                throw error
+            }
+            viewer.stop()
+            await mount.close(afterDismissing: panel)
+        }
+    }
+
+    func testSavedLoginRecoveryRequiresAChangeToTheSelectedCredential() {
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Login", addresses: ["127.0.0.1"])
+        let files = DirectFilesSession(mac: mac)
+        defer { files.close() }
+        let saved = DirectMacAccessProfile.Password(username: "synthetic", password: "synthetic-only")
+        let previous = DirectMacAccessProfile(login: saved, sshMethod: .password)
+        let rejected = DirectFilesSession.SavedLogin(profile: previous, useSSH: false)
+        let message = "Synthetic login rejection"
+        files.reportConnectionRecovery(.rejectedLogin, message: message)
+        files.updateSavedLoginRecovery(previous: rejected, current: rejected)
+        XCTAssertEqual(files.connectionRecovery?.reason, .rejectedLogin)
+
+        var current = previous
+        current.sshPassword = .init(username: "alternate", password: "synthetic-alternate")
+        files.updateSavedLoginRecovery(previous: rejected, current: .init(profile: current, useSSH: false))
+        XCTAssertEqual(files.connectionRecovery?.reason, .rejectedLogin)
+        XCTAssertEqual(files.message, message)
+        current.login?.password = "synthetic-changed"
+        files.updateSavedLoginRecovery(previous: rejected, current: .init(profile: current, useSSH: false))
+        XCTAssertNil(files.connectionRecovery)
+
+        current.sshMethod = .key
+        current.keyID = UUID()
+        let blankAccount = DirectFilesSession.SavedLogin(profile: current, useSSH: true)
+        files.reportConnectionRecovery(.missingLogin, message: "Select a key")
+        files.updateSavedLoginRecovery(previous: .missing("Select a key"), current: blankAccount)
+        XCTAssertEqual(files.connectionRecovery?.reason, .missingLogin)
+        XCTAssertTrue(files.message?.contains("Add the Terminal account") == true)
+        current.keyUsername = "synthetic"
+        files.updateSavedLoginRecovery(previous: blankAccount, current: .init(profile: current, useSSH: true))
+        XCTAssertNil(files.connectionRecovery)
+    }
+
     func testFilesUsesNoSeparateCredentialFormAtNarrowAndAccessibilitySizes() async throws {
         for large in [false, true] {
             let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Files Companion", addresses: ["127.0.0.1"])
@@ -371,11 +478,14 @@ import Vision
 @MainActor private final class CompanionFilesMount {
     let window: UIWindow
     private let previous: UIWindow?
-    init(_ view: some View) throws {
+    convenience init(_ view: some View) throws {
+        try self.init(controller: UIHostingController(rootView: view))
+    }
+    init(controller: UIViewController) throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         previous = scene.windows.first { $0.isKeyWindow }
         window = UIWindow(windowScene: scene); window.frame = .init(x: 0, y: 0, width: 390, height: 844)
-        show(view); window.makeKeyAndVisible()
+        window.rootViewController = controller; window.makeKeyAndVisible()
     }
     var fields: [UITextField] {
         func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }

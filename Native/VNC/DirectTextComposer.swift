@@ -126,6 +126,7 @@ struct DirectComposedText: Equatable {
     var confirmation: DirectComposedText?
     @ObservationIgnored private var epoch = UUID()
     @ObservationIgnored private var deliveryID: UUID?
+    @ObservationIgnored private var lastAutomaticDeliveryAlert: UUID?
     @ObservationIgnored private var available: () -> Bool = { false }
     @ObservationIgnored private var send: ((String, @escaping (String?) -> Void) -> Void)?
     @ObservationIgnored var close: (() -> Void)?
@@ -188,6 +189,11 @@ struct DirectComposedText: Equatable {
             issue = "The draft changed. Review it and tap Send Text again."; return
         }
         deliver(reviewed)
+    }
+    func claimAutomaticDeliveryAlert(_ attempt: UUID) -> Bool {
+        guard deliveryFailure?.attempt == attempt, lastAutomaticDeliveryAlert != attempt else { return false }
+        lastAutomaticDeliveryAlert = attempt
+        return true
     }
     private func deliver(_ prepared: DirectComposedText) {
         guard canSend, available(), let send else { invalidate(); return }
@@ -834,7 +840,6 @@ private struct DirectTextComposerView: View {
     var reportExpansionBounds: (CGRect) -> Void
     @FocusState private var editing: Bool
     @State private var showIssue = false
-    @State private var lastAutomaticDeliveryAlert: UUID?
     private var issue: String? { draft.footerIssue }
     private var compactDeliveryAttempt: UUID? { draft.deliveryIssueInDetails ? draft.deliveryFailure?.attempt : nil }
     private var issueTitle: String {
@@ -918,8 +923,7 @@ private struct DirectTextComposerView: View {
             .onChange(of: draft.issue) { _, _ in requestLayout() }
             .onChange(of: draft.deliveryFailure?.attempt) { _, _ in requestLayout() }
             .onChange(of: compactDeliveryAttempt, initial: true) { _, attempt in
-                guard let attempt, attempt != lastAutomaticDeliveryAlert else { return }
-                lastAutomaticDeliveryAlert = attempt
+                guard let attempt, draft.claimAutomaticDeliveryAlert(attempt) else { return }
                 showIssue = true
             }
             .onChange(of: draft.sending) { _, _ in requestLayout() }
