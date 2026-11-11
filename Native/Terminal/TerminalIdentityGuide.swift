@@ -14,7 +14,11 @@ struct TerminalIdentityGuide: View {
                     Text("ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub").font(.footnote.monospaced()).textSelection(.enabled)
                         .padding(12).frame(maxWidth: .infinity, alignment: .leading).background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
                     Text("Other key types are in /etc/ssh/ssh_host_*_key.pub.").font(.caption).foregroundStyle(.secondary)
+                    #if os(iOS)
+                    DirectGuidanceRow(title: "2. Forget the old key", detail: "My Macs → Edit Mac → Reset Login & Trust → Forget SSH Server Key.", symbol: "key")
+                    #else
                     DirectGuidanceRow(title: "2. Forget the old key", detail: "Mac Settings → Saved Logins & Server Trust → Forget SSH Server Key.", symbol: "key")
+                    #endif
                     DirectGuidanceRow(title: "3. Verify again", detail: "Reconnect and compare the new fingerprint before login.", symbol: "checkmark.shield")
                 }.padding(24)
             }.navigationTitle("Verify Server Identity").directInlineNavigationTitle()

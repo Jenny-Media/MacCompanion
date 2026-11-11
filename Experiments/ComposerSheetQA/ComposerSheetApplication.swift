@@ -49,10 +49,11 @@ final class ComposerSheetRoot: UIViewController {
             button.centerXAnchor.constraint(equalTo: view.centerXAnchor)])
     }
     @objc func openComposer() {
-        let shortFlat = ProcessInfo.processInfo.arguments.contains("--qa-short-flat-composer")
-        if shortFlat || ProcessInfo.processInfo.arguments.contains("--qa-narrow-composer") {
+        let arguments = ProcessInfo.processInfo.arguments
+        let shortFlat = arguments.contains("--qa-short-flat-composer")
+        if shortFlat || arguments.contains("--qa-narrow-composer") {
             let draft = composer.draft
-            draft.configure(available: { true }, send: { _, _ in })
+            draft.configure(available: { true }, send: { [weak self] _, completion in self?.finishSyntheticSend(completion) })
             let panel = DirectTextComposerPanel(draft: draft)
             addChild(panel); view.addSubview(panel.view); panel.didMove(toParent: self)
             panel.view.translatesAutoresizingMaskIntoConstraints = false
@@ -82,19 +83,26 @@ final class ComposerSheetRoot: UIViewController {
                 panel?.willMove(toParent: nil); panel?.view.removeFromSuperview(); panel?.removeFromParent()
                 bar?.removeFromSuperview()
             }
-            draft.edit(String(repeating: "x", count: shortFlat ? 3277 : 4097))
-            if ProcessInfo.processInfo.arguments.contains("--qa-rejected-paste") {
+            if arguments.contains("--qa-delivery-result") {
+                if sends == 0 { draft.edit("retry draft") }
+            } else {
+                draft.edit(String(repeating: "x", count: shortFlat ? 3277 : 4097))
+            }
+            if arguments.contains("--qa-rejected-paste") {
                 draft.edit(String(repeating: "x", count: DirectComposedText.draftMaximumBytes + 1))
             }
             return
         }
-        let arguments = ProcessInfo.processInfo.arguments
         let initialText = arguments.contains("--qa-long-draft") ? String(repeating: "This is a synthetic paragraph for checking longer text. ", count: 12)
             : arguments.contains("--qa-near-limit") ? String(repeating: "x", count: 3277) : nil
         composer.present(from: self, initialText: initialText, savedTitle: nil, available: { true }, send: { [weak self] _, completion in
-            guard let self, ProcessInfo.processInfo.arguments.contains("--qa-delivery-result") else { return }
-            self.sends += 1; completion(self.sends == 1 ? "Synthetic delivery failure" : nil)
+            self?.finishSyntheticSend(completion)
         })
+    }
+    private func finishSyntheticSend(_ completion: (String?) -> Void) {
+        guard ProcessInfo.processInfo.arguments.contains("--qa-delivery-result") else { return }
+        sends += 1
+        completion(sends == 1 ? "Synthetic delivery failure" : nil)
     }
 }
 

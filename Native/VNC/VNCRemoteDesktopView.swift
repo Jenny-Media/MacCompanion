@@ -1,4 +1,5 @@
 #if os(iOS) && MACCOMPANION_VNC_DEVELOPMENT
+import Observation
 import SwiftUI
 import UIKit
 
@@ -155,10 +156,10 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         coordinator.viewer?.stop()
     }
 
-    @MainActor final class Coordinator {
+    @MainActor @Observable final class Coordinator {
         let files: DirectFilesSession
         let mac: DirectMacRecordV1
-        weak var viewer: CompanionVNCViewer?
+        @ObservationIgnored weak var viewer: CompanionVNCViewer?
         private let accessOwnerID = UUID()
         private var accessLease: UUID?
         private var authenticatedAccount = ""
@@ -433,7 +434,12 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
             guard let viewer, viewer.presentedViewController == nil, DirectAppLockV1.shared.canAccess else { return }
             let controller = UIHostingController(rootView: DirectFilesView(mac: mac, session: files, retainWhenDismissed: true).usingConnection { [weak self] in
                 guard let self, let tunnel = self.tunnel, self.viewer?.session.running == true else { return nil }
-                return .init(client: tunnel.client, macID: self.mac.id, ownerID: self.accessOwnerID, account: self.authenticatedAccount, keyID: nil, generation: self.authenticatedGeneration)
+                let generation = self.authenticatedGeneration
+                return .init(client: tunnel.client, macID: self.mac.id, ownerID: self.accessOwnerID, account: self.authenticatedAccount,
+                    keyID: nil, generation: generation, isCurrent: { [weak self, weak tunnel] in
+                        guard let self, let tunnel else { return false }
+                        return self.tunnel === tunnel && self.authenticatedGeneration == generation && self.viewer?.session.running == true
+                    })
             }.directAppearance())
             controller.modalPresentationStyle = .pageSheet
             controller.sheetPresentationController?.detents = [.medium(), .large()]
@@ -489,8 +495,8 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
             let native = viewer?.session
             native?.stop(); login = nil; remember = false
             let lease = accessLease; accessLease = nil
-            files.disconnectBorrowed(authenticatedGeneration)
             let retired = tunnel; tunnel = nil
+            files.disconnectBorrowed(authenticatedGeneration)
             let earlier = retirement
             retirement = Task {
                 await earlier?.value

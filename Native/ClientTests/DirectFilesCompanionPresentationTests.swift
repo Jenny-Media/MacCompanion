@@ -1,5 +1,6 @@
 #if os(iOS)
 import XCTest
+import Observation
 import SwiftUI
 import UIKit
 import Vision
@@ -70,8 +71,34 @@ import Vision
         XCTAssertTrue(files.hasUnsavedDownloads)
         let download = try XCTUnwrap(files.results.first?.localDownload)
         XCTAssertEqual(try Data(contentsOf: download), bytes)
-        files.disconnectBorrowed(context.generation)
+        // Files can disconnect while its parent is still connected.
+        files.disconnect()
+        do {
+            let parent = FilesParentFixture(context)
+            var view = DirectFilesView(mac: mac, session: files, retainWhenDismissed: true).usingConnection { parent.context }
+            view.sessionAvailable = { false }
+            let mount = try CompanionFilesMount(view)
+            defer { mount.close() }
+            var text = ""
+            try await waitForRecovery("Open Files before the parent ends", diagnostics: { text }) {
+                text = (try? mount.recognizedText(in: mount.snapshot())) ?? ""
+                return text.contains("Open Files")
+            }
+            parent.context = nil
+            try await waitForRecovery("Back to Session after the parent ends", diagnostics: { text }) {
+                text = (try? mount.recognizedText(in: mount.snapshot())) ?? ""
+                return text.contains("Back to Session") && text.contains("Ready to save")
+            }
+            XCTAssertEqual(try Data(contentsOf: download), bytes)
+        }
+
+        files.reportConnectionRecovery(.identityChanged, message: "The Mac’s SSH identity changed.")
+        files.reportConnectionRecovery(.missingLogin, message: "Add a saved login.")
+        XCTAssertEqual(files.connectionRecovery, .missingLogin)
+        files.reportConnectionRecovery(.identityChanged, message: "The Mac’s SSH identity changed.")
         files.connectBorrowed(.init(client: client, macID: mac.id, account: "another-account", keyID: nil, generation: UUID()))
+        XCTAssertNil(files.connectionRecovery, "A standalone login failure cannot override a verified parent")
+        XCTAssertTrue(files.message?.contains("Save or discard") == true)
         XCTAssertEqual(files.phase, .interrupted); XCTAssertEqual(files.resultsAccount, "synthetic")
         XCTAssertEqual(files.account, "synthetic"); XCTAssertEqual(probe.authentications, 1)
         try library.applyCloud([])
@@ -217,6 +244,11 @@ import Vision
         let end = Date().addingTimeInterval(8)
         while !condition() { guard Date() < end else { throw DirectFilesFailure.timedOut }; try await Task.sleep(for: .milliseconds(20)) }
     }
+}
+
+@MainActor @Observable private final class FilesParentFixture {
+    var context: DirectFilesConnectionContext?
+    init(_ context: DirectFilesConnectionContext) { self.context = context }
 }
 
 /// Match the library's exit ownership: handling the last download removes the

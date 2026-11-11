@@ -102,6 +102,12 @@ struct DirectFilesView: View {
                 ToolbarItem(placement: .primaryAction) {
                     Menu("More", systemImage: "ellipsis.circle") {
                         Button("Setup Guide", systemImage: "questionmark.circle") { sheet = .setup }
+                        #if os(iOS)
+                        if standaloneRecovery == .rejectedLogin, !session.busy, !session.macRemoved {
+                            Button("Try Again", systemImage: "arrow.clockwise", action: connectCompanion)
+                                .accessibilityIdentifier("files-retry-saved-login")
+                        }
+                        #endif
                         if session.phase == .ready { Button("Disconnect Files", systemImage: "power") {
                             if session.transferActive { confirmation = .disconnect } else { session.disconnect() }
                         } }
@@ -293,12 +299,18 @@ struct DirectFilesView: View {
     }
     private var showsIdentityStatus: Bool {
         #if os(iOS)
-        session.phase != .connecting && !session.requiresSavedLogin && !session.requiresIdentityVerification && !needsSessionReconnect
+        session.phase != .connecting && standaloneRecovery == nil && !needsSessionReconnect
         #else
         true
         #endif
     }
     #if os(iOS)
+    private var standaloneRecovery: DirectFilesSession.ConnectionRecovery? {
+        contextProvider == nil ? session.connectionRecovery : nil
+    }
+    private var requiresSavedLogin: Bool {
+        standaloneRecovery == .missingLogin || standaloneRecovery == .rejectedLogin
+    }
     private var needsSessionReconnect: Bool {
         guard let contextProvider else { return false }
         return contextProvider()?.isCurrent() != true
@@ -316,20 +328,25 @@ struct DirectFilesView: View {
                 } else if needsSessionReconnect {
                     Label("Mac session ended", systemImage: "rectangle.connected.to.line.below")
                     Text("Reconnect your Mac session, then reopen Files.").foregroundStyle(.secondary)
-                } else if session.requiresIdentityVerification {
+                } else if standaloneRecovery == .identityChanged {
                     Label("Verify your Mac", systemImage: "lock.shield")
                     if let message = session.message { Text(message).foregroundStyle(.secondary) }
                 } else {
-                    Label(session.requiresSavedLogin ? "Check your Mac login" : "Files for " + mac.name,
-                          systemImage: session.requiresSavedLogin ? "person.badge.key" : "folder")
-                    if let message = session.message { Text(message).foregroundStyle(.secondary) }
-                    else { Text(contextProvider == nil ? "Uses this Mac’s Saved Login settings and Remote Login." : "Uses your current session’s account. No additional sign-in is needed.").foregroundStyle(.secondary) }
+                    Label(requiresSavedLogin ? "Check your Mac login" : "Files for " + mac.name,
+                          systemImage: requiresSavedLogin ? "person.badge.key" : "folder")
+                    if let message = session.message {
+                        Text(standaloneRecovery == .rejectedLogin
+                            ? message + " If you changed Remote Login on your Mac, choose More → Try Again."
+                            : message).foregroundStyle(.secondary)
+                    } else {
+                        Text(contextProvider == nil ? "Uses this Mac’s Saved Login settings and Remote Login." : "Uses your current session’s account. No additional sign-in is needed.").foregroundStyle(.secondary)
+                    }
                     if contextProvider == nil, hasMacLogin, hasSSHOverride {
                         Toggle("Use Terminal Sign-In", isOn: $standaloneSSH).disabled(session.busy)
                             .accessibilityIdentifier("files-ssh-override")
                             .onChange(of: standaloneSSH) { _, _ in refreshSavedLoginRequirement() }
                     }
-                    if !session.busy, contextProvider == nil, !session.requiresSavedLogin {
+                    if !session.busy, contextProvider == nil, !requiresSavedLogin {
                         Button("Saved Login", systemImage: "person.badge.key") { sheet = .access }
                     }
                 }
@@ -342,9 +359,9 @@ struct DirectFilesView: View {
                             .accessibilityIdentifier("files-cancel-connection")
                     } else if needsSessionReconnect {
                         filesConnectionButton("Back to Session", symbol: "arrow.backward", identifier: "files-back-to-session", action: finishDismissal)
-                    } else if session.requiresIdentityVerification {
+                    } else if standaloneRecovery == .identityChanged {
                         filesConnectionButton("How to Verify", symbol: "lock.shield", identifier: "files-verify-identity") { sheet = .identity }
-                    } else if contextProvider == nil, session.requiresSavedLogin {
+                    } else if requiresSavedLogin {
                         filesConnectionButton("Saved Login", symbol: "person.badge.key", identifier: "files-saved-login") { sheet = .access }
                     } else {
                         let retry = session.phase == .interrupted && session.message != nil
@@ -603,9 +620,9 @@ struct DirectFilesView: View {
         return .password(login, useMacLogin: !useSSH)
     }
     private func refreshSavedLoginRequirement() {
-        guard session.requiresSavedLogin, let login = try? companionLogin() else { return }
-        if case .missing(let message) = login { session.requireSavedLogin(message) }
-        else { session.clearSavedLoginRequirement() }
+        guard requiresSavedLogin, let login = try? companionLogin() else { return }
+        if case .missing(let message) = login { session.reportConnectionRecovery(.missingLogin, message: message) }
+        else { session.clearConnectionRecovery() }
     }
     private func savedCompanionLogin() {
         refreshCompanionAccounts()
@@ -627,9 +644,16 @@ struct DirectFilesView: View {
             if contextBlocked && session.busy { session.message = "A transfer is still running for " + session.account + ". Finish or cancel it before opening another account." }
         }
         guard accessAllowed(), sessionAvailable(), !session.busy, !session.isClosed, !session.macRemoved else { return }
-        guard contextProvider == nil || context?.isCurrent() == true else { return }
+        guard contextProvider == nil || context?.isCurrent() == true else {
+            session.message = "Reconnect your Mac session, then reopen Files."
+            return
+        }
         let library = DirectMacLibraryV1(url: session.libraryURL)
-        guard library.readable, library.macs.contains(where: { $0.id == mac.id }) else { session.message = "This Mac is unavailable in My Macs."; return }
+        guard library.readable, library.macs.contains(where: { $0.id == mac.id }) else {
+            session.clearConnectionRecovery()
+            session.message = "This Mac is unavailable in My Macs."
+            return
+        }
         guard pro.ready, pro.canUseMac(mac.id, among: library.macs.map(\.id)) else { sheet = .pro; return }
         if let context {
             session.connectBorrowed(context)
@@ -643,9 +667,12 @@ struct DirectFilesView: View {
             case .password(let login, let useMacLogin):
                 session.connect(username: login.username, password: login.password, key: nil, remember: true, useMacLogin: useMacLogin)
             case .missing(let message):
-                session.requireSavedLogin(message)
+                session.reportConnectionRecovery(.missingLogin, message: message)
             }
-        } catch { session.message = "Saved access settings could not be read. Existing settings are kept." }
+        } catch {
+            session.clearConnectionRecovery()
+            session.message = "Saved access settings could not be read. Existing settings are kept."
+        }
     }
     #endif
     private func prepareSignIn() {

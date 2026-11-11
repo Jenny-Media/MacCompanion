@@ -17,6 +17,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
 
 @MainActor @Observable final class DirectFilesSession {
     enum Phase: String { case signIn = "Sign In Required", connecting = "Connecting", ready = "Ready", interrupted = "Disconnected" }
+    enum ConnectionRecovery { case missingLogin, rejectedLogin, identityChanged }
     enum ConflictChoice { case keepBoth, replace, cancel }
     struct Trust: Identifiable { let id = UUID(); let fingerprint: String }
     struct Conflict: Identifiable { let id = UUID(); let name: String; let replaceAllowed: Bool }
@@ -51,8 +52,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     private(set) var preparedUploads: [URL] = []
     private(set) var busy = false
     var message: String?
-    private(set) var requiresSavedLogin = false
-    private(set) var requiresIdentityVerification = false
+    private(set) var connectionRecovery: ConnectionRecovery?
     var trust: Trust?
     var conflict: Conflict?
     #if os(iOS)
@@ -62,13 +62,13 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     private var borrowedIsCurrent: (@MainActor () -> Bool)?
     private var borrowedGeneration: UUID?
     var isBorrowed: Bool { borrowedGeneration != nil }
-    func requireSavedLogin(_ message: String) {
-        requiresSavedLogin = true
+    func reportConnectionRecovery(_ recovery: ConnectionRecovery, message: String) {
+        connectionRecovery = recovery
         self.message = message
     }
-    func clearSavedLoginRequirement() {
-        guard requiresSavedLogin else { return }
-        requiresSavedLogin = false
+    func clearConnectionRecovery() {
+        guard connectionRecovery != nil else { return }
+        connectionRecovery = nil
         message = nil
     }
     func disconnectBorrowed(_ owner: UUID) {
@@ -165,6 +165,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     func connectBorrowed(_ context: DirectFilesConnectionContext) {
         guard context.macID == mac.id, context.isCurrent(), !closed, !macRemoved, canAccess(), DirectClientPlatformV1.sessionAvailable, !busy else { return }
         if phase == .ready, borrowedGeneration == context.generation, account == context.account { return }
+        clearConnectionRecovery()
         guard !transferActive else { message = "A transfer is still running for " + account + ". Finish or cancel it first."; return }
         guard !hasPendingResults || resultsAccount.isEmpty || resultsAccount == context.account else {
             message = "Save or discard the files for " + resultsAccount + " before opening another account."; return
@@ -207,6 +208,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     }
     func connect(username: String, password: String, key: TerminalSSHKey?, remember: Bool, keyFileID: UUID? = nil, useMacLogin: Bool = false) {
         guard !closed, !macRemoved, canAccess(), !busy, phase != .ready else { return }
+        clearConnectionRecovery()
         guard !username.isEmpty, username.utf8.count <= 255, !username.contains("\0"),
               (key != nil || !password.isEmpty), password.utf8.count <= 4096, !password.contains("\0") else {
             message = "Enter a Mac account and password, or choose its SSH key."; return
@@ -348,12 +350,11 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                 let openingFiles = ssh != nil
                 retire(); phase = .interrupted
                 if let failure = error as? TerminalSecretStore.Failure, failure == .changedKey {
-                    requiresIdentityVerification = true
-                    message = "The Mac’s SSH identity changed. Verify it before reconnecting. Existing trust is kept."
+                    reportConnectionRecovery(.identityChanged, message: "The Mac’s SSH identity changed. Verify it before reconnecting. Existing trust is kept.")
                 } else if let failure = error as? TerminalSecretStore.Failure, failure == .rejectedKey {
                     message = "Server identity was not approved. No file connection was opened."
                 } else if DirectTerminalSession.reason(for: error, keyLogin: key != nil) == .loginRejected || DirectTerminalSession.reason(for: error, keyLogin: key != nil) == .keyRejected {
-                    requireSavedLogin("Your Mac didn’t accept this login. Check the saved account or SSH key and the users allowed in Remote Login.")
+                    reportConnectionRecovery(.rejectedLogin, message: "Your Mac didn’t accept this login. Check the saved account or SSH key and the users allowed in Remote Login.")
                 } else if openingFiles { message = "SSH connected, but Files could not open. Check SFTP availability and this account’s folder permissions." }
                 else { message = "Couldn’t connect to Remote Login. Check the network, saved SSH port and Remote Login settings on your Mac." }
                 status = "Sign In Required"
@@ -556,8 +557,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     }
     private func retire() {
         establishedIndependentLogin = false
-        requiresSavedLogin = false
-        requiresIdentityVerification = false
+        connectionRecovery = nil
         #if os(iOS)
         let pendingWork = work
         #endif

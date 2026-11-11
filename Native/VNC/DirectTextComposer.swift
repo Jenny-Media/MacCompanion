@@ -135,17 +135,18 @@ struct DirectComposedText: Equatable {
         catch { return "Review the draft before sending." }
     }
     var canSend: Bool { active && !sending && validationIssue == nil }
-    var issueMessage: String? { deliveryIssue ?? footerIssue }
-    var footerIssue: String? {
-        if deliveryIssueInDetails, let deliveryIssue { return deliveryIssue }
-        return issue ?? (text.isEmpty ? nil : validationIssue)
-    }
+    private var editIssue: String? { issue ?? (text.isEmpty ? nil : validationIssue) }
+    var issueMessage: String? { editIssue ?? deliveryIssue }
+    var footerIssue: String? { editIssue ?? (deliveryIssueInDetails ? deliveryIssue : nil) }
     var sizeSummary: String? { lengthSummary(includeUnits: true) }
     var compactSizeSummary: String? { lengthSummary(includeUnits: false) }
     var detailsMessage: String? {
-        guard let issue = footerIssue else { return counterInDetails ? sizeSummary : nil }
-        let count = lengthSummary(includeUnits: true, onlyNearLimit: false)
-        return [issue, count.map { "Current draft: \($0)" }].compactMap { $0 }.joined(separator: "\n\n")
+        var details = [editIssue, deliveryIssueInDetails ? deliveryIssue : nil].compactMap { $0 }
+        guard !details.isEmpty else { return counterInDetails ? sizeSummary : nil }
+        if let count = lengthSummary(includeUnits: true, onlyNearLimit: false) {
+            details.append("Current draft: \(count)")
+        }
+        return details.joined(separator: "\n\n")
     }
     private func lengthSummary(includeUnits: Bool, onlyNearLimit: Bool = true) -> String? {
         let normalized = DirectComposedText.normalized(text)
@@ -161,7 +162,10 @@ struct DirectComposedText: Equatable {
     }
     func edit(_ value: String) {
         guard active, !sending else { return }
-        guard value.utf8.count <= DirectComposedText.draftMaximumBytes else { issue = "This draft exceeds the 16 KB limit. Use a smaller selection. Your previous text was kept."; return }
+        guard value.utf8.count <= DirectComposedText.draftMaximumBytes else {
+            issue = "Paste too large. Your previous text was kept. Use a selection up to 16 KB."
+            return
+        }
         text = value; issue = nil; deliveryIssue = nil; confirmation = nil
     }
     func requestSend() {
@@ -826,6 +830,10 @@ private struct DirectTextComposerView: View {
     @State private var showIssue = false
     private var issue: String? { draft.footerIssue }
     private var deliveryIssueInDetails: String? { draft.deliveryIssueInDetails ? draft.deliveryIssue : nil }
+    private var issueTitle: String {
+        if draft.issue == nil, deliveryIssueInDetails != nil { return "Text delivery" }
+        return issue == nil ? "Text limit" : "Can’t send this text"
+    }
     private func confirmationMessage(_ reviewed: DirectComposedText) -> String {
         let explanation = draft.mode == .terminal
             ? "Without bracketed paste, line breaks can run commands and tabs can change terminal input."
@@ -905,7 +913,7 @@ private struct DirectTextComposerView: View {
             .onChange(of: deliveryIssueInDetails) { _, message in if message != nil { showIssue = true } }
             .onChange(of: draft.sending) { _, _ in requestLayout() }
             .onChange(of: draft.active) { _, _ in requestLayout() }
-            .alert(deliveryIssueInDetails != nil ? "Text delivery" : issue == nil ? "Text limit" : "Can’t send this text", isPresented: $showIssue) {
+            .alert(issueTitle, isPresented: $showIssue) {
                 Button("Done", role: .cancel) {}.accessibilityIdentifier("compose-error-done")
             } message: { Text(draft.detailsMessage ?? "Review the text and try again.") }
             .alert("Send line breaks or tabs?", isPresented: Binding(get: { draft.confirmation != nil }, set: { if !$0 { draft.confirmation = nil } }), presenting: draft.confirmation) { reviewed in
