@@ -15,6 +15,13 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayHandoffPhase) {
     CompanionVNCDisplayHandoffPhaseCompleted,
 };
 
+typedef NS_ENUM(NSInteger, CompanionVNCRecoveryPhase) {
+    CompanionVNCRecoveryPhaseIdle,
+    CompanionVNCRecoveryPhaseBackgroundResumable,
+    CompanionVNCRecoveryPhaseProbing,
+    CompanionVNCRecoveryPhaseReplacing,
+};
+
 @interface CompanionVNCViewer : UIViewController
 @property(nonatomic, strong, nullable) DirectConnectionPanelHost *connectionPanelHost;
 @property(nonatomic) BOOL preventsLoginRetention;

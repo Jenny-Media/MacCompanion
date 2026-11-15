@@ -380,8 +380,8 @@
         viewer.followCursorEnabled = NO; [viewer followTrackpadPointer:target]; XCTAssertTrue(CGPointEqualToPoint(canvas.contentOffset,offset));
         viewer.followCursorEnabled = YES; [viewer setTrackpadModeEnabled:NO]; [viewer followTrackpadPointer:target];
         XCTAssertTrue(CGPointEqualToPoint(canvas.contentOffset,offset)); [viewer setTrackpadModeEnabled:YES];
-        [viewer setValue:@YES forKey:@"checkingResume"]; [viewer followTrackpadPointer:target]; XCTAssertTrue(CGPointEqualToPoint(canvas.contentOffset,offset));
-        [viewer setValue:@NO forKey:@"checkingResume"]; [viewer setValue:@NO forKey:@"foreground"]; [viewer followTrackpadPointer:target];
+        [viewer setValue:@(CompanionVNCRecoveryPhaseProbing) forKey:@"recoveryPhase"]; [viewer followTrackpadPointer:target]; XCTAssertTrue(CGPointEqualToPoint(canvas.contentOffset,offset));
+        [viewer setValue:@(CompanionVNCRecoveryPhaseIdle) forKey:@"recoveryPhase"]; [viewer setValue:@NO forKey:@"foreground"]; [viewer followTrackpadPointer:target];
         XCTAssertTrue(CGPointEqualToPoint(canvas.contentOffset,offset)); [viewer setValue:@YES forKey:@"foreground"];
         [viewer fitDesktop]; offset = canvas.contentOffset; [viewer followTrackpadPointer:target];
         XCTAssertTrue(CGPointEqualToPoint(canvas.contentOffset,offset)); XCTAssertEqual(canvas.zoomScale,canvas.minimumZoomScale);

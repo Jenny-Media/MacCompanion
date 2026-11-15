@@ -175,9 +175,20 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         private var remember = false
         private var observers: [NSObjectProtocol] = []
         let activity: VNCSessionActivityController
+        private enum BackgroundPause {
+            case idle
+            case awaitingRelease(UUID, CompanionVNCSession)
+            case released(UUID)
+
+            var id: UUID? {
+                switch self {
+                case .idle: nil
+                case .awaitingRelease(let id, _), .released(let id): id
+                }
+            }
+        }
         private var backgroundTask = UIBackgroundTaskIdentifier.invalid
-        private var backgroundGeneration = UUID()
-        private var inputReleaseCompleted = false
+        private var backgroundPause = BackgroundPause.idle
         private let showMacs: @MainActor () -> Void
         var connectionEstablished: @MainActor () -> Bool = { true }
         /// False for an intentional temporary Quick Connect session.
@@ -238,37 +249,38 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         func stopObserving() { observers.forEach(NotificationCenter.default.removeObserver); observers = []; finishBackgroundWork() }
         private func pause() {
             activity.setForeground(false)
-            guard backgroundTask == .invalid else { return }
-            let token = UUID(); backgroundGeneration = token
-            inputReleaseCompleted = false
+            guard backgroundPause.id == nil, let viewer else { return }
+            let token = UUID()
+            backgroundPause = .awaitingRelease(token, viewer.session)
             backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Finish session pause") { [weak self] in
-                MainActor.assumeIsolated {
-                    guard let self, self.backgroundGeneration == token else { return }
-                    if !self.inputReleaseCompleted { self.viewer?.session.stop(); self.activity.setPhase("ended") }
-                    self.finishBackgroundWork()
-                }
+                MainActor.assumeIsolated { self?.expireBackgroundPause(token) }
             }
-            viewer?.background(completion: { [weak self] in
+            viewer.background(completion: { [weak self] in
                 MainActor.assumeIsolated {
-                    guard let self, self.backgroundGeneration == token else { return }
-                    self.inputReleaseCompleted = true
+                    guard let self, case .awaitingRelease(let current, _) = self.backgroundPause, current == token else { return }
+                    self.backgroundPause = .released(token)
                     Task { [weak self] in
                         guard let self else { return }
                         await self.activity.waitForUpdates()
-                        if self.backgroundGeneration == token { self.finishBackgroundWork() }
+                        if self.backgroundPause.id == token { self.finishBackgroundWork() }
                     }
                 }
             })
             Task { [weak self] in
-                try? await Task.sleep(for: .seconds(1))
-                guard let self, self.backgroundGeneration == token else { return }
-                // Only a stalled release is retired; no idle background assertion remains.
-                if !self.inputReleaseCompleted { self.viewer?.session.stop(); self.activity.setPhase("ended") }
-                self.finishBackgroundWork()
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
+                self?.expireBackgroundPause(token)
             }
         }
+        private func expireBackgroundPause(_ token: UUID) {
+            guard backgroundPause.id == token else { return }
+            if case .awaitingRelease(_, let owner) = backgroundPause, viewer?.session === owner {
+                owner.stop()
+                activity.setPhase("ended")
+            }
+            finishBackgroundWork()
+        }
         private func finishBackgroundWork() {
-            backgroundGeneration = UUID()
+            backgroundPause = .idle
             if backgroundTask != .invalid { UIApplication.shared.endBackgroundTask(backgroundTask); backgroundTask = .invalid }
         }
         func recordDiagnostics(_ counters: [AnyHashable: Any]) {

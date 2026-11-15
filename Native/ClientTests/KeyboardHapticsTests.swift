@@ -480,6 +480,7 @@ private final class KeyboardMenuSession: CompanionVNCSession {
                     XCTAssertTrue(modifiers[0].isSelected)
                     feedback.events.removeAll()
                     if pause == "resizing" { owner.ready = false }
+                    else if pause == "checkingResume" { viewer.setValue(CompanionVNCRecoveryPhase.probing.rawValue, forKey: "recoveryPhase") }
                     else { viewer.setValue(pause != "foreground", forKey: pause) }
                     _ = viewer.perform(NSSelectorFromString("updateConnectionChrome"))
                     for key in [try button("esc", in: viewer.view), try button("⇥", in: viewer.view)] + modifiers {
@@ -493,7 +494,8 @@ private final class KeyboardMenuSession: CompanionVNCSession {
                     let keyboard = try XCTUnwrap(viewer.value(forKey: "keyboardButton") as? UIButton)
                     XCTAssertTrue(keyboard.isEnabled, "Keyboard visibility remains a local control")
                     owner.ready = true
-                    if pause != "resizing" { viewer.setValue(pause == "foreground", forKey: pause) }
+                    if pause == "checkingResume" { viewer.setValue(CompanionVNCRecoveryPhase.idle.rawValue, forKey: "recoveryPhase") }
+                    else if pause != "resizing" { viewer.setValue(pause == "foreground", forKey: pause) }
                     _ = viewer.perform(NSSelectorFromString("updateConnectionChrome"))
                     let escape = try button("esc", in: viewer.view)
                     XCTAssertTrue(escape.isEnabled); XCTAssertEqual(escape.alpha, 1)
@@ -515,6 +517,7 @@ private final class KeyboardMenuSession: CompanionVNCSession {
                 let menu = try XCTUnwrap(viewer.capturedMenu?.topViewController as? CompanionVNCMenu)
                 let selection = try XCTUnwrap(menu.selectionHandler)
                 if pause == "resizing" { owner.ready = false }
+                else if pause == "checkingResume" { viewer.setValue(CompanionVNCRecoveryPhase.probing.rawValue, forKey: "recoveryPhase") }
                 else { viewer.setValue(true, forKey: pause) }
                 _ = viewer.perform(NSSelectorFromString("updateConnectionChrome"))
                 XCTAssertNotNil(menu.selectionHandler, pause)

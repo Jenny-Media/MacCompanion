@@ -206,7 +206,7 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
 @property NSArray *displayViews;
 @property CGFloat displayAspect;
 @property CGSize framebufferSize;
-@property BOOL trackpadMode, reconnectWhenReady, foreground, fixtureExercised, starting;
+@property BOOL trackpadMode, foreground, fixtureExercised, starting;
 @property BOOL textSendInterrupted;
 @property NSMutableArray<UIButton *> *modifiers;
 @property CompanionVNCKeyboard *remoteKeyboard;
@@ -223,7 +223,9 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
 @property CGPoint lastPointer;
 @property BOOL pointerHeld, smartZoomed, smartZoomPending;
 @property NSUInteger zoomGeneration, resumeGeneration;
-@property BOOL checkingResume, exited, restoreViewportPending, inputInactive, awaitingReplacementLayout;
+@property CompanionVNCRecoveryPhase recoveryPhase;
+@property(nonatomic, readonly) BOOL checkingResume, reconnectWhenReady;
+@property BOOL exited, restoreViewportPending, inputInactive, awaitingReplacementLayout;
 @property UIImage *pendingRestorationFrame;
 @property NSUInteger statusGeneration;
 @property UIStackView *statusRow;
@@ -678,25 +680,27 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
     self.latestCounters = @{};
     __weak CompanionVNCViewer *weak = self;
     __weak CompanionVNCSession *owner = self.session;
-    self.session.frameHandler = ^(UIImage *image) { if (weak.session == owner) [weak frame:image]; };
+    self.session.frameHandler = ^(UIImage *image) { if (owner && weak.session == owner) [weak frame:image]; };
     self.session.cursorHandler = ^(UIImage *image, CGPoint hotspot, CGPoint position, BOOL known) {
-        if (weak.session == owner) [weak receivedCursor:image hotspot:hotspot position:position known:known];
+        if (owner && weak.session == owner) [weak receivedCursor:image hotspot:hotspot position:position known:known];
     };
-    self.session.displayLayoutHandler = ^(NSDictionary *layout) { if (weak.session == owner) weak.displayLayout = layout; };
-    if (!self.inputOnly && (self.reconnectWhenReady || self.checkingResume)) self.restoreViewportPending = YES;
+    self.session.displayLayoutHandler = ^(NSDictionary *layout) { if (owner && weak.session == owner) weak.displayLayout = layout; };
+    if (!self.inputOnly && self.reconnectWhenReady) self.restoreViewportPending = YES;
     self.awaitingReplacementLayout = self.restoreViewportPending && self.lastFramebuffer != nil && self.resumeDisplayID != nil;
     self.pendingRestorationFrame = nil;
     if (!self.awaitingReplacementLayout) self.displayLayout = nil;
     if (self.awaitingReplacementLayout) {
+        NSUInteger generation = self.resumeGeneration;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 9000 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
-            if (weak.session == owner && weak.foreground && !weak.exited && weak.restoreViewportPending) {
+            if (owner && weak.session == owner && weak.resumeGeneration == generation
+                && weak.foreground && !weak.exited && weak.restoreViewportPending) {
                 [owner stop]; if (weak.disconnectHandler) weak.disconnectHandler();
                 [weak showConnectionFailureStage:102];
             }
         });
     }
     self.session.stateHandler = ^(NSString *state, NSDictionary *stats) {
-        CompanionVNCViewer *strong = weak; if (!strong || strong.session != owner) return;
+        CompanionVNCViewer *strong = weak; if (!strong || !owner || strong.session != owner) return;
         strong.latestCounters = stats;
         if (strong.exited || strong.displayHandoff.failedPreset) return;
         if (!strong.session.running) [strong retireSessionMenu];
@@ -767,9 +771,15 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
         [strong reportDiagnostics:stats];
     };
 }
+- (BOOL)checkingResume { return self.recoveryPhase == CompanionVNCRecoveryPhaseProbing; }
+- (BOOL)reconnectWhenReady { return self.recoveryPhase != CompanionVNCRecoveryPhaseIdle; }
+- (void)advanceRecoveryTo:(CompanionVNCRecoveryPhase)phase {
+    self.recoveryPhase = phase;
+    self.resumeGeneration++;
+}
 - (void)completeResumeReadiness {
-    self.checkingResume = NO; self.reconnectWhenReady = NO;
-    self.resumeGeneration++; self.statusGeneration++;
+    [self advanceRecoveryTo:CompanionVNCRecoveryPhaseIdle];
+    self.statusGeneration++;
     if (!self.inputOnly) [self restoreSavedDisplay];
 }
 - (void)reportDiagnostics:(NSDictionary *)stats {
@@ -889,8 +899,8 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
     self.status.hidden = YES; [self updateStatusPresentation];
     [self invalidateTextReview:NO]; self.textReviewViewportPending=NO;
     [self retireTextDraft];
-    [self.controls close]; self.starting = NO; self.exited = YES; self.reconnectWhenReady = NO; self.checkingResume = NO;
-    self.resumeGeneration++; self.statusGeneration++; self.restoreViewportPending = NO; self.awaitingReplacementLayout = NO; self.pendingRestorationFrame = nil; self.resumeDisplayID = nil;
+    [self.controls close]; self.starting = NO; self.exited = YES;
+    [self advanceRecoveryTo:CompanionVNCRecoveryPhaseIdle]; self.statusGeneration++; self.restoreViewportPending = NO; self.awaitingReplacementLayout = NO; self.pendingRestorationFrame = nil; self.resumeDisplayID = nil;
     self.keyboardViewportSaved = NO; self.keyboardLayoutPending = NO;
     if (self.sessionPhaseHandler) self.sessionPhaseHandler(@"ended");
     [self releasePointer]; self.zoomGeneration++; self.smartZoomed = NO; self.smartZoomPending = NO;
@@ -1005,7 +1015,7 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
         [self.credentialState suspendForModeRetry]; [self renderCredentialForm];
     } else [self finishCredentialSession];
     [self retireTextDraft];
-    self.starting = NO; self.checkingResume = NO; self.resumeGeneration++; self.statusGeneration++; self.awaitingReplacementLayout = NO; self.pendingRestorationFrame = nil; self.restoreViewportPending = NO;
+    self.starting = NO; [self advanceRecoveryTo:CompanionVNCRecoveryPhaseIdle]; self.statusGeneration++; self.awaitingReplacementLayout = NO; self.pendingRestorationFrame = nil; self.restoreViewportPending = NO;
     if (self.sessionPhaseHandler) self.sessionPhaseHandler(@"ended");
     [self clearCursor]; [self resetModifiers]; self.connect.enabled = YES;
     if (self.textReview) {
@@ -1066,10 +1076,11 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
     self.controlsCustomization = NO; self.restoresControlsKeyboard = NO;
     if (!self.foreground || self.exited) { if (completion) completion(); return; }
     [self discardPendingDisplayPreferences];
-    self.reconnectWhenReady = self.session.running || self.starting;
+    [self advanceRecoveryTo:self.session.running || self.starting
+        ? CompanionVNCRecoveryPhaseBackgroundResumable : CompanionVNCRecoveryPhaseIdle];
     [self.credentialState suspend]; [self renderCredentialForm];
     [self.displayHandoff retireVerification];
-    self.foreground = NO; self.inputInactive = YES; self.statusGeneration++; self.image.alpha = 1; self.resumeGeneration++; self.checkingResume = NO;
+    self.foreground = NO; self.inputInactive = YES; self.statusGeneration++; self.image.alpha = 1;
     self.pendingRestorationFrame = nil;
     self.status.hidden = YES; [self updateStatusPresentation];
     [self invalidateTextReview:NO]; self.textReviewViewportPending=NO;
@@ -1094,13 +1105,17 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
     }
     self.foreground = YES; self.inputInactive = NO;
     [self.credentialState resumeWithActive:YES allowed:self.credentialState.accessAllowed]; [self renderCredentialForm];
-    if (self.deferredTextReviewFailure) { self.reconnectWhenReady = NO; [self revealDeferredTextReviewFailure]; return; }
-    if (!self.reconnectWhenReady) { [self updateRemoteKeyAvailability]; return; }
-    self.checkingResume = YES;
+    if (self.deferredTextReviewFailure) {
+        [self advanceRecoveryTo:CompanionVNCRecoveryPhaseIdle];
+        [self revealDeferredTextReviewFailure];
+        return;
+    }
+    if (self.recoveryPhase != CompanionVNCRecoveryPhaseBackgroundResumable) { [self updateRemoteKeyAvailability]; return; }
+    [self advanceRecoveryTo:CompanionVNCRecoveryPhaseProbing];
     self.status.hidden = YES; [self scheduleResumeIndicator:self.inputOnly ? @"Resuming Trackpad & Keyboard…" : @"Updating desktop…"]; self.image.alpha = 1;
     if (!self.session.running) { [self reconnectAfterFailedResume]; return; }
     [self.session resume];
-    CompanionVNCSession *owner = self.session; NSUInteger generation = ++self.resumeGeneration;
+    CompanionVNCSession *owner = self.session; NSUInteger generation = self.resumeGeneration;
     __weak CompanionVNCViewer *weak = self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 9000 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
         CompanionVNCViewer *strong = weak;
@@ -1111,7 +1126,7 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
 }
 - (void)reconnectAfterFailedResume {
     if (!self.foreground || self.exited || !self.checkingResume) return;
-    self.checkingResume = NO; self.resumeGeneration++;
+    [self advanceRecoveryTo:CompanionVNCRecoveryPhaseReplacing];
     // One replacement attempt. The Swift connection owner awaits retirement first.
     self.restoreViewportPending = YES; [self startResuming:YES];
 }
@@ -2181,8 +2196,9 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
     [self retireDisplayModeOwner];
     self.displayHandoff = [CompanionVNCDisplayHandoff new];
     self.pendingDesktopSizePreset = self.lateDesktopSizePreset = 0; self.pendingStreamDisplayID = nil;
-    self.checkingResume = self.reconnectWhenReady = self.restoreViewportPending = self.awaitingReplacementLayout = NO;
-    self.resumeGeneration++; self.statusGeneration++; self.pendingRestorationFrame = nil; self.resumeDisplayID = nil;
+    [self advanceRecoveryTo:CompanionVNCRecoveryPhaseIdle];
+    self.restoreViewportPending = self.awaitingReplacementLayout = NO;
+    self.statusGeneration++; self.pendingRestorationFrame = nil; self.resumeDisplayID = nil;
     [self discardInputOnlyPresentation];
     [self clearRecovery]; self.login.hidden = NO;
     self.inputOnly = YES;
@@ -2714,7 +2730,7 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
     }
     [self.displayHandoff.observedLayouts addObject:@(virtual)];
     if (!virtual) { [self completeDisplayModeVerified:YES]; return; }
-    self.checkingResume = NO; self.resumeGeneration++;
+    [self advanceRecoveryTo:CompanionVNCRecoveryPhaseReplacing];
     handoff.phase = CompanionVNCDisplayHandoffPhaseRetryScheduled; self.starting = YES;
     CompanionVNCSession *owner = self.session; __weak CompanionVNCViewer *weak = self;
     BOOL exhausted = self.displayHandoff.recoveryAttempts >= 1;
