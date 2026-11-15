@@ -325,18 +325,20 @@
         XCTAssertTrue(HandleRFBServerMessage(client)); [session publishCursor];
         [self waitForExpectations:@[delivered] timeout:1];
     }
-    XCTestExpectation *pending = [self expectationWithDescription:@"Pending shape"];
-    session.cursorHandler = ^(NSImage *image, CGPoint hotspot, CGPoint position, BOOL known) { [pending fulfill]; };
+    XCTestExpectation *latest = [self expectationWithDescription:@"Latest coalesced shape"];
+    __block NSUInteger coalesced = 0;
+    session.cursorHandler = ^(NSImage *image, CGPoint hotspot, CGPoint position, BOOL known) {
+        [self assertImage:image vector:vectors.lastObject]; coalesced++; [latest fulfill];
+    };
     for (NSDictionary *vector in @[vectors[0], vectors.lastObject]) {
         NSData *packet = [self updateFor:vector]; XCTAssertEqual(send(peer, packet.bytes, packet.length, 0), packet.length);
         XCTAssertTrue(HandleRFBServerMessage(client)); [session publishCursor];
     }
-    [self waitForExpectations:@[pending] timeout:1];
-    XCTestExpectation *latest = [self expectationWithDescription:@"Latest dirty shape"];
-    session.cursorHandler = ^(NSImage *image, CGPoint hotspot, CGPoint position, BOOL known) {
-        [self assertImage:image vector:vectors.lastObject]; [latest fulfill];
-    };
-    [session publishCursor]; [self waitForExpectations:@[latest] timeout:1];
+    [self waitForExpectations:@[latest] timeout:1];
+    [session publishCursor];
+    XCTestExpectation *drained = [self expectationWithDescription:@"No stale queued cursor"];
+    dispatch_async(dispatch_get_main_queue(), ^{ [drained fulfill]; });
+    [self waitForExpectations:@[drained] timeout:1]; XCTAssertEqual(coalesced, 1);
     XCTAssertEqualObjects([session valueForKey:@"updates"], @0);
     XCTAssertEqualObjects([session valueForKey:@"cursorPositions"], @0);
     XCTAssertEqualObjects([session valueForKey:@"appleCursorStores"], @3);
