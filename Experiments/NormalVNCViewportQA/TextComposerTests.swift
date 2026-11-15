@@ -1190,12 +1190,15 @@ import StoreKitTest
         var rejected: String?
         // Exercise the production final-send closure independently of the draft's
         // earlier availability check, as a late delivery callback can do.
-        delivery("synthetic-only") { rejected = $0 }
+        delivery("synthetic-only") { status, message in
+            XCTAssertEqual(status, .rejected)
+            rejected = message
+        }
         XCTAssertNotNil(rejected)
         XCTAssertEqual((owner.value(forKey: "events") as? [NSDictionary])?.count, 0)
         viewer.setValue(false, forKey: "restoreViewportPending")
         XCTAssertTrue(availability())
-        delivery("a") { _ in }
+        delivery("a") { _, _ in }
         XCTAssertEqual((owner.value(forKey: "events") as? [NSDictionary])?.count, 2, "Current readiness still admits balanced Unicode events")
     }
     func testInterruptedSendWarningSurvivesAutomaticReplacementUntilAcknowledged() async throws {
