@@ -339,6 +339,43 @@ private struct FilesTestWindowRoot: View {
         XCTAssertFalse(FileManager.default.fileExists(atPath: adopted[0].path))
         XCTAssertEqual(try Data(contentsOf: source), bytes)
     }
+    func testRetiredOverwriteDecisionCannotAffectRetryOrChangedDestination() async throws {
+        let root = try DirectFilesLocalStore.root(), local = try DirectFilesLocalStore.root()
+        defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(at: local) }
+        let destination = root.appendingPathComponent("report.txt")
+        let source = local.appendingPathComponent("report.txt")
+        try Data([1]).write(to: destination); try Data([2]).write(to: source)
+        let server = try await self.server(root: root, record: SSHTestRecord())
+        defer { Task { try? await server.close() } }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Overwrite", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+        let session = DirectFilesSession(mac: mac)
+        defer { session.close(); try? TerminalSecretStore.remove(mac.id) }
+        try await open(session)
+        session.upload([source], to: session.home)
+        try await wait { session.conflict != nil }
+        let retired = try XCTUnwrap(session.conflict)
+        session.disconnect()
+        XCTAssertNil(session.conflict)
+        XCTAssertEqual(session.results.first?.outcome, .interrupted)
+        XCTAssertEqual(try Data(contentsOf: destination), Data([1]))
+
+        try await open(session)
+        session.retry(try XCTUnwrap(session.results.first?.id))
+        try await wait { session.conflict != nil }
+        let current = try XCTUnwrap(session.conflict)
+        XCTAssertNotEqual(retired.id, current.id)
+        session.answerConflict(.replace, requestID: retired.id)
+        XCTAssertEqual(session.conflict?.id, current.id)
+        XCTAssertEqual(try Data(contentsOf: destination), Data([1]))
+
+        try FileManager.default.removeItem(at: destination)
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: false)
+        session.answerConflict(.replace, requestID: current.id)
+        try await wait { !session.busy }
+        XCTAssertEqual(session.results.first?.outcome, .interrupted)
+        XCTAssertTrue(try destination.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true)
+        XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: root.path).contains { $0.hasPrefix(".maccompanion-upload-") })
+    }
     func testKeepBothWithFullLengthFilenamePreservesOriginalAndPublishesDuplicate() async throws {
         let root = try DirectFilesLocalStore.root(), local = try DirectFilesLocalStore.root()
         defer { try? FileManager.default.removeItem(at: root); try? FileManager.default.removeItem(at: local) }
