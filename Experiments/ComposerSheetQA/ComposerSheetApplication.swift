@@ -99,11 +99,11 @@ final class ComposerSheetRoot: UIViewController {
             self?.finishSyntheticSend(completion)
         })
     }
-    private func finishSyntheticSend(_ completion: (String?) -> Void) {
+    private func finishSyntheticSend(_ completion: DirectTextDeliveryCompletion) {
         guard ProcessInfo.processInfo.arguments.contains("--qa-delivery-result") else { return }
         sends += 1
         let failures = ProcessInfo.processInfo.arguments.contains("--qa-short-flat-composer") ? 2 : 1
-        completion(sends <= failures ? "Synthetic delivery failure" : nil)
+        completion(sends <= failures ? .rejected : .written, sends <= failures ? "Synthetic delivery failure" : nil)
     }
 }
 

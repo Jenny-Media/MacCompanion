@@ -549,12 +549,12 @@ private enum TerminalPTY {
     var canComposeText: Bool { connected && !inputInactive && !suspended && !isSendingCustomSequence && DirectAppLockV1.shared.canAccess && DirectClientPlatformV1.sessionAvailable && writer != nil }
     /// Use the same PTY and write ordering as live typing. A completion confirms
     /// only the local write; the remote program supplies no consumption receipt.
-    func sendComposedText(_ data: [UInt8], generation expected: UUID, completion: @escaping (String?) -> Void) {
+    func sendComposedText(_ data: [UInt8], generation expected: UUID, completion: @escaping DirectTextDeliveryCompletion) {
         guard generation == expected, canComposeText, let writer, !data.isEmpty else {
-            completion("The Terminal session changed. Nothing was sent."); return
+            completion(.rejected, "The Terminal session changed. Nothing was sent."); return
         }
         guard data.count <= DirectComposedText.terminalMaximumBytes + 12, queuedBytes + data.count <= 65536 else {
-            completion("Input is busy or the text is too large. Nothing was queued."); return
+            completion(.rejected, "Input is busy or the text is too large. Nothing was queued."); return
         }
         queuedBytes += data.count
         let id = generation, writeID = writeGeneration, previous = writeTail
@@ -562,16 +562,16 @@ private enum TerminalPTY {
             await previous?.value
             defer { if generation == id && writeGeneration == writeID { queuedBytes -= data.count } }
             guard generation == id, writeGeneration == writeID, canSendUserInput, !Task.isCancelled else {
-                completion("Sending was interrupted. Check the Terminal before sending again."); return
+                completion(.rejected, "Sending was interrupted. Check the Terminal before sending again."); return
             }
             do {
                 try await writeInput(data, using: writer)
                 guard generation == id, writeGeneration == writeID else {
-                    completion("Text may have been partially sent. Check the Terminal before sending again."); return
+                    completion(.uncertain, "Text may have been partially sent. Check the Terminal before sending again."); return
                 }
-                completion(nil)
+                completion(.written, nil)
             } catch {
-                completion("Text may have been partially sent. Check the Terminal before sending again.")
+                completion(.uncertain, "Text may have been partially sent. Check the Terminal before sending again.")
                 if generation == id && writeGeneration == writeID {
                     stop(); present(.terminalEnded, message: "The connection ended while sending text. It may have been partially sent and won’t be replayed. Check the Mac before opening a new shell.")
                 }

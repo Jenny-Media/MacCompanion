@@ -2919,11 +2919,11 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
             CompanionVNCViewer *current = weak;
             return current && owner && current.session == owner && current.textGeneration == generation
                 && [current composedTextAvailable] && available();
-        } send:^(NSString *text, void (^complete)(NSString *)) {
+        } send:^(NSString *text, void (^complete)(DirectTextDeliveryStatus, NSString *)) {
             CompanionVNCViewer *current = weak;
             if (!current || !owner || current.session != owner || current.textGeneration != generation
                 || ![current composedTextAvailable] || !available()) {
-                complete(@"The session changed. Nothing was sent."); return;
+                complete(DirectTextDeliveryStatusRejected, @"The session changed. Nothing was sent."); return;
             }
             [current clearControlModifiers];
             if (![DirectTextComposer sendDesktopText:text session:owner current:^BOOL {
@@ -2932,8 +2932,9 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
                     && [active composedTextAvailable];
             } completion:^(BOOL written) {
                 if (!written && weak.textGeneration == generation) weak.textSendInterrupted = YES;
-                complete(written ? nil : @"Text may have been partially sent. Check your Mac before sending it again.");
-            }]) complete(@"Input is busy. Nothing was queued. Try Send Text again.");
+                complete(written ? DirectTextDeliveryStatusWritten : DirectTextDeliveryStatusUncertain,
+                         written ? nil : @"Text may have been partially sent. Check your Mac before sending it again.");
+            }]) complete(DirectTextDeliveryStatusRejected, @"Input is busy. Nothing was queued. Try Send Text again.");
         }];
     };
     if (self.presentedViewController) [self dismissViewControllerAnimated:YES completion:present];

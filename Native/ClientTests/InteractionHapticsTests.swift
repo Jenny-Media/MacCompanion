@@ -113,11 +113,12 @@ import XCTest
     func testComposerCompletionIsOwnedAndEmitsOnceForSuccessOrFailure() {
         for error in [nil, "Synthetic send failure"] as [String?] {
             let draft = DirectTextComposerDraft(macName: "Synthetic", mode: .terminal)
-            var completion: ((String?) -> Void)?, events: [String] = [], closed = 0
+            var completion: DirectTextDeliveryCompletion?, events: [String] = [], closed = 0
             draft.feedback = { events.append($0) }; draft.close = { closed += 1 }
             draft.configure(available: { true }, send: { _, done in completion = done })
             draft.edit("synthetic"); draft.requestSend(); XCTAssertTrue(draft.sending)
-            completion?(error); completion?(error)
+            let status: DirectTextDeliveryStatus = error == nil ? .written : .rejected
+            completion?(status, error); completion?(status, error)
             XCTAssertEqual(events, [error == nil ? "success" : "error"])
             XCTAssertEqual(closed, error == nil ? 1 : 0)
         }
@@ -125,13 +126,13 @@ import XCTest
     func testComposerRetiredUnavailableAndCancelledWorkStaySilent() {
         for retired in [false, true] {
             let draft = DirectTextComposerDraft(macName: "Synthetic", mode: .terminal)
-            var completion: ((String?) -> Void)?, events: [String] = [], available = true
+            var completion: DirectTextDeliveryCompletion?, events: [String] = [], available = true
             draft.feedback = { events.append($0) }
             draft.configure(available: { available }, send: { _, done in completion = done })
             draft.edit("synthetic"); draft.requestSend()
             if retired { draft.invalidate(); draft.configure(available: { true }, send: { _, _ in }) }
             else { available = false }
-            completion?(nil); completion?("Synthetic failure")
+            completion?(.written, nil); completion?(.uncertain, "Synthetic failure")
             XCTAssertTrue(events.isEmpty)
         }
     }
@@ -194,13 +195,13 @@ import XCTest
     }
     func testOldComposerCompletionCannotAcknowledgeANewerRetry() {
         let draft = DirectTextComposerDraft(macName: "Synthetic", mode: .terminal)
-        var completions: [(String?) -> Void] = [], events: [String] = []
+        var completions: [DirectTextDeliveryCompletion] = [], events: [String] = []
         draft.feedback = { events.append($0) }
         draft.configure(available: { true }, send: { _, done in completions.append(done) })
-        draft.edit("synthetic"); draft.requestSend(); completions[0]("Synthetic failure")
-        draft.requestSend(); completions[0](nil)
+        draft.edit("synthetic"); draft.requestSend(); completions[0](.rejected, "Synthetic failure")
+        draft.requestSend(); completions[0](.written, nil)
         XCTAssertTrue(draft.sending); XCTAssertEqual(events, ["error"])
-        completions[1](nil); XCTAssertEqual(events, ["error", "success"])
+        completions[1](.written, nil); XCTAssertEqual(events, ["error", "success"])
     }
     func testComposerExpandDockAndAccessibilityMovesTickOnlyOnCommittedChanges() {
         let draft = DirectTextComposerDraft(macName: "Synthetic", mode: .terminal)

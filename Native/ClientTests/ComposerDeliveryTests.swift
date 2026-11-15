@@ -215,7 +215,7 @@ private final class ComposerBatchSession: CompanionVNCSession {
     func testRejectedPasteTakesPriorityOverCompactDeliveryWarning() throws {
         let draft = DirectTextComposerDraft(macName: "Synthetic Mac", mode: .desktop)
         let delivery = "Text may have been partially sent. Check your Mac before sending it again."
-        draft.configure(available: { true }, send: { _, complete in complete(delivery) })
+        draft.configure(available: { true }, send: { _, complete in complete(.uncertain, delivery) })
         draft.edit("retained draft")
         draft.requestSend()
         draft.deliveryIssueInDetails = true
