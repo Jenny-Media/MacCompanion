@@ -821,11 +821,15 @@ private enum TerminalPTY {
         retireLifecycleInput()
     }
     private func retireLifecycleInput() {
-        writeGeneration = UUID(); writeTail?.cancel(); writeTail = nil; queuedBytes = 0
+        writeGeneration = UUID()
+        writeTail?.cancel()
+        queuedBytes = 0
         #if os(iOS)
         retireCustomSequence()
         #endif
+        // Held-input cleanup captures the tail so releases follow any press already in flight.
         suspendInput?()
+        writeTail = nil
     }
     func background() {
         if connecting { cancelConnection(); return }

@@ -246,6 +246,44 @@ private final class InputTestScroll: NSEvent {
     func testRealSSHIndependentSessionsResizeCloseAndRecovery() async throws {
         try await runTwoSessions(checkNativeFocus: false)
     }
+    func testTerminalSuspendReleasesHeldKeyAfterInFlightPress() async throws {
+        let records = SSHConnections(), hostKey = NIOSSHPrivateKey(ed25519Key: .init())
+        let server = try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton).childChannelInitializer { channel in
+            let record = records.accepted(channel)
+            return channel.pipeline.addHandler(NIOSSHHandler(role: .server(.init(hostKeys: [hostKey], userAuthDelegate: SSHTestAuth(record))), allocator: channel.allocator,
+                inboundChildChannelInitializer: { child, _ in child.pipeline.addHandler(SSHTestPTY(record)) }))
+        }.bind(host: "127.0.0.1", port: 0).get()
+        defer { Task { try? await server.close() } }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic SSH", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+        let session = DirectTerminalSession(mac: mac)
+        var resumePress: CheckedContinuation<Void, Never>?
+        defer { resumePress?.resume(); session.stop(); try? TerminalSecretStore.remove(mac.id) }
+        session.connect(username: "synthetic", password: "synthetic-only", remember: false)
+        try await wait { session.trust != nil || !session.connecting }
+        session.answerTrust(true)
+        try await wait { session.connected || !session.connecting }
+        XCTAssertTrue(session.connected, session.status)
+        let record = try XCTUnwrap(records.connections.first)
+
+        let press = Array("\u{1b}[A".utf8), release = Array("\u{1b}[1;1:3A".utf8)
+        var held = MacTerminalHeldInput()
+        XCTAssertTrue(held.observe(press[...], keyboardEvents: true))
+        session.suspendInput = { [weak session] in session?.releaseNativeInput(held.releaseAll()) }
+        session.beforeWriteForTesting = { bytes in
+            guard bytes == press else { return }
+            await withCheckedContinuation { resumePress = $0 }
+        }
+        XCTAssertTrue(session.trySend(press))
+        try await wait("press passed admission") { resumePress != nil }
+
+        session.background()
+        // Give the queued cleanup a chance to run while the admitted press is still held.
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertTrue(record.received.isEmpty, "The release must wait for the press")
+        resumePress?.resume(); resumePress = nil
+        try await wait("press and release reached SSH") { record.received.count >= press.count + release.count }
+        XCTAssertEqual(record.received, press + release)
+    }
     func testTerminalClipboardLockAndHeldInputCleanupOverRealSSH() async throws {
         let records = SSHConnections(), hostKey = NIOSSHPrivateKey(ed25519Key: .init())
         let server = try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton).childChannelInitializer { channel in
