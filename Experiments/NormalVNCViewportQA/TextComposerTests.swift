@@ -1000,7 +1000,10 @@ import StoreKitTest
         XCTAssertNotNil(viewer.presentedViewController)
         XCTAssertEqual((owner.value(forKey: "events") as? [NSDictionary])?.count, 0)
         composer.draft.edit("a"); composer.draft.requestSend()
-        XCTAssertEqual((owner.value(forKey: "events") as? [NSDictionary])?.count, 2)
+        let queued = try XCTUnwrap(owner.value(forKey: "events") as? [[String: Any]])
+        let keys = queued.filter { $0["composedTextID"] != nil }
+        XCTAssertEqual(keys.compactMap { $0["key"] as? UInt32 }, [0x61, 0x61])
+        XCTAssertEqual(keys.compactMap { $0["down"] as? Bool }, [true, false])
     }
     func testCustomizedTrackpadProfileCanAddFreeComposeWithoutReplacingOtherChoices() throws {
         let right = VNCQuickAction(title: "My Right Click", kind: .rightClick)
