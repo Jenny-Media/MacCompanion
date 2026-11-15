@@ -72,6 +72,7 @@ struct DirectFilesView: View {
     }
     var body: some View {
         let conflict = session.conflict
+        let trust = session.trust
         NavigationStack {
             VStack(spacing: 0) {
                 identity
@@ -136,7 +137,11 @@ struct DirectFilesView: View {
                     #endif
                 }
             }
-            .sheet(item: Binding(get: { session.trust }, set: { if $0 == nil { session.answerTrust(false) } })) { trust in
+            .sheet(item: Binding(get: {
+                session.trust?.id == trust?.id ? trust : nil
+            }, set: { selected in
+                if selected == nil, let trust { session.answerTrust(false, requestID: trust.id) }
+            })) { trust in
                 TerminalServerTrustView(macName: mac.name, fingerprint: trust.fingerprint) {
                     session.answerTrust($0, requestID: trust.id)
                 }.id(trust.id).directAppearance()
