@@ -729,7 +729,11 @@ private final class KeyboardMenuSession: CompanionVNCSession {
                     ["kind": "text", "text": "synthetic"], ["kind": "shortcut", "key": 0xff1b, "modifiers": [0xffe9]], ["kind": "rightClick"]]
                 for item in actions { chooseQuickAction(item, in: controls) }
                 XCTAssertTrue(feedback.events.isEmpty); XCTAssertEqual(full.value(forKey: "overflow") as? Bool, false)
-                let accepted = KeyboardMenuSession(); viewer.session = accepted; full.setValue(false, forKey: "running")
+                let accepted = KeyboardMenuSession()
+                accepted.inputOnly = inputOnly
+                for key in ["running", "inputReady", "baselinePresented"] { accepted.setValue(true, forKey: key) }
+                viewer.session = accepted; full.setValue(false, forKey: "running")
+                defer { accepted.setValue(false, forKey: "running") }
                 for item in actions { chooseQuickAction(item, in: controls) }
                 XCTAssertEqual(feedback.events, Array(repeating: "commit", count: actions.count))
                 XCTAssertEqual(accepted.keyGroups, 5); XCTAssertEqual(accepted.clicks, 1)
