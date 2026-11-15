@@ -2,7 +2,9 @@
 import XCTest
 @testable import Mac_Companion
 
-private final class ComposerBatchSession: CompanionVNCSession {
+final class ComposerBatchSession: CompanionVNCSession {
+    override var connected: Bool { true }
+    override var composedTextReady: Bool { true }
     var owner: String?
     var groups: [[[AnyHashable: Any]]] = []
     var pending: ((Bool) -> Void)?

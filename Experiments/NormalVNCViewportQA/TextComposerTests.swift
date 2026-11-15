@@ -1199,7 +1199,10 @@ import StoreKitTest
         viewer.setValue(false, forKey: "restoreViewportPending")
         XCTAssertTrue(availability())
         delivery("a") { _, _ in }
-        XCTAssertEqual((owner.value(forKey: "events") as? [NSDictionary])?.count, 2, "Current readiness still admits balanced Unicode events")
+        let queued = try XCTUnwrap(owner.value(forKey: "events") as? [[String: Any]])
+        let keys = queued.filter { $0["composedTextID"] != nil }
+        XCTAssertEqual(keys.compactMap { $0["key"] as? UInt32 }, [0x61, 0x61])
+        XCTAssertEqual(keys.compactMap { $0["down"] as? Bool }, [true, false])
     }
     func testInterruptedSendWarningSurvivesAutomaticReplacementUntilAcknowledged() async throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "ios-text-composer-v1", withExtension: "json"))
@@ -1423,24 +1426,26 @@ import StoreKitTest
             let viewer = CompanionVNCViewer()
             viewer.macName = "Synthetic Mac"; viewer.inputOnly = inputOnly
             window.rootViewController = viewer; window.makeKeyAndVisible(); viewer.loadViewIfNeeded()
-            let ownerType = try XCTUnwrap(NSClassFromString("ControlsSession") as? CompanionVNCSession.Type)
-            let owner = ownerType.init(), groups = NSMutableArray()
-            owner.setValue(groups, forKey: "groups"); owner.setValue(NSMutableArray(), forKey: "pointers")
-            viewer.setValue(owner, forKey: "session")
+            let owner = ComposerBatchSession()
+            viewer.session = owner
             viewer.perform(NSSelectorFromString("showTextComposer"))
             try await Task.sleep(for: .milliseconds(400))
             let composer = try XCTUnwrap(viewer.value(forKey: "textComposer") as? DirectTextComposer)
             XCTAssertEqual(composer.draft.mode, inputOnly ? .trackpad : .desktop)
             composer.draft.edit("中文😀\n")
-            XCTAssertEqual(groups.count, 0)
+            XCTAssertTrue(owner.groups.isEmpty)
             composer.draft.close?()
             try await Task.sleep(for: .milliseconds(350))
             viewer.perform(NSSelectorFromString("showTextComposer"))
             try await Task.sleep(for: .milliseconds(400))
             XCTAssertEqual(composer.draft.text, "中文😀\n")
             composer.draft.requestSend(); composer.draft.confirmSend()
-            XCTAssertEqual(groups.count, 1)
-            let events = try XCTUnwrap(groups.firstObject as? [[String: Any]])
+            for count in 1...4 {
+                try await waitForComposerUI("character batch \(count)") { owner.groups.count == count }
+                XCTAssertEqual(owner.groups.last?.count, 2)
+                owner.complete(true)
+            }
+            let events = owner.groups.flatMap { $0 }
             XCTAssertEqual(events.count, 8)
             XCTAssertEqual(events.last?["key"] as? UInt32, 0xff0d)
             XCTAssertEqual(events.last?["down"] as? Bool, false)
