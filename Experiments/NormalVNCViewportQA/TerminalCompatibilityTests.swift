@@ -142,6 +142,26 @@ import Citadel
         }
     }
 
+    func testForegroundBeforeReadPauseAcknowledgementResumesTheSamePTY() async throws {
+        try await withHarness { rig in
+            let generation = rig.session.outputGeneration
+            rig.record.clearReceived()
+            rig.session.background()
+            // The pause task cannot publish its acknowledgement until this actor yields.
+            rig.session.foreground()
+            XCTAssertTrue(rig.session.suspended)
+            XCTAssertFalse(rig.session.trySend(Array("retired".utf8)))
+            await rig.session.waitForLifecycleUpdates()
+            XCTAssertFalse(rig.session.suspended)
+            XCTAssertEqual(rig.session.outputGeneration, generation)
+            XCTAssertEqual(rig.record.shellRequests, 1)
+            XCTAssertTrue(rig.session.trySend(Array("fresh".utf8)))
+            try await terminalWait("fresh input after the pause acknowledgement") {
+                rig.record.received == Array("fresh".utf8)
+            }
+        }
+    }
+
     func testReplacementPTYStartsWithFreshEmulatorModes() async throws {
         let fixture = try vectors()
         try await withHarness { rig in
