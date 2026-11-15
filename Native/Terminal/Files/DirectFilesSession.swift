@@ -25,7 +25,29 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     }
     enum ConflictChoice { case keepBoth, replace, cancel }
     struct Trust: Identifiable { let id = UUID(); let fingerprint: String }
-    struct Conflict: Identifiable { let id = UUID(); let name: String; let replaceAllowed: Bool }
+    struct Conflict: Identifiable {
+        let id = UUID()
+        let name: String
+        let replaceAllowed: Bool
+    }
+    private struct PendingConflict {
+        let prompt: Conflict
+        let job: UUID
+        let item: UUID
+        let destination: String
+        let reply: CheckedContinuation<ConflictChoice, Never>
+    }
+    private struct TransferBatch {
+        enum Phase {
+            case idle
+            case running(UUID)
+            case awaitingDecision(PendingConflict)
+            case settled
+        }
+        var account = ""
+        var items: [ResultItem] = []
+        var phase = Phase.idle
+    }
     struct ResultItem: Identifiable {
         enum Outcome { case waiting, transferring, completed, interrupted }
         let id = UUID()
@@ -99,8 +121,9 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     private(set) var status = "Sign In Required" { didSet { activityChanged?(activityTitle) } }
     private(set) var directory: DirectFilesDirectory?
     private(set) var home = ""
-    private(set) var results: [ResultItem] = [] { didSet { activityChanged?(activityTitle) } }
-    private(set) var resultsAccount = ""
+    private var batch = TransferBatch() { didSet { activityChanged?(activityTitle) } }
+    var results: [ResultItem] { batch.items }
+    var resultsAccount: String { batch.account }
     private(set) var preparedUploads: [URL] = []
     private(set) var busy = false
     private var statusMessage: String?
@@ -110,7 +133,10 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     }
     private(set) var connectionRecovery: ConnectionRecovery?
     var trust: Trust?
-    var conflict: Conflict?
+    var conflict: Conflict? {
+        if case .awaitingDecision(let decision) = batch.phase { return decision.prompt }
+        return nil
+    }
     #if os(iOS)
     private let accessOwnerID = UUID()
     private var connectionLease: UUID?
@@ -164,7 +190,6 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     private var ssh: SSHClient?
     private var store: (any DirectFilesRemoteStore)?
     private var trustReply: CheckedContinuation<Bool, Never>?
-    private var conflictReply: CheckedContinuation<ConflictChoice, Never>?
     private var temporaryRoot: URL?
     @ObservationIgnored private var backgroundObserver: DirectFilesBackgroundObservation?
     private var closed: Bool { if case .closed = connectionState { true } else { false } }
@@ -215,7 +240,12 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
             }
         }
     }
-    var transferActive: Bool { results.contains { $0.outcome == .transferring || $0.outcome == .waiting } && busy }
+    var transferActive: Bool {
+        switch batch.phase {
+        case .running, .awaitingDecision: true
+        case .idle, .settled: false
+        }
+    }
     var hasPendingResults: Bool { results.contains { $0.needsAttention } }
     var hasUnsavedDownloads: Bool { results.contains { $0.localDownload != nil && !$0.saved } }
     var activityTitle: String {
@@ -453,12 +483,17 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         let reply = trustReply; trustReply = nil; trust = nil
         reply?.resume(returning: accepted && canAccess())
     }
-    func answerConflict(_ choice: ConflictChoice) {
-        let reply = conflictReply; conflictReply = nil; conflict = nil
-        reply?.resume(returning: canAccess() ? choice : .cancel)
+    func answerConflict(_ choice: ConflictChoice, requestID: UUID? = nil) {
+        guard case .awaitingDecision(let decision) = batch.phase,
+              requestID == nil || requestID == decision.prompt.id else { return }
+        let current = operation == decision.job && connectionIsCurrent && canAccess() &&
+            batch.items.contains { $0.id == decision.item && $0.outcome == .transferring &&
+                (try? DirectFilesPolicy.child($0.name, of: $0.folder)) == decision.destination }
+        batch.phase = .running(decision.job)
+        decision.reply.resume(returning: current ? choice : .cancel)
     }
     func browse(_ path: String) {
-        guard phase == .ready, !busy, let store, canAccess() else { return }
+        guard phase == .ready, connectionIsCurrent, !busy, let store, canAccess() else { return }
         let token = generation; operation = UUID(); let job = operation
         busy = true; message = nil; status = "Opening folder…"; armDeadline()
         work = Task {
@@ -469,7 +504,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         }
     }
     func createFolder(_ name: String) {
-        guard phase == .ready, !busy, let store, let directory, canAccess() else { return }
+        guard phase == .ready, connectionIsCurrent, !busy, let store, let directory, canAccess() else { return }
         do {
             let path = try DirectFilesPolicy.child(name, of: directory.path)
             let token = generation; operation = UUID(); let job = operation
@@ -509,52 +544,55 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         if let temporaryRoot { DirectFilesLocalStore.removeStaged(removing, in: temporaryRoot) }
     }
     func upload(_ urls: [URL], to folder: String) {
-        guard phase == .ready, !busy, canAccess(), (1...DirectFilesPolicy.maximumBatch).contains(urls.count), DirectFilesPolicy.validPath(folder) else { return }
+        guard phase == .ready, connectionIsCurrent, !busy, canAccess(), (1...DirectFilesPolicy.maximumBatch).contains(urls.count), DirectFilesPolicy.validPath(folder) else { return }
         guard beginNewBatch() else { return }
         // Transfer results now own adopted sources. Release any unadopted review.
         preparedUploads.removeAll { urls.contains($0) }
         discardPreparedUploads()
-        resultsAccount = account
-        results = urls.map { .init(source: $0, remotePath: nil, folder: folder, name: $0.lastPathComponent) }
+        batch = .init(account: account, items: urls.map { .init(source: $0, remotePath: nil, folder: folder, name: $0.lastPathComponent) })
         runTransfers()
     }
     func download(_ entry: DirectFilesEntry) {
-        guard phase == .ready, !busy, entry.kind == .file, let directory, canAccess(),
+        guard phase == .ready, connectionIsCurrent, !busy, entry.kind == .file, let directory, canAccess(),
               let path = try? DirectFilesPolicy.child(entry.name, of: directory.path) else { return }
         guard beginNewBatch() else { return }
         discardPreparedUploads()
-        resultsAccount = account
-        results = [.init(source: nil, remotePath: path, folder: directory.path, name: entry.name)]
+        batch = .init(account: account, items: [.init(source: nil, remotePath: path, folder: directory.path, name: entry.name)])
         runTransfers()
     }
     func retry(_ id: UUID) {
-        guard phase == .ready, !busy, canAccess(), let index = results.firstIndex(where: { $0.id == id && $0.outcome == .interrupted }) else { return }
+        guard phase == .ready, connectionIsCurrent, !busy, canAccess(), let index = results.firstIndex(where: { $0.id == id && $0.outcome == .interrupted }) else { return }
         guard account == resultsAccount else { message = "Reconnect as \(resultsAccount) to retry this transfer."; return }
-        results[index].outcome = .waiting; results[index].bytes = 0; results[index].message = "Waiting"; runTransfers()
+        batch.items[index].outcome = .waiting; batch.items[index].bytes = 0; batch.items[index].message = "Waiting"; runTransfers()
     }
     private func runTransfers() {
         guard let store else { return }
         let token = generation; operation = UUID(); let job = operation
+        batch.phase = .running(job)
         busy = true; message = nil; status = "Transferring"
         work = Task {
-            for index in results.indices where results[index].outcome == .waiting {
+            for index in results.indices where batch.items[index].outcome == .waiting {
                 do {
                     try check(token, job)
-                    results[index].outcome = .transferring; results[index].message = results[index].source == nil ? "Downloading" : "Uploading"; armDeadline()
+                    batch.items[index].outcome = .transferring; batch.items[index].message = batch.items[index].source == nil ? "Downloading" : "Uploading"; armDeadline()
                     let check: DirectFilesTransfer.Check = { try self.check(token, job) }
                     let progress: DirectFilesTransfer.Progress = { bytes, total in
                         guard self.generation == token, self.operation == job else { return }
-                        self.results[index].bytes = bytes; self.results[index].total = total; self.armDeadline()
+                        self.batch.items[index].bytes = bytes; self.batch.items[index].total = total; self.armDeadline()
                     }
-                    if let source = results[index].source {
-                        var name = results[index].name; var replace = false
-                        let path = try DirectFilesPolicy.child(name, of: results[index].folder)
+                    if let source = batch.items[index].source {
+                        var name = batch.items[index].name; var replace = false
+                        let path = try DirectFilesPolicy.child(name, of: batch.items[index].folder)
                         let attributes = try await store.attributes(path)
                         try check()
                         if let attrs = attributes {
                             deadline?.cancel()
-                            conflict = .init(name: name, replaceAllowed: attrs.kind == .file)
-                            let choice = await withCheckedContinuation { conflictReply = $0 }; try check()
+                            let prompt = Conflict(name: name, replaceAllowed: attrs.kind == .file)
+                            let choice = await withCheckedContinuation { reply in
+                                batch.phase = .awaitingDecision(.init(prompt: prompt, job: job,
+                                    item: batch.items[index].id, destination: path, reply: reply))
+                            }
+                            try check()
                             armDeadline()
                             switch choice {
                             case .cancel: throw CancellationError()
@@ -563,7 +601,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                                 var found = false
                                 for number in 2...1000 {
                                     let candidate = DirectFilesPolicy.duplicateName(name, number: number)
-                                    let candidatePath = try DirectFilesPolicy.child(candidate, of: results[index].folder)
+                                    let candidatePath = try DirectFilesPolicy.child(candidate, of: batch.items[index].folder)
                                     let candidateAttributes = try await store.attributes(candidatePath)
                                     try check()
                                     if candidateAttributes == nil { name = candidate; found = true; break }
@@ -571,25 +609,26 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                                 guard found else { throw DirectFilesFailure.invalidName }
                             }
                         }
-                        results[index].destinationName = name
-                        try await DirectFilesTransfer.upload(source: source, name: name, folder: results[index].folder, replace: replace,
+                        batch.items[index].destinationName = name
+                        try await DirectFilesTransfer.upload(source: source, name: name, folder: batch.items[index].folder, replace: replace,
                                                              store: store, check: check, progress: progress)
-                    } else if let path = results[index].remotePath {
-                        let target = try DirectFilesLocalStore.emptyFile(in: root(), name: results[index].name)
+                    } else if let path = batch.items[index].remotePath {
+                        let target = try DirectFilesLocalStore.emptyFile(in: root(), name: batch.items[index].name)
                         try await DirectFilesTransfer.download(path: path, to: target, store: store, check: check, progress: progress)
-                        try check(); results[index].localDownload = target
+                        try check(); batch.items[index].localDownload = target
                     }
-                    try check(); results[index].outcome = .completed
-                    results[index].message = results[index].source == nil ? "Ready to save" : "Uploaded"
+                    try check(); batch.items[index].outcome = .completed
+                    batch.items[index].message = batch.items[index].source == nil ? "Ready to save" : "Uploaded"
                 } catch {
                     guard generation == token, operation == job else { return }
-                    results[index].outcome = .interrupted; results[index].message = error is CancellationError ? "Cancelled · Retry when ready" : Self.operationMessage(error)
+                    batch.items[index].outcome = .interrupted; batch.items[index].message = error is CancellationError ? "Cancelled · Retry when ready" : Self.operationMessage(error)
                     if error is CancellationError { break }
                 }
             }
             guard generation == token, operation == job else { return }
             // Mark untouched queued files explicitly; retry never repeats completed files.
-            for index in results.indices where results[index].outcome == .waiting { results[index].outcome = .interrupted; results[index].message = "Not transferred" }
+            for index in results.indices where batch.items[index].outcome == .waiting { batch.items[index].outcome = .interrupted; batch.items[index].message = "Not transferred" }
+            batch.phase = .settled
             deadline?.cancel(); busy = false; status = "Ready"
             if let path = directory?.path { browse(path) }
         }
@@ -607,8 +646,8 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     }
     func markSaved(_ id: UUID) {
         guard canAccess(), let index = results.firstIndex(where: { $0.id == id }) else { return }
-        results[index].saved = true
-        results[index].message = "Saved"
+        batch.items[index].saved = true
+        batch.items[index].message = "Saved"
     }
     private func beginNewBatch() -> Bool {
         guard !hasPendingResults else { message = DirectFilesFailure.pendingTransfers.localizedDescription; return false }
@@ -627,7 +666,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                 }
             }
         }
-        results = []; resultsAccount = ""; message = nil
+        batch = .init(); message = nil
     }
     @discardableResult func confirmExit(_ intent: DirectFilesExitIntent, retainWhenDismissed: Bool) -> Bool {
         if intent == .close && !retainWhenDismissed {
@@ -648,8 +687,8 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
             loginDraft.passwordSessionEnded()
         }
         retire(); status = "Sign In Required"; self.message = message
-        for index in results.indices where results[index].outcome == .waiting || results[index].outcome == .transferring {
-            results[index].outcome = .interrupted; results[index].message = "Interrupted · Reconnect, then Retry. A temporary upload file may remain on the Mac."
+        for index in results.indices where batch.items[index].outcome == .waiting || batch.items[index].outcome == .transferring {
+            batch.items[index].outcome = .interrupted; batch.items[index].message = "Interrupted · Reconnect, then Retry. A temporary upload file may remain on the Mac."
         }
     }
     private func retire() {
@@ -662,7 +701,8 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         work?.cancel(); work = nil; stageWork?.cancel(); stageWork = nil
         discardPreparedUploads()
         let trust = trustReply; trustReply = nil; self.trust = nil; trust?.resume(returning: false)
-        let conflict = conflictReply; conflictReply = nil; self.conflict = nil; conflict?.resume(returning: .cancel)
+        if case .awaitingDecision(let decision) = batch.phase { decision.reply.resume(returning: .cancel) }
+        if transferActive { batch.phase = .settled }
         socket?.cancel(); socket = nil
         #if os(iOS)
         let lease = connectionLease; connectionLease = nil
@@ -688,7 +728,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         backgroundObserver = nil
         removalObserver = nil
         disconnect()
-        directory = nil; results = []; resultsAccount = ""; home = ""
+        directory = nil; batch = .init(); home = ""
         if let temporaryRoot { try? FileManager.default.removeItem(at: temporaryRoot) }; temporaryRoot = nil
     }
     func endTemporarySession() {
