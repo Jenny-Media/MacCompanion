@@ -293,9 +293,8 @@ import AppKit
             try await presentation.wait { session.loginDraft.isSuspended && presentation.values().1 == "" }
             // No application activation is sent in this journey.
             NSWorkspace.shared.notificationCenter.post(name: wake, object: nil)
-            try await presentation.wait { !session.loginDraft.isSuspended }
-            XCTAssertEqual(presentation.values().1, "synthetic-only")
-            XCTAssertNotEqual(session.phase, .ready, "Wake never reconnects automatically")
+            try await presentation.wait { !session.loginDraft.isSuspended && presentation.values().1 == "synthetic-only" }
+            XCTAssertEqual(session.phase, .signIn, "Wake must leave the first sign-in waiting for the user")
         }
         admission.allowed = false
         try await presentation.wait { session.loginDraft.isSuspended && presentation.values().1 == "" }
@@ -304,7 +303,8 @@ import AppKit
         XCTAssertTrue(session.loginDraft.isSuspended); XCTAssertEqual(presentation.values().1, "")
         admission.allowed = true
         try await presentation.wait { presentation.values().1 == "synthetic-only" }
-        XCTAssertFalse(session.loginDraft.isSuspended); XCTAssertEqual(session.phase, .interrupted)
+        XCTAssertFalse(session.loginDraft.isSuspended)
+        XCTAssertEqual(session.phase, .signIn, "Unlocking must leave the first sign-in waiting for the user")
     }
     func testKeyChooserRenamingPreservesEditedFilesAccount() async throws {
         if !DirectProAccess.shared.ready { await DirectProAccess.shared.refresh() }
@@ -478,7 +478,7 @@ import AppKit
         }
         // Mount before the first connection: loaded=true must not block later reconnect.
         try await wait { values().0 == "synthetic" && values().1 == "synthetic-only" }
-        func suspendAndReturn() async throws {
+        func suspendAndReturn(expecting phase: DirectFilesSession.Phase) async throws {
             admission.active = false
             NotificationCenter.default.post(name: DirectClientPlatformV1.didEnterBackground, object: nil)
             try await wait { values().1 == "" }
@@ -490,21 +490,23 @@ import AppKit
                 throw error
             }
             XCTAssertEqual(values().0, "synthetic")
-            XCTAssertNotEqual(session.phase, .ready, "Restoring a saved login must never reconnect automatically")
+            XCTAssertEqual(session.phase, phase, "Restoring a saved login must never connect automatically")
         }
-        func lockAndUnlock() async throws {
+        func lockAndUnlock(expecting phase: DirectFilesSession.Phase) async throws {
             admission.allowed = false
-            try await wait { values().1 == "" && session.phase == .interrupted }
+            try await wait { values().1 == "" && session.loginDraft.isSuspended }
+            XCTAssertEqual(session.phase, phase)
             admission.allowed = true
             try await wait { values().1 == "synthetic-only" }
             XCTAssertEqual(values().0, "synthetic")
-            XCTAssertEqual(session.phase, .interrupted, "Unlocking never reconnects automatically")
+            XCTAssertEqual(session.phase, phase, "Unlocking must never connect automatically")
         }
         // Cover the whole round trip before any authentication, then repeat it
         // after successful authentication and Disconnect in this same view.
-        try await suspendAndReturn()
-        try await suspendAndReturn()
-        try await lockAndUnlock()
+        try await suspendAndReturn(expecting: .signIn)
+        try await suspendAndReturn(expecting: .signIn)
+        try await lockAndUnlock(expecting: .signIn)
+        XCTAssertEqual(probe.authentications, 0)
         func connect() async throws {
             session.connect(username: "synthetic", password: "synthetic-only", key: nil, remember: true)
             try await wait { session.trust != nil || session.phase != .connecting }
@@ -516,13 +518,15 @@ import AppKit
             try await Task.sleep(for: .milliseconds(150)); layout()
         }
         try await connect()
+        let authentications = probe.authentications
         session.disconnect()
         try await wait { values().1 == "synthetic-only" }
         XCTAssertEqual(values().0, "synthetic")
         XCTAssertEqual(session.phase, .interrupted, "Restoring the secret never reconnects automatically")
-        try await suspendAndReturn()
-        try await suspendAndReturn()
-        try await lockAndUnlock()
+        try await suspendAndReturn(expecting: .interrupted)
+        try await suspendAndReturn(expecting: .interrupted)
+        try await lockAndUnlock(expecting: .interrupted)
+        XCTAssertEqual(probe.authentications, authentications)
         try edit("synthetic-edited-account", "synthetic-edited-password")
         try await Task.sleep(for: .milliseconds(150))
         session.connect(username: "synthetic-edited-account", password: "synthetic-edited-password", key: nil, remember: true)
