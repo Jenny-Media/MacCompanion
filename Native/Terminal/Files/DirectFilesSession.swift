@@ -45,9 +45,56 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     let mac: DirectMacRecordV1
     let libraryURL: URL
     var loginDraft = DirectFilesLoginDraft()
-    private var establishedIndependentLogin = false
-    private(set) var account = ""
-    private(set) var phase: Phase = .signIn
+    private struct ParentConnection {
+        let ownerID: UUID
+        let generation: UUID
+        let isCurrent: @MainActor () -> Bool
+    }
+    private enum CredentialSource {
+        case macPassword
+        case sshPassword
+        case sshKey(UUID?)
+    }
+    private struct Connection {
+        enum Authority {
+            case borrowed(ParentConnection)
+            case independent(CredentialSource)
+        }
+        let account: String
+        let authority: Authority
+
+        var parent: ParentConnection? {
+            if case .borrowed(let parent) = authority { return parent }
+            return nil
+        }
+    }
+    private enum ConnectionState {
+        case signIn
+        case opening(Connection)
+        case ready(Connection)
+        case interrupted(account: String)
+        case closed
+    }
+    private var connectionState = ConnectionState.signIn
+    private var connection: Connection? {
+        switch connectionState {
+        case .opening(let connection), .ready(let connection): connection
+        case .signIn, .interrupted, .closed: nil
+        }
+    }
+    var account: String {
+        if case .interrupted(let previousAccount) = connectionState { return previousAccount }
+        return connection?.account ?? ""
+    }
+    var phase: Phase {
+        switch connectionState {
+        case .signIn: .signIn
+        case .opening: .connecting
+        case .ready: .ready
+        case .interrupted, .closed: .interrupted
+        }
+    }
+    private var connectionIsCurrent: Bool { connection?.parent?.isCurrent() != false }
     @ObservationIgnored var activityChanged: (@MainActor (String) -> Void)?
     private(set) var status = "Sign In Required" { didSet { activityChanged?(activityTitle) } }
     private(set) var directory: DirectFilesDirectory?
@@ -68,9 +115,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     private let accessOwnerID = UUID()
     private var connectionLease: UUID?
     #endif
-    private var borrowedIsCurrent: (@MainActor () -> Bool)?
-    private var borrowedGeneration: UUID?
-    var isBorrowed: Bool { borrowedGeneration != nil }
+    var isBorrowed: Bool { connection?.parent != nil }
     func reportConnectionRecovery(_ reason: ConnectionRecovery.Reason, message: String, presentedIdentity: TerminalSecretStore.HostIdentity? = nil) {
         statusMessage = nil
         connectionRecovery = .init(reason: reason, message: message, presentedIdentity: presentedIdentity)
@@ -107,7 +152,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     }
     #endif
     func disconnectBorrowed(_ owner: UUID) {
-        if borrowedGeneration == owner { disconnect(message: "The parent session ended. Completed downloads are kept; reconnect before retrying interrupted transfers.") }
+        if connection?.parent?.generation == owner { disconnect(message: "The parent session ended. Completed downloads are kept; reconnect before retrying interrupted transfers.") }
     }
     private var generation = UUID()
     private var operation = UUID()
@@ -122,7 +167,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     private var conflictReply: CheckedContinuation<ConflictChoice, Never>?
     private var temporaryRoot: URL?
     @ObservationIgnored private var backgroundObserver: DirectFilesBackgroundObservation?
-    private var closed = false
+    private var closed: Bool { if case .closed = connectionState { true } else { false } }
     var isClosed: Bool { closed }
     private(set) var macRemoved = false
     var shouldCloseAfterRemoval: Bool { macRemoved && !hasUnsavedDownloads }
@@ -181,7 +226,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         return status
     }
     private func check(_ token: UUID, _ job: UUID? = nil) throws {
-        guard !closed, !macRemoved, generation == token, job == nil || operation == job, canAccess(), borrowedIsCurrent?() != false, !Task.isCancelled else { throw CancellationError() }
+        guard !closed, !macRemoved, generation == token, job == nil || operation == job, canAccess(), connectionIsCurrent, !Task.isCancelled else { throw CancellationError() }
     }
     private func armDeadline(after delay: Duration? = nil) {
         deadline?.cancel(); let token = generation, job = operation
@@ -199,7 +244,8 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     }
     func connectBorrowed(_ context: DirectFilesConnectionContext) {
         guard context.macID == mac.id, context.isCurrent(), !closed, !macRemoved, canAccess(), DirectClientPlatformV1.sessionAvailable, !busy else { return }
-        if phase == .ready, borrowedGeneration == context.generation, account == context.account { return }
+        if phase == .ready, let parent = connection?.parent, parent.ownerID == context.ownerID,
+           parent.generation == context.generation, account == context.account { return }
         clearConnectionRecovery()
         guard !transferActive else { message = "A transfer is still running for " + account + ". Finish or cancel it first."; return }
         guard !hasPendingResults || resultsAccount.isEmpty || resultsAccount == context.account else {
@@ -207,12 +253,14 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         }
         let previousPath = account == context.account ? directory?.path : nil
         observeLifecycle(); retire(); let token = generation
-        account = context.account; borrowedGeneration = context.generation; borrowedIsCurrent = context.isCurrent
+        let parent = ParentConnection(ownerID: context.ownerID, generation: context.generation, isCurrent: context.isCurrent)
+        let attempt = Connection(account: context.account, authority: .borrowed(parent))
+        connectionState = .opening(attempt)
         #if os(iOS)
         connectionLease = DirectMacConnections.shared.begin(macID: mac.id, kind: "files", keyID: context.keyID, ownerID: context.ownerID,
             transferActive: { [weak self] in self?.transferActive == true }, disconnect: { [weak self] in self?.disconnect() })
         #endif
-        phase = .connecting; busy = true; message = nil; status = "Opening Files…"; armDeadline()
+        busy = true; message = nil; status = "Opening Files…"; armDeadline()
         work = Task { [weak self] in
             guard let self else { return }
             do {
@@ -234,7 +282,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                 else { directory = homePath }
                 try check(token)
                 self.directory = directory; home = homePath.path
-                deadline?.cancel(); busy = false; phase = .ready; status = "Ready"
+                deadline?.cancel(); busy = false; connectionState = .ready(attempt); status = "Ready"
             } catch {
                 guard generation == token else { return }
                 disconnect(message: "Files could not open on this connection. Check the session and retry. Nothing was transferred automatically.")
@@ -293,7 +341,12 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
             pendingAccessChange: DirectMacAccessStore.willRetainChange(macID: mac.id, username: username, password: password, key: key, ssh: !useMacLogin, remember: remember),
             transferActive: { [weak self] in self?.transferActive == true }, disconnect: { [weak self] in self?.disconnect() })
         #endif
-        phase = .connecting; busy = true; account = username; message = nil; status = "Contacting Remote Login…"; armDeadline(after: .seconds(60))
+        let credential: CredentialSource
+        if key != nil { credential = .sshKey(keyFileID ?? namedSelection?.id) }
+        else { credential = useMacLogin ? .macPassword : .sshPassword }
+        let connectionAttempt = Connection(account: username, authority: .independent(credential))
+        connectionState = .opening(connectionAttempt)
+        busy = true; message = nil; status = "Contacting Remote Login…"; armDeadline(after: .seconds(60))
         let addresses = mac.addresses, port = mac.sshPort
         work = Task {
             do {
@@ -303,7 +356,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                     #endif
                 }
                 catch {
-                    retire(); phase = .interrupted; status = "Sign In Required"
+                    retire(); status = "Sign In Required"
                     message = "The saved SSH login could not be removed. Files did not connect."
                     return
                 }
@@ -324,7 +377,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                     guard let fingerprint = TerminalSecretStore.fingerprint(publicKey) else { throw TerminalSecretStore.Failure.rejectedKey }
                     self.status = "Verify this Mac’s identity"; self.trust = .init(fingerprint: fingerprint)
                     let accepted = await withCheckedContinuation { self.trustReply = $0 }
-                    self.trust = nil; try self.check(token)
+                    try self.check(token)
                     guard accepted else { throw TerminalSecretStore.Failure.rejectedKey }
                     do { try TerminalSecretStore.approveHostKey(publicKey, id: self.mac.id) }
                     catch TerminalSecretStore.Failure.changedKey { throw TerminalSecretStore.HostKeyMismatch(key: publicKey) }
@@ -337,7 +390,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                 self.status = "Opening Files…"; self.armDeadline()
                 let logger = Logger(label: "Files", factory: { _ in SwiftLogNoOpLogHandler() })
                 let client = try await ssh.openSFTP(logger: logger)
-                try check(token)
+                do { try check(token) } catch { try? await client.close(); throw error }
                 client.closeFuture.whenComplete { [weak self] _ in
                     Task { @MainActor in
                         guard let self, !self.closed, self.generation == token else { return }
@@ -370,9 +423,8 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                 }
                 } catch { self.message = "Connected. The SSH login could not be saved on this device." }
                 loginDraft.authenticationSucceeded(attempt, retention: retention)
-                establishedIndependentLogin = true
                 self.directory = directory; self.home = directory.path
-                self.deadline?.cancel(); self.busy = false; self.phase = .ready; self.status = "Ready"
+                deadline?.cancel(); busy = false; connectionState = .ready(connectionAttempt); status = "Ready"
                 channel.closeFuture.whenComplete { [weak self] _ in
                     Task { @MainActor in
                         guard let self, self.generation == token else { return }
@@ -382,7 +434,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
             } catch {
                 guard generation == token else { return }
                 let openingFiles = ssh != nil
-                retire(); phase = .interrupted
+                retire()
                 if let mismatch = error as? TerminalSecretStore.HostKeyMismatch {
                     reportConnectionRecovery(.identityChanged, message: "The Mac’s SSH identity changed. Verify it before reconnecting. Existing trust is kept.",
                         presentedIdentity: mismatch.presented)
@@ -396,7 +448,11 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
             }
         }
     }
-    func answerTrust(_ accepted: Bool) { let reply = trustReply; trustReply = nil; trust = nil; reply?.resume(returning: accepted && canAccess()) }
+    func answerTrust(_ accepted: Bool, requestID: UUID? = nil) {
+        if let requestID, trust?.id != requestID { return }
+        let reply = trustReply; trustReply = nil; trust = nil
+        reply?.resume(returning: accepted && canAccess())
+    }
     func answerConflict(_ choice: ConflictChoice) {
         let reply = conflictReply; conflictReply = nil; conflict = nil
         reply?.resume(returning: canAccess() ? choice : .cancel)
@@ -588,14 +644,16 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         disconnect(message: message)
     }
     func disconnect(message: String? = nil) {
-        if establishedIndependentLogin { loginDraft.passwordSessionEnded() }
-        retire(); phase = .interrupted; status = "Sign In Required"; self.message = message
+        if case .ready(let connection) = connectionState, case .independent = connection.authority {
+            loginDraft.passwordSessionEnded()
+        }
+        retire(); status = "Sign In Required"; self.message = message
         for index in results.indices where results[index].outcome == .waiting || results[index].outcome == .transferring {
             results[index].outcome = .interrupted; results[index].message = "Interrupted · Reconnect, then Retry. A temporary upload file may remain on the Mac."
         }
     }
     private func retire() {
-        establishedIndependentLogin = false
+        if !closed { connectionState = .interrupted(account: account) }
         connectionRecovery = nil
         #if os(iOS)
         let pendingWork = work
@@ -609,7 +667,6 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         #if os(iOS)
         let lease = connectionLease; connectionLease = nil
         #endif
-        borrowedGeneration = nil; borrowedIsCurrent = nil
         let sftp = (store as? DirectFilesSFTPStore)?.client
         if sftp == nil { store?.close() }
         store = nil
@@ -626,12 +683,12 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         busy = false
     }
     func close() {
-        closed = true
+        connectionState = .closed
         loginDraft.invalidate()
         backgroundObserver = nil
         removalObserver = nil
         disconnect()
-        directory = nil; results = []; resultsAccount = ""; account = ""; home = ""
+        directory = nil; results = []; resultsAccount = ""; home = ""
         if let temporaryRoot { try? FileManager.default.removeItem(at: temporaryRoot) }; temporaryRoot = nil
     }
     func endTemporarySession() {

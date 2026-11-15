@@ -136,7 +136,9 @@ struct DirectFilesView: View {
                 }
             }
             .sheet(item: Binding(get: { session.trust }, set: { if $0 == nil { session.answerTrust(false) } })) { trust in
-                TerminalServerTrustView(macName: mac.name, fingerprint: trust.fingerprint, answer: session.answerTrust).directAppearance()
+                TerminalServerTrustView(macName: mac.name, fingerprint: trust.fingerprint) {
+                    session.answerTrust($0, requestID: trust.id)
+                }.id(trust.id).directAppearance()
             }
             .confirmationDialog("A file named \(session.conflict?.name ?? "") already exists", isPresented: Binding(get: { session.conflict != nil }, set: { if !$0 { session.answerConflict(.cancel) } }), titleVisibility: .visible) {
                 Button("Keep Both") { session.answerConflict(.keepBoth) }
