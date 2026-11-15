@@ -295,6 +295,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
             guard let self else { return }
             do {
                 let logger = Logger(label: "Files", factory: { _ in SwiftLogNoOpLogHandler() })
+                try check(token)
                 let client = try await context.client.openSFTP(logger: logger)
                 do { try check(token) } catch { try? await client.close(); throw error }
                 let store = DirectFilesSFTPStore(client: client); self.store = store
