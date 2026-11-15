@@ -351,7 +351,7 @@ import NIO
         let data = Data((0..<100_000).map { UInt8($0 % 251) }); try data.write(to: source)
         let store = FilesTestStore(), destination = "/home/report.txt"
         var progress: [UInt64] = []
-        try await DirectFilesTransfer.upload(source: source, name: "report.txt", folder: "/home", replace: false,
+        try await DirectFilesTransfer.upload(source: source, name: "report.txt", folder: "/home", replacing: nil,
             store: store, check: {}, progress: { progress.append($0); XCTAssertEqual($1, UInt64(data.count)) })
         XCTAssertEqual(store.files[destination], data)
         XCTAssertEqual(store.largestWrite, DirectFilesPolicy.chunkSize)
@@ -365,10 +365,11 @@ import NIO
             let source = try DirectFilesLocalStore.emptyFile(in: root, name: "existing.txt")
             try Data(repeating: 1, count: 100_000).write(to: source)
             let store = FilesTestStore(); let original = Data([7, 8, 9]); store.files["/home/existing.txt"] = original
+            let expected = try await store.attributes("/home/existing.txt")
             var stop = false
             store.wrote = { stop = true; if !cancelled { throw DirectFilesFailure.interrupted } }
             do {
-                try await DirectFilesTransfer.upload(source: source, name: "existing.txt", folder: "/home", replace: true,
+                try await DirectFilesTransfer.upload(source: source, name: "existing.txt", folder: "/home", replacing: expected,
                     store: store, check: { if stop { throw CancellationError() } }, progress: { _, _ in })
                 XCTFail("Interrupted upload succeeded")
             } catch {}
@@ -382,16 +383,36 @@ import NIO
         let source = try DirectFilesLocalStore.emptyFile(in: root, name: "existing.txt")
         try Data([1, 2]).write(to: source)
         let store = FilesTestStore(); store.failCommit = true; store.files["/home/existing.txt"] = Data([9])
-        do { try await DirectFilesTransfer.upload(source: source, name: "existing.txt", folder: "/home", replace: true,
+        let expected = try await store.attributes("/home/existing.txt")
+        do { try await DirectFilesTransfer.upload(source: source, name: "existing.txt", folder: "/home", replacing: expected,
             store: store, check: {}, progress: { _, _ in }); XCTFail("Commit should fail") } catch {}
         XCTAssertEqual(store.files["/home/existing.txt"], Data([9]))
         XCTAssertFalse(store.removed.contains("/home/existing.txt")); XCTAssertEqual(store.files.count, 1)
+    }
+    func testApprovedOverwriteRechecksDestinationAfterSendingTemporaryFile() async throws {
+        let root = try DirectFilesLocalStore.root(); defer { try? FileManager.default.removeItem(at: root) }
+        let source = try DirectFilesLocalStore.emptyFile(in: root, name: "existing.txt")
+        try Data([1, 2]).write(to: source)
+        let store = FilesTestStore(), destination = "/home/existing.txt"
+        store.files[destination] = Data([9])
+        let expected = try await store.attributes(destination)
+        let replacement = Data([7, 8, 9])
+        store.wrote = { store.files[destination] = replacement }
+
+        do {
+            try await DirectFilesTransfer.upload(source: source, name: "existing.txt", folder: "/home", replacing: expected,
+                                                 store: store, check: {}, progress: { _, _ in })
+            XCTFail("The previous approval must not replace a changed destination")
+        } catch DirectFilesFailure.destinationChanged {}
+        XCTAssertEqual(store.files, [destination: replacement])
+        XCTAssertEqual(store.commits, 0)
+        XCTAssertEqual(store.removed.count, 1)
     }
     func testNewDestinationRaceDoesNotOverwrite() async throws {
         let root = try DirectFilesLocalStore.root(); defer { try? FileManager.default.removeItem(at: root) }
         let source = try DirectFilesLocalStore.emptyFile(in: root, name: "race.txt"); try Data([1]).write(to: source)
         let store = FilesTestStore(); store.files["/home/race.txt"] = Data([9])
-        do { try await DirectFilesTransfer.upload(source: source, name: "race.txt", folder: "/home", replace: false,
+        do { try await DirectFilesTransfer.upload(source: source, name: "race.txt", folder: "/home", replacing: nil,
             store: store, check: {}, progress: { _, _ in }); XCTFail("Should not replace") } catch {}
         XCTAssertEqual(store.files["/home/race.txt"], Data([9]))
     }

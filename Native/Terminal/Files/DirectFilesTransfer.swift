@@ -33,7 +33,7 @@ actor DirectFilesDiskFile {
 @MainActor enum DirectFilesTransfer {
     typealias Check = @MainActor () throws -> Void
     typealias Progress = @MainActor (UInt64, UInt64?) -> Void
-    static func upload(source: URL, name: String, folder: String, replace: Bool,
+    static func upload(source: URL, name: String, folder: String, replacing expected: DirectFilesAttributes?,
                        store: any DirectFilesRemoteStore, check: Check, progress: Progress) async throws {
         let destination = try DirectFilesPolicy.child(name, of: folder)
         let temporary = try DirectFilesPolicy.child(".maccompanion-upload-" + UUID().uuidString + ".part", of: folder)
@@ -58,7 +58,14 @@ actor DirectFilesDiskFile {
             guard offset == UInt64(count) else { throw DirectFilesFailure.changedFile }
             try await file.close(); remote = nil
             await local.close(); try check()
-            try await store.commit(temporary, to: destination, replace: replace)
+            if let expected {
+                // SFTP exposes metadata and replacement as separate operations.
+                // Ignore access time, which another reader can change.
+                let current = try await store.attributes(destination)
+                try check()
+                guard current == expected else { throw DirectFilesFailure.destinationChanged }
+            }
+            try await store.commit(temporary, to: destination, replace: expected != nil)
             ownsTemporary = false
             // The caller still checks its generation before publishing success.
         } catch {

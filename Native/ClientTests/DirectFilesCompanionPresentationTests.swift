@@ -158,6 +158,67 @@ import NIOSSH
         XCTAssertEqual(files.phase, .ready); XCTAssertEqual(files.directory?.path, path)
         XCTAssertTrue(mount.fields.isEmpty)
     }
+    func testStandaloneFilesReopensWithTerminalSignInAndWaitsWhenItChanges() async throws {
+        for usesKey in [false, true] {
+            let key = usesKey ? TerminalSSHKey.create() : nil
+            let keyID = try key.map { try TerminalKeyLibraryStore.add($0, name: "Synthetic Files Reopen") }
+            defer { if let keyID { try? TerminalKeyLibraryStore.delete(keyID) } }
+            let hostKey = NIOSSHPrivateKey(ed25519Key: .init())
+            let probe = FilesDirectoryTestProbe()
+            let server = try await filesDirectoryTestServer(probe: probe, hostKey: hostKey, publicKey: key?.publicKey)
+            defer { Task { await probe.shutdown(); try? await server.close().get() } }
+            let root = try DirectFilesLocalStore.root()
+            defer { try? FileManager.default.removeItem(at: root) }
+            let library = DirectMacLibraryV1(url: root.appendingPathComponent("macs.json"), removeLogin: { _ in })
+            let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Files Reopen", addresses: ["127.0.0.1"],
+                                        sshPort: try XCTUnwrap(server.localAddress?.port))
+            XCTAssertTrue(library.save(id: mac.id, name: mac.name, addresses: mac.addresses, sshPort: mac.sshPort))
+            defer { try? TerminalSecretStore.removeTemporaryIdentity(mac.id) }
+            try TerminalSecretStore.approveHostKey(String(openSSHPublicKey: hostKey.publicKey), id: mac.id)
+            let terminalPassword = DirectMacAccessProfile.Password(username: "synthetic", password: "synthetic-only")
+            let macPassword = DirectMacAccessProfile.Password(username: usesKey ? "synthetic" : "other-account", password: "synthetic-only")
+            let profile = DirectMacAccessProfile(login: macPassword, sshMethod: usesKey ? .key : .password,
+                                                 sshPassword: usesKey ? nil : terminalPassword, keyID: keyID, keyUsername: usesKey ? "synthetic" : "")
+            try DirectMacAccessStore.write(profile, id: mac.id)
+            let files = DirectFilesWorkspace.session(mac, libraryURL: library.storageURL)
+            defer { files.close() }
+            files.connect(username: "synthetic", password: key == nil ? "synthetic-only" : "", key: key, remember: key == nil)
+            try await wait { !files.busy }
+            XCTAssertEqual(files.phase, .ready, files.message ?? files.status)
+            let mount = try CompanionFilesMount(DirectFilesView(mac: mac, session: files, retainWhenDismissed: true))
+            defer { mount.close() }
+
+            func dismissAndInterrupt() async throws {
+                mount.hide()
+                await Task.yield()
+                NotificationCenter.default.post(name: DirectClientPlatformV1.didEnterBackground, object: nil)
+                try await wait { files.phase == .interrupted && !DirectMacConnections.shared.isActive(mac.id) }
+            }
+
+            try await dismissAndInterrupt()
+            let passwordAttempts = probe.authentications, keyAttempts = probe.keyAuthentications
+            mount.show(DirectFilesView(mac: mac, session: files, retainWhenDismissed: true))
+            try await wait { !files.busy && (probe.authentications > passwordAttempts || probe.keyAuthentications > keyAttempts) }
+            XCTAssertEqual(files.phase, .ready, files.message ?? files.status)
+            XCTAssertEqual(files.account, "synthetic")
+            XCTAssertEqual(probe.authentications, passwordAttempts + (usesKey ? 0 : 1))
+            XCTAssertEqual(probe.keyAuthentications, keyAttempts + (usesKey ? 1 : 0))
+
+            try await dismissAndInterrupt()
+            let beforeChange = probe.authentications + probe.keyAuthentications
+            var changed = try DirectMacAccessStore.load(mac.id)
+            changed.sshMethod = usesKey ? .password : .inherit
+            changed.sshPassword = usesKey ? terminalPassword : nil
+            changed.keyID = nil
+            changed.keyUsername = ""
+            try DirectMacAccessStore.save(changed, id: mac.id, replacing: try DirectMacAccessStore.load(mac.id))
+            mount.show(DirectFilesView(mac: mac, session: files, retainWhenDismissed: true))
+            try await wait { files.message?.contains("previous Files sign-in changed") == true }
+            XCTAssertEqual(files.phase, .interrupted)
+            XCTAssertFalse(files.busy)
+            XCTAssertEqual(probe.authentications + probe.keyAuthentications, beforeChange)
+        }
+    }
     func testDownloadsStayWithTheirAccountAndSurviveMacRemoval() async throws {
         let probe = FilesDirectoryTestProbe(), bytes = Data([1, 2, 3])
         let server = try await filesDirectoryTestServer(probe: probe, downloadBytes: bytes)
