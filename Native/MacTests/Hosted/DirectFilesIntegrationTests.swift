@@ -721,10 +721,11 @@ private struct FilesTestWindowRoot: View {
         session.connect(username: "synthetic", password: "incorrect-synthetic", key: nil, remember: false)
         try await wait { session.trust != nil || session.phase != .connecting }
         session.answerTrust(true); try await wait { session.phase != .connecting }
-        XCTAssertTrue(session.message?.contains("did not accept") == true, session.message ?? "")
+        XCTAssertEqual(session.connectionRecovery?.reason, .rejectedLogin)
+        XCTAssertTrue(session.message?.contains("didn’t accept this login") == true, session.message ?? "")
         session.connect(username: "synthetic", password: "synthetic-only", key: nil, remember: false)
         try await wait { session.phase != .connecting }
         XCTAssertTrue(session.message?.contains("SSH connected, but Files") == true, session.message ?? "")
-        XCTAssertFalse(session.message?.contains("did not accept") == true)
+        XCTAssertNil(session.connectionRecovery)
     }
 }
