@@ -90,14 +90,29 @@ private enum TerminalPTY {
     var inputAvailable: @MainActor () -> Bool = { true }
     var suspendInput: (@MainActor () -> Void)?
     var finishControlsCustomization: (@MainActor () -> Void)?
-    private(set) var suspended = false
+    private enum Lifecycle {
+        case active
+        case inactive
+        case pausing(UUID, resumeRequested: Bool)
+        case paused(UUID)
+        case resuming(UUID)
+
+        var pauseID: UUID? {
+            switch self {
+            case .pausing(let id, _), .paused(let id), .resuming(let id): id
+            case .active, .inactive: nil
+            }
+        }
+        var awaitingPause: Bool { if case .pausing = self { true } else { false } }
+    }
+    private var lifecycle = Lifecycle.active
+    var suspended: Bool { lifecycle.pauseID != nil }
+    private var inputInactive: Bool { if case .inactive = lifecycle { true } else { false } }
     private(set) var activity: VNCSessionActivityController?
     private var pausedOutput: [UInt8] = []
     var pausedOutputByteCount: Int { pausedOutput.count }
     private var pauseWork: Task<Void, Never>?
     private var resumeWork: Task<Void, Never>?
-    private var inputInactive = false
-    private var readPauseCompleted = false
     private var pauseDeadline: Task<Void, Never>?
     #if os(iOS)
     private var backgroundTask = UIBackgroundTaskIdentifier.invalid
@@ -114,7 +129,6 @@ private enum TerminalPTY {
             message: "Sending text was interrupted. It may have been partially sent. Check your Mac before sending it again; input won’t be replayed.")
     }
     #endif
-    private var lifecycleGeneration = UUID()
     private var writeGeneration = UUID()
     #if os(iOS) || os(visionOS)
     var outputGeneration: UUID { generation }
@@ -549,12 +563,12 @@ private enum TerminalPTY {
     var canComposeText: Bool { connected && !inputInactive && !suspended && !isSendingCustomSequence && DirectAppLockV1.shared.canAccess && DirectClientPlatformV1.sessionAvailable && writer != nil }
     /// Use the same PTY and write ordering as live typing. A completion confirms
     /// only the local write; the remote program supplies no consumption receipt.
-    func sendComposedText(_ data: [UInt8], generation expected: UUID, completion: @escaping (String?) -> Void) {
+    func sendComposedText(_ data: [UInt8], generation expected: UUID, completion: @escaping DirectTextDeliveryCompletion) {
         guard generation == expected, canComposeText, let writer, !data.isEmpty else {
-            completion("The Terminal session changed. Nothing was sent."); return
+            completion(.rejected, "The Terminal session changed. Nothing was sent."); return
         }
         guard data.count <= DirectComposedText.terminalMaximumBytes + 12, queuedBytes + data.count <= 65536 else {
-            completion("Input is busy or the text is too large. Nothing was queued."); return
+            completion(.rejected, "Input is busy or the text is too large. Nothing was queued."); return
         }
         queuedBytes += data.count
         let id = generation, writeID = writeGeneration, previous = writeTail
@@ -562,16 +576,16 @@ private enum TerminalPTY {
             await previous?.value
             defer { if generation == id && writeGeneration == writeID { queuedBytes -= data.count } }
             guard generation == id, writeGeneration == writeID, canSendUserInput, !Task.isCancelled else {
-                completion("Sending was interrupted. Check the Terminal before sending again."); return
+                completion(.rejected, "Sending was interrupted. Check the Terminal before sending again."); return
             }
             do {
                 try await writeInput(data, using: writer)
                 guard generation == id, writeGeneration == writeID else {
-                    completion("Text may have been partially sent. Check the Terminal before sending again."); return
+                    completion(.uncertain, "Text may have been partially sent. Check the Terminal before sending again."); return
                 }
-                completion(nil)
+                completion(.written, nil)
             } catch {
-                completion("Text may have been partially sent. Check the Terminal before sending again.")
+                completion(.uncertain, "Text may have been partially sent. Check the Terminal before sending again.")
                 if generation == id && writeGeneration == writeID {
                     stop(); present(.terminalEnded, message: "The connection ended while sending text. It may have been partially sent and won’t be replayed. Check the Mac before opening a new shell.")
                 }
@@ -754,13 +768,13 @@ private enum TerminalPTY {
         try await writer.resize(columns: columns, rows: rows)
     }
     func stop() {
-        inputInactive = false; readPauseCompleted = false
-        lifecycleGeneration = UUID(); writeGeneration = UUID()
+        lifecycle = .active
+        writeGeneration = UUID()
         #if os(iOS)
         retireCustomSequence()
         #endif
         pauseWork?.cancel(); pauseWork = nil; resumeWork?.cancel(); resumeWork = nil; finishBackgroundWork()
-        suspended = false; pausedOutput.removeAll(keepingCapacity: false)
+        pausedOutput.removeAll(keepingCapacity: false)
         suspendInput?(); activity?.finish(); activity = nil
         let pendingConnection = work
         generation = UUID(); let reply = trustReply; trustReply = nil; trust = nil; reply?.resume(returning: false); work?.cancel(); work = nil; writeTail?.cancel(); writeTail = nil
@@ -798,84 +812,123 @@ private enum TerminalPTY {
     }
     func becameInactive() {
         if connecting { cancelConnection(); return }
-        guard connected, !inputInactive else { return }
-        inputInactive = true; writeGeneration = UUID(); writeTail?.cancel(); writeTail = nil; queuedBytes = 0
+        guard connected else { return }
+        if case .pausing(let token, _) = lifecycle {
+            lifecycle = .pausing(token, resumeRequested: false)
+        }
+        guard case .active = lifecycle else { return }
+        lifecycle = .inactive
+        retireLifecycleInput()
+    }
+    private func retireLifecycleInput() {
+        writeGeneration = UUID()
+        writeTail?.cancel()
+        queuedBytes = 0
         #if os(iOS)
         retireCustomSequence()
         #endif
+        // Held-input cleanup captures the tail so releases follow any press already in flight.
         suspendInput?()
+        writeTail = nil
     }
     func background() {
         if connecting { cancelConnection(); return }
-        guard connected, !suspended || resumeWork != nil else { return }
-        suspended = true; lifecycleGeneration = UUID(); let token = lifecycleGeneration
-        inputInactive = true; readPauseCompleted = false
-        writeGeneration = UUID(); writeTail?.cancel()
-        #if os(iOS)
-        retireCustomSequence()
-        #endif
-        resumeWork?.cancel(); resumeWork = nil; suspendInput?()
-        writeTail = nil; queuedBytes = 0
+        guard connected else { return }
+        switch lifecycle {
+        case .pausing(let token, _):
+            lifecycle = .pausing(token, resumeRequested: false)
+            return
+        case .paused:
+            return
+        case .active, .inactive, .resuming:
+            break
+        }
+        let token = UUID()
+        lifecycle = .pausing(token, resumeRequested: false)
+        resumeWork?.cancel(); resumeWork = nil
+        finishBackgroundWork()
+        retireLifecycleInput()
         activity?.setForeground(false); activity?.setPhase("paused")
         let readPause = channel?.setOption(ChannelOptions.autoRead, value: false)
         #if os(iOS)
         backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Pause SSH session") { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self, self.lifecycleGeneration == token else { return }
-                if !self.readPauseCompleted { self.stop(); self.present(.terminalEnded) }
-                self.finishBackgroundWork()
-            }
+            MainActor.assumeIsolated { self?.expirePause(token) }
         }
         #endif
         pauseWork = Task { [weak self] in
-            do { try await readPause?.get() } catch {
-                guard let self, self.lifecycleGeneration == token else { return }
-                self.stop(); self.present(.terminalEnded); return
-            }
-            guard let self, self.lifecycleGeneration == token else { return }
-            self.readPauseCompleted = true
-            // ActivityKit must not be on the transport-resume dependency chain.
-            Task { [weak self, activity = self.activity] in
-                await activity?.waitForUpdates()
-                guard let self, self.lifecycleGeneration == token else { return }
-                self.finishBackgroundWork()
+            do {
+                try await readPause?.get()
+                self?.acknowledgePause(token)
+            } catch {
+                guard let self, self.lifecycle.pauseID == token else { return }
+                self.stop(); self.present(.terminalEnded)
             }
         }
         pauseDeadline = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(1)) } catch { return }
-            guard let self, self.lifecycleGeneration == token else { return }
-            if !self.readPauseCompleted { self.stop(); self.present(.terminalEnded) }
+            self?.expirePause(token)
+        }
+    }
+    private func acknowledgePause(_ token: UUID) {
+        guard case .pausing(let current, let resumeRequested) = lifecycle, current == token else { return }
+        lifecycle = .paused(token)
+        if resumeRequested, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable {
+            beginResume(token)
+            return
+        }
+        // ActivityKit acknowledgement has no bearing on transport resumption.
+        Task { [weak self, activity] in
+            await activity?.waitForUpdates()
+            guard let self, self.lifecycle.pauseID == token else { return }
             self.finishBackgroundWork()
         }
     }
+    private func expirePause(_ token: UUID) {
+        guard lifecycle.pauseID == token else { return }
+        if lifecycle.awaitingPause { stop(); present(.terminalEnded) }
+        else { finishBackgroundWork() }
+    }
     func foreground() {
         guard connected, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { return }
-        let wasInactive = inputInactive
-        inputInactive = false
         activity?.setForeground(true)
-        guard suspended else {
+        switch lifecycle {
+        case .active, .inactive:
+            let wasInactive = inputInactive
+            lifecycle = .active
             do { try receiveOutput([]) } catch { stop(); present(.terminalEnded); return }
             if wasInactive { resize(columns: columns, rows: rows) }
-            activity?.setPhase("connected", verified: false); return
+            activity?.setPhase("connected", verified: false)
+        case .pausing(let token, _):
+            // Keep the pause deadline live until the channel acknowledges it.
+            lifecycle = .pausing(token, resumeRequested: true)
+        case .paused(let token):
+            beginResume(token)
+        case .resuming:
+            break
         }
-        guard resumeWork == nil else { return }
-        lifecycleGeneration = UUID(); let token = lifecycleGeneration, id = generation
-        finishBackgroundWork(); let previousPause = pauseWork
+    }
+    private func beginResume(_ token: UUID) {
+        lifecycle = .resuming(token)
+        finishBackgroundWork()
+        let id = generation
         resumeWork = Task { [weak self] in
-            await previousPause?.value
-            guard let self else { return }
-            defer { if self.lifecycleGeneration == token { self.resumeWork = nil } }
-            guard self.generation == id, self.lifecycleGeneration == token,
-                  self.connected, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { return }
+            guard let self, self.generation == id, self.lifecycle.pauseID == token else { return }
+            defer { if self.generation == id && self.lifecycle.pauseID == token { self.resumeWork = nil } }
             guard let channel = self.channel, channel.isActive else { self.stop(); self.present(.terminalEnded); return }
             do {
                 try await channel.setOption(ChannelOptions.autoRead, value: true).get()
-                guard self.generation == id, self.lifecycleGeneration == token, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { return }
-                self.suspended = false; try self.receiveOutput([])
+                guard self.generation == id, self.lifecycle.pauseID == token else { return }
+                guard DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else {
+                    self.background()
+                    return
+                }
+                self.resumeWork = nil
+                self.lifecycle = .active
+                try self.receiveOutput([])
                 self.resize(columns: self.columns, rows: self.rows)
                 self.activity?.setPhase("connected", verified: false)
             } catch {
-                if self.generation == id && self.lifecycleGeneration == token { self.stop(); self.present(.terminalEnded) }
+                if self.generation == id && self.lifecycle.pauseID == token { self.stop(); self.present(.terminalEnded) }
             }
         }
     }

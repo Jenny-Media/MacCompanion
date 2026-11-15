@@ -10,8 +10,25 @@ import UIKit
     static let gracePreferenceKey = "direct-client-unlock-grace-seconds-v1"
     static let unlocked = Notification.Name("DirectClientUnlockedV1")
     static let locked = Notification.Name("DirectClientLockedV1")
-    private(set) var authenticating = false
-    private(set) var allowed: Bool
+    private enum Admission {
+        case disabled(needsPublication: Bool)
+        case locked(attempted: Bool)
+        case evaluating(UUID, LAContext)
+        case awaitingActivation(localInteraction: Bool)
+        case unlocked
+    }
+    private var admission: Admission
+    var authenticating: Bool { if case .evaluating = admission { true } else { false } }
+    var allowed: Bool {
+        switch admission {
+        case .disabled, .awaitingActivation, .unlocked: true
+        case .locked, .evaluating: false
+        }
+    }
+    private var localInteractionDuringActivation: Bool {
+        if case .awaitingActivation(let value) = admission { return value }
+        return false
+    }
     private(set) var foregroundActive: Bool
     private(set) var protectedDataReady: Bool
     private(set) var graceSeconds: Int
@@ -20,7 +37,7 @@ import UIKit
     var canAccess: Bool { !enabled || (allowed && protectedDataAvailable()) }
     // A current authentication result can release local UI during system dismissal.
     // Remote-session resume still requires actual foreground activation.
-    var canInteract: Bool { canAccess && (foregroundActive || authenticationSucceeded) }
+    var canInteract: Bool { canAccess && (foregroundActive || localInteractionDuringActivation) }
     var canResumeRemoteSession: Bool { canAccess && foregroundActive }
     var contentVisible: Bool { canAccess || foregroundGracePending }
     var privacyCoverVisible: Bool { cover?.isHidden == false }
@@ -37,16 +54,22 @@ import UIKit
     private let isActive: () -> Bool
     private let isBackground: () -> Bool
     private let protectedDataAvailable: () -> Bool
-    private var graceStarted: TimeInterval?
-    private var graceDeadline: TimeInterval?
-    private var unlockNeedsPublication = false
-    private var authenticationSucceeded = false
-    private var authenticationAttempted = false
-    private var foregroundGracePending = false
-    private var context: LAContext?
+    private enum Grace {
+        case none
+        case retained(Range<TimeInterval>)
+        case preview(Range<TimeInterval>)
+
+        var window: Range<TimeInterval>? {
+            switch self {
+            case .none: nil
+            case .retained(let window), .preview(let window): window
+            }
+        }
+    }
+    private var grace = Grace.none
+    private var foregroundGracePending: Bool { if case .preview = grace { true } else { false } }
     private var cover: UIWindow?
     private var observers: [NSObjectProtocol] = []
-    private var attempt = UUID()
     init(contextFactory: @escaping () -> LAContext = { LAContext() }, defaults: UserDefaults = .standard,
          unlockMethod: @escaping @Sendable () async -> DirectUnlockMethod = { await DirectUnlockMethod.available() },
          now: (() -> TimeInterval)? = nil, unlockTimings: DirectUnlockTimingsV1? = nil,
@@ -62,7 +85,7 @@ import UIKit
         }
         self.isActive = isActive; self.isBackground = isBackground; self.protectedDataAvailable = protectedDataAvailable
         foregroundActive = isActive(); protectedDataReady = protectedDataAvailable()
-        allowed = !defaults.bool(forKey: Self.preferenceKey)
+        admission = defaults.bool(forKey: Self.preferenceKey) ? .locked(attempted: false) : .disabled(needsPublication: false)
         graceSeconds = defaults.integer(forKey: Self.gracePreferenceKey) == 30 ? 30 : 0
     }
     func install() {
@@ -101,56 +124,67 @@ import UIKit
         }
         retireUnlockTiming(.preferenceChanged)
         discardGrace(); defaults.set(value, forKey: Self.preferenceKey)
-        attempt = UUID(); context?.invalidate(); context = nil; authenticating = false; unlockNeedsPublication = false
-        authenticationSucceeded = false; authenticationAttempted = false
-        if value { allowed = false; NotificationCenter.default.post(name: Self.locked, object: nil); showCover(); authenticate() }
-        else {
-            allowed = true; hideCover(); foregroundActive = isActive()
-            if foregroundActive { publishUnlock() } else { unlockNeedsPublication = true }
+        if value {
+            replaceAdmission(.locked(attempted: false))
+            NotificationCenter.default.post(name: Self.locked, object: nil)
+            showCover()
+            authenticate()
+        } else {
+            foregroundActive = isActive()
+            replaceAdmission(.disabled(needsPublication: !foregroundActive))
+            hideCover()
+            if foregroundActive { publishUnlock() }
         }
     }
     func setGraceSeconds(_ value: Int) {
         graceSeconds = value == 30 ? 30 : 0; defaults.set(graceSeconds, forKey: Self.gracePreferenceKey)
         discardGrace()
     }
-    private func discardGrace() { graceStarted = nil; graceDeadline = nil; foregroundGracePending = false }
-    private var graceValid: Bool {
-        guard let start = graceStarted, let deadline = graceDeadline else { return false }
-        let time = now()
-        return time >= start && time < deadline && protectedDataAvailable()
+    private func discardGrace() { grace = .none }
+    private var validGraceWindow: Range<TimeInterval>? {
+        guard let window = grace.window, window.contains(now()), protectedDataAvailable() else { return nil }
+        return window
     }
     func prepareForeground() {
         guard !isBackground() else { return }
-        // Presentation can precede active admission. Do not publish unlock or
-        // grant credential/input access while UIKit is still inactive.
-        foregroundGracePending = enabled && !allowed && graceValid
+        // Preview can precede activation but never grants credential or input access.
+        if enabled, !allowed, let window = validGraceWindow { grace = .preview(window) }
+        else if case .preview(let window) = grace { grace = .retained(window) }
         if canAccess || foregroundGracePending { hideCover() }
         else { showCover() }
     }
     func becameInactive() {
         foregroundActive = false
-        // This exception belongs only to the just-accepted authentication.
-        authenticationSucceeded = false
+        if case .awaitingActivation = admission { admission = .awaitingActivation(localInteraction: false) }
     }
     func background() {
         foregroundActive = false
-        foregroundGracePending = false
+        if case .preview(let window) = grace { grace = .retained(window) }
         guard enabled else { return }
-        if allowed && !unlockNeedsPublication && graceSeconds > 0 && protectedDataAvailable() {
-            let time = now(); graceStarted = time; graceDeadline = time + TimeInterval(graceSeconds)
-        } else if authenticating || authenticationSucceeded || unlockNeedsPublication { discardGrace() }
+        switch admission {
+        case .unlocked where graceSeconds > 0 && protectedDataAvailable():
+            let start = now()
+            grace = .retained(start..<(start + TimeInterval(graceSeconds)))
+        case .evaluating, .awaitingActivation:
+            discardGrace()
+        case .locked, .disabled, .unlocked:
+            break
+        }
         revokeAccess()
     }
     func protectedDataLost() {
         protectedDataReady = false
         discardGrace(); guard enabled else { return }; revokeAccess()
     }
+    private func replaceAdmission(_ next: Admission) {
+        let previous = admission
+        admission = next
+        if case .evaluating(_, let context) = previous { context.invalidate() }
+    }
     private func revokeAccess() {
         retireUnlockTiming(.revoked)
-        foregroundGracePending = false
-        attempt = UUID(); context?.invalidate(); context = nil; authenticating = false
-        unlockNeedsPublication = false; authenticationSucceeded = false; authenticationAttempted = false
-        allowed = false; message = "Unlock to access your Macs"; showCover()
+        replaceAdmission(.locked(attempted: false))
+        message = "Unlock to access your Macs"; showCover()
         NotificationCenter.default.post(name: Self.locked, object: nil)
     }
     func receivedActivationNotification() {
@@ -168,27 +202,34 @@ import UIKit
     }
     func becameActive() {
         foregroundActive = isActive(); protectedDataReady = protectedDataAvailable()
-        guard foregroundActive, !authenticating else { return }
-        if authenticationSucceeded {
+        guard foregroundActive else { return }
+        switch admission {
+        case .evaluating:
+            return
+        case .awaitingActivation:
             guard enabled, protectedDataAvailable(), !isBackground() else { revokeAccess(); return }
-            authenticationSucceeded = false; allowed = true; publishUnlock()
-            return
-        }
-        if canAccess {
+            admission = .unlocked
+            publishUnlock()
+        case .disabled(let needsPublication):
             hideCover()
-            if unlockNeedsPublication { publishUnlock() }
-            return
-        }
-        if graceValid {
-            discardGrace(); allowed = true; publishUnlock()
-        } else {
+            if needsPublication {
+                admission = .disabled(needsPublication: false)
+                publishUnlock()
+            }
+        case .unlocked:
+            if canAccess { hideCover() }
+        case .locked(let attempted):
+            let eligible = validGraceWindow != nil
             discardGrace()
-            if !authenticationAttempted { authenticate() }
+            if eligible {
+                admission = .unlocked
+                publishUnlock()
+            } else if !attempted { authenticate() }
         }
     }
     private func publishUnlock() {
         unlockTimings.mark(.activeAdmission, token: unlockTimingToken)
-        unlockNeedsPublication = false; hideCover()
+        hideCover()
         unlockTimings.mark(.coverRemoved, token: unlockTimingToken)
         unlockTimings.mark(.unlockNotification, token: unlockTimingToken)
         NotificationCenter.default.post(name: Self.unlocked, object: nil)
@@ -197,30 +238,29 @@ import UIKit
         unlockTimings.checkpoint()
     }
     func authenticate() {
-        guard enabled, !allowed, !authenticating, !authenticationSucceeded, isActive(), protectedDataAvailable() else { return }
+        guard enabled, case .locked = admission, isActive(), protectedDataAvailable() else { return }
         discardGrace()
-        showCover(); authenticationAttempted = true
-        let id = UUID(); attempt = id
+        showCover()
+        let id = UUID()
         unlockTimingToken = unlockTimings.begin(active: isActive())
         let timingToken = unlockTimingToken, callbackClock = unlockTimings.callbackClock
-        let context = contextFactory(); self.context = context
+        let context = contextFactory()
+        admission = .evaluating(id, context)
         // evaluatePolicy reports unavailable policy asynchronously. Repeating
         // canEvaluatePolicy here adds a blocking IPC before every real attempt.
-        authenticating = true; message = "Authenticating…"
+        message = "Authenticating…"
         unlockTimings.mark(.evaluationIssued, token: timingToken)
         context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Unlock Mac Companion to access your saved Macs") { [weak self] success, error in
             let callbackInstant = callbackClock()
             let passcodeMissing = !success && (error as? LAError)?.code == .passcodeNotSet
             Task { @MainActor in
-                guard let self, self.attempt == id else { return }
+                guard let self, case .evaluating(let current, let completedContext) = self.admission, current == id else { return }
                 self.unlockTimings.mark(.authenticationCallback, token: timingToken, at: callbackInstant)
                 self.unlockTimings.mark(.authenticationHandled, token: timingToken)
                 // Consume this result once; a duplicate or retired callback
                 // cannot replace a newer attempt or reopen a revoked transition.
-                self.attempt = UUID()
-                let completedContext = self.context
-                self.context = nil; self.authenticating = false
                 guard success, self.protectedDataAvailable(), !self.isBackground() else {
+                    self.admission = .locked(attempted: true)
                     self.retireUnlockTiming(passcodeMissing ? .unavailable : .failed)
                     self.message = passcodeMissing ? "Set up a device passcode in iPhone Settings, then try again."
                         : "Unlock to access your Macs."
@@ -229,12 +269,11 @@ import UIKit
                 // Dropping our reference does not explicitly end the framework's
                 // presentation. Dispose only after accepting and retiring this
                 // reply. Cleanup itself cannot grant local or remote access.
-                completedContext?.invalidate()
+                self.admission = .awaitingActivation(localInteraction: true)
+                completedContext.invalidate()
                 self.unlockTimings.mark(.authenticationContextInvalidated, token: timingToken)
                 // Reveal prepared content and enable local controls in the same turn,
                 // without waiting for UIKit's authentication-dismissal activation.
-                self.authenticationSucceeded = true
-                self.allowed = true; self.unlockNeedsPublication = true
                 self.foregroundActive = self.isActive()
                 self.unlockTimings.mark(.localAdmission, token: timingToken)
                 self.hideCover()

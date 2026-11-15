@@ -71,6 +71,8 @@ struct DirectFilesView: View {
         DirectFilesPolicy.preventsDismissal(retained: retainWhenDismissed, active: session.transferActive, pending: session.hasPendingResults)
     }
     var body: some View {
+        let conflict = session.conflict
+        let trust = session.trust
         NavigationStack {
             VStack(spacing: 0) {
                 identity
@@ -135,13 +137,24 @@ struct DirectFilesView: View {
                     #endif
                 }
             }
-            .sheet(item: Binding(get: { session.trust }, set: { if $0 == nil { session.answerTrust(false) } })) { trust in
-                TerminalServerTrustView(macName: mac.name, fingerprint: trust.fingerprint, answer: session.answerTrust).directAppearance()
+            .sheet(item: Binding(get: {
+                session.trust?.id == trust?.id ? trust : nil
+            }, set: { selected in
+                if selected == nil, let trust { session.answerTrust(false, requestID: trust.id) }
+            })) { trust in
+                TerminalServerTrustView(macName: mac.name, fingerprint: trust.fingerprint) {
+                    session.answerTrust($0, requestID: trust.id)
+                }.id(trust.id).directAppearance()
             }
-            .confirmationDialog("A file named \(session.conflict?.name ?? "") already exists", isPresented: Binding(get: { session.conflict != nil }, set: { if !$0 { session.answerConflict(.cancel) } }), titleVisibility: .visible) {
-                Button("Keep Both") { session.answerConflict(.keepBoth) }
-                if session.conflict?.replaceAllowed == true { Button("Replace", role: .destructive) { session.answerConflict(.replace) } }
-                Button("Cancel", role: .cancel) { session.answerConflict(.cancel) }
+            .confirmationDialog("A file named \(conflict?.name ?? "") already exists",
+                isPresented: Binding(get: { conflict != nil && session.conflict?.id == conflict?.id }, set: { shown in
+                    if !shown, let conflict { Task { @MainActor in session.answerConflict(.cancel, requestID: conflict.id) } }
+                }), titleVisibility: .visible, presenting: conflict) { prompt in
+                Button("Keep Both") { session.answerConflict(.keepBoth, requestID: prompt.id) }
+                if prompt.replaceAllowed {
+                    Button("Replace", role: .destructive) { session.answerConflict(.replace, requestID: prompt.id) }
+                }
+                Button("Cancel", role: .cancel) { session.answerConflict(.cancel, requestID: prompt.id) }
             }
             .alert("New Folder", isPresented: $newFolder) {
                 TextField("Folder name", text: $folderName)

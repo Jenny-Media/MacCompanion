@@ -878,8 +878,9 @@ private func desktopWriterFinished(_ group: DispatchGroup) -> Bool { group.wait(
         do {
             try await wait("initial encrypted desktop") { viewer.session.desktopFrameReady }
             let previous = viewer.session
-            viewer.setValue(true, forKey: "starting"); viewer.setValue(true, forKey: "changingDisplayMode")
-            viewer.setValue(true, forKey: "mirrorRequiresCleanup"); viewer.setValue(true, forKey: "mirrorFullRestartUsed")
+            viewer.setValue(true, forKey: "starting")
+            viewer.setValue(CompanionVNCDisplayHandoffPhase.waitingForCleanup.rawValue, forKeyPath: "displayHandoff.phase")
+            viewer.setValue(true, forKeyPath: "displayHandoff.fullRestart")
             coordinator.disconnect()
             let started = ContinuousClock.now
             coordinator.connect(user: "synthetic", password: "synthetic-only", remember: false)
@@ -888,14 +889,14 @@ private func desktopWriterFinished(_ group: DispatchGroup) -> Bool { group.wait(
             XCTAssertEqual(server.record.count("auth"),1); XCTAssertTrue(viewer.session.displayHandoffInputBlocked)
             XCTAssertFalse(previous.running)
             let active = try await server.activeClients(); XCTAssertEqual(active,0, "The preceding SSH owner must be fully closed during cleanup")
-            let remaining = try XCTUnwrap(viewer.value(forKey: "mirrorCleanupRemaining") as? Int)
+            let remaining = try XCTUnwrap(viewer.value(forKeyPath: "displayHandoff.cleanupRemaining") as? Int)
             XCTAssertGreaterThan(remaining,13); XCTAssertLessThanOrEqual(remaining,16)
             try await Task.sleep(for: .seconds(15))
             try await wait("one fresh SSH authentication after cleanup") { server.record.count("auth") == 2 }
             XCTAssertGreaterThanOrEqual(started.duration(to: .now), .seconds(16))
             try await wait("fresh native framebuffer after restart") { viewer.session.desktopFrameReady }
             XCTAssertEqual(server.record.count("tcp"),2); XCTAssertEqual(server.record.count("forward"),2)
-            XCTAssertEqual(viewer.value(forKey: "mirrorCleanupRemaining") as? Int,0)
+            XCTAssertEqual(viewer.value(forKeyPath: "displayHandoff.cleanupRemaining") as? Int,0)
             XCTAssertEqual(viewer.mirrorRetirementDelay,0)
             coordinator.disconnect(); viewer.stop(); try await server.close(); try? TerminalSecretStore.remove(mac.id)
         } catch { coordinator.disconnect(); viewer.stop(); try? await server.close(); try? TerminalSecretStore.remove(mac.id); throw error }
@@ -906,8 +907,8 @@ private func desktopWriterFinished(_ group: DispatchGroup) -> Bool { group.wait(
             let mac = try DirectMacRecordV1.normalized(name: "Synthetic Mac", addresses: ["127.0.0.1"], sshPort: server.port)
             let viewer = CompanionVNCViewer(), coordinator = VNCRemoteDesktopView.Coordinator(mac: mac)
             viewer.loadViewIfNeeded(); coordinator.viewer = viewer
-            viewer.setValue(true, forKey: "starting"); viewer.setValue(true, forKey: "changingDisplayMode")
-            viewer.setValue(true, forKey: "mirrorRequiresCleanup")
+            viewer.setValue(true, forKey: "starting")
+            viewer.setValue(CompanionVNCDisplayHandoffPhase.waitingForCleanup.rawValue, forKeyPath: "displayHandoff.phase")
             coordinator.connect(user: "synthetic", password: "synthetic-only", remember: false)
             try await Task.sleep(for: .milliseconds(150))
             switch reason {
@@ -931,8 +932,10 @@ private func desktopWriterFinished(_ group: DispatchGroup) -> Bool { group.wait(
         login.edit(username: "synthetic", password: "synthetic-only", remember: false)
         _ = login.beginLogin(); login.authenticated()
         viewer.restoredDesktopSizePreset = 0
-        for key in ["starting", "changingDisplayMode", "mirrorRequiresCleanup", "mirrorFullRestartUsed"] { viewer.setValue(true, forKey: key) }
-        viewer.setValue(0, forKey: "modeTargetPreset"); viewer.setValue(2, forKey: "modePreviousPreset")
+        viewer.setValue(true, forKey: "starting")
+        viewer.setValue(CompanionVNCDisplayHandoffPhase.waitingForCleanup.rawValue, forKeyPath: "displayHandoff.phase")
+        viewer.setValue(true, forKeyPath: "displayHandoff.fullRestart")
+        viewer.setValue(0, forKeyPath: "displayHandoff.targetPreset"); viewer.setValue(2, forKeyPath: "displayHandoff.previousPreset")
         var recoveries = 0
         viewer.connectHandler = { user, password, remember in MainActor.assumeIsolated {
             recoveries += 1; XCTAssertEqual(user,"synthetic"); XCTAssertEqual(password,"synthetic-only"); XCTAssertFalse(remember)
@@ -951,10 +954,10 @@ private func desktopWriterFinished(_ group: DispatchGroup) -> Bool { group.wait(
             NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
             try await Task.sleep(for: .milliseconds(350))
             XCTAssertEqual(recoveries,1); XCTAssertFalse(viewer.session === retired)
-            XCTAssertNil(viewer.value(forKey: "failedDisplayModePreset")); XCTAssertTrue(viewer.value(forKey: "starting") as? Bool == true)
+            XCTAssertNil(viewer.value(forKeyPath: "displayHandoff.failedPreset")); XCTAssertTrue(viewer.value(forKey: "starting") as? Bool == true)
             XCTAssertEqual(login.loginForResume()?["password"],"synthetic-only")
             XCTAssertEqual(server.record.count("tcp"),0); XCTAssertEqual(server.record.count("auth"),0)
-            let remaining = try XCTUnwrap(viewer.value(forKey: "mirrorCleanupRemaining") as? Int)
+            let remaining = try XCTUnwrap(viewer.value(forKeyPath: "displayHandoff.cleanupRemaining") as? Int)
             XCTAssertGreaterThan(remaining,13); XCTAssertLessThanOrEqual(remaining,16)
             coordinator.disconnect(); viewer.stop(); XCTAssertNil(login.loginForResume()); try await server.close()
         } catch {
@@ -974,8 +977,10 @@ private func desktopWriterFinished(_ group: DispatchGroup) -> Bool { group.wait(
         let login = try XCTUnwrap(viewer.value(forKey: "credentialState") as? DirectDesktopLoginState)
         login.edit(username: "synthetic", password: "synthetic-only", remember: false)
         _ = login.beginLogin(); login.authenticated()
-        for key in ["starting", "changingDisplayMode", "mirrorFullRestartUsed"] { viewer.setValue(true, forKey: key) }
-        viewer.restoredDesktopSizePreset = 2; viewer.setValue(2, forKey: "modeTargetPreset"); viewer.setValue(0, forKey: "modePreviousPreset")
+        viewer.setValue(true, forKey: "starting")
+        viewer.setValue(CompanionVNCDisplayHandoffPhase.connecting.rawValue, forKeyPath: "displayHandoff.phase")
+        viewer.setValue(true, forKeyPath: "displayHandoff.fullRestart")
+        viewer.restoredDesktopSizePreset = 2; viewer.setValue(2, forKeyPath: "displayHandoff.targetPreset"); viewer.setValue(0, forKeyPath: "displayHandoff.previousPreset")
         var recoveries = 0
         viewer.connectHandler = { user, password, remember in MainActor.assumeIsolated {
             recoveries += 1; XCTAssertEqual(user,"synthetic"); XCTAssertEqual(password,"synthetic-only"); XCTAssertFalse(remember)
@@ -999,7 +1004,7 @@ private func desktopWriterFinished(_ group: DispatchGroup) -> Bool { group.wait(
             try await activation?.value
             try await wait("retiring peer finishes before replacement transport") { server.record.count("peerCleanup") >= 1 }
             XCTAssertEqual(login.loginForResume()?["password"],"synthetic-only")
-            XCTAssertNil(viewer.value(forKey: "failedDisplayModePreset"))
+            XCTAssertNil(viewer.value(forKeyPath: "displayHandoff.failedPreset"))
             XCTAssertGreaterThanOrEqual(server.record.count("peerCleanup"),1)
             coordinator.disconnect(); viewer.stop(); try await server.close()
         } catch {
@@ -1020,15 +1025,16 @@ private func desktopWriterFinished(_ group: DispatchGroup) -> Bool { group.wait(
             try await wait("first pending SSH handshake") { server.record.count("tcp") == 1 }
             let old = viewer.session
             coordinator.disconnect()
-            viewer.setValue(true, forKey: "starting"); viewer.setValue(true, forKey: "changingDisplayMode")
-            viewer.setValue(2, forKey: "modeTargetPreset")
+            viewer.setValue(true, forKey: "starting")
+            viewer.setValue(CompanionVNCDisplayHandoffPhase.connecting.rawValue, forKeyPath: "displayHandoff.phase")
+            viewer.setValue(2, forKeyPath: "displayHandoff.targetPreset")
             coordinator.connect(user: "synthetic", password: "synthetic-only", remember: false)
             try await wait("replacement after joined pending retirement") { server.record.count("tcp") == 2 }
             let active = try await server.activeClients()
             XCTAssertEqual(active,1, "The old pending opener must not survive the replacement")
             XCTAssertFalse(old.running); XCTAssertFalse(viewer.session === old)
             XCTAssertTrue(viewer.session.displayHandoffInputBlocked)
-            XCTAssertNil(viewer.value(forKey: "failedDisplayModePreset"), "The cancelled opener must not fail the replacement")
+            XCTAssertNil(viewer.value(forKeyPath: "displayHandoff.failedPreset"), "The cancelled opener must not fail the replacement")
             XCTAssertTrue(viewer.value(forKey: "starting") as? Bool == true)
             coordinator.disconnect(); viewer.stop(); try await server.close()
         } catch { coordinator.disconnect(); viewer.stop(); try? await server.close(); throw error }

@@ -648,8 +648,11 @@
     }
     tap.sampleState = UIGestureRecognizerStateRecognized;
     for (NSString *key in @[@"inputInactive", @"restoreViewportPending", @"checkingResume", @"exited"]) {
-        [viewer setValue:@YES forKey:key]; [viewer secondaryClickAt:tap]; XCTAssertEqual([self takeEvents:session].count, 0, @"%@", key);
-        [viewer setValue:@NO forKey:key];
+        if ([key isEqualToString:@"checkingResume"]) [viewer setValue:@(CompanionVNCRecoveryPhaseProbing) forKey:@"recoveryPhase"];
+        else [viewer setValue:@YES forKey:key];
+        [viewer secondaryClickAt:tap]; XCTAssertEqual([self takeEvents:session].count, 0, @"%@", key);
+        if ([key isEqualToString:@"checkingResume"]) [viewer setValue:@(CompanionVNCRecoveryPhaseIdle) forKey:@"recoveryPhase"];
+        else [viewer setValue:@NO forKey:key];
     }
     [viewer setValue:@NO forKey:@"foreground"]; [viewer secondaryClickAt:tap]; XCTAssertEqual([self takeEvents:session].count, 0);
     [viewer setValue:@YES forKey:@"foreground"]; [session setValue:@NO forKey:@"inputReady"];

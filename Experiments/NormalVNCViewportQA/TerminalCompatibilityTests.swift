@@ -102,8 +102,8 @@ import Citadel
             let prepared = try DirectComposedText(fixture.paste.text, mode: .terminal)
             var completed = false
             rig.session.sendComposedText(prepared.terminalBytes(bracketedPaste: rig.controller.terminal.getTerminal().bracketedPasteMode),
-                                         generation: rig.session.composeGeneration) { issue in
-                XCTAssertNil(issue); completed = true
+                                         generation: rig.session.composeGeneration) { status, issue in
+                XCTAssertEqual(status, .written); XCTAssertNil(issue); completed = true
             }
             try await terminalWait("complete paste") { completed && !rig.record.received.isEmpty }
             XCTAssertEqual(self.hex(rig.record.received), fixture.paste.expectedHex)
@@ -139,6 +139,26 @@ import Citadel
             XCTAssertTrue(rig.controller.terminal.getTerminal().bracketedPasteMode)
             XCTAssertEqual(rig.controller.terminal.getTerminal().keyboardEnhancementFlags.rawValue, 1)
             XCTAssertTrue(rig.record.received.isEmpty, "Unexpected synthetic PTY bytes: " + self.hex(rig.record.received))
+        }
+    }
+
+    func testForegroundBeforeReadPauseAcknowledgementResumesTheSamePTY() async throws {
+        try await withHarness { rig in
+            let generation = rig.session.outputGeneration
+            rig.record.clearReceived()
+            rig.session.background()
+            // The pause task cannot publish its acknowledgement until this actor yields.
+            rig.session.foreground()
+            XCTAssertTrue(rig.session.suspended)
+            XCTAssertFalse(rig.session.trySend(Array("retired".utf8)))
+            await rig.session.waitForLifecycleUpdates()
+            XCTAssertFalse(rig.session.suspended)
+            XCTAssertEqual(rig.session.outputGeneration, generation)
+            XCTAssertEqual(rig.record.shellRequests, 1)
+            XCTAssertTrue(rig.session.trySend(Array("fresh".utf8)))
+            try await terminalWait("fresh input after the pause acknowledgement") {
+                rig.record.received == Array("fresh".utf8)
+            }
         }
     }
 
@@ -397,8 +417,8 @@ import Citadel
             rig.session.stop(); rig.record.clearReceived(); rig.connect()
             try await terminalWait("replacement ready") { rig.session.connected && rig.record.shellRequests == 2 }
             var completed = false
-            rig.session.sendComposedText(Array("retired-composer".utf8), generation: oldGeneration) { issue in
-                XCTAssertNotNil(issue); completed = true
+            rig.session.sendComposedText(Array("retired-composer".utf8), generation: oldGeneration) { status, issue in
+                XCTAssertEqual(status, .rejected); XCTAssertNotNil(issue); completed = true
             }
             try await terminalWait("retired composer rejected") { completed }
             try await Task.sleep(for: .milliseconds(50))

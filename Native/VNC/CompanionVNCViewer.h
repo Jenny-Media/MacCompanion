@@ -3,6 +3,25 @@
 @class DirectConnectionPanelHost;
 @class CompanionVNCInterfaceFeedback;
 NS_ASSUME_NONNULL_BEGIN
+
+typedef NS_ENUM(NSInteger, CompanionVNCDisplayHandoffPhase) {
+    CompanionVNCDisplayHandoffPhaseIdle,
+    CompanionVNCDisplayHandoffPhaseConnecting,
+    CompanionVNCDisplayHandoffPhaseWaitingForCleanup,
+    CompanionVNCDisplayHandoffPhaseVerifying,
+    CompanionVNCDisplayHandoffPhaseWaitingForResize,
+    CompanionVNCDisplayHandoffPhaseRetryScheduled,
+    CompanionVNCDisplayHandoffPhaseFailed,
+    CompanionVNCDisplayHandoffPhaseCompleted,
+};
+
+typedef NS_ENUM(NSInteger, CompanionVNCRecoveryPhase) {
+    CompanionVNCRecoveryPhaseIdle,
+    CompanionVNCRecoveryPhaseBackgroundResumable,
+    CompanionVNCRecoveryPhaseProbing,
+    CompanionVNCRecoveryPhaseReplacing,
+};
+
 @interface CompanionVNCViewer : UIViewController
 @property(nonatomic, strong, nullable) DirectConnectionPanelHost *connectionPanelHost;
 @property(nonatomic) BOOL preventsLoginRetention;

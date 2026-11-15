@@ -7,15 +7,15 @@ import StoreKitTest
     @objc var interruptionHandler: (() -> Void)?
     @objc var sending: Bool { false }
     var available: (() -> Bool)?
-    var send: ((String, @escaping (String?) -> Void) -> Void)?
+    var send: ((String, @escaping DirectTextDeliveryCompletion) -> Void)?
     @objc func invalidate() { available = nil; send = nil }
     @objc weak var shortcutBar: UIView?
     @objc func present(from controller: UIViewController, available: @escaping () -> Bool,
-                       send: @escaping (String, @escaping (String?) -> Void) -> Void) {
+                       send: @escaping (String, @escaping DirectTextDeliveryCompletion) -> Void) {
         self.available = available; self.send = send
     }
     @objc func present(from controller: UIViewController, initialText: String?, savedTitle: String?,
-                       available: @escaping () -> Bool, send: @escaping (String, @escaping (String?) -> Void) -> Void) {
+                       available: @escaping () -> Bool, send: @escaping (String, @escaping DirectTextDeliveryCompletion) -> Void) {
         self.available = available; self.send = send
     }
 }
@@ -178,7 +178,7 @@ import StoreKitTest
         root.view.addSubview(bar)
         let draft = DirectTextComposerDraft(macName: "Synthetic Mac", mode: .desktop)
         draft.configure(available: { true }, send: { _, complete in
-            complete("Text may have been partially sent. Check your Mac before sending it again.")
+            complete(.uncertain, "Text may have been partially sent. Check your Mac before sending it again.")
         })
         draft.edit("test draft")
         let panel = DirectTextComposerPanel(draft: draft); panel.shortcutBar = bar
@@ -1000,7 +1000,10 @@ import StoreKitTest
         XCTAssertNotNil(viewer.presentedViewController)
         XCTAssertEqual((owner.value(forKey: "events") as? [NSDictionary])?.count, 0)
         composer.draft.edit("a"); composer.draft.requestSend()
-        XCTAssertEqual((owner.value(forKey: "events") as? [NSDictionary])?.count, 2)
+        let queued = try XCTUnwrap(owner.value(forKey: "events") as? [[String: Any]])
+        let keys = queued.filter { $0["composedTextID"] != nil }
+        XCTAssertEqual(keys.compactMap { $0["key"] as? UInt32 }, [0x61, 0x61])
+        XCTAssertEqual(keys.compactMap { $0["down"] as? Bool }, [true, false])
     }
     func testCustomizedTrackpadProfileCanAddFreeComposeWithoutReplacingOtherChoices() throws {
         let right = VNCQuickAction(title: "My Right Click", kind: .rightClick)
@@ -1190,13 +1193,19 @@ import StoreKitTest
         var rejected: String?
         // Exercise the production final-send closure independently of the draft's
         // earlier availability check, as a late delivery callback can do.
-        delivery("synthetic-only") { rejected = $0 }
+        delivery("synthetic-only") { status, message in
+            XCTAssertEqual(status, .rejected)
+            rejected = message
+        }
         XCTAssertNotNil(rejected)
         XCTAssertEqual((owner.value(forKey: "events") as? [NSDictionary])?.count, 0)
         viewer.setValue(false, forKey: "restoreViewportPending")
         XCTAssertTrue(availability())
-        delivery("a") { _ in }
-        XCTAssertEqual((owner.value(forKey: "events") as? [NSDictionary])?.count, 2, "Current readiness still admits balanced Unicode events")
+        delivery("a") { _, _ in }
+        let queued = try XCTUnwrap(owner.value(forKey: "events") as? [[String: Any]])
+        let keys = queued.filter { $0["composedTextID"] != nil }
+        XCTAssertEqual(keys.compactMap { $0["key"] as? UInt32 }, [0x61, 0x61])
+        XCTAssertEqual(keys.compactMap { $0["down"] as? Bool }, [true, false])
     }
     func testInterruptedSendWarningSurvivesAutomaticReplacementUntilAcknowledged() async throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "ios-text-composer-v1", withExtension: "json"))
@@ -1220,7 +1229,7 @@ import StoreKitTest
             viewer.perform(NSSelectorFromString("showTextComposer"))
             try await Task.sleep(for: .milliseconds(350))
             let composer = try XCTUnwrap(viewer.value(forKey: "textComposer") as? DirectTextComposer)
-            var completion: ((String?) -> Void)?
+            var completion: DirectTextDeliveryCompletion?
             composer.draft.configure(available: { true }, send: { _, done in completion = done })
             composer.draft.edit("hello"); composer.draft.requestSend()
             XCTAssertTrue(composer.sending)
@@ -1246,7 +1255,7 @@ import StoreKitTest
             owner.frameHandler?(image); owner.stateHandler?("Connected", [:])
             XCTAssertEqual(viewer.value(forKey: "textSendInterrupted") as? Bool, policy["warningBeforeAcknowledge"] as? Bool)
             XCTAssertNotNil(viewer.value(forKey: "recoveryController"))
-            completion?(nil) // A retired callback must not acknowledge the warning.
+            completion?(.written, nil) // A retired callback must not acknowledge the warning.
             XCTAssertEqual(viewer.value(forKey: "textSendInterrupted") as? Bool, true)
             let acknowledge = NSSelectorFromString("acknowledgeTextSendWarning")
             XCTAssertTrue(viewer.responds(to: acknowledge))
@@ -1289,25 +1298,26 @@ import StoreKitTest
         for mode in DirectControlMode.allCases {
             let draft = DirectTextComposerDraft(macName: "Synthetic Mac", mode: mode)
             var sent: [String] = []
-            var completion: ((String?) -> Void)?
+            var completion: DirectTextDeliveryCompletion?
             draft.configure(available: { true }, send: { sent.append($0); completion = $1 })
             draft.edit("one\n  two\n")
             XCTAssertTrue(sent.isEmpty)
-            draft.requestSend(); XCTAssertTrue(sent.isEmpty); XCTAssertNotNil(draft.confirmation)
-            draft.confirmation = nil; XCTAssertTrue(sent.isEmpty)
+            draft.requestSend(); XCTAssertTrue(sent.isEmpty); XCTAssertNotNil(draft.review)
+            draft.cancelReview(); XCTAssertTrue(sent.isEmpty)
             draft.requestSend(); draft.confirmSend()
             XCTAssertEqual(sent, ["one\n  two\n"]); XCTAssertTrue(draft.sending)
-            draft.requestSend(); draft.confirmSend(try? DirectComposedText("one\n  two\n", mode: mode)); draft.edit("replacement")
+            draft.requestSend(); draft.confirmSend(); draft.edit("replacement")
             XCTAssertEqual(sent.count, 1); XCTAssertEqual(draft.text, "one\n  two\n")
-            completion?("Input is busy. Nothing was queued.")
+            completion?(.rejected, "Input is busy. Nothing was queued.")
+            XCTAssertEqual(draft.deliveryFailure?.status, .rejected)
             XCTAssertFalse(draft.sending); XCTAssertEqual(draft.text, "one\n  two\n")
-            draft.requestSend(); draft.confirmSend(); completion?(nil)
+            draft.requestSend(); draft.confirmSend(); completion?(.written, nil)
             XCTAssertEqual(sent.count, 2); XCTAssertEqual(draft.text, "")
         }
     }
     func testStaleOwnerAndLateCompletionCannotSendOrEraseAnotherDraft() {
         let draft = DirectTextComposerDraft(macName: "Synthetic Mac", mode: .terminal)
-        var admitted = true, sent: [String] = [], completion: ((String?) -> Void)?
+        var admitted = true, sent: [String] = [], completion: DirectTextDeliveryCompletion?
         var interruptions = 0
         draft.interrupted = { interruptions += 1 }
         draft.configure(available: { admitted }, send: { sent.append($0); completion = $1 })
@@ -1316,7 +1326,7 @@ import StoreKitTest
         draft.invalidate(); XCTAssertEqual(draft.text, ""); XCTAssertFalse(draft.active)
         XCTAssertEqual(interruptions, 1)
         draft.configure(available: { admitted }, send: { sent.append($0); completion = $1 })
-        draft.edit("new draft"); oldCompletion?(nil)
+        draft.edit("new draft"); oldCompletion?(.written, nil)
         XCTAssertEqual(draft.text, "new draft"); XCTAssertEqual(sent.count, 1)
         admitted = false; draft.requestSend()
         XCTAssertEqual(sent.count, 1); XCTAssertEqual(draft.text, ""); XCTAssertFalse(draft.active)
@@ -1324,10 +1334,10 @@ import StoreKitTest
     func testExactConfirmationAndOversizePasteDoNotSilentlyChangeText() {
         let draft = DirectTextComposerDraft(macName: "Synthetic Mac", mode: .desktop)
         var sent: [String] = []
-        draft.configure(available: { true }, send: { text, complete in sent.append(text); complete(nil) })
+        draft.configure(available: { true }, send: { text, complete in sent.append(text); complete(.written, nil) })
         draft.edit("reviewed\n"); draft.requestSend()
-        let confirmation = draft.confirmation
-        draft.edit("changed\n"); draft.confirmation = confirmation; draft.confirmSend()
+        let confirmation = draft.review
+        draft.edit("changed\n"); draft.confirmSend(confirmation)
         XCTAssertTrue(sent.isEmpty); XCTAssertNotNil(draft.issue)
         draft.edit(String(repeating: "x", count: 16385))
         XCTAssertEqual(draft.text, "changed\n"); XCTAssertNotNil(draft.issue)
@@ -1419,24 +1429,26 @@ import StoreKitTest
             let viewer = CompanionVNCViewer()
             viewer.macName = "Synthetic Mac"; viewer.inputOnly = inputOnly
             window.rootViewController = viewer; window.makeKeyAndVisible(); viewer.loadViewIfNeeded()
-            let ownerType = try XCTUnwrap(NSClassFromString("ControlsSession") as? CompanionVNCSession.Type)
-            let owner = ownerType.init(), groups = NSMutableArray()
-            owner.setValue(groups, forKey: "groups"); owner.setValue(NSMutableArray(), forKey: "pointers")
-            viewer.setValue(owner, forKey: "session")
+            let owner = ComposerBatchSession()
+            viewer.session = owner
             viewer.perform(NSSelectorFromString("showTextComposer"))
             try await Task.sleep(for: .milliseconds(400))
             let composer = try XCTUnwrap(viewer.value(forKey: "textComposer") as? DirectTextComposer)
             XCTAssertEqual(composer.draft.mode, inputOnly ? .trackpad : .desktop)
             composer.draft.edit("中文😀\n")
-            XCTAssertEqual(groups.count, 0)
+            XCTAssertTrue(owner.groups.isEmpty)
             composer.draft.close?()
             try await Task.sleep(for: .milliseconds(350))
             viewer.perform(NSSelectorFromString("showTextComposer"))
             try await Task.sleep(for: .milliseconds(400))
             XCTAssertEqual(composer.draft.text, "中文😀\n")
             composer.draft.requestSend(); composer.draft.confirmSend()
-            XCTAssertEqual(groups.count, 1)
-            let events = try XCTUnwrap(groups.firstObject as? [[String: Any]])
+            for count in 1...4 {
+                try await waitForComposerUI("character batch \(count)") { owner.groups.count == count }
+                XCTAssertEqual(owner.groups.last?.count, 2)
+                owner.complete(true)
+            }
+            let events = owner.groups.flatMap { $0 }
             XCTAssertEqual(events.count, 8)
             XCTAssertEqual(events.last?["key"] as? UInt32, 0xff0d)
             XCTAssertEqual(events.last?["down"] as? Bool, false)

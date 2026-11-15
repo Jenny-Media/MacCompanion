@@ -103,12 +103,18 @@ struct DirectComposedText: Equatable {
     }
 }
 
+@objc enum DirectTextDeliveryStatus: Int {
+    case written
+    case rejected
+    case uncertain
+}
+
+typealias DirectTextDeliveryCompletion = (DirectTextDeliveryStatus, String?) -> Void
+
 @MainActor @Observable final class DirectTextComposerDraft {
     let macName: String
     let mode: DirectControlMode
     private(set) var text = ""
-    private(set) var sending = false
-    private(set) var active = false
     var docked = false
     var floatingAnchor = CGPoint(x: 0.5, y: 1)
     var expanded = false
@@ -118,17 +124,38 @@ struct DirectComposedText: Equatable {
     var deliveryIssueInDetails = false
     struct DeliveryFailure {
         let attempt: UUID
+        let status: DirectTextDeliveryStatus
         let message: String
     }
-    private(set) var deliveryFailure: DeliveryFailure?
+    struct Review: Equatable {
+        let id = UUID()
+        let text: DirectComposedText
+    }
+    private enum Phase {
+        case inactive
+        case editing(DeliveryFailure?)
+        case reviewing(Review, DeliveryFailure?)
+        case sending(UUID)
+    }
+    private var phase = Phase.inactive
+    var sending: Bool { if case .sending = phase { true } else { false } }
+    var active: Bool { if case .inactive = phase { false } else { true } }
+    var review: Review? {
+        if case .reviewing(let review, _) = phase { return review }
+        return nil
+    }
+    var deliveryFailure: DeliveryFailure? {
+        switch phase {
+        case .editing(let failure), .reviewing(_, let failure): failure
+        case .inactive, .sending: nil
+        }
+    }
     var deliveryIssue: String? { deliveryFailure?.message }
     var issue: String?
-    var confirmation: DirectComposedText?
     @ObservationIgnored private var epoch = UUID()
-    @ObservationIgnored private var deliveryID: UUID?
     @ObservationIgnored private var lastAutomaticDeliveryAlert: UUID?
     @ObservationIgnored private var available: () -> Bool = { false }
-    @ObservationIgnored private var send: ((String, @escaping (String?) -> Void) -> Void)?
+    @ObservationIgnored private var send: ((String, @escaping DirectTextDeliveryCompletion) -> Void)?
     @ObservationIgnored var close: (() -> Void)?
     @ObservationIgnored var sendingChanged: ((Bool) -> Void)?
     @ObservationIgnored var interrupted: (() -> Void)?
@@ -162,8 +189,9 @@ struct DirectComposedText: Equatable {
         let counter = "\(count.formatted()) / \(limit.formatted())"
         return includeUnits ? counter + " " + (mode == .terminal ? "UTF-8 bytes" : "characters") : counter
     }
-    func configure(available: @escaping () -> Bool, send: @escaping (String, @escaping (String?) -> Void) -> Void) {
-        epoch = UUID(); self.available = available; self.send = send; active = true; confirmation = nil; issue = nil; counterInDetails = false
+    func configure(available: @escaping () -> Bool, send: @escaping (String, @escaping DirectTextDeliveryCompletion) -> Void) {
+        phase = .editing(deliveryFailure)
+        epoch = UUID(); self.available = available; self.send = send; issue = nil; counterInDetails = false
         deliveryIssueInDetails = false
     }
     func edit(_ value: String) {
@@ -172,23 +200,25 @@ struct DirectComposedText: Equatable {
             issue = "Drafts can contain up to 16 KB. Your previous text was kept."
             return
         }
-        text = value; issue = nil; deliveryFailure = nil; confirmation = nil
+        text = value; issue = nil; phase = .editing(nil)
     }
     func requestSend() {
         guard canSend else { return }
         guard available() else { invalidate(); return }
         guard let prepared = try? DirectComposedText(text, mode: mode) else { return }
-        if prepared.needsConfirmation { confirmation = prepared }
+        if prepared.needsConfirmation { phase = .reviewing(.init(text: prepared), deliveryFailure) }
         else { deliver(prepared) }
     }
-    func confirmSend(_ reviewed: DirectComposedText? = nil) {
-        guard active, !sending else { return }
-        guard let reviewed = reviewed ?? confirmation else { return }
-        confirmation = nil
-        guard let current = try? DirectComposedText(text, mode: mode), current == reviewed else {
+    func cancelReview(_ expected: Review? = nil) {
+        guard case .reviewing(let current, let failure) = phase, expected == nil || expected == current else { return }
+        phase = .editing(failure)
+    }
+    func confirmSend(_ expected: Review? = nil) {
+        guard active, !sending, let expected = expected ?? review else { return }
+        guard review == expected, (try? DirectComposedText(text, mode: mode)) == expected.text else {
             issue = "The draft changed. Review it and tap Send Text again."; return
         }
-        deliver(reviewed)
+        deliver(expected.text)
     }
     func claimAutomaticDeliveryAlert(_ attempt: UUID) -> Bool {
         guard deliveryFailure?.attempt == attempt, lastAutomaticDeliveryAlert != attempt else { return false }
@@ -198,23 +228,27 @@ struct DirectComposedText: Equatable {
     private func deliver(_ prepared: DirectComposedText) {
         guard canSend, available(), let send else { invalidate(); return }
         let token = epoch, delivery = UUID()
-        deliveryID = delivery
-        sending = true; issue = nil; deliveryFailure = nil; sendingChanged?(true)
-        send(prepared.text) { [weak self] error in
-            guard let self, self.epoch == token, self.active, self.sending, self.deliveryID == delivery else { return }
+        phase = .sending(delivery); issue = nil; sendingChanged?(true)
+        send(prepared.text) { [weak self] status, message in
+            guard let self, self.epoch == token, case .sending(let current) = self.phase, current == delivery else { return }
             guard self.available() else { self.invalidate(); return }
-            self.deliveryID = nil; self.sending = false; self.sendingChanged?(false)
-            if let error {
-                self.deliveryFailure = .init(attempt: delivery, message: error)
+            switch status {
+            case .written:
+                self.phase = .editing(nil)
+                self.sendingChanged?(false)
+                self.feedback("success"); self.text = ""; self.close?()
+            case .rejected, .uncertain:
+                self.phase = .editing(.init(attempt: delivery, status: status, message: message ??
+                    "Check the remote session before sending the text again."))
+                self.sendingChanged?(false)
                 self.feedback("error")
             }
-            else { self.feedback("success"); self.text = ""; self.close?() }
         }
     }
     func invalidate() {
         if sending { interrupted?() }
-        epoch = UUID(); deliveryID = nil; text = ""; issue = nil; deliveryFailure = nil; confirmation = nil; active = false; expanded = false; docked = false; floatingAnchor = CGPoint(x: 0.5, y: 1)
-        sending = false; counterInDetails = false; available = { false }; send = nil; sendingChanged?(false); close?()
+        epoch = UUID(); phase = .inactive; text = ""; issue = nil; expanded = false; docked = false; floatingAnchor = CGPoint(x: 0.5, y: 1)
+        counterInDetails = false; available = { false }; send = nil; sendingChanged?(false); close?()
     }
 }
 
@@ -277,12 +311,12 @@ struct DirectComposedText: Equatable {
         return DirectDesktopTextDelivery(events: events, session: session, current: current, completion: completion).start()
     }
     @objc func present(from controller: UIViewController, available: @escaping () -> Bool,
-                       send: @escaping (String, @escaping (String?) -> Void) -> Void) {
+                       send: @escaping (String, @escaping DirectTextDeliveryCompletion) -> Void) {
         present(from: controller, initialText: nil, savedTitle: nil, available: available, send: send)
     }
     @objc func present(from controller: UIViewController, initialText: String?, savedTitle: String?,
                        available: @escaping () -> Bool,
-                       send: @escaping (String, @escaping (String?) -> Void) -> Void) {
+                       send: @escaping (String, @escaping DirectTextDeliveryCompletion) -> Void) {
         guard !draft.sending, DirectAppLockV1.shared.canAccess, available(), controller.presentedViewController == nil else { return }
         let request = UUID(), epoch = draft.presentationEpoch, previousText = draft.text
         presentationRequest = request
@@ -931,10 +965,14 @@ private struct DirectTextComposerView: View {
             .alert(issueTitle, isPresented: $showIssue) {
                 Button("Done", role: .cancel) {}.accessibilityIdentifier("compose-error-done")
             } message: { Text(draft.detailsMessage ?? "Review the text and try again.") }
-            .alert("Send line breaks or tabs?", isPresented: Binding(get: { draft.confirmation != nil }, set: { if !$0 { draft.confirmation = nil } }), presenting: draft.confirmation) { reviewed in
-                Button("Send Text") { if isCurrent() { draft.confirmSend(reviewed) } }
-                Button("Cancel", role: .cancel) { draft.confirmation = nil }
-            } message: { reviewed in Text(confirmationMessage(reviewed)) }
+            .alert("Send line breaks or tabs?", isPresented: Binding(get: { draft.review != nil }, set: { _ in }),
+                   presenting: draft.review) { reviewed in
+                Button("Send Text") {
+                    if isCurrent() { draft.confirmSend(reviewed) }
+                    else { draft.cancelReview(reviewed) }
+                }
+                Button("Cancel", role: .cancel) { draft.cancelReview(reviewed) }
+            } message: { reviewed in Text(confirmationMessage(reviewed.text)) }
             .onChange(of: DirectAppLockV1.shared.canAccess) { _, value in if !value { draft.invalidate() } }
     }
 }

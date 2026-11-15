@@ -21,15 +21,22 @@ struct FilesDirectoryTestPlan: Decodable, Sendable {
 }
 
 final class FilesDirectoryTestProbe: Sendable {
-    private struct State { var reads = 0; var closes = 0; var authentications = 0; var channels: [Channel] = [] }
+    private struct State { var reads = 0; var closes = 0; var authentications = 0; var childOpens = 0; var channels: [Channel] = [] }
     private let state = NIOLockedValueBox(State())
     var authentications: Int { state.withLockedValue { $0.authentications } }
     func authenticated() { state.withLockedValue { $0.authentications += 1 } }
     var reads: Int { state.withLockedValue { $0.reads } }
     var closes: Int { state.withLockedValue { $0.closes } }
+    var childOpens: Int { state.withLockedValue { $0.childOpens } }
     func read() { state.withLockedValue { $0.reads += 1 } }
     func closeHandle() { state.withLockedValue { $0.closes += 1 } }
     func opened(_ channel: Channel) { state.withLockedValue { $0.channels.append(channel) } }
+    func openedChild(_ channel: Channel) {
+        state.withLockedValue { state in
+            state.childOpens += 1
+            state.channels.append(channel)
+        }
+    }
     func shutdown() async {
         let channels = state.withLockedValue { state -> [Channel] in
             defer { state.channels = [] }; return state.channels
@@ -166,7 +173,7 @@ func filesDirectoryTestServer(plan: FilesDirectoryTestPlan = .empty, probe: File
         probe.opened(channel)
         return channel.pipeline.addHandler(NIOSSHHandler(role: .server(.init(hostKeys: [hostKey], userAuthDelegate: FilesDirectoryTestAuth(probe: probe))),
             allocator: channel.allocator, inboundChildChannelInitializer: { child, _ in
-                probe.opened(child)
+                probe.openedChild(child)
                 return child.pipeline.addHandlers(SSHChannelDataUnwrapper(), SSHOutboundChannelDataWrapper(), FilesDirectoryTestChunks(),
                     ByteToMessageHandler(SFTPMessageParser()),
                     FilesDirectoryTestHandler(plan: plan, probe: probe, responseDelay: responseDelay, downloadBytes: downloadBytes))

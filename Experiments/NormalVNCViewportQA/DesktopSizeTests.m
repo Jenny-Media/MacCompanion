@@ -67,7 +67,8 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
 - (BOOL)applyStreamDisplay:(NSNumber *)identifier;
 - (BOOL)applyMirrorDisplay;
 - (UIAlertController *)displayModeConfirmationForPreset:(NSInteger)preset;
-- (BOOL)acceptDisplayModeConfirmation;
+- (BOOL)acceptDisplayModeConfirmation:(id)confirmation;
+- (BOOL)acceptCurrentDisplayModeConfirmation;
 - (UIAlertController *)inputOnlyConfirmation;
 - (void)cancelDisplayModeConfirmation;
 - (BOOL)restartDisplayModePreset:(NSInteger)preset;
@@ -77,6 +78,11 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
 - (void)restoreSavedDisplay;
 - (void)completeResumeReadiness;
 - (void)completeDisplayModeVerified:(BOOL)verified;
+@end
+@implementation CompanionVNCViewer (DesktopSizeTesting)
+- (BOOL)acceptCurrentDisplayModeConfirmation {
+    return [self acceptDisplayModeConfirmation:[self valueForKey:@"displayConfirmation"]];
+}
 @end
 @interface DesktopSizeSession : CompanionVNCSession
 @property BOOL usable, available;
@@ -623,7 +629,8 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     XCTAssertTrue([viewer applyMirrorDisplay]); XCTAssertTrue(viewer.requestedResume);
     XCTAssertEqual(choice,-1); XCTAssertEqual(viewer.restoredDesktopSizePreset,0);
     [viewer setValue:@NO forKey:@"starting"]; session.snapshot=self.physicalSnapshot;
-    [viewer updateDesktopSizeState]; XCTAssertEqual(choice,0); XCTAssertEqual(session.requests,0);
+    [viewer updateDesktopSizeState]; XCTAssertEqual(choice,-1, @"Pixels during cleanup do not verify the handoff");
+    [viewer finishMirrorCleanup]; [viewer updateDesktopSizeState]; XCTAssertEqual(choice,0); XCTAssertEqual(session.requests,0);
     viewer.requestedResume=NO; XCTAssertTrue([viewer applyMirrorDisplay]); XCTAssertFalse(viewer.requestedResume);
     [viewer setValue:@YES forKey:@"inputInactive"]; XCTAssertFalse([viewer applyMirrorDisplay]);
     [viewer stopViewer];
@@ -1334,8 +1341,8 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
 }
 - (DesktopSizeViewer *)mirrorViewerWithSession:(DesktopSizeSession *)session attempt:(NSUInteger)attempt {
     DesktopSizeViewer *viewer=[self viewerWithSession:session];
-    [viewer setValue:@YES forKey:@"changingDisplayMode"]; [viewer setValue:@(attempt) forKey:@"mirrorRestoreAttempts"];
-    [viewer setValue:[NSMutableArray new] forKey:@"mirrorObservedLayouts"];
+    [viewer setValue:@(CompanionVNCDisplayHandoffPhaseConnecting) forKeyPath:@"displayHandoff.phase"]; [viewer setValue:@(attempt) forKeyPath:@"displayHandoff.attempts"];
+    [viewer setValue:[NSMutableArray new] forKeyPath:@"displayHandoff.observedLayouts"];
     session.displayHandoffInputBlocked=YES;
     return viewer;
 }
@@ -1344,30 +1351,37 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     XCTAssertEqualObjects(policy[@"maximumFreshConnectionsPerRestart"],@2); XCTAssertEqualObjects(policy[@"retirementGraceMilliseconds"],@16000);
     DesktopSizeSession *session=[DesktopSizeSession new]; session.snapshot=self.acceptedSnapshot;
     DesktopSizeViewer *viewer=[self mirrorViewerWithSession:session attempt:1];
-    session.usable=NO; [viewer updateDisplayModeRestoration]; XCTAssertFalse([[viewer valueForKey:@"mirrorRestartScheduled"] boolValue]);
+    session.usable=NO; [viewer updateDisplayModeRestoration]; XCTAssertFalse([[viewer valueForKeyPath:@"displayHandoff.retryScheduled"] boolValue]);
     session.usable=YES; __block NSUInteger retirements=0; viewer.disconnectHandler=^{retirements++;};
-    [viewer setValue:@YES forKey:@"checkingResume"];
+    [viewer setValue:@(CompanionVNCRecoveryPhaseProbing) forKey:@"recoveryPhase"];
     [viewer updateDisplayModeRestoration]; [viewer updateDisplayModeRestoration];
     XCTAssertFalse([[viewer valueForKey:@"checkingResume"] boolValue], @"The old resume watchdog must not exceed the handoff budget");
     XCTAssertEqual(retirements,0); XCTAssertTrue(session.displayHandoffInputBlocked);
     XCTestExpectation *turn=[self expectationWithDescription:@"deferred retry"];
     dispatch_async(dispatch_get_main_queue(), ^{ [turn fulfill]; }); [self waitForExpectations:@[turn] timeout:2];
-    XCTAssertEqual(retirements,1); XCTAssertTrue(viewer.requestedResume); XCTAssertTrue([[viewer valueForKey:@"changingDisplayMode"] boolValue]);
-    XCTAssertTrue([[viewer valueForKey:@"mirrorFullRestartUsed"] boolValue]); XCTAssertEqual(viewer.mirrorRetirementDelay,16);
+    XCTAssertEqual(retirements,1); XCTAssertTrue(viewer.requestedResume); XCTAssertTrue([[viewer valueForKeyPath:@"displayHandoff.active"] boolValue]);
+    XCTAssertTrue([[viewer valueForKeyPath:@"displayHandoff.fullRestart"] boolValue]); XCTAssertEqual(viewer.mirrorRetirementDelay,16);
     // The real coordinator creates the replacement and increments the attempt.
     [viewer prepareConnection]; XCTAssertTrue(viewer.session.displayHandoffInputBlocked);
-    XCTAssertEqualObjects([viewer valueForKey:@"mirrorRestoreAttempts"],@2);
+    XCTAssertEqualObjects([viewer valueForKeyPath:@"displayHandoff.attempts"],@2);
     DesktopSizeSession *physical=[DesktopSizeSession new]; physical.usable=YES; physical.displayHandoffInputBlocked=YES;
     physical.snapshot=self.physicalSnapshot; viewer.session=physical;
+    [viewer updateDisplayModeRestoration]; XCTAssertTrue(physical.displayHandoffInputBlocked);
+    [viewer finishMirrorCleanup]; [viewer updateDisplayModeRestoration];
+    XCTAssertTrue(physical.displayHandoffInputBlocked, @"Layout alone must wait for the replacement viewport");
+    UIGraphicsImageRendererFormat *format=[UIGraphicsImageRendererFormat defaultFormat]; format.scale=1;
+    CGSize pixels=CGSizeMake([physical.snapshot[@"framebufferWidth"] doubleValue], [physical.snapshot[@"framebufferHeight"] doubleValue]);
+    UIGraphicsImageRenderer *renderer=[[UIGraphicsImageRenderer alloc] initWithSize:pixels format:format];
+    [viewer frame:[renderer imageWithActions:^(UIGraphicsImageRendererContext *context){}]];
     [viewer updateDisplayModeRestoration]; XCTAssertFalse(physical.displayHandoffInputBlocked);
-    XCTAssertFalse([[viewer valueForKey:@"changingDisplayMode"] boolValue]); XCTAssertEqualObjects([viewer valueForKey:@"mirrorRestoreOutcome"],@2);
-    XCTAssertEqualObjects([viewer valueForKey:@"mirrorObservedLayouts"],(@[@YES,@NO]));
+    XCTAssertFalse([[viewer valueForKeyPath:@"displayHandoff.active"] boolValue]); XCTAssertEqualObjects([viewer valueForKeyPath:@"displayHandoff.outcome"],@2);
+    XCTAssertEqualObjects([viewer valueForKeyPath:@"displayHandoff.observedLayouts"],(@[@YES,@NO]));
     XCTAssertEqual(retirements,1); viewer.disconnectHandler=nil; [viewer stopViewer];
 }
 - (void)testFullMirrorRestartRejectsVirtualResultWithoutAnotherConnectionOrRemoteInput {
     DesktopSizeSession *session=[DesktopSizeSession new]; session.snapshot=self.acceptedSnapshot;
     DesktopSizeViewer *viewer=[self mirrorViewerWithSession:session attempt:1];
-    [viewer setValue:@YES forKey:@"mirrorFullRestartUsed"]; [viewer setValue:@1 forKey:@"modeRecoveryAttempts"];
+    [viewer setValue:@YES forKeyPath:@"displayHandoff.fullRestart"]; [viewer setValue:@1 forKeyPath:@"displayHandoff.recoveryAttempts"];
     __block NSUInteger retirements=0; viewer.disconnectHandler=^{retirements++;};
     [viewer updateDisplayModeRestoration]; [viewer updateDisplayModeRestoration];
     XCTAssertTrue(session.displayHandoffInputBlocked); XCTAssertFalse(viewer.requestedResume);
@@ -1375,8 +1389,8 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     dispatch_async(dispatch_get_main_queue(), ^{[turn fulfill];}); [self waitForExpectations:@[turn] timeout:2];
     XCTAssertEqual(retirements,1); XCTAssertFalse(viewer.requestedResume); XCTAssertEqual(session.requests,0);
     XCTAssertTrue(session.displayHandoffInputBlocked, @"A virtual result must not reopen remote input");
-    XCTAssertFalse([[viewer valueForKey:@"changingDisplayMode"] boolValue]);
-    XCTAssertEqualObjects([viewer valueForKey:@"mirrorRestoreOutcome"],@3);
+    XCTAssertFalse([[viewer valueForKeyPath:@"displayHandoff.active"] boolValue]);
+    XCTAssertEqualObjects([viewer valueForKeyPath:@"displayHandoff.outcome"],@3);
     XCTAssertTrue([[viewer valueForKey:@"loginIssueDetails"] containsString:@"still using a virtual display"]);
     viewer.disconnectHandler=nil; [viewer stopViewer];
 }
@@ -1385,7 +1399,7 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     DesktopSizeViewer *viewer=[self viewerWithSession:session];
     XCTAssertEqual(viewer.mirrorRetirementDelay,0);
     XCTAssertTrue([viewer applyMirrorDisplay]); XCTAssertEqual(viewer.mirrorRetirementDelay,16);
-    XCTAssertTrue([[viewer valueForKey:@"mirrorFullRestartUsed"] boolValue]);
+    XCTAssertTrue([[viewer valueForKeyPath:@"displayHandoff.fullRestart"] boolValue]);
     ((UIView *)[viewer valueForKey:@"login"]).hidden=YES; // Connected desktop presentation.
     [viewer showMirrorCleanupRemaining:16];
     XCTAssertEqualObjects(((UILabel *)[viewer valueForKey:@"status"]).text,@"Switching display mode…");
@@ -1395,7 +1409,7 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     XCTestExpectation *turn=[self expectationWithDescription:@"no fast reconnect"];
     viewer.requestedResume=NO; dispatch_async(dispatch_get_main_queue(),^{[turn fulfill];}); [self waitForExpectations:@[turn] timeout:2];
     XCTAssertTrue(viewer.requestedResume); XCTAssertEqual(viewer.mirrorRetirementDelay,16);
-    XCTAssertEqualObjects([viewer valueForKey:@"modeRecoveryAttempts"],@1); [viewer stopViewer];
+    XCTAssertEqualObjects([viewer valueForKeyPath:@"displayHandoff.recoveryAttempts"],@1); [viewer stopViewer];
     session=[DesktopSizeSession new]; session.snapshot=@{@"layoutVirtual":@NO};
     viewer=[self viewerWithSession:session];
     XCTAssertTrue([viewer applyMirrorDisplay]); XCTAssertEqual(viewer.mirrorRetirementDelay,0); XCTAssertFalse(viewer.requestedResume);
@@ -1403,12 +1417,12 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
 }
 - (void)testQuietIntervalRemainsRequiredAcrossReplacementPreparationUntilItFinishes {
     CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
-    [viewer setValue:@YES forKey:@"changingDisplayMode"]; [viewer setValue:@YES forKey:@"mirrorRequiresCleanup"];
+    [viewer setValue:@(CompanionVNCDisplayHandoffPhaseWaitingForCleanup) forKeyPath:@"displayHandoff.phase"];
     [viewer prepareConnection]; XCTAssertEqual(viewer.mirrorRetirementDelay,16); XCTAssertTrue(viewer.session.displayHandoffInputBlocked);
     [viewer prepareConnection]; XCTAssertEqual(viewer.mirrorRetirementDelay,16);
     [viewer setValue:@YES forKey:@"starting"]; [viewer showMirrorCleanupRemaining:9];
     [viewer becameInactive]; XCTAssertFalse(viewer.connectionForegroundAvailable);
-    [viewer showMirrorCleanupRemaining:8]; XCTAssertEqualObjects([viewer valueForKey:@"mirrorCleanupRemaining"],@9);
+    [viewer showMirrorCleanupRemaining:8]; XCTAssertEqualObjects([viewer valueForKeyPath:@"displayHandoff.cleanupRemaining"],@9);
     [viewer foregrounded]; XCTAssertTrue(viewer.connectionForegroundAvailable);
     XCTAssertEqual(viewer.mirrorRetirementDelay,16); [viewer finishMirrorCleanup]; XCTAssertEqual(viewer.mirrorRetirementDelay,0);
     [viewer stopViewer]; XCTAssertFalse(viewer.connectionForegroundAvailable); XCTAssertEqual(viewer.mirrorRetirementDelay,0);
@@ -1417,7 +1431,7 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     for (NSString *reason in @[@"exit",@"replacement",@"inactive",@"background"]) {
         DesktopSizeSession *session=[DesktopSizeSession new]; session.snapshot=self.acceptedSnapshot;
         DesktopSizeViewer *viewer=[self mirrorViewerWithSession:session attempt:1]; viewer.disconnectHandler=^{};
-        [viewer updateDisplayModeRestoration]; XCTAssertTrue([[viewer valueForKey:@"mirrorRestartScheduled"] boolValue]);
+        [viewer updateDisplayModeRestoration]; XCTAssertTrue([[viewer valueForKeyPath:@"displayHandoff.retryScheduled"] boolValue]);
         if ([reason isEqualToString:@"exit"]) [viewer stopViewer];
         if ([reason isEqualToString:@"replacement"]) [viewer prepareConnection];
         if ([reason isEqualToString:@"inactive"]) [viewer setValue:@YES forKey:@"inputInactive"];
@@ -1433,11 +1447,11 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     ((UITextField *)[viewer valueForKey:@"password"]).text=@"transient";
     __block NSUInteger connects=0; viewer.connectHandler=^(NSString *user,NSString *password,BOOL remember){
         connects++; [viewer prepareConnection]; XCTAssertTrue(viewer.session.displayHandoffInputBlocked);
-        XCTAssertEqualObjects([viewer valueForKey:@"mirrorRestoreAttempts"],@1);
+        XCTAssertEqualObjects([viewer valueForKeyPath:@"displayHandoff.attempts"],@1);
     };
     [viewer startResuming:NO]; XCTAssertEqual(connects,1);
     [viewer showConnectionFailureStage:4];
-    XCTAssertFalse([[viewer valueForKey:@"changingDisplayMode"] boolValue]); XCTAssertFalse([[viewer valueForKey:@"mirrorRestartScheduled"] boolValue]);
+    XCTAssertFalse([[viewer valueForKeyPath:@"displayHandoff.active"] boolValue]); XCTAssertFalse([[viewer valueForKeyPath:@"displayHandoff.retryScheduled"] boolValue]);
     XCTAssertEqual(connects,1); viewer.connectHandler=nil; [viewer stopViewer];
 }
 
@@ -1454,7 +1468,7 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
         XCTAssertEqualObjects(alert.message,fromVirtual ? @"Your connection will restart to show your Mac’s displays." : @"Your connection will restart. Your Mac’s screen may go dark.");
         XCTAssertEqualObjects([alert.actions valueForKey:@"title"],(@[@"Cancel",@"Switch & Reconnect"]));
         XCTAssertEqual(alert.actions[0].style,UIAlertActionStyleCancel);
-        [viewer cancelDisplayModeConfirmation]; XCTAssertFalse([viewer acceptDisplayModeConfirmation]);
+        [viewer cancelDisplayModeConfirmation]; XCTAssertFalse([viewer acceptCurrentDisplayModeConfirmation]);
         XCTAssertEqual(retires,0); XCTAssertEqual(saves,0); XCTAssertFalse(viewer.requestedResume);
         XCTAssertEqual(viewer.restoredDesktopSizePreset,fromVirtual?2:0); XCTAssertEqual(viewer.session,session);
         viewer.disconnectHandler=nil; [viewer stopViewer];
@@ -1472,19 +1486,32 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
         __block NSUInteger retires=0,saves=0; __block NSInteger saved=-1;
         viewer.disconnectHandler=^{retires++;}; viewer.desktopSizeSelectionHandler=^(NSInteger p){saves++;saved=p;};
         UIAlertController *alert=[viewer displayModeConfirmationForPreset:target.integerValue]; XCTAssertNotNil(alert);
-        XCTAssertTrue([viewer acceptDisplayModeConfirmation]); XCTAssertFalse([viewer acceptDisplayModeConfirmation]);
+        XCTAssertTrue([viewer acceptCurrentDisplayModeConfirmation]); XCTAssertFalse([viewer acceptCurrentDisplayModeConfirmation]);
         XCTAssertEqual(retires,1); XCTAssertTrue(viewer.requestedResume); XCTAssertEqual(saves,0); XCTAssertEqual(old.requests,0);
         XCTAssertTrue(old.displayHandoffInputBlocked); XCTAssertNil([viewer valueForKey:@"selectedDisplay"]);
         XCTAssertNil(old.stateHandler); XCTAssertNil(old.frameHandler); XCTAssertNil(old.cursorHandler); XCTAssertNil(old.displayLayoutHandler);
         DesktopSizeSession *fresh=[DesktopSizeSession new]; fresh.usable=NO; fresh.available=YES; fresh.displayHandoffInputBlocked=YES;
         fresh.snapshot=target.integerValue ? self.acceptedSnapshot : self.physicalSnapshot;
+        if (fromVirtual) [viewer finishMirrorCleanup];
         viewer.session=fresh; [viewer updateDisplayModeRestoration]; XCTAssertEqual(saves,0); XCTAssertTrue(fresh.displayHandoffInputBlocked);
         fresh.usable=YES; [viewer updateDisplayModeRestoration];
         XCTAssertEqual(saves,1); XCTAssertEqual(saved,target.integerValue); XCTAssertFalse(fresh.displayHandoffInputBlocked);
-        XCTAssertFalse([[viewer valueForKey:@"changingDisplayMode"] boolValue]);
+        XCTAssertFalse([[viewer valueForKeyPath:@"displayHandoff.active"] boolValue]);
         viewer.disconnectHandler=nil; [viewer stopViewer];
     }
 }
+- (void)testSupersededDisplayConfirmationCannotConsumeCurrentConfirmation {
+    DesktopSizeSession *session = [DesktopSizeSession new];
+    DesktopSizeViewer *viewer = [self viewerWithSession:session];
+    XCTAssertNotNil([viewer displayModeConfirmationForPreset:1]);
+    id previous = [viewer valueForKey:@"displayConfirmation"];
+    XCTAssertNotNil([viewer displayModeConfirmationForPreset:2]);
+    XCTAssertFalse([viewer acceptDisplayModeConfirmation:previous]);
+    XCTAssertTrue([viewer acceptCurrentDisplayModeConfirmation]);
+    XCTAssertEqualObjects([viewer valueForKeyPath:@"displayHandoff.targetPreset"], @2);
+    [viewer stopViewer];
+}
+
 - (void)testConfirmationCannotCrossReplacementInactivityExitOrFileTransferWarning {
     for (NSString *reason in @[@"replacement",@"inactive",@"exit"]) {
         DesktopSizeSession *old=[DesktopSizeSession new]; old.snapshot=self.acceptedSnapshot;
@@ -1495,28 +1522,28 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
         if ([reason isEqualToString:@"replacement"]) [viewer prepareConnection];
         else if ([reason isEqualToString:@"inactive"]) [viewer becameInactive];
         else [viewer stopViewer];
-        XCTAssertFalse([viewer acceptDisplayModeConfirmation]); XCTAssertFalse(viewer.requestedResume);
+        XCTAssertFalse([viewer acceptCurrentDisplayModeConfirmation]); XCTAssertFalse(viewer.requestedResume);
         XCTAssertEqual(viewer.restoredDesktopSizePreset,2); [viewer stopViewer];
     }
     DesktopSizeSession *physical=[DesktopSizeSession new]; physical.snapshot=self.physicalSnapshot;
     DesktopSizeViewer *viewer=[self viewerWithSession:physical];
     XCTAssertNil([viewer displayModeConfirmationForPreset:0]); XCTAssertTrue([viewer applyStreamDisplay:@5]);
-    XCTAssertNil([viewer valueForKey:@"modeConfirmationPreset"]); XCTAssertFalse(viewer.requestedResume);
+    XCTAssertNil([viewer valueForKey:@"displayConfirmation"]); XCTAssertFalse(viewer.requestedResume);
     XCTAssertEqualObjects(physical.requestedDisplay,@5); XCTAssertEqual(viewer.session,physical); [viewer stopViewer];
 }
 - (void)testVirtualModeHandoffRequestsOnceWhileAllRemoteInputRemainsBlocked {
     DesktopSizeSession *session=[DesktopSizeSession new]; session.snapshot=self.physicalSnapshot;
     DesktopSizeViewer *viewer=[self viewerWithSession:session];
-    [viewer setValue:@YES forKey:@"changingDisplayMode"]; [viewer setValue:@2 forKey:@"modeTargetPreset"];
+    [viewer setValue:@(CompanionVNCDisplayHandoffPhaseConnecting) forKeyPath:@"displayHandoff.phase"]; [viewer setValue:@2 forKeyPath:@"displayHandoff.targetPreset"];
     session.displayHandoffInputBlocked=YES;
     [viewer updateDisplayModeRestoration]; [viewer updateDisplayModeRestoration];
     XCTAssertEqual(session.requests,1); XCTAssertEqual(session.lastPreset,2); XCTAssertTrue(session.displayHandoffInputBlocked);
     XCTAssertFalse([session tryClickX:1 y:1 mask:1]); XCTAssertFalse(session.composedTextReady);
     session.snapshot=@{@"layoutVirtual":@YES,@"layoutCount":@1,@"probeOutcome":@3};
     __block NSUInteger saves=0; viewer.desktopSizeSelectionHandler=^(NSInteger p){saves++;};
-    viewer.restoredDesktopSizePreset=2; [viewer setValue:@0 forKey:@"modePreviousPreset"];
+    viewer.restoredDesktopSizePreset=2; [viewer setValue:@0 forKeyPath:@"displayHandoff.previousPreset"];
     [viewer updateDisplayModeRestoration];
-    XCTAssertEqualObjects([viewer valueForKey:@"failedDisplayModePreset"],@2);
+    XCTAssertEqualObjects([viewer valueForKeyPath:@"displayHandoff.failedPreset"],@2);
     XCTAssertEqual(viewer.restoredDesktopSizePreset,0); XCTAssertEqual(saves,0);
     XCTAssertEqualObjects([viewer valueForKey:@"lastConnectionFailure"][@"displayModeFailureStage"],@117);
     XCTAssertNil(session.stateHandler); XCTAssertNil(session.frameHandler);
@@ -1586,8 +1613,8 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
     id<DesktopLoginRecoveryTesting> login=[viewer valueForKey:@"credentialState"];
     [login editWithUsername:@"synthetic" password:@"transient" remember:NO]; [login beginLogin]; [login authenticated];
-    [viewer setValue:@YES forKey:@"changingDisplayMode"]; [viewer setValue:@YES forKey:@"mirrorFullRestartUsed"];
-    [viewer setValue:@0 forKey:@"modeTargetPreset"]; [viewer setValue:@2 forKey:@"modePreviousPreset"];
+    [viewer setValue:@(CompanionVNCDisplayHandoffPhaseConnecting) forKeyPath:@"displayHandoff.phase"]; [viewer setValue:@YES forKeyPath:@"displayHandoff.fullRestart"];
+    [viewer setValue:@0 forKeyPath:@"displayHandoff.targetPreset"]; [viewer setValue:@2 forKeyPath:@"displayHandoff.previousPreset"];
     [viewer prepareConnection]; CompanionVNCSession *owner=viewer.session;
     void (^queued)(NSString *,NSDictionary *)=owner.stateHandler;
     [viewer showConnectionFailureStage:116]; NSString *failure=[viewer valueForKey:@"loginIssueDetails"];
@@ -1621,11 +1648,11 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
         XCTAssertEqualObjects(inputAction[@"kind"],@"inputOnly"); XCTAssertFalse([inputAction[@"disabled"] boolValue]);
         NSInteger target=[failure[@"target"] integerValue];
         viewer.restoredDesktopSizePreset=target == 0 ? 2 : 0;
-        [viewer setValue:@YES forKey:@"changingDisplayMode"]; [viewer setValue:@YES forKey:@"mirrorFullRestartUsed"];
-        [viewer setValue:@(target) forKey:@"modeTargetPreset"];
-        [viewer setValue:@(viewer.restoredDesktopSizePreset) forKey:@"modePreviousPreset"];
+        [viewer setValue:@(CompanionVNCDisplayHandoffPhaseConnecting) forKeyPath:@"displayHandoff.phase"]; [viewer setValue:@YES forKeyPath:@"displayHandoff.fullRestart"];
+        [viewer setValue:@(target) forKeyPath:@"displayHandoff.targetPreset"];
+        [viewer setValue:@(viewer.restoredDesktopSizePreset) forKeyPath:@"displayHandoff.previousPreset"];
         [viewer showConnectionFailureStage:[failure[@"stage"] integerValue]];
-        XCTAssertEqualObjects([viewer valueForKey:@"failedDisplayModePreset"],@(target));
+        XCTAssertEqualObjects([viewer valueForKeyPath:@"displayHandoff.failedPreset"],@(target));
         XCTAssertFalse(((UIView *)[viewer valueForKey:@"controls"]).hidden, @"Recovery over a cached frame keeps the controls menu reachable");
         NSDictionary *action=[viewer displayMenuSections].lastObject[@"items"][0];
         XCTAssertFalse([action[@"disabled"] boolValue], @"Input-only is available while Try Again retries the display target");
@@ -1639,7 +1666,7 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
         viewer.session=[CompanionVNCSession new]; // The failed transport is no longer running.
         [viewer connectionAction];
         XCTAssertEqual(connects,1); XCTAssertEqual(viewer.restoredDesktopSizePreset,target);
-        XCTAssertEqualObjects([viewer valueForKey:@"modeTargetPreset"],@(target));
+        XCTAssertEqualObjects([viewer valueForKeyPath:@"displayHandoff.targetPreset"],@(target));
         viewer.connectHandler=nil; [viewer stopViewer]; XCTAssertNil([login loginForResume]);
     }
 }
@@ -1704,8 +1731,8 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
             [UIColor.blackColor setFill]; UIRectFill(CGRectMake(0,0,8,8));
         }];
         [viewer setValue:image forKey:@"lastFramebuffer"];
-        [viewer setValue:@YES forKey:@"changingDisplayMode"]; [viewer setValue:@YES forKey:@"mirrorFullRestartUsed"];
-        [viewer setValue:target forKey:@"modeTargetPreset"]; [viewer setValue:@1 forKey:@"modePreviousPreset"];
+        [viewer setValue:@(CompanionVNCDisplayHandoffPhaseConnecting) forKeyPath:@"displayHandoff.phase"]; [viewer setValue:@YES forKeyPath:@"displayHandoff.fullRestart"];
+        [viewer setValue:target forKeyPath:@"displayHandoff.targetPreset"]; [viewer setValue:@1 forKeyPath:@"displayHandoff.previousPreset"];
         [viewer showConnectionFailureStage:target.intValue == 0 ? 116 : 117];
         CompanionVNCSession *old=viewer.session;
         NSDictionary *action=[viewer displayMenuSections].lastObject[@"items"][0];
@@ -1723,8 +1750,8 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
         XCTAssertEqual(connects,1); XCTAssertEqual(disconnects,1); XCTAssertEqual(saves,0);
         XCTAssertEqual(viewer.restoredDesktopSizePreset,1); XCTAssertEqual(viewer.mirrorRetirementDelay,0);
         XCTAssertNil(old.stateHandler); XCTAssertNil(old.frameHandler); XCTAssertNil(old.displayLayoutHandler);
-        XCTAssertNil([viewer valueForKey:@"failedDisplayModePreset"]); XCTAssertNil([viewer valueForKey:@"lastFramebuffer"]);
-        for (NSString *key in @[@"changingDisplayMode",@"restoreViewportPending",@"checkingResume",@"awaitingReplacementLayout"]) XCTAssertFalse([[viewer valueForKey:key] boolValue]);
+        XCTAssertNil([viewer valueForKeyPath:@"displayHandoff.failedPreset"]); XCTAssertNil([viewer valueForKey:@"lastFramebuffer"]);
+        for (NSString *key in @[@"displayHandoff.active",@"restoreViewportPending",@"checkingResume",@"awaitingReplacementLayout"]) XCTAssertFalse([[viewer valueForKeyPath:key] boolValue]);
         rfbClient *client=rfbGetClient(8,3,4); client->width=2; client->height=2;
         [viewer.session configureClient:client]; XCTAssertTrue([viewer.session allocate:client]);
         for (NSString *key in @[@"running",@"established",@"inputReady"]) [viewer.session setValue:@YES forKey:key];
@@ -1758,8 +1785,8 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
         else if ([boundary isEqualToString:@"inactive"]) [viewer becameInactive];
         else if ([boundary isEqualToString:@"exit"]) [viewer stopViewer];
         NSUInteger before=retires;
-        XCTAssertEqual([viewer acceptDisplayModeConfirmation],[boundary isEqualToString:@"accept"]);
-        XCTAssertFalse([viewer acceptDisplayModeConfirmation]);
+        XCTAssertEqual([viewer acceptCurrentDisplayModeConfirmation],[boundary isEqualToString:@"accept"]);
+        XCTAssertFalse([viewer acceptCurrentDisplayModeConfirmation]);
         XCTAssertEqual(viewer.inputOnly,[boundary isEqualToString:@"accept"]);
         XCTAssertEqual(retires-before,[boundary isEqualToString:@"accept"] ? 1 : 0);
         if ([boundary isEqualToString:@"accept"]) { XCTAssertTrue(viewer.requestedResume); XCTAssertNil([viewer valueForKey:@"pendingStreamDisplayID"]); }
@@ -1772,8 +1799,8 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
         CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
         id<DesktopLoginRecoveryTesting> login=[viewer valueForKey:@"credentialState"];
         [login editWithUsername:@"synthetic" password:@"transient" remember:NO]; [login beginLogin];
-        [viewer setValue:@YES forKey:@"starting"]; [viewer setValue:@YES forKey:@"changingDisplayMode"];
-        [viewer setValue:@2 forKey:@"modeTargetPreset"]; [viewer setValue:@0 forKey:@"modePreviousPreset"];
+        [viewer setValue:@YES forKey:@"starting"]; [viewer setValue:@(CompanionVNCDisplayHandoffPhaseConnecting) forKeyPath:@"displayHandoff.phase"];
+        [viewer setValue:@2 forKeyPath:@"displayHandoff.targetPreset"]; [viewer setValue:@0 forKeyPath:@"displayHandoff.previousPreset"];
         if (hadInitialFrame.boolValue) {
             UIImage *image=[[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(8,8)] imageWithActions:^(UIGraphicsImageRendererContext *context){
                 [UIColor.blueColor setFill]; UIRectFill(CGRectMake(0,0,8,8));
@@ -1790,7 +1817,7 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
         XCTAssertTrue(connect.hidden); XCTAssertFalse(cancel.hidden);
         [viewer showConnectionFailureStage:117];
         XCTAssertNotNil([viewer valueForKey:@"recoveryController"]);
-        XCTAssertEqualObjects([viewer valueForKey:@"failedDisplayModePreset"],@2);
+        XCTAssertEqualObjects([viewer valueForKeyPath:@"displayHandoff.failedPreset"],@2);
         XCTAssertFalse(viewer.inputOnly);
         if (!hadInitialFrame.boolValue) {
             XCTAssertFalse(connect.hidden); XCTAssertTrue(connect.enabled); XCTAssertEqualObjects(connect.currentTitle,@"Try Again");
@@ -1803,7 +1830,7 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
 }
 - (void)testDisplayFailureShowsTheLoginFormWhenRetryNeedsCredentials {
     CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
-    [viewer setValue:@YES forKey:@"changingDisplayMode"]; [viewer setValue:@2 forKey:@"modeTargetPreset"];
+    [viewer setValue:@(CompanionVNCDisplayHandoffPhaseConnecting) forKeyPath:@"displayHandoff.phase"]; [viewer setValue:@2 forKeyPath:@"displayHandoff.targetPreset"];
     [viewer showConnectionFailureStage:117];
     XCTAssertFalse(((UIView *)[viewer valueForKey:@"loginFields"]).hidden);
     UIButton *retry=[viewer valueForKey:@"connect"];
@@ -1816,11 +1843,11 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
         [UIColor.blackColor setFill]; UIRectFill(CGRectMake(0,0,8,8));
     }];
     [viewer setValue:image forKey:@"lastFramebuffer"];
-    [viewer setValue:@YES forKey:@"changingDisplayMode"]; [viewer setValue:@2 forKey:@"modeTargetPreset"];
+    [viewer setValue:@(CompanionVNCDisplayHandoffPhaseConnecting) forKeyPath:@"displayHandoff.phase"]; [viewer setValue:@2 forKeyPath:@"displayHandoff.targetPreset"];
     [viewer showConnectionFailureStage:118]; // No retained login; input-only must show its own fields.
     __block NSUInteger connects=0; viewer.connectHandler=^(NSString *u,NSString *p,BOOL remember){ connects++; };
     [viewer performControlAction:[viewer displayMenuSections].lastObject[@"items"][0]];
-    XCTAssertEqual(connects,0); XCTAssertTrue(viewer.inputOnly); XCTAssertNil([viewer valueForKey:@"failedDisplayModePreset"]);
+    XCTAssertEqual(connects,0); XCTAssertTrue(viewer.inputOnly); XCTAssertNil([viewer valueForKeyPath:@"displayHandoff.failedPreset"]);
     XCTAssertFalse(((UIView *)[viewer valueForKey:@"login"]).hidden); XCTAssertNil([viewer valueForKey:@"recoveryController"]);
     XCTAssertEqualObjects(((UITextField *)[viewer valueForKey:@"username"]).text,@"");
     XCTAssertEqualObjects(((UITextField *)[viewer valueForKey:@"password"]).text,@"");
@@ -1830,16 +1857,17 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
 - (void)testDisplayRecoveryDoesNotPermanentlyDisableInputOnly {
     for (NSNumber *target in @[@0,@2]) for (NSNumber *exit in @[@NO,@YES]) {
         DesktopSizeSession *session=[DesktopSizeSession new]; DesktopSizeViewer *viewer=[self viewerWithSession:session];
-        [viewer setValue:target forKey:@"failedDisplayModePreset"];
+        [viewer setValue:target forKeyPath:@"displayHandoff.targetPreset"];
+        [viewer setValue:@(CompanionVNCDisplayHandoffPhaseFailed) forKeyPath:@"displayHandoff.phase"];
         XCTAssertFalse([[viewer displayMenuSections].lastObject[@"items"][0][@"disabled"] boolValue]);
         if (exit.boolValue) {
             __block NSUInteger exits=0; viewer.macsHandler=^{ exits++; };
             [viewer performControlAction:@{@"kind":@"exit"}]; XCTAssertEqual(exits,1);
         } else {
-            [viewer setValue:target forKey:@"modeTargetPreset"];
+            [viewer setValue:@(CompanionVNCDisplayHandoffPhaseVerifying) forKeyPath:@"displayHandoff.phase"];
             [viewer completeDisplayModeVerified:YES];
         }
-        XCTAssertNil([viewer valueForKey:@"failedDisplayModePreset"]);
+        XCTAssertNil([viewer valueForKeyPath:@"displayHandoff.failedPreset"]);
         if (!exit.boolValue) XCTAssertFalse([[viewer displayMenuSections].lastObject[@"items"][0][@"disabled"] boolValue]);
         viewer.inputOnly=YES; XCTAssertTrue(viewer.inputOnly);
         viewer.macsHandler=nil; [viewer stopViewer];
@@ -1849,20 +1877,20 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
 - (void)testModeVerificationDeadlineCannotCrossInterruptionOrOwnerReplacement {
     DesktopSizeSession *old=[DesktopSizeSession new]; old.snapshot=@{@"layoutVirtual":@NO,@"layoutCount":@0};
     DesktopSizeViewer *viewer=[self mirrorViewerWithSession:old attempt:1];
-    [viewer setValue:@YES forKey:@"mirrorFullRestartUsed"];
-    [viewer updateDisplayModeRestoration]; NSUInteger interrupted=[[viewer valueForKey:@"modeVerificationGeneration"] unsignedIntegerValue];
-    XCTAssertTrue([[viewer valueForKey:@"modeVerificationTimed"] boolValue]);
-    [viewer becameInactive]; XCTAssertFalse([[viewer valueForKey:@"modeVerificationTimed"] boolValue]);
-    [viewer foregrounded]; NSUInteger resumed=[[viewer valueForKey:@"modeVerificationGeneration"] unsignedIntegerValue];
-    XCTAssertGreaterThan(resumed,interrupted); XCTAssertTrue([[viewer valueForKey:@"modeVerificationTimed"] boolValue]);
-    [viewer expireDisplayModeVerification:old generation:interrupted]; XCTAssertTrue([[viewer valueForKey:@"changingDisplayMode"] boolValue]);
+    [viewer setValue:@YES forKeyPath:@"displayHandoff.fullRestart"];
+    [viewer updateDisplayModeRestoration]; NSUInteger interrupted=[[viewer valueForKeyPath:@"displayHandoff.verificationGeneration"] unsignedIntegerValue];
+    XCTAssertTrue([[viewer valueForKeyPath:@"displayHandoff.verificationTimed"] boolValue]);
+    [viewer becameInactive]; XCTAssertFalse([[viewer valueForKeyPath:@"displayHandoff.verificationTimed"] boolValue]);
+    [viewer foregrounded]; NSUInteger resumed=[[viewer valueForKeyPath:@"displayHandoff.verificationGeneration"] unsignedIntegerValue];
+    XCTAssertGreaterThan(resumed,interrupted); XCTAssertTrue([[viewer valueForKeyPath:@"displayHandoff.verificationTimed"] boolValue]);
+    [viewer expireDisplayModeVerification:old generation:interrupted]; XCTAssertTrue([[viewer valueForKeyPath:@"displayHandoff.active"] boolValue]);
     [viewer prepareConnection];
     DesktopSizeSession *fresh=[DesktopSizeSession new]; fresh.usable=YES; fresh.snapshot=old.snapshot; viewer.session=fresh;
-    [viewer updateDisplayModeRestoration]; NSUInteger current=[[viewer valueForKey:@"modeVerificationGeneration"] unsignedIntegerValue];
-    [viewer expireDisplayModeVerification:old generation:resumed]; XCTAssertNil([viewer valueForKey:@"failedDisplayModePreset"]);
+    [viewer updateDisplayModeRestoration]; NSUInteger current=[[viewer valueForKeyPath:@"displayHandoff.verificationGeneration"] unsignedIntegerValue];
+    [viewer expireDisplayModeVerification:old generation:resumed]; XCTAssertNil([viewer valueForKeyPath:@"displayHandoff.failedPreset"]);
     [viewer expireDisplayModeVerification:fresh generation:current];
     XCTAssertEqualObjects([viewer valueForKey:@"lastConnectionFailure"][@"displayModeFailureStage"],@118);
-    XCTAssertFalse([[viewer valueForKey:@"changingDisplayMode"] boolValue]); [viewer stopViewer];
+    XCTAssertFalse([[viewer valueForKeyPath:@"displayHandoff.active"] boolValue]); [viewer stopViewer];
 }
 
 - (void)testInitialAppleImageWaitsForMetadataBeforeApplyingEitherSavedMode {
@@ -1870,17 +1898,17 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
         DesktopSizeSession *session=[DesktopSizeSession new];
         session.snapshot=@{@"appleDisplayProtocol":@YES,@"layoutVirtual":@NO,@"layoutCount":@0};
         DesktopSizeViewer *viewer=[self mirrorViewerWithSession:session attempt:1];
-        [viewer setValue:target forKey:@"modeTargetPreset"]; viewer.restoredDesktopSizePreset=target.integerValue;
+        [viewer setValue:target forKeyPath:@"displayHandoff.targetPreset"]; viewer.restoredDesktopSizePreset=target.integerValue;
         __block NSUInteger saves=0; viewer.desktopSizeSelectionHandler=^(NSInteger p){saves++;};
         [viewer updateDisplayModeRestoration];
-        XCTAssertTrue([[viewer valueForKey:@"changingDisplayMode"] boolValue]);
+        XCTAssertTrue([[viewer valueForKeyPath:@"displayHandoff.active"] boolValue]);
         XCTAssertTrue(session.displayHandoffInputBlocked); XCTAssertEqual(saves,0);
         session.snapshot=self.acceptedSnapshot;
         [viewer updateDisplayModeRestoration];
         if (target.integerValue) {
-            XCTAssertFalse([[viewer valueForKey:@"changingDisplayMode"] boolValue]); XCTAssertEqual(saves,1);
+            XCTAssertFalse([[viewer valueForKeyPath:@"displayHandoff.active"] boolValue]); XCTAssertEqual(saves,1);
         } else {
-            XCTAssertTrue([[viewer valueForKey:@"mirrorRestartScheduled"] boolValue]);
+            XCTAssertTrue([[viewer valueForKeyPath:@"displayHandoff.retryScheduled"] boolValue]);
             XCTestExpectation *next=[self expectationWithDescription:@"late metadata starts bounded Mirror recovery"];
             dispatch_async(dispatch_get_main_queue(),^{[next fulfill];}); [self waitForExpectations:@[next] timeout:2];
             XCTAssertTrue(viewer.requestedResume); XCTAssertEqual(viewer.mirrorRetirementDelay,16); XCTAssertEqual(saves,0);
@@ -1894,7 +1922,7 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     DesktopSizeViewer *viewer=[self mirrorViewerWithSession:session attempt:1];
     __block NSUInteger saves=0; viewer.desktopSizeSelectionHandler=^(NSInteger p){saves++;};
     [viewer updateDisplayModeRestoration];
-    XCTAssertFalse([[viewer valueForKey:@"changingDisplayMode"] boolValue]);
+    XCTAssertFalse([[viewer valueForKeyPath:@"displayHandoff.active"] boolValue]);
     XCTAssertFalse(session.displayHandoffInputBlocked); XCTAssertEqual(saves,0); [viewer stopViewer];
 }
 - (void)testAuthenticatedAppleProtocolIsKnownBeforeItsFirstDisplayLayout {
@@ -1906,10 +1934,10 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     DesktopSizeSession *session=[DesktopSizeSession new];
     session.snapshot=@{@"layoutVirtual":@NO,@"layoutCount":@2,@"layoutWidth":@3200,@"layoutHeight":@1200,
         @"framebufferWidth":@1600,@"framebufferHeight":@1200};
-    DesktopSizeViewer *viewer=[self mirrorViewerWithSession:session attempt:1]; [viewer setValue:@YES forKey:@"mirrorFullRestartUsed"];
+    DesktopSizeViewer *viewer=[self mirrorViewerWithSession:session attempt:1]; [viewer setValue:@YES forKeyPath:@"displayHandoff.fullRestart"];
     __block NSUInteger saves=0; viewer.desktopSizeSelectionHandler=^(NSInteger p){saves++;};
     [viewer updateDisplayModeRestoration];
-    XCTAssertTrue([[viewer valueForKey:@"changingDisplayMode"] boolValue]); XCTAssertTrue(session.displayHandoffInputBlocked); XCTAssertEqual(saves,0);
+    XCTAssertTrue([[viewer valueForKeyPath:@"displayHandoff.active"] boolValue]); XCTAssertTrue(session.displayHandoffInputBlocked); XCTAssertEqual(saves,0);
     session.snapshot=@{@"layoutVirtual":@NO,@"layoutCount":@2,@"layoutWidth":@3200,@"layoutHeight":@1200,
         @"framebufferWidth":@3200,@"framebufferHeight":@1200};
     session.usable=NO; [viewer updateDisplayModeRestoration]; XCTAssertEqual(saves,0);
@@ -1937,7 +1965,7 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     session.catalogue=@{@"views":views}; session.snapshot=self.physicalSnapshot; viewer.restoredDisplayID=@5;
     [viewer setValue:views forKey:@"displayViews"]; [viewer setValue:@(3200.0/1200) forKey:@"displayAspect"];
     [viewer setValue:[NSValue valueWithCGSize:CGSizeMake(3200,1200)] forKey:@"framebufferSize"];
-    [viewer setValue:@YES forKey:@"checkingResume"];
+    [viewer setValue:@(CompanionVNCRecoveryPhaseProbing) forKey:@"recoveryPhase"];
     [viewer updateDisplayModeRestoration]; XCTAssertNil(session.requestedDisplay);
     [viewer completeResumeReadiness];
     XCTAssertEqualObjects(session.requestedDisplay,@5, @"Resume readiness retries the saved monitor without another frame or layout callback");
@@ -1948,8 +1976,8 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
         CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
         id<DesktopLoginRecoveryTesting> login=[viewer valueForKey:@"credentialState"];
         [login editWithUsername:@"synthetic" password:@"transient" remember:NO]; [login beginLogin]; [login authenticated];
-        [viewer setValue:@YES forKey:@"changingDisplayMode"]; [viewer setValue:@YES forKey:@"mirrorFullRestartUsed"];
-        [viewer setValue:@0 forKey:@"modeTargetPreset"]; [viewer setValue:@2 forKey:@"modePreviousPreset"];
+        [viewer setValue:@(CompanionVNCDisplayHandoffPhaseConnecting) forKeyPath:@"displayHandoff.phase"]; [viewer setValue:@YES forKeyPath:@"displayHandoff.fullRestart"];
+        [viewer setValue:@0 forKeyPath:@"displayHandoff.targetPreset"]; [viewer setValue:@2 forKeyPath:@"displayHandoff.previousPreset"];
         [viewer prepareConnection]; [viewer showConnectionFailureStage:stage.integerValue];
         XCTAssertNotNil([login loginForResume]);
         XCTAssertEqualObjects(((UITextField *)[viewer valueForKey:@"username"]).text,@"");
@@ -1967,8 +1995,8 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
         CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
         id<DesktopLoginRecoveryTesting> login=[viewer valueForKey:@"credentialState"];
         [login editWithUsername:@"synthetic" password:@"transient" remember:NO]; [login beginLogin]; [login authenticated];
-        [viewer setValue:@YES forKey:@"changingDisplayMode"]; [viewer setValue:@YES forKey:@"mirrorFullRestartUsed"];
-        [viewer setValue:@0 forKey:@"modeTargetPreset"]; [viewer prepareConnection];
+        [viewer setValue:@(CompanionVNCDisplayHandoffPhaseConnecting) forKeyPath:@"displayHandoff.phase"]; [viewer setValue:@YES forKeyPath:@"displayHandoff.fullRestart"];
+        [viewer setValue:@0 forKeyPath:@"displayHandoff.targetPreset"]; [viewer prepareConnection];
         [viewer showConnectionFailureStage:stage.integerValue]; XCTAssertNil([login loginForResume]);
         XCTAssertEqualObjects(((UITextField *)[viewer valueForKey:@"password"]).text,@"");
         [viewer stopViewer];
@@ -1978,7 +2006,7 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     CompanionVNCViewer *viewer=[CompanionVNCViewer new]; [viewer loadViewIfNeeded];
     id<DesktopLoginRecoveryTesting> login=[viewer valueForKey:@"credentialState"];
     [login editWithUsername:@"original" password:@"original-only" remember:NO]; [login beginLogin];
-    [viewer setValue:@YES forKey:@"changingDisplayMode"]; [viewer setValue:@2 forKey:@"modeTargetPreset"];
+    [viewer setValue:@(CompanionVNCDisplayHandoffPhaseConnecting) forKeyPath:@"displayHandoff.phase"]; [viewer setValue:@2 forKeyPath:@"displayHandoff.targetPreset"];
     [viewer prepareConnection]; [viewer showConnectionFailureStage:117]; XCTAssertNotNil([login loginForResume]);
     ((UITextField *)[viewer valueForKey:@"username"]).text=@"replacement";
     ((UITextField *)[viewer valueForKey:@"password"]).text=@"replacement-only";

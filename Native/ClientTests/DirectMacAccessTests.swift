@@ -214,6 +214,28 @@ import NIO
         files.connectBorrowed(.init(client: client, macID: UUID(), account: "synthetic", keyID: nil, generation: UUID()))
         XCTAssertEqual(files.phase, .signIn); XCTAssertFalse(files.busy); XCTAssertFalse(DirectMacConnections.shared.isActive(mac.id))
     }
+    func testBorrowedFilesDoesNotOpenChannelAfterQueuedParentRetires() async throws {
+        let probe = FilesDirectoryTestProbe()
+        let server = try await filesDirectoryTestServer(probe: probe)
+        defer { Task { await probe.shutdown(); try? await server.close() } }
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Retired Parent", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+        let client = try await SSHClient.connect(to: .init(host: "127.0.0.1", port: mac.sshPort,
+            authenticationMethod: { .passwordBased(username: "synthetic", password: "synthetic-only") }, hostKeyValidator: .acceptAnything()))
+        defer { Task { try? await client.close() } }
+        let files = DirectFilesSession(mac: mac); defer { files.close() }
+        var parentIsCurrent = true
+        files.connectBorrowed(.init(client: client, macID: mac.id, account: "synthetic", keyID: nil, generation: UUID(),
+                                    isCurrent: { parentIsCurrent }))
+        XCTAssertTrue(files.busy)
+        // The queued main-actor task has not started yet. Keep the SSH transport alive.
+        parentIsCurrent = false
+        try await wait { !files.busy }
+        XCTAssertEqual(probe.childOpens, 0, "A retired parent must never receive a queued Files open")
+
+        let next = try await client.openSFTP()
+        XCTAssertEqual(probe.childOpens, 1, "The authenticated transport still accepts a valid child open")
+        try await next.close()
+    }
     func testEditingRequiresDisconnectEvenForSameOwnerAndOtherMacStaysEditable() throws {
         let mac = UUID(), other = UUID(), ownerID = UUID()
         defer { removeFixtureProfile(mac); removeFixtureProfile(other) }
@@ -284,7 +306,7 @@ import NIO
         defer { Task { try? await client.close() } }
         let files = DirectFilesSession(mac: mac); defer { files.close() }
         files.connectBorrowed(.init(client: client, macID: mac.id, account: "synthetic", keyID: nil, generation: UUID()))
-        try await Task.sleep(for: .milliseconds(30))
+        try await wait { probe.childOpens == 1 }
         XCTAssertTrue(files.busy)
         files.disconnect()
         try await Task.sleep(for: .milliseconds(20))

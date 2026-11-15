@@ -1144,7 +1144,7 @@ private struct TerminalSurface: UIViewControllerRepresentable {
                 session?.composeGeneration == generation && session?.canComposeText == true
             }, send: { [weak self] text, complete in
                 guard let self, let prepared = try? DirectComposedText(text, mode: .terminal) else {
-                    complete("The Terminal session ended. Nothing was sent."); return
+                    complete(.rejected, "The Terminal session ended. Nothing was sent."); return
                 }
                 terminal.resetModifiers()
                 session.sendComposedText(prepared.terminalBytes(bracketedPaste: terminal.getTerminal().bracketedPasteMode),

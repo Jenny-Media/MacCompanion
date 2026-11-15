@@ -401,10 +401,9 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         controller.showTextComposer()
         try await wait("second composer sheet") { controller.presentedViewController != nil }
         draft.edit("one\r\n  two\r\n"); draft.requestSend()
-        let reviewed = try XCTUnwrap(draft.confirmation)
+        let reviewed = try XCTUnwrap(draft.review)
         XCTAssertEqual(record.received, Array("中文😀".utf8), "Multiline review must send nothing")
-        // SwiftUI dismisses an alert binding before invoking its captured action.
-        draft.confirmation = nil; draft.confirmSend(reviewed); draft.requestSend()
+        draft.confirmSend(reviewed); draft.requestSend()
         var expected = Array("中文😀\u{1b}[200~one\n  two\n\u{1b}[201~".utf8)
         try await wait("bracketed UTF-8 write") { record.received == expected }
         try await wait("second composer dismisses") { controller.presentedViewController == nil }
@@ -421,7 +420,9 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         controller.showTextComposer(); draft.edit("retire this draft"); session.stop()
         XCTAssertEqual(draft.text, ""); XCTAssertFalse(draft.active)
         var staleIssue: String?
-        session.sendComposedText(Array("must not replay".utf8), generation: oldGeneration) { staleIssue = $0 }
+        session.sendComposedText(Array("must not replay".utf8), generation: oldGeneration) { status, issue in
+            XCTAssertEqual(status, .rejected); staleIssue = issue
+        }
         XCTAssertNotNil(staleIssue)
         try await Task.sleep(for: .milliseconds(50)); XCTAssertEqual(record.received, expected)
     }
@@ -866,7 +867,9 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         session.connect(username: "synthetic", password: "synthetic-only", remember: false)
         try await wait { session.trust != nil }; session.answerTrust(true); try await wait { session.canSendUserInput }
         var composed = false, shortcut = false
-        session.sendComposedText([112], generation: session.composeGeneration) { XCTAssertNil($0); composed = true }
+        session.sendComposedText([112], generation: session.composeGeneration) { status, issue in
+            XCTAssertEqual(status, .written); XCTAssertNil(issue); composed = true
+        }
         XCTAssertTrue(session.sendSequence([[97], [98]], epoch: try XCTUnwrap(session.customInputEpoch), completion: { XCTAssertNil($0); shortcut = true }))
         try await wait { composed && shortcut && record.received == [112, 97, 98] }
     }
@@ -1415,7 +1418,7 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         var inactiveComposeReply = false
         var inactiveComposeIssue: String?
         session.sendComposedText(Array("INACTIVE-COMPOSER-MUST-NOT-REPLAY".utf8), generation: session.composeGeneration) {
-            inactiveComposeReply = true; inactiveComposeIssue = $0
+            XCTAssertEqual($0, .rejected); inactiveComposeReply = true; inactiveComposeIssue = $1
         }
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertTrue(inactiveComposeReply)
@@ -1432,7 +1435,7 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         var freshComposeReply = false
         var freshComposeIssue: String?
         session.sendComposedText(Array("fresh-compose-only".utf8), generation: session.composeGeneration) {
-            freshComposeReply = true; freshComposeIssue = $0
+            XCTAssertEqual($0, .written); freshComposeReply = true; freshComposeIssue = $1
         }
         try await wait("fresh composed input on the same foreground PTY") {
             freshComposeReply && String(decoding: record.received, as: UTF8.self) == "active-onlyfresh-compose-only"

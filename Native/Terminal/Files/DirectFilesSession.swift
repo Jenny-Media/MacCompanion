@@ -25,7 +25,29 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     }
     enum ConflictChoice { case keepBoth, replace, cancel }
     struct Trust: Identifiable { let id = UUID(); let fingerprint: String }
-    struct Conflict: Identifiable { let id = UUID(); let name: String; let replaceAllowed: Bool }
+    struct Conflict: Identifiable {
+        let id = UUID()
+        let name: String
+        let replaceAllowed: Bool
+    }
+    private struct PendingConflict {
+        let prompt: Conflict
+        let job: UUID
+        let item: UUID
+        let destination: String
+        let reply: CheckedContinuation<ConflictChoice, Never>
+    }
+    private struct TransferBatch {
+        enum Phase {
+            case idle
+            case running(UUID)
+            case awaitingDecision(PendingConflict)
+            case settled
+        }
+        var account = ""
+        var items: [ResultItem] = []
+        var phase = Phase.idle
+    }
     struct ResultItem: Identifiable {
         enum Outcome { case waiting, transferring, completed, interrupted }
         let id = UUID()
@@ -45,15 +67,63 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     let mac: DirectMacRecordV1
     let libraryURL: URL
     var loginDraft = DirectFilesLoginDraft()
-    private var establishedIndependentLogin = false
-    private(set) var account = ""
-    private(set) var phase: Phase = .signIn
+    private struct ParentConnection {
+        let ownerID: UUID
+        let generation: UUID
+        let isCurrent: @MainActor () -> Bool
+    }
+    private enum CredentialSource {
+        case macPassword
+        case sshPassword
+        case sshKey(UUID?)
+    }
+    private struct Connection {
+        enum Authority {
+            case borrowed(ParentConnection)
+            case independent(CredentialSource)
+        }
+        let account: String
+        let authority: Authority
+
+        var parent: ParentConnection? {
+            if case .borrowed(let parent) = authority { return parent }
+            return nil
+        }
+    }
+    private enum ConnectionState {
+        case signIn
+        case opening(Connection)
+        case ready(Connection)
+        case interrupted(account: String)
+        case closed
+    }
+    private var connectionState = ConnectionState.signIn
+    private var connection: Connection? {
+        switch connectionState {
+        case .opening(let connection), .ready(let connection): connection
+        case .signIn, .interrupted, .closed: nil
+        }
+    }
+    var account: String {
+        if case .interrupted(let previousAccount) = connectionState { return previousAccount }
+        return connection?.account ?? ""
+    }
+    var phase: Phase {
+        switch connectionState {
+        case .signIn: .signIn
+        case .opening: .connecting
+        case .ready: .ready
+        case .interrupted, .closed: .interrupted
+        }
+    }
+    private var connectionIsCurrent: Bool { connection?.parent?.isCurrent() != false }
     @ObservationIgnored var activityChanged: (@MainActor (String) -> Void)?
     private(set) var status = "Sign In Required" { didSet { activityChanged?(activityTitle) } }
     private(set) var directory: DirectFilesDirectory?
     private(set) var home = ""
-    private(set) var results: [ResultItem] = [] { didSet { activityChanged?(activityTitle) } }
-    private(set) var resultsAccount = ""
+    private var batch = TransferBatch() { didSet { activityChanged?(activityTitle) } }
+    var results: [ResultItem] { batch.items }
+    var resultsAccount: String { batch.account }
     private(set) var preparedUploads: [URL] = []
     private(set) var busy = false
     private var statusMessage: String?
@@ -63,14 +133,15 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     }
     private(set) var connectionRecovery: ConnectionRecovery?
     var trust: Trust?
-    var conflict: Conflict?
+    var conflict: Conflict? {
+        if case .awaitingDecision(let decision) = batch.phase { return decision.prompt }
+        return nil
+    }
     #if os(iOS)
     private let accessOwnerID = UUID()
     private var connectionLease: UUID?
     #endif
-    private var borrowedIsCurrent: (@MainActor () -> Bool)?
-    private var borrowedGeneration: UUID?
-    var isBorrowed: Bool { borrowedGeneration != nil }
+    var isBorrowed: Bool { connection?.parent != nil }
     func reportConnectionRecovery(_ reason: ConnectionRecovery.Reason, message: String, presentedIdentity: TerminalSecretStore.HostIdentity? = nil) {
         statusMessage = nil
         connectionRecovery = .init(reason: reason, message: message, presentedIdentity: presentedIdentity)
@@ -107,7 +178,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     }
     #endif
     func disconnectBorrowed(_ owner: UUID) {
-        if borrowedGeneration == owner { disconnect(message: "The parent session ended. Completed downloads are kept; reconnect before retrying interrupted transfers.") }
+        if connection?.parent?.generation == owner { disconnect(message: "The parent session ended. Completed downloads are kept; reconnect before retrying interrupted transfers.") }
     }
     private var generation = UUID()
     private var operation = UUID()
@@ -119,10 +190,9 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     private var ssh: SSHClient?
     private var store: (any DirectFilesRemoteStore)?
     private var trustReply: CheckedContinuation<Bool, Never>?
-    private var conflictReply: CheckedContinuation<ConflictChoice, Never>?
     private var temporaryRoot: URL?
     @ObservationIgnored private var backgroundObserver: DirectFilesBackgroundObservation?
-    private var closed = false
+    private var closed: Bool { if case .closed = connectionState { true } else { false } }
     var isClosed: Bool { closed }
     private(set) var macRemoved = false
     var shouldCloseAfterRemoval: Bool { macRemoved && !hasUnsavedDownloads }
@@ -170,7 +240,12 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
             }
         }
     }
-    var transferActive: Bool { results.contains { $0.outcome == .transferring || $0.outcome == .waiting } && busy }
+    var transferActive: Bool {
+        switch batch.phase {
+        case .running, .awaitingDecision: true
+        case .idle, .settled: false
+        }
+    }
     var hasPendingResults: Bool { results.contains { $0.needsAttention } }
     var hasUnsavedDownloads: Bool { results.contains { $0.localDownload != nil && !$0.saved } }
     var activityTitle: String {
@@ -181,7 +256,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         return status
     }
     private func check(_ token: UUID, _ job: UUID? = nil) throws {
-        guard !closed, !macRemoved, generation == token, job == nil || operation == job, canAccess(), borrowedIsCurrent?() != false, !Task.isCancelled else { throw CancellationError() }
+        guard !closed, !macRemoved, generation == token, job == nil || operation == job, canAccess(), connectionIsCurrent, !Task.isCancelled else { throw CancellationError() }
     }
     private func armDeadline(after delay: Duration? = nil) {
         deadline?.cancel(); let token = generation, job = operation
@@ -199,7 +274,8 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     }
     func connectBorrowed(_ context: DirectFilesConnectionContext) {
         guard context.macID == mac.id, context.isCurrent(), !closed, !macRemoved, canAccess(), DirectClientPlatformV1.sessionAvailable, !busy else { return }
-        if phase == .ready, borrowedGeneration == context.generation, account == context.account { return }
+        if phase == .ready, let parent = connection?.parent, parent.ownerID == context.ownerID,
+           parent.generation == context.generation, account == context.account { return }
         clearConnectionRecovery()
         guard !transferActive else { message = "A transfer is still running for " + account + ". Finish or cancel it first."; return }
         guard !hasPendingResults || resultsAccount.isEmpty || resultsAccount == context.account else {
@@ -207,16 +283,19 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         }
         let previousPath = account == context.account ? directory?.path : nil
         observeLifecycle(); retire(); let token = generation
-        account = context.account; borrowedGeneration = context.generation; borrowedIsCurrent = context.isCurrent
+        let parent = ParentConnection(ownerID: context.ownerID, generation: context.generation, isCurrent: context.isCurrent)
+        let attempt = Connection(account: context.account, authority: .borrowed(parent))
+        connectionState = .opening(attempt)
         #if os(iOS)
         connectionLease = DirectMacConnections.shared.begin(macID: mac.id, kind: "files", keyID: context.keyID, ownerID: context.ownerID,
             transferActive: { [weak self] in self?.transferActive == true }, disconnect: { [weak self] in self?.disconnect() })
         #endif
-        phase = .connecting; busy = true; message = nil; status = "Opening Files…"; armDeadline()
+        busy = true; message = nil; status = "Opening Files…"; armDeadline()
         work = Task { [weak self] in
             guard let self else { return }
             do {
                 let logger = Logger(label: "Files", factory: { _ in SwiftLogNoOpLogHandler() })
+                try check(token)
                 let client = try await context.client.openSFTP(logger: logger)
                 do { try check(token) } catch { try? await client.close(); throw error }
                 let store = DirectFilesSFTPStore(client: client); self.store = store
@@ -234,7 +313,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                 else { directory = homePath }
                 try check(token)
                 self.directory = directory; home = homePath.path
-                deadline?.cancel(); busy = false; phase = .ready; status = "Ready"
+                deadline?.cancel(); busy = false; connectionState = .ready(attempt); status = "Ready"
             } catch {
                 guard generation == token else { return }
                 disconnect(message: "Files could not open on this connection. Check the session and retry. Nothing was transferred automatically.")
@@ -293,7 +372,12 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
             pendingAccessChange: DirectMacAccessStore.willRetainChange(macID: mac.id, username: username, password: password, key: key, ssh: !useMacLogin, remember: remember),
             transferActive: { [weak self] in self?.transferActive == true }, disconnect: { [weak self] in self?.disconnect() })
         #endif
-        phase = .connecting; busy = true; account = username; message = nil; status = "Contacting Remote Login…"; armDeadline(after: .seconds(60))
+        let credential: CredentialSource
+        if key != nil { credential = .sshKey(keyFileID ?? namedSelection?.id) }
+        else { credential = useMacLogin ? .macPassword : .sshPassword }
+        let connectionAttempt = Connection(account: username, authority: .independent(credential))
+        connectionState = .opening(connectionAttempt)
+        busy = true; message = nil; status = "Contacting Remote Login…"; armDeadline(after: .seconds(60))
         let addresses = mac.addresses, port = mac.sshPort
         work = Task {
             do {
@@ -303,7 +387,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                     #endif
                 }
                 catch {
-                    retire(); phase = .interrupted; status = "Sign In Required"
+                    retire(); status = "Sign In Required"
                     message = "The saved SSH login could not be removed. Files did not connect."
                     return
                 }
@@ -324,7 +408,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                     guard let fingerprint = TerminalSecretStore.fingerprint(publicKey) else { throw TerminalSecretStore.Failure.rejectedKey }
                     self.status = "Verify this Mac’s identity"; self.trust = .init(fingerprint: fingerprint)
                     let accepted = await withCheckedContinuation { self.trustReply = $0 }
-                    self.trust = nil; try self.check(token)
+                    try self.check(token)
                     guard accepted else { throw TerminalSecretStore.Failure.rejectedKey }
                     do { try TerminalSecretStore.approveHostKey(publicKey, id: self.mac.id) }
                     catch TerminalSecretStore.Failure.changedKey { throw TerminalSecretStore.HostKeyMismatch(key: publicKey) }
@@ -337,7 +421,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                 self.status = "Opening Files…"; self.armDeadline()
                 let logger = Logger(label: "Files", factory: { _ in SwiftLogNoOpLogHandler() })
                 let client = try await ssh.openSFTP(logger: logger)
-                try check(token)
+                do { try check(token) } catch { try? await client.close(); throw error }
                 client.closeFuture.whenComplete { [weak self] _ in
                     Task { @MainActor in
                         guard let self, !self.closed, self.generation == token else { return }
@@ -370,9 +454,8 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                 }
                 } catch { self.message = "Connected. The SSH login could not be saved on this device." }
                 loginDraft.authenticationSucceeded(attempt, retention: retention)
-                establishedIndependentLogin = true
                 self.directory = directory; self.home = directory.path
-                self.deadline?.cancel(); self.busy = false; self.phase = .ready; self.status = "Ready"
+                deadline?.cancel(); busy = false; connectionState = .ready(connectionAttempt); status = "Ready"
                 channel.closeFuture.whenComplete { [weak self] _ in
                     Task { @MainActor in
                         guard let self, self.generation == token else { return }
@@ -382,7 +465,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
             } catch {
                 guard generation == token else { return }
                 let openingFiles = ssh != nil
-                retire(); phase = .interrupted
+                retire()
                 if let mismatch = error as? TerminalSecretStore.HostKeyMismatch {
                     reportConnectionRecovery(.identityChanged, message: "The Mac’s SSH identity changed. Verify it before reconnecting. Existing trust is kept.",
                         presentedIdentity: mismatch.presented)
@@ -396,13 +479,22 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
             }
         }
     }
-    func answerTrust(_ accepted: Bool) { let reply = trustReply; trustReply = nil; trust = nil; reply?.resume(returning: accepted && canAccess()) }
-    func answerConflict(_ choice: ConflictChoice) {
-        let reply = conflictReply; conflictReply = nil; conflict = nil
-        reply?.resume(returning: canAccess() ? choice : .cancel)
+    func answerTrust(_ accepted: Bool, requestID: UUID? = nil) {
+        if let requestID, trust?.id != requestID { return }
+        let reply = trustReply; trustReply = nil; trust = nil
+        reply?.resume(returning: accepted && canAccess())
+    }
+    func answerConflict(_ choice: ConflictChoice, requestID: UUID? = nil) {
+        guard case .awaitingDecision(let decision) = batch.phase,
+              requestID == nil || requestID == decision.prompt.id else { return }
+        let current = operation == decision.job && connectionIsCurrent && canAccess() &&
+            batch.items.contains { $0.id == decision.item && $0.outcome == .transferring &&
+                (try? DirectFilesPolicy.child($0.name, of: $0.folder)) == decision.destination }
+        batch.phase = .running(decision.job)
+        decision.reply.resume(returning: current ? choice : .cancel)
     }
     func browse(_ path: String) {
-        guard phase == .ready, !busy, let store, canAccess() else { return }
+        guard phase == .ready, connectionIsCurrent, !busy, let store, canAccess() else { return }
         let token = generation; operation = UUID(); let job = operation
         busy = true; message = nil; status = "Opening folder…"; armDeadline()
         work = Task {
@@ -413,7 +505,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         }
     }
     func createFolder(_ name: String) {
-        guard phase == .ready, !busy, let store, let directory, canAccess() else { return }
+        guard phase == .ready, connectionIsCurrent, !busy, let store, let directory, canAccess() else { return }
         do {
             let path = try DirectFilesPolicy.child(name, of: directory.path)
             let token = generation; operation = UUID(); let job = operation
@@ -453,52 +545,55 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         if let temporaryRoot { DirectFilesLocalStore.removeStaged(removing, in: temporaryRoot) }
     }
     func upload(_ urls: [URL], to folder: String) {
-        guard phase == .ready, !busy, canAccess(), (1...DirectFilesPolicy.maximumBatch).contains(urls.count), DirectFilesPolicy.validPath(folder) else { return }
+        guard phase == .ready, connectionIsCurrent, !busy, canAccess(), (1...DirectFilesPolicy.maximumBatch).contains(urls.count), DirectFilesPolicy.validPath(folder) else { return }
         guard beginNewBatch() else { return }
         // Transfer results now own adopted sources. Release any unadopted review.
         preparedUploads.removeAll { urls.contains($0) }
         discardPreparedUploads()
-        resultsAccount = account
-        results = urls.map { .init(source: $0, remotePath: nil, folder: folder, name: $0.lastPathComponent) }
+        batch = .init(account: account, items: urls.map { .init(source: $0, remotePath: nil, folder: folder, name: $0.lastPathComponent) })
         runTransfers()
     }
     func download(_ entry: DirectFilesEntry) {
-        guard phase == .ready, !busy, entry.kind == .file, let directory, canAccess(),
+        guard phase == .ready, connectionIsCurrent, !busy, entry.kind == .file, let directory, canAccess(),
               let path = try? DirectFilesPolicy.child(entry.name, of: directory.path) else { return }
         guard beginNewBatch() else { return }
         discardPreparedUploads()
-        resultsAccount = account
-        results = [.init(source: nil, remotePath: path, folder: directory.path, name: entry.name)]
+        batch = .init(account: account, items: [.init(source: nil, remotePath: path, folder: directory.path, name: entry.name)])
         runTransfers()
     }
     func retry(_ id: UUID) {
-        guard phase == .ready, !busy, canAccess(), let index = results.firstIndex(where: { $0.id == id && $0.outcome == .interrupted }) else { return }
+        guard phase == .ready, connectionIsCurrent, !busy, canAccess(), let index = results.firstIndex(where: { $0.id == id && $0.outcome == .interrupted }) else { return }
         guard account == resultsAccount else { message = "Reconnect as \(resultsAccount) to retry this transfer."; return }
-        results[index].outcome = .waiting; results[index].bytes = 0; results[index].message = "Waiting"; runTransfers()
+        batch.items[index].outcome = .waiting; batch.items[index].bytes = 0; batch.items[index].message = "Waiting"; runTransfers()
     }
     private func runTransfers() {
         guard let store else { return }
         let token = generation; operation = UUID(); let job = operation
+        batch.phase = .running(job)
         busy = true; message = nil; status = "Transferring"
         work = Task {
-            for index in results.indices where results[index].outcome == .waiting {
+            for index in results.indices where batch.items[index].outcome == .waiting {
                 do {
                     try check(token, job)
-                    results[index].outcome = .transferring; results[index].message = results[index].source == nil ? "Downloading" : "Uploading"; armDeadline()
+                    batch.items[index].outcome = .transferring; batch.items[index].message = batch.items[index].source == nil ? "Downloading" : "Uploading"; armDeadline()
                     let check: DirectFilesTransfer.Check = { try self.check(token, job) }
                     let progress: DirectFilesTransfer.Progress = { bytes, total in
                         guard self.generation == token, self.operation == job else { return }
-                        self.results[index].bytes = bytes; self.results[index].total = total; self.armDeadline()
+                        self.batch.items[index].bytes = bytes; self.batch.items[index].total = total; self.armDeadline()
                     }
-                    if let source = results[index].source {
-                        var name = results[index].name; var replace = false
-                        let path = try DirectFilesPolicy.child(name, of: results[index].folder)
+                    if let source = batch.items[index].source {
+                        var name = batch.items[index].name; var replace = false
+                        let path = try DirectFilesPolicy.child(name, of: batch.items[index].folder)
                         let attributes = try await store.attributes(path)
                         try check()
                         if let attrs = attributes {
                             deadline?.cancel()
-                            conflict = .init(name: name, replaceAllowed: attrs.kind == .file)
-                            let choice = await withCheckedContinuation { conflictReply = $0 }; try check()
+                            let prompt = Conflict(name: name, replaceAllowed: attrs.kind == .file)
+                            let choice = await withCheckedContinuation { reply in
+                                batch.phase = .awaitingDecision(.init(prompt: prompt, job: job,
+                                    item: batch.items[index].id, destination: path, reply: reply))
+                            }
+                            try check()
                             armDeadline()
                             switch choice {
                             case .cancel: throw CancellationError()
@@ -507,7 +602,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                                 var found = false
                                 for number in 2...1000 {
                                     let candidate = DirectFilesPolicy.duplicateName(name, number: number)
-                                    let candidatePath = try DirectFilesPolicy.child(candidate, of: results[index].folder)
+                                    let candidatePath = try DirectFilesPolicy.child(candidate, of: batch.items[index].folder)
                                     let candidateAttributes = try await store.attributes(candidatePath)
                                     try check()
                                     if candidateAttributes == nil { name = candidate; found = true; break }
@@ -515,25 +610,26 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                                 guard found else { throw DirectFilesFailure.invalidName }
                             }
                         }
-                        results[index].destinationName = name
-                        try await DirectFilesTransfer.upload(source: source, name: name, folder: results[index].folder, replace: replace,
+                        batch.items[index].destinationName = name
+                        try await DirectFilesTransfer.upload(source: source, name: name, folder: batch.items[index].folder, replace: replace,
                                                              store: store, check: check, progress: progress)
-                    } else if let path = results[index].remotePath {
-                        let target = try DirectFilesLocalStore.emptyFile(in: root(), name: results[index].name)
+                    } else if let path = batch.items[index].remotePath {
+                        let target = try DirectFilesLocalStore.emptyFile(in: root(), name: batch.items[index].name)
                         try await DirectFilesTransfer.download(path: path, to: target, store: store, check: check, progress: progress)
-                        try check(); results[index].localDownload = target
+                        try check(); batch.items[index].localDownload = target
                     }
-                    try check(); results[index].outcome = .completed
-                    results[index].message = results[index].source == nil ? "Ready to save" : "Uploaded"
+                    try check(); batch.items[index].outcome = .completed
+                    batch.items[index].message = batch.items[index].source == nil ? "Ready to save" : "Uploaded"
                 } catch {
                     guard generation == token, operation == job else { return }
-                    results[index].outcome = .interrupted; results[index].message = error is CancellationError ? "Cancelled · Retry when ready" : Self.operationMessage(error)
+                    batch.items[index].outcome = .interrupted; batch.items[index].message = error is CancellationError ? "Cancelled · Retry when ready" : Self.operationMessage(error)
                     if error is CancellationError { break }
                 }
             }
             guard generation == token, operation == job else { return }
             // Mark untouched queued files explicitly; retry never repeats completed files.
-            for index in results.indices where results[index].outcome == .waiting { results[index].outcome = .interrupted; results[index].message = "Not transferred" }
+            for index in results.indices where batch.items[index].outcome == .waiting { batch.items[index].outcome = .interrupted; batch.items[index].message = "Not transferred" }
+            batch.phase = .settled
             deadline?.cancel(); busy = false; status = "Ready"
             if let path = directory?.path { browse(path) }
         }
@@ -551,8 +647,8 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     }
     func markSaved(_ id: UUID) {
         guard canAccess(), let index = results.firstIndex(where: { $0.id == id }) else { return }
-        results[index].saved = true
-        results[index].message = "Saved"
+        batch.items[index].saved = true
+        batch.items[index].message = "Saved"
     }
     private func beginNewBatch() -> Bool {
         guard !hasPendingResults else { message = DirectFilesFailure.pendingTransfers.localizedDescription; return false }
@@ -571,7 +667,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                 }
             }
         }
-        results = []; resultsAccount = ""; message = nil
+        batch = .init(); message = nil
     }
     @discardableResult func confirmExit(_ intent: DirectFilesExitIntent, retainWhenDismissed: Bool) -> Bool {
         if intent == .close && !retainWhenDismissed {
@@ -588,14 +684,16 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         disconnect(message: message)
     }
     func disconnect(message: String? = nil) {
-        if establishedIndependentLogin { loginDraft.passwordSessionEnded() }
-        retire(); phase = .interrupted; status = "Sign In Required"; self.message = message
-        for index in results.indices where results[index].outcome == .waiting || results[index].outcome == .transferring {
-            results[index].outcome = .interrupted; results[index].message = "Interrupted · Reconnect, then Retry. A temporary upload file may remain on the Mac."
+        if case .ready(let connection) = connectionState, case .independent = connection.authority {
+            loginDraft.passwordSessionEnded()
+        }
+        retire(); status = "Sign In Required"; self.message = message
+        for index in results.indices where batch.items[index].outcome == .waiting || batch.items[index].outcome == .transferring {
+            batch.items[index].outcome = .interrupted; batch.items[index].message = "Interrupted · Reconnect, then Retry. A temporary upload file may remain on the Mac."
         }
     }
     private func retire() {
-        establishedIndependentLogin = false
+        if !closed { connectionState = .interrupted(account: account) }
         connectionRecovery = nil
         #if os(iOS)
         let pendingWork = work
@@ -604,12 +702,12 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         work?.cancel(); work = nil; stageWork?.cancel(); stageWork = nil
         discardPreparedUploads()
         let trust = trustReply; trustReply = nil; self.trust = nil; trust?.resume(returning: false)
-        let conflict = conflictReply; conflictReply = nil; self.conflict = nil; conflict?.resume(returning: .cancel)
+        if case .awaitingDecision(let decision) = batch.phase { decision.reply.resume(returning: .cancel) }
+        if transferActive { batch.phase = .settled }
         socket?.cancel(); socket = nil
         #if os(iOS)
         let lease = connectionLease; connectionLease = nil
         #endif
-        borrowedGeneration = nil; borrowedIsCurrent = nil
         let sftp = (store as? DirectFilesSFTPStore)?.client
         if sftp == nil { store?.close() }
         store = nil
@@ -626,12 +724,12 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         busy = false
     }
     func close() {
-        closed = true
+        connectionState = .closed
         loginDraft.invalidate()
         backgroundObserver = nil
         removalObserver = nil
         disconnect()
-        directory = nil; results = []; resultsAccount = ""; account = ""; home = ""
+        directory = nil; batch = .init(); home = ""
         if let temporaryRoot { try? FileManager.default.removeItem(at: temporaryRoot) }; temporaryRoot = nil
     }
     func endTemporarySession() {
