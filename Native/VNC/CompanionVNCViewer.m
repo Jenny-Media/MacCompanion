@@ -31,6 +31,81 @@
 }
 @end
 
+// One object owns the mode intent. An RFB owner and verification generation
+// distinguish each connection attempt within it.
+@interface CompanionVNCDisplayHandoff : NSObject
+@property CompanionVNCDisplayHandoffPhase phase;
+@property NSInteger targetPreset, previousPreset;
+@property BOOL fullRestart;
+@property NSUInteger attempts, outcome, cleanupRemaining, recoveryAttempts;
+@property NSMutableArray<NSNumber *> *observedLayouts;
+@property NSUInteger verificationGeneration;
+@property NSNumber *verificationDeadline;
+@property(nonatomic, readonly) BOOL active, requiresCleanup, retryScheduled, resizeRequested, verificationTimed;
+@property(nonatomic, readonly) NSNumber *failedPreset;
+- (void)prepareReplacement;
+- (void)retireVerification;
+- (void)finishWithOutcome:(NSUInteger)outcome;
+@end
+
+@implementation CompanionVNCDisplayHandoff
+- (instancetype)init {
+    if ((self = [super init])) _observedLayouts = [NSMutableArray new];
+    return self;
+}
+- (BOOL)active {
+    switch (self.phase) {
+        case CompanionVNCDisplayHandoffPhaseConnecting:
+        case CompanionVNCDisplayHandoffPhaseWaitingForCleanup:
+        case CompanionVNCDisplayHandoffPhaseVerifying:
+        case CompanionVNCDisplayHandoffPhaseWaitingForResize:
+        case CompanionVNCDisplayHandoffPhaseRetryScheduled:
+            return YES;
+        case CompanionVNCDisplayHandoffPhaseIdle:
+        case CompanionVNCDisplayHandoffPhaseFailed:
+        case CompanionVNCDisplayHandoffPhaseCompleted:
+            return NO;
+    }
+    return NO;
+}
+- (BOOL)requiresCleanup { return self.phase == CompanionVNCDisplayHandoffPhaseWaitingForCleanup; }
+- (BOOL)retryScheduled { return self.phase == CompanionVNCDisplayHandoffPhaseRetryScheduled; }
+- (BOOL)resizeRequested { return self.phase == CompanionVNCDisplayHandoffPhaseWaitingForResize; }
+- (BOOL)verificationTimed { return self.verificationDeadline != nil; }
+- (NSNumber *)failedPreset { return self.phase == CompanionVNCDisplayHandoffPhaseFailed ? @(self.targetPreset) : nil; }
+- (void)retireVerification {
+    self.verificationDeadline = nil;
+    self.verificationGeneration++;
+}
+- (void)prepareReplacement {
+    [self retireVerification];
+    if (!self.active) return;
+    self.attempts++;
+    if (!self.requiresCleanup) self.phase = CompanionVNCDisplayHandoffPhaseConnecting;
+}
+- (void)finishWithOutcome:(NSUInteger)outcome {
+    if (self.active) self.phase = outcome <= 2 ? CompanionVNCDisplayHandoffPhaseCompleted : CompanionVNCDisplayHandoffPhaseFailed;
+    self.cleanupRemaining = 0;
+    self.outcome = outcome;
+    [self retireVerification];
+}
+@end
+
+typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
+    CompanionVNCDisplayConfirmationSwitchMode,
+    CompanionVNCDisplayConfirmationInputOnly,
+};
+
+@interface CompanionVNCDisplayConfirmation : NSObject
+@property CompanionVNCDisplayConfirmationKind kind;
+@property NSInteger targetPreset;
+@property(nonatomic, weak) CompanionVNCSession *owner;
+@property(nonatomic, weak) UIAlertController *alert;
+@end
+
+@implementation CompanionVNCDisplayConfirmation
+@end
+
 @interface CompanionVNCViewer () <UIScrollViewDelegate, UITextViewDelegate, UIGestureRecognizerDelegate>
 
 @property UITextField *host, *username, *password;
@@ -89,17 +164,9 @@
 @property BOOL desktopSizeRestored;
 @property NSInteger pendingDesktopSizePreset;
 @property NSNumber *pendingStreamDisplayID;
-@property BOOL changingDisplayMode, mirrorRestartScheduled, mirrorRequiresCleanup, mirrorFullRestartUsed;
-@property NSUInteger mirrorRestoreAttempts, mirrorRestoreOutcome, mirrorCleanupRemaining;
-@property NSInteger modeTargetPreset, modePreviousPreset, lateDesktopSizePreset;
-@property NSUInteger modeRecoveryAttempts;
-@property BOOL modeResizeRequested, modeVerificationTimed;
-@property NSUInteger modeVerificationGeneration;
-@property NSNumber *failedDisplayModePreset, *modeConfirmationPreset;
-@property BOOL inputOnlyConfirmationPending;
-@property(weak) CompanionVNCSession *modeConfirmationOwner;
-@property(weak) UIAlertController *modeConfirmationAlert;
-@property NSMutableArray<NSNumber *> *mirrorObservedLayouts;
+@property CompanionVNCDisplayHandoff *displayHandoff;
+@property NSInteger lateDesktopSizePreset;
+@property CompanionVNCDisplayConfirmation *displayConfirmation;
 @property BOOL restoringStreamViewport;
 @property BOOL immersiveChrome;
 @property CGPoint trackpadTranslation;
@@ -185,6 +252,7 @@
 - (BOOL)sessionKeyInputAvailable;
 - (BOOL)remotePointerInputAvailable;
 - (void)retireSessionMenu;
+- (BOOL)acceptDisplayModeConfirmation:(CompanionVNCDisplayConfirmation *)confirmation;
 @end
 
 @implementation CompanionVNCViewer
@@ -192,7 +260,10 @@
     return self.immersiveChrome || self.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark ? UIStatusBarStyleLightContent : UIStatusBarStyleDarkContent;
 }
 - (instancetype)initWithNibName:(NSString *)nibNameOrNil bundle:(NSBundle *)nibBundleOrNil {
-    if ((self = [super initWithNibName:nibNameOrNil bundle:nibBundleOrNil])) { _followCursorEnabled = YES; _scrollSpeed = 1; _showsTouchPoints = YES; _trackpadHapticsEnabled = YES; }
+    if ((self = [super initWithNibName:nibNameOrNil bundle:nibBundleOrNil])) {
+        _displayHandoff = [CompanionVNCDisplayHandoff new];
+        _followCursorEnabled = YES; _scrollSpeed = 1; _showsTouchPoints = YES; _trackpadHapticsEnabled = YES;
+    }
     return self;
 }
 - (void)setDisplayLayout:(NSDictionary *)displayLayout {
@@ -569,29 +640,30 @@
     if (self.password.text.length && !self.preventsAutomaticConnection) dispatch_async(dispatch_get_main_queue(), ^{ [weak start]; });
 }
 - (NSString *)connectionProgressMessage {
-    if (self.changingDisplayMode && self.mirrorFullRestartUsed) return @"Switching display mode…";
+    if (self.displayHandoff.active && self.displayHandoff.fullRestart) return @"Switching display mode…";
     return self.inputOnly ? @"Connecting to Trackpad & Keyboard…" : @"Connecting to Screen Sharing…";
 }
-- (NSTimeInterval)mirrorRetirementDelay { return self.changingDisplayMode && self.mirrorRequiresCleanup ? 16 : 0; }
+- (NSTimeInterval)mirrorRetirementDelay { return self.displayHandoff.requiresCleanup ? 16 : 0; }
 - (BOOL)connectionForegroundAvailable { return self.foreground && !self.inputInactive && !self.exited; }
 - (void)showMirrorCleanupRemaining:(NSUInteger)seconds {
-    if (!self.changingDisplayMode || !self.starting || !self.connectionForegroundAvailable) return;
-    self.mirrorCleanupRemaining = seconds; self.statusGeneration++;
+    if (!self.displayHandoff.requiresCleanup || !self.starting || !self.connectionForegroundAvailable) return;
+    self.displayHandoff.cleanupRemaining = seconds; self.statusGeneration++;
     NSString *message = @"Switching display mode…";
     self.progressLabel.text = message; self.status.text = message; self.status.hidden = NO;
     [self updateConnectionChrome]; [self reportDiagnostics:self.latestCounters];
 }
 - (void)finishMirrorCleanup {
-    self.mirrorRequiresCleanup = NO; self.mirrorCleanupRemaining = 0;
+    if (!self.displayHandoff.requiresCleanup) return;
+    self.displayHandoff.phase = CompanionVNCDisplayHandoffPhaseConnecting;
+    self.displayHandoff.cleanupRemaining = 0;
     [self.connectionProgress finishedRestoringDisplays];
     [self showConnectionProgress:@"Switching display mode…"];
 }
 - (void)prepareConnection {
     [self retireSessionMenu];
-    self.mirrorRestartScheduled = NO;
-    if (self.changingDisplayMode) self.mirrorRestoreAttempts++;
-    self.desktopSizeRestored = self.changingDisplayMode || self.inputOnly; self.pendingDesktopSizePreset = 0; self.pendingStreamDisplayID = nil;
-    self.lateDesktopSizePreset = 0; self.modeResizeRequested = NO; self.modeVerificationTimed = NO; self.modeVerificationGeneration++;
+    [self.displayHandoff prepareReplacement];
+    self.desktopSizeRestored = self.displayHandoff.active || self.inputOnly; self.pendingDesktopSizePreset = 0; self.pendingStreamDisplayID = nil;
+    self.lateDesktopSizePreset = 0;
     self.displaySelectionRejections = self.displaySelectionRejectMask = 0;
     self.initialDisplayApplied = NO; self.restoringStreamViewport = NO;
     self.deferredTextReviewFailure = nil;
@@ -601,7 +673,7 @@
     self.session = [CompanionVNCSession new];
     self.session.inputOnly = self.inputOnly;
     if (self.inputOnly) [self discardInputOnlyPresentation];
-    self.session.displayHandoffInputBlocked = self.changingDisplayMode;
+    self.session.displayHandoffInputBlocked = self.displayHandoff.active;
     [self clearCursor];
     self.latestCounters = @{};
     __weak CompanionVNCViewer *weak = self;
@@ -626,15 +698,15 @@
     self.session.stateHandler = ^(NSString *state, NSDictionary *stats) {
         CompanionVNCViewer *strong = weak; if (!strong || strong.session != owner) return;
         strong.latestCounters = stats;
-        if (strong.exited || strong.failedDisplayModePreset) return;
+        if (strong.exited || strong.displayHandoff.failedPreset) return;
         if (!strong.session.running) [strong retireSessionMenu];
         [strong.connectionProgress recordNativeState:state];
-        if (strong.changingDisplayMode && strong.foreground && !strong.inputInactive) [strong updateDisplayModeRestoration];
-        if (strong.mirrorRestartScheduled || strong.failedDisplayModePreset) { [strong reportDiagnostics:stats]; return; }
-        if (strong.changingDisplayMode) {
+        if (strong.displayHandoff.active && strong.foreground && !strong.inputInactive) [strong updateDisplayModeRestoration];
+        if (strong.displayHandoff.retryScheduled || strong.displayHandoff.failedPreset) { [strong reportDiagnostics:stats]; return; }
+        if (strong.displayHandoff.active) {
             if (!strong.session.running) {
                 NSInteger failure = [stats[@"failureStage"] integerValue];
-                if (strong.modeTargetPreset > 0 && failure == 102) failure = 117;
+                if (strong.displayHandoff.targetPreset > 0 && failure == 102) failure = 117;
                 [strong retireDisplayModeOwner]; [strong showConnectionFailureStage:failure];
             } else {
                 strong.status.text = @"Switching display mode…"; strong.status.hidden = NO;
@@ -644,7 +716,7 @@
         }
         if (strong.inputOnly && strong.session.established) [strong updateInputOnlyGeometry];
         BOOL running = strong.session.running, connected = [state isEqualToString:@"Connected"] && strong.session.connected
-            && (strong.inputOnly || (strong.lastFramebuffer != nil && !strong.restoreViewportPending)) && !strong.changingDisplayMode;
+            && (strong.inputOnly || (strong.lastFramebuffer != nil && !strong.restoreViewportPending)) && !strong.displayHandoff.active;
         if (!running && ![state isEqualToString:@"Disconnected"] && [stats[@"handshakeStage"] integerValue] >= 5) {
             // Session counters contain only bounded numeric aggregates/geometry.
             // Keep one failure across replacement owners, before teardown clears it.
@@ -705,11 +777,11 @@
     NSMutableDictionary *diagnostics = [stats mutableCopy] ?: [NSMutableDictionary new];
     [diagnostics addEntriesFromDictionary:self.session.diagnosticCounters ?: @{}];
     diagnostics[@"cursorPresentation"] = [self cursorDiagnosticFlags];
-    diagnostics[@"mirrorHandoff"] = @{@"attempts":@(self.mirrorRestoreAttempts), @"outcome":@(self.mirrorRestoreOutcome),
-        @"awaitingPhysical":@(self.changingDisplayMode), @"retryScheduled":@(self.mirrorRestartScheduled),
-        @"fullRestartUsed":@(self.mirrorFullRestartUsed), @"cleanupRequired":@(self.mirrorRequiresCleanup),
-        @"cleanupRemainingSeconds":@(self.mirrorCleanupRemaining), @"observedVirtual":self.mirrorObservedLayouts ?: @[],
-        @"targetPreset":@(self.modeTargetPreset), @"recoveryAttempts":@(self.modeRecoveryAttempts), @"resizeRequested":@(self.modeResizeRequested)};
+    diagnostics[@"mirrorHandoff"] = @{@"attempts":@(self.displayHandoff.attempts), @"outcome":@(self.displayHandoff.outcome),
+        @"awaitingPhysical":@(self.displayHandoff.active), @"retryScheduled":@(self.displayHandoff.retryScheduled),
+        @"fullRestartUsed":@(self.displayHandoff.fullRestart), @"cleanupRequired":@(self.displayHandoff.requiresCleanup),
+        @"cleanupRemainingSeconds":@(self.displayHandoff.cleanupRemaining), @"observedVirtual":self.displayHandoff.observedLayouts ?: @[],
+        @"targetPreset":@(self.displayHandoff.targetPreset), @"recoveryAttempts":@(self.displayHandoff.recoveryAttempts), @"resizeRequested":@(self.displayHandoff.resizeRequested)};
     if (self.lastConnectionFailure) diagnostics[@"lastConnectionFailure"] = self.lastConnectionFailure;
     diagnostics[@"diagnosticWrites"] = @(++self.diagnosticWrites);
     diagnostics[@"viewer"] = @{@"canvasWidth": @(self.canvas.bounds.size.width), @"canvasHeight": @(self.canvas.bounds.size.height),
@@ -744,12 +816,9 @@
         [self finishCredentialSession]; self.login.hidden = NO; self.starting = NO; [self updateConnectionChrome]; return;
     }
     if (!resuming) {
-        self.changingDisplayMode = !self.inputOnly;
-        self.modeTargetPreset = self.modePreviousPreset = self.restoredDesktopSizePreset;
-        self.modeRecoveryAttempts = 0; self.modeResizeRequested = NO; self.failedDisplayModePreset = nil;
-        self.mirrorRestoreAttempts = 0; self.mirrorRestoreOutcome = 0; self.mirrorRestartScheduled = NO;
-        self.mirrorRequiresCleanup = self.mirrorFullRestartUsed = NO; self.mirrorCleanupRemaining = 0;
-        self.mirrorObservedLayouts = [NSMutableArray new];
+        self.displayHandoff = [CompanionVNCDisplayHandoff new];
+        self.displayHandoff.targetPreset = self.displayHandoff.previousPreset = self.restoredDesktopSizePreset;
+        if (!self.inputOnly) self.displayHandoff.phase = CompanionVNCDisplayHandoffPhaseConnecting;
     }
     [self invalidateTextReview:NO]; self.textReviewViewportPending=NO; self.deferredTextReviewFailure=nil;
     [self retireTextDraft];
@@ -758,7 +827,7 @@
     if (self.inputOnly) { self.restoreViewportPending = self.awaitingReplacementLayout = NO; self.pendingRestorationFrame = nil; }
     self.starting = YES; self.exited = NO;
     [self.connectionProgress beginWaitingForDisplays:self.mirrorRetirementDelay > 0];
-    if (self.lastFramebuffer) [self scheduleResumeIndicator:self.changingDisplayMode && self.mirrorFullRestartUsed ? @"Switching display mode…" : @"Reconnecting…"];
+    if (self.lastFramebuffer) [self scheduleResumeIndicator:self.displayHandoff.active && self.displayHandoff.fullRestart ? @"Switching display mode…" : @"Reconnecting…"];
     if (self.sessionPhaseHandler) self.sessionPhaseHandler(@"reconnecting");
     [self.view endEditing:YES]; [self.loginScroll endEditing:YES]; self.status.text = [self connectionProgressMessage];
     self.connect.enabled = NO; self.progressLabel.text = @"Contacting Mac…"; self.status.hidden = YES; [self updateConnectionChrome];
@@ -767,7 +836,7 @@
 - (void)connectionAction {
     if (!self.session.running && !self.starting) {
         if (self.recoveryStage == 112) [self showRecoveryVerification];
-        else if (self.failedDisplayModePreset) [self restartDisplayModePreset:self.failedDisplayModePreset.integerValue];
+        else if (self.displayHandoff.failedPreset) [self restartDisplayModePreset:self.displayHandoff.failedPreset.integerValue];
         else [self start];
     }
 }
@@ -813,9 +882,8 @@
 }
 - (void)stopViewer {
     [self retireSessionMenu];
-    [self cancelDisplayModeConfirmation]; self.failedDisplayModePreset = nil;
-    self.changingDisplayMode = self.mirrorRestartScheduled = self.mirrorRequiresCleanup = NO;
-    self.mirrorCleanupRemaining = 0;
+    [self cancelDisplayModeConfirmation];
+    self.displayHandoff = [CompanionVNCDisplayHandoff new];
     self.deferredTextReviewFailure = nil;
     [self.credentialState invalidate]; [self renderCredentialForm];
     self.status.hidden = YES; [self updateStatusPresentation];
@@ -895,7 +963,7 @@
     BOOL hadFrame = self.lastFramebuffer != nil;
     NSInteger port = (stage == 10 || stage == 11 || (stage >= 110 && stage <= 115)) ? self.sshPort ?: 22 : self.servicePort ?: 5900;
     UIViewController *card = [DirectRecoveryBridgeV1 desktopWithStage:stage hadFrame:hadFrame port:port textInterrupted:self.textSendInterrupted retry:^{
-        if (weak.failedDisplayModePreset) [weak restartDisplayModePreset:weak.failedDisplayModePreset.integerValue];
+        if (weak.displayHandoff.failedPreset) [weak restartDisplayModePreset:weak.displayHandoff.failedPreset.integerValue];
         else [weak start];
     } edit:^{ [weak editRecoveryLogin]; } verify:^{ [weak showRecoveryVerification]; }];
     NSString *details = [DirectRecoveryBridgeV1 desktopDetailsWithStage:stage hadFrame:hadFrame port:port];
@@ -912,28 +980,26 @@
 - (void)showConnectionProgress:(NSString *)message {
     if (!self.starting || self.exited) return;
     [self.connectionProgress recordTransportMessage:message];
-    if (self.changingDisplayMode && self.mirrorFullRestartUsed) message = @"Switching display mode…";
-    self.progressLabel.text = self.changingDisplayMode && self.mirrorFullRestartUsed ? @"Switching display mode…" : @"Connecting…";
-    if (self.changingDisplayMode) { self.statusGeneration++; self.status.text = message; self.status.hidden = NO; }
+    if (self.displayHandoff.active && self.displayHandoff.fullRestart) message = @"Switching display mode…";
+    self.progressLabel.text = self.displayHandoff.active && self.displayHandoff.fullRestart ? @"Switching display mode…" : @"Connecting…";
+    if (self.displayHandoff.active) { self.statusGeneration++; self.status.text = message; self.status.hidden = NO; }
     [self updateConnectionChrome];
 }
 - (void)showConnectionFailure { [self showConnectionFailureStage:0]; }
 - (void)showConnectionFailureStage:(NSInteger)stage {
     if (self.exited) return;
-    if (self.changingDisplayMode) {
-        self.failedDisplayModePreset = @(self.modeTargetPreset);
+    if (self.displayHandoff.active) {
         NSMutableDictionary *failure = [self.session.diagnosticCounters mutableCopy] ?: [NSMutableDictionary new];
-        failure[@"displayModeTargetPreset"] = @(self.modeTargetPreset); failure[@"displayModeFailureStage"] = @(stage);
-        failure[@"displayModeAttempts"] = @(self.mirrorRestoreAttempts); self.lastConnectionFailure = failure;
+        failure[@"displayModeTargetPreset"] = @(self.displayHandoff.targetPreset); failure[@"displayModeFailureStage"] = @(stage);
+        failure[@"displayModeAttempts"] = @(self.displayHandoff.attempts); self.lastConnectionFailure = failure;
         self.session.stateHandler = nil; self.session.frameHandler = nil; self.session.cursorHandler = nil; self.session.displayLayoutHandler = nil;
-        self.restoredDesktopSizePreset = self.modePreviousPreset; self.desktopSizeRestored = YES;
+        self.restoredDesktopSizePreset = self.displayHandoff.previousPreset; self.desktopSizeRestored = YES;
     }
-    self.changingDisplayMode = self.mirrorRestartScheduled = NO; self.mirrorCleanupRemaining = 0;
-    self.mirrorRestoreOutcome = stage == 116 ? 3 : stage == 117 ? 5 : 4;
+    [self.displayHandoff finishWithOutcome:stage == 116 ? 3 : stage == 117 ? 5 : 4];
     UIApplication.sharedApplication.idleTimerDisabled = NO;
     BOOL rejectedLoginOrTrust = [@[@2,@7,@8,@111,@112,@113,@115] containsObject:@(stage)];
-    BOOL retryableModeFailure = (stage >= 116 && stage <= 118) || (self.mirrorFullRestartUsed && !rejectedLoginOrTrust);
-    if (self.failedDisplayModePreset && retryableModeFailure) {
+    BOOL retryableModeFailure = (stage >= 116 && stage <= 118) || (self.displayHandoff.fullRestart && !rejectedLoginOrTrust);
+    if (self.displayHandoff.failedPreset && retryableModeFailure) {
         // Keep only the existing bounded session recovery for explicit retry.
         // Visible unremembered fields stay empty; exit/edit still invalidate it.
         [self.credentialState suspendForModeRetry]; [self renderCredentialForm];
@@ -969,11 +1035,11 @@
     self.macSaveFailureVisible = YES;
 }
 - (void)rememberViewport {
-    if (self.changingDisplayMode) {
+    if (self.displayHandoff.active) {
         self.resumeDisplayID = nil; self.resumeCropSize = CGSizeZero; self.resumeZoomRatio = 1; self.resumeCenter = CGPointMake(.5,.5); return;
     }
-    self.resumeDisplayID = self.changingDisplayMode ? nil : self.selectedDisplay[@"id"];
-    self.resumeCropSize = self.changingDisplayMode ? CGSizeZero : self.activeCrop.size;
+    self.resumeDisplayID = self.selectedDisplay[@"id"];
+    self.resumeCropSize = self.activeCrop.size;
     self.resumeZoomRatio = self.canvas.minimumZoomScale > 0 ? self.canvas.zoomScale / self.canvas.minimumZoomScale : 1;
     self.resumeCenter = CGRectIsEmpty(self.activeCrop) || CGRectIsNull(self.activeCrop) ? CGPointMake(.5, .5) : [self viewportCenter];
 }
@@ -985,7 +1051,7 @@
     if (!self.foreground || self.exited || self.inputInactive) return;
     [self retireSessionMenu];
     self.controlsCustomization = NO; self.restoresControlsKeyboard = NO;
-    self.inputInactive = YES; self.modeVerificationTimed = NO; self.modeVerificationGeneration++;
+    self.inputInactive = YES; [self.displayHandoff retireVerification];
     [self discardPendingDisplayPreferences];
     [self cancelDisplayModeConfirmation];
     [self.controls close]; [self releasePointer]; [self resetModifiers]; [self cancelTrackpadTouches];
@@ -1002,7 +1068,7 @@
     [self discardPendingDisplayPreferences];
     self.reconnectWhenReady = self.session.running || self.starting;
     [self.credentialState suspend]; [self renderCredentialForm];
-    self.modeVerificationTimed = NO; self.modeVerificationGeneration++;
+    [self.displayHandoff retireVerification];
     self.foreground = NO; self.inputInactive = YES; self.statusGeneration++; self.image.alpha = 1; self.resumeGeneration++; self.checkingResume = NO;
     self.pendingRestorationFrame = nil;
     self.status.hidden = YES; [self updateStatusPresentation];
@@ -1023,7 +1089,7 @@
     if (self.exited) return;
     if (self.foreground) {
         if (self.inputInactive) { self.inputInactive = NO; [self.session resumeInputAfterInterruption]; [self updateCursor]; [self updateTrackpadFeedback]; }
-        if (self.changingDisplayMode) [self updateDisplayModeRestoration];
+        if (self.displayHandoff.active) [self updateDisplayModeRestoration];
         [self updateRemoteKeyAvailability]; [self revealDeferredTextReviewFailure]; return;
     }
     self.foreground = YES; self.inputInactive = NO;
@@ -1122,7 +1188,7 @@
 }
 - (void)updateStatusPresentation {
     [self updateRemoteKeyAvailability];
-    BOOL busy = self.changingDisplayMode || self.checkingResume || self.starting || self.restoreViewportPending || self.pendingDesktopSizePreset != 0 || self.pendingStreamDisplayID != nil;
+    BOOL busy = self.displayHandoff.active || self.checkingResume || self.starting || self.restoreViewportPending || self.pendingDesktopSizePreset != 0 || self.pendingStreamDisplayID != nil;
     self.statusBackdrop.hidden = self.status.hidden;
     self.statusSpinner.hidden = !busy || self.status.hidden;
     if (!self.statusSpinner.hidden) [self.statusSpinner startAnimating]; else [self.statusSpinner stopAnimating];
@@ -2009,7 +2075,7 @@
             __weak typeof(self) weak = self;
             UIViewController *content = self.loginPanelContent;
             if (progress) {
-                self.loginProgressContent = [DirectConnectionBridge updateProgress:self.loginProgressContent name:self.macName ?: @"Mac" inputOnly:self.inputOnly desktopSize:self.changingDisplayMode ? self.modeTargetPreset : self.restoredDesktopSizePreset message:self.mirrorFullRestartUsed ? @"Switching display mode…" : @"Connecting…" progress:self.connectionProgress addresses:self.connectionAddresses ?: @[] sshPort:self.sshPort ?: 22 screenSharingPort:self.servicePort ?: 5900 cancel:^{ [weak showMacs]; } heightChanged:^(CGFloat height) {
+                self.loginProgressContent = [DirectConnectionBridge updateProgress:self.loginProgressContent name:self.macName ?: @"Mac" inputOnly:self.inputOnly desktopSize:self.displayHandoff.active ? self.displayHandoff.targetPreset : self.restoredDesktopSizePreset message:self.displayHandoff.fullRestart ? @"Switching display mode…" : @"Connecting…" progress:self.connectionProgress addresses:self.connectionAddresses ?: @[] sshPort:self.sshPort ?: 22 screenSharingPort:self.servicePort ?: 5900 cancel:^{ [weak showMacs]; } heightChanged:^(CGFloat height) {
                     if (weak.starting || (weak.session.running && !weak.lastFramebuffer)) {
                         weak.loginProgressHeight = height;
                         [weak.connectionPanelHost setContentHeight:height owner:weak.loginPanelOwner];
@@ -2025,7 +2091,7 @@
     [self updateTrackpadFeedback];
     BOOL verifyIdentity = self.recoveryStage == 112;
     BOOL displayFailure = self.recoveryStage >= 116 && self.recoveryStage <= 118;
-    BOOL canRetryMode = self.failedDisplayModePreset != nil && [self.credentialState loginForResume] != nil;
+    BOOL canRetryMode = self.displayHandoff.failedPreset != nil && [self.credentialState loginForResume] != nil;
     // Keep the editors mounted so they can reappear with the same state if login is needed.
     BOOL hideFields = progress || verifyIdentity || (displayFailure && canRetryMode);
     self.loginPurpose.hidden = hideFields || self.inputOnly;
@@ -2046,7 +2112,7 @@
     NSString *connectTitle = @"Connect";
     if (verifyIdentity) connectTitle = @"How to Verify";
     else if (displayFailure) connectTitle = @"Try Again";
-    else if (self.failedDisplayModePreset) connectTitle = @"Reconnect";
+    else if (self.displayHandoff.failedPreset) connectTitle = @"Reconnect";
     else if (self.recoveryController) connectTitle = @"Try Again";
     [self.connect setTitle:connectTitle forState:UIControlStateNormal];
     self.progressRow.hidden = !progress && !self.progressLabel.text.length; self.spinner.hidden = !progress;
@@ -2066,7 +2132,7 @@
     self.controls.hidden = !self.loginScroll.hidden;
     self.toolbar.hidden = !self.loginScroll.hidden || self.fullscreen || self.recoveryPanel != nil;
     self.trackpadHelp.hidden = !self.loginScroll.hidden || !self.inputOnly;
-    if (!self.loginScroll.hidden || (self.session.connected && !self.changingDisplayMode && !self.checkingResume && !self.restoreViewportPending && NSProcessInfo.processInfo.systemUptime >= self.displayNoticeUntil)) self.status.hidden = YES;
+    if (!self.loginScroll.hidden || (self.session.connected && !self.displayHandoff.active && !self.checkingResume && !self.restoreViewportPending && NSProcessInfo.processInfo.systemUptime >= self.displayNoticeUntil)) self.status.hidden = YES;
     [self updateStatusPresentation];
     [self.view setNeedsLayout];
 }
@@ -2075,7 +2141,7 @@
     if (self.presentationHandler) self.presentationHandler(value);
 }
 - (void)setInputOnly:(BOOL)value {
-    BOOL replacingDisplay = self.failedDisplayModePreset != nil || self.changingDisplayMode || self.restoreViewportPending
+    BOOL replacingDisplay = self.displayHandoff.failedPreset != nil || self.displayHandoff.active || self.restoreViewportPending
         || self.pendingDesktopSizePreset || self.pendingStreamDisplayID || (!self.session.running && self.recoveryController);
     if (value && !_inputOnly && self.isViewLoaded && replacingDisplay) {
         if (self.filesTransferActiveHandler && self.filesTransferActiveHandler()) {
@@ -2110,12 +2176,11 @@
 - (void)restartInputOnlyConnection {
     if (!self.connectionForegroundAvailable || self.textReview) return;
     BOOL resumeLogin = [self.credentialState loginForResume] != nil;
-    if (self.changingDisplayMode) self.restoredDesktopSizePreset = self.modePreviousPreset;
+    if (self.displayHandoff.active) self.restoredDesktopSizePreset = self.displayHandoff.previousPreset;
     [self cancelDisplayModeConfirmation];
     [self retireDisplayModeOwner];
-    self.changingDisplayMode = self.mirrorRestartScheduled = self.mirrorRequiresCleanup = self.mirrorFullRestartUsed = NO;
-    self.failedDisplayModePreset = nil; self.pendingDesktopSizePreset = self.lateDesktopSizePreset = 0; self.pendingStreamDisplayID = nil;
-    self.mirrorCleanupRemaining = 0; self.modeVerificationTimed = NO; self.modeVerificationGeneration++;
+    self.displayHandoff = [CompanionVNCDisplayHandoff new];
+    self.pendingDesktopSizePreset = self.lateDesktopSizePreset = 0; self.pendingStreamDisplayID = nil;
     self.checkingResume = self.reconnectWhenReady = self.restoreViewportPending = self.awaitingReplacementLayout = NO;
     self.resumeGeneration++; self.statusGeneration++; self.pendingRestorationFrame = nil; self.resumeDisplayID = nil;
     [self discardInputOnlyPresentation];
@@ -2427,7 +2492,7 @@
     }];
 }
 - (BOOL)canCopyScreenText {
-    return self.foreground && !self.exited && !self.inputInactive && !self.changingDisplayMode && !self.restoreViewportPending && !self.checkingResume && !self.inputOnly && !self.textReview
+    return self.foreground && !self.exited && !self.inputInactive && !self.displayHandoff.active && !self.restoreViewportPending && !self.checkingResume && !self.inputOnly && !self.textReview
         && self.session.desktopFrameReady && self.lastFramebuffer && !CGRectIsNull(self.activeCrop)
         && !CGRectIsEmpty(self.activeCrop) && self.activeCrop.size.width*self.activeCrop.size.height <= 32*1024*1024;
 }
@@ -2485,7 +2550,7 @@
 }
 - (BOOL)displayChangeAllowed {
     return self.foreground && !self.exited && !self.inputInactive && !self.inputOnly && !self.textReview
-        && !self.changingDisplayMode && !self.restoreViewportPending && !self.checkingResume && !self.pendingDesktopSizePreset
+        && !self.displayHandoff.active && !self.restoreViewportPending && !self.checkingResume && !self.pendingDesktopSizePreset
         && !self.pendingStreamDisplayID && self.session.desktopSizeAvailable;
 }
 - (BOOL)applyStreamDisplay:(NSNumber *)identifier {
@@ -2498,54 +2563,62 @@
     return YES;
 }
 - (void)cancelDisplayModeConfirmation {
-    self.inputOnlyConfirmationPending = NO; self.modeConfirmationPreset = nil; self.modeConfirmationOwner = nil;
-    UIAlertController *alert = self.modeConfirmationAlert; self.modeConfirmationAlert = nil;
+    UIAlertController *alert = self.displayConfirmation.alert;
+    self.displayConfirmation = nil;
     if (alert && self.presentedViewController == alert) [alert dismissViewControllerAnimated:NO completion:nil];
+}
+- (UIAlertController *)displayConfirmation:(CompanionVNCDisplayConfirmationKind)kind preset:(NSInteger)preset
+                                     title:(NSString *)title message:(NSString *)message action:(NSString *)action {
+    [self cancelDisplayModeConfirmation];
+    CompanionVNCDisplayConfirmation *confirmation = [CompanionVNCDisplayConfirmation new];
+    confirmation.kind = kind;
+    confirmation.targetPreset = preset;
+    confirmation.owner = self.session;
+    self.displayConfirmation = confirmation;
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:message preferredStyle:UIAlertControllerStyleAlert];
+    confirmation.alert = alert;
+    __weak CompanionVNCViewer *weak = self;
+    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action) {
+        if (weak.displayConfirmation == confirmation) [weak cancelDisplayModeConfirmation];
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:action style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        [weak acceptDisplayModeConfirmation:confirmation];
+    }]];
+    return alert;
 }
 - (UIAlertController *)inputOnlyConfirmation {
     if (!self.connectionForegroundAvailable || self.inputOnly || self.textReview) return nil;
-    [self cancelDisplayModeConfirmation];
-    self.inputOnlyConfirmationPending = YES; self.modeConfirmationOwner = self.session;
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Use Trackpad & Keyboard?"
-        message:@"File transfers using this connection will stop." preferredStyle:UIAlertControllerStyleAlert];
-    __weak CompanionVNCViewer *weak = self;
-    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action){ [weak cancelDisplayModeConfirmation]; }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Continue" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){ [weak acceptDisplayModeConfirmation]; }]];
-    self.modeConfirmationAlert = alert; return alert;
+    return [self displayConfirmation:CompanionVNCDisplayConfirmationInputOnly preset:0 title:@"Use Trackpad & Keyboard?"
+                             message:@"File transfers using this connection will stop." action:@"Continue"];
 }
 - (UIAlertController *)displayModeConfirmationForPreset:(NSInteger)preset {
-    if (preset < 0 || preset > 3 || ![self displayChangeAllowed] || self.changingDisplayMode
+    if (preset < 0 || preset > 3 || ![self displayChangeAllowed]
         || ([self.session.diagnosticCounters[@"layoutVirtual"] boolValue] == (preset > 0))) return nil;
-    [self cancelDisplayModeConfirmation];
-    self.modeConfirmationPreset = @(preset); self.modeConfirmationOwner = self.session;
     BOOL filesActive = self.filesTransferActiveHandler && self.filesTransferActiveHandler();
     NSString *message = preset > 0 ? @"Your connection will restart. Your Mac’s screen may go dark."
         : @"Your connection will restart to show your Mac’s displays.";
     if (filesActive) message = [message stringByAppendingString:@" File transfers using this connection will stop."];
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:preset > 0 ? @"Switch to Virtual Display?" : @"Switch to Mirror Mac Screen?"
-        message:message preferredStyle:UIAlertControllerStyleAlert];
-    __weak CompanionVNCViewer *weak = self;
-    [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action){ [weak cancelDisplayModeConfirmation]; }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Switch & Reconnect" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action){ [weak acceptDisplayModeConfirmation]; }]];
-    self.modeConfirmationAlert = alert; return alert;
+    return [self displayConfirmation:CompanionVNCDisplayConfirmationSwitchMode preset:preset
+                               title:preset > 0 ? @"Switch to Virtual Display?" : @"Switch to Mirror Mac Screen?"
+                             message:message action:@"Switch & Reconnect"];
 }
 - (void)confirmDisplayModePreset:(NSInteger)preset {
     if (self.presentedViewController) return;
     UIAlertController *alert = [self displayModeConfirmationForPreset:preset];
     if (alert) [self presentViewController:alert animated:YES completion:nil];
 }
-- (BOOL)acceptDisplayModeConfirmation {
-    NSNumber *target = self.modeConfirmationPreset; BOOL inputOnly = self.inputOnlyConfirmationPending;
-    BOOL current = self.modeConfirmationOwner == self.session && (target != nil || inputOnly);
-    self.inputOnlyConfirmationPending = NO; self.modeConfirmationPreset = nil; self.modeConfirmationOwner = nil; self.modeConfirmationAlert = nil;
-    if (!current) return NO;
-    if (inputOnly) {
+- (BOOL)acceptDisplayModeConfirmation:(CompanionVNCDisplayConfirmation *)confirmation {
+    if (!confirmation || self.displayConfirmation != confirmation) return NO;
+    self.displayConfirmation = nil;
+    if (!confirmation.owner || confirmation.owner != self.session) return NO;
+    if (confirmation.kind == CompanionVNCDisplayConfirmationInputOnly) {
         if (!self.connectionForegroundAvailable || self.inputOnly || self.textReview) return NO;
         [self restartInputOnlyConnection]; [self.keyFeedback feedback:@"selection"]; return YES;
     }
+    NSInteger target = confirmation.targetPreset;
     if (![self displayChangeAllowed]) return NO;
-    BOOL changed = [self.session.diagnosticCounters[@"layoutVirtual"] boolValue] != (target.integerValue > 0);
-    BOOL accepted = [self restartDisplayModePreset:target.integerValue];
+    BOOL changed = [self.session.diagnosticCounters[@"layoutVirtual"] boolValue] != (target > 0);
+    BOOL accepted = [self restartDisplayModePreset:target];
     if (accepted && changed) [self.keyFeedback feedback:@"selection"];
     return accepted;
 }
@@ -2559,23 +2632,23 @@
 }
 - (BOOL)restartDisplayModePreset:(NSInteger)preset {
     if (preset < 0 || preset > 3 || !self.connectionForegroundAvailable || self.inputOnly || self.textReview) return NO;
-    if (!self.failedDisplayModePreset && ![self displayChangeAllowed]) return NO;
-    if (!self.failedDisplayModePreset && [self.session.diagnosticCounters[@"layoutVirtual"] boolValue] == (preset > 0)) return YES;
+    if (!self.displayHandoff.failedPreset && ![self displayChangeAllowed]) return NO;
+    if (!self.displayHandoff.failedPreset && [self.session.diagnosticCounters[@"layoutVirtual"] boolValue] == (preset > 0)) return YES;
     BOOL wasVirtual = [self.session.diagnosticCounters[@"layoutVirtual"] boolValue]
-        || (preset == 0 && self.failedDisplayModePreset != nil);
+        || (preset == 0 && self.displayHandoff.failedPreset != nil);
     if (![self.credentialState loginForResume]) {
         [self.credentialState editWithUsername:self.username.text ?: @"" password:self.password.text ?: @"" remember:self.remember.on];
         if (!self.credentialState.username.length || !self.credentialState.password.length) { [self showInvalidLogin]; return NO; }
         [self.credentialState beginLogin];
     }
-    self.modePreviousPreset = self.restoredDesktopSizePreset; self.modeTargetPreset = preset;
+    self.displayHandoff = [CompanionVNCDisplayHandoff new];
+    self.displayHandoff.previousPreset = self.restoredDesktopSizePreset;
+    self.displayHandoff.targetPreset = preset;
+    self.displayHandoff.fullRestart = YES;
+    self.displayHandoff.phase = preset == 0 && wasVirtual
+        ? CompanionVNCDisplayHandoffPhaseWaitingForCleanup : CompanionVNCDisplayHandoffPhaseConnecting;
     self.restoredDesktopSizePreset = preset; // Draft; persistence waits for verified pixels.
-    self.desktopSizeRestored = YES; self.changingDisplayMode = YES;
-    self.mirrorRequiresCleanup = preset == 0 && wasVirtual; self.mirrorFullRestartUsed = YES;
-    self.modeRecoveryAttempts = 0; self.modeResizeRequested = NO;
-    self.mirrorRestoreAttempts = self.mirrorRestoreOutcome = self.mirrorCleanupRemaining = 0;
-    self.mirrorObservedLayouts = [NSMutableArray new]; self.mirrorRestartScheduled = NO;
-    self.failedDisplayModePreset = nil; self.pendingDesktopSizePreset = 0; self.pendingStreamDisplayID = nil;
+    self.desktopSizeRestored = YES; self.pendingDesktopSizePreset = 0; self.pendingStreamDisplayID = nil;
     self.session.displayHandoffInputBlocked = YES;
     [self retireDisplayModeOwner];
     self.selectedDisplay = nil; self.displayViews = @[]; self.displayLayout = nil; self.displayAspect = 0;
@@ -2585,33 +2658,37 @@
 }
 - (BOOL)applyMirrorDisplay { return [self restartDisplayModePreset:0]; }
 - (void)completeDisplayModeVerified:(BOOL)verified {
-    NSInteger target = self.modeTargetPreset;
-    self.changingDisplayMode = self.mirrorRequiresCleanup = NO; self.mirrorCleanupRemaining = 0;
-    self.mirrorRestoreOutcome = verified ? 2 : 1; self.desktopSizeRestored = YES;
+    if (!self.displayHandoff.active) return;
+    NSInteger target = self.displayHandoff.targetPreset;
+    [self.displayHandoff finishWithOutcome:verified ? 2 : 1];
+    self.desktopSizeRestored = YES;
     self.session.displayHandoffInputBlocked = NO; self.statusGeneration++;
-    self.failedDisplayModePreset = nil;
     if (verified) [self retainDesktopSizePreset:target];
     if (target == 0) [self restoreSavedDisplay];
 }
 - (void)expireDisplayModeVerification:(CompanionVNCSession *)owner generation:(NSUInteger)generation {
-    if (self.session != owner || self.modeVerificationGeneration != generation
-        || !self.changingDisplayMode || !self.connectionForegroundAvailable) return;
-    NSInteger failure = self.modeTargetPreset > 0 ? 117 : 118;
+    if (self.session != owner || ![self.displayHandoff.verificationDeadline isEqual:@(generation)]
+        || !self.displayHandoff.active || !self.connectionForegroundAvailable) return;
+    NSInteger failure = self.displayHandoff.targetPreset > 0 ? 117 : 118;
     [self retireDisplayModeOwner]; [self showConnectionFailureStage:failure]; [self reportDiagnostics:self.latestCounters];
 }
 - (void)armDisplayModeVerification {
-    if (self.modeVerificationTimed || !self.session.established || !self.connectionForegroundAvailable) return;
-    self.modeVerificationTimed = YES; NSUInteger generation = ++self.modeVerificationGeneration;
+    CompanionVNCDisplayHandoff *handoff = self.displayHandoff;
+    if (handoff.verificationTimed || !self.session.established || !self.connectionForegroundAvailable) return;
+    if (handoff.phase == CompanionVNCDisplayHandoffPhaseConnecting) handoff.phase = CompanionVNCDisplayHandoffPhaseVerifying;
+    NSUInteger generation = ++handoff.verificationGeneration;
+    handoff.verificationDeadline = @(generation);
     __weak CompanionVNCViewer *weak = self; __weak CompanionVNCSession *owner = self.session;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 40 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        [weak expireDisplayModeVerification:owner generation:generation];
+        if (weak.displayHandoff == handoff) [weak expireDisplayModeVerification:owner generation:generation];
     });
 }
 - (void)updateDisplayModeRestoration {
-    if (!self.changingDisplayMode || self.mirrorRestartScheduled || !self.connectionForegroundAvailable) return;
+    CompanionVNCDisplayHandoff *handoff = self.displayHandoff;
+    if (!handoff.active || handoff.requiresCleanup || handoff.retryScheduled || !self.connectionForegroundAvailable) return;
     [self armDisplayModeVerification];
     NSDictionary *stats = self.session.diagnosticCounters;
-    if (self.modeTargetPreset > 0 && self.modeResizeRequested
+    if (self.displayHandoff.targetPreset > 0 && self.displayHandoff.resizeRequested
         && ([stats[@"probeOutcome"] integerValue] == 3 || [stats[@"probeOutcome"] integerValue] == 4)) {
         [self retireDisplayModeOwner]; [self showConnectionFailureStage:117]; [self reportDiagnostics:stats]; return;
     }
@@ -2620,12 +2697,14 @@
     if ([stats[@"layoutCount"] unsignedIntegerValue] == 0) {
         // Initial legacy connections keep their ordinary behavior. A mode change
         // on a previously validated Apple host must wait for its new metadata.
-        if (!self.mirrorFullRestartUsed && ![stats[@"appleDisplayProtocol"] boolValue]) [self completeDisplayModeVerified:NO];
+        if (!self.displayHandoff.fullRestart && ![stats[@"appleDisplayProtocol"] boolValue]) [self completeDisplayModeVerified:NO];
         return;
     }
-    if (self.modeTargetPreset > 0) {
-        if ([self desktopSizeMatchesPreset:self.modeTargetPreset]) { [self completeDisplayModeVerified:YES]; return; }
-        if (!self.modeResizeRequested) self.modeResizeRequested = [self.session requestDesktopSizePresetForHandoff:self.modeTargetPreset];
+    if (self.displayHandoff.targetPreset > 0) {
+        if ([self desktopSizeMatchesPreset:self.displayHandoff.targetPreset]) { [self completeDisplayModeVerified:YES]; return; }
+        if (!handoff.resizeRequested && [self.session requestDesktopSizePresetForHandoff:handoff.targetPreset]) {
+            handoff.phase = CompanionVNCDisplayHandoffPhaseWaitingForResize;
+        }
         return;
     }
     if (!virtual) {
@@ -2633,20 +2712,22 @@
         if (width <= 0 || height <= 0 || width != [stats[@"framebufferWidth"] integerValue]
             || height != [stats[@"framebufferHeight"] integerValue]) return;
     }
-    [self.mirrorObservedLayouts addObject:@(virtual)];
+    [self.displayHandoff.observedLayouts addObject:@(virtual)];
     if (!virtual) { [self completeDisplayModeVerified:YES]; return; }
     self.checkingResume = NO; self.resumeGeneration++;
-    self.mirrorRestartScheduled = YES; self.starting = YES;
+    handoff.phase = CompanionVNCDisplayHandoffPhaseRetryScheduled; self.starting = YES;
     CompanionVNCSession *owner = self.session; __weak CompanionVNCViewer *weak = self;
-    BOOL exhausted = self.modeRecoveryAttempts >= 1;
+    BOOL exhausted = self.displayHandoff.recoveryAttempts >= 1;
     dispatch_async(dispatch_get_main_queue(), ^{
         CompanionVNCViewer *strong = weak;
-        if (!strong || strong.session != owner || strong.exited || !strong.changingDisplayMode) return;
-        strong.mirrorRestartScheduled = NO;
+        if (!strong || strong.session != owner || strong.exited || strong.displayHandoff != handoff || !handoff.retryScheduled) return;
+        handoff.phase = CompanionVNCDisplayHandoffPhaseVerifying;
         if (!strong.connectionForegroundAvailable) return;
         [strong retireDisplayModeOwner];
         if (exhausted) { [strong showConnectionFailureStage:116]; [strong reportDiagnostics:strong.latestCounters]; return; }
-        strong.modeRecoveryAttempts++; strong.mirrorRequiresCleanup = strong.mirrorFullRestartUsed = YES;
+        handoff.recoveryAttempts++;
+        handoff.fullRestart = YES;
+        handoff.phase = CompanionVNCDisplayHandoffPhaseWaitingForCleanup;
         [strong startResuming:YES];
     });
 }
@@ -2695,7 +2776,7 @@
             [self updateStatusPresentation]; [self updateDisplayPicker];
         }
     }
-    if (self.changingDisplayMode && self.foreground && !self.inputInactive) [self updateDisplayModeRestoration];
+    if (self.displayHandoff.active && self.foreground && !self.inputInactive) [self updateDisplayModeRestoration];
     if (self.pendingDesktopSizePreset) {
         NSDictionary *stats = self.session.diagnosticCounters;
         NSInteger result = [stats[@"probeOutcome"] integerValue];
@@ -2719,7 +2800,7 @@
         }
         [self updateStatusPresentation];
     }
-    if (self.lateDesktopSizePreset && !self.changingDisplayMode && self.connectionForegroundAvailable
+    if (self.lateDesktopSizePreset && !self.displayHandoff.active && self.connectionForegroundAvailable
         && [self.session.diagnosticCounters[@"probeOutcome"] integerValue] == 2 && [self desktopSizeMatchesPreset:self.lateDesktopSizePreset]) {
         [self retainDesktopSizePreset:self.lateDesktopSizePreset]; self.lateDesktopSizePreset = 0;
         self.displayNoticeUntil = 0; self.status.hidden = YES; [self updateStatusPresentation];
@@ -2758,7 +2839,7 @@
         // The active stream can contain one monitor while the retained host
         // catalogue still offers multiple monitors and All Displays.
         NSArray *availableDisplays = sizingSupported ? catalogue[@"views"] : self.displayViews;
-        BOOL busy = !self.foreground || self.inputInactive || self.changingDisplayMode || self.restoreViewportPending || self.checkingResume
+        BOOL busy = !self.foreground || self.inputInactive || self.displayHandoff.active || self.restoreViewportPending || self.checkingResume
             || self.pendingDesktopSizePreset || self.pendingStreamDisplayID || !self.session.desktopFrameReady;
         BOOL unavailable = busy || ![self displayChangeAllowed];
         NSMutableArray *modeItems = [NSMutableArray new];
