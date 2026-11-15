@@ -401,10 +401,9 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         controller.showTextComposer()
         try await wait("second composer sheet") { controller.presentedViewController != nil }
         draft.edit("one\r\n  two\r\n"); draft.requestSend()
-        let reviewed = try XCTUnwrap(draft.confirmation)
+        let reviewed = try XCTUnwrap(draft.review)
         XCTAssertEqual(record.received, Array("中文😀".utf8), "Multiline review must send nothing")
-        // SwiftUI dismisses an alert binding before invoking its captured action.
-        draft.confirmation = nil; draft.confirmSend(reviewed); draft.requestSend()
+        draft.confirmSend(reviewed); draft.requestSend()
         var expected = Array("中文😀\u{1b}[200~one\n  two\n\u{1b}[201~".utf8)
         try await wait("bracketed UTF-8 write") { record.received == expected }
         try await wait("second composer dismisses") { controller.presentedViewController == nil }

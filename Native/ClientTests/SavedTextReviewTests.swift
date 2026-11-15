@@ -187,7 +187,7 @@ private final class SavedTextSession: CompanionVNCSession {
             try await selectSaved(f); _ = try await panel(f)
             let composer = try XCTUnwrap(f.composer)
             composer.draft.edit("first\nsecond\tvalue"); composer.draft.requestSend()
-            XCTAssertNotNil(composer.draft.confirmation); XCTAssertTrue(f.session.sent.isEmpty)
+            XCTAssertNotNil(composer.draft.review); XCTAssertTrue(f.session.sent.isEmpty)
             composer.draft.close?(); try await waitFor { f.viewer.presentedViewController == nil }
             XCTAssertTrue(f.session.sent.isEmpty); XCTAssertEqual(composer.draft.text, "first\nsecond\tvalue")
             XCTAssertEqual(try f.store.load().actions.first { $0.id == f.saved.id }?.text, f.saved.text)
