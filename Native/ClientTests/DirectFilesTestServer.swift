@@ -21,10 +21,12 @@ struct FilesDirectoryTestPlan: Decodable, Sendable {
 }
 
 final class FilesDirectoryTestProbe: Sendable {
-    private struct State { var reads = 0; var closes = 0; var authentications = 0; var childOpens = 0; var channels: [Channel] = [] }
+    private struct State { var reads = 0; var closes = 0; var authentications = 0; var keyAuthentications = 0; var childOpens = 0; var channels: [Channel] = [] }
     private let state = NIOLockedValueBox(State())
     var authentications: Int { state.withLockedValue { $0.authentications } }
     func authenticated() { state.withLockedValue { $0.authentications += 1 } }
+    var keyAuthentications: Int { state.withLockedValue { $0.keyAuthentications } }
+    func authenticatedWithKey() { state.withLockedValue { $0.keyAuthentications += 1 } }
     var reads: Int { state.withLockedValue { $0.reads } }
     var closes: Int { state.withLockedValue { $0.closes } }
     var childOpens: Int { state.withLockedValue { $0.childOpens } }
@@ -47,13 +49,24 @@ final class FilesDirectoryTestProbe: Sendable {
 
 private final class FilesDirectoryTestAuth: NIOSSHServerUserAuthenticationDelegate, Sendable {
     let probe: FilesDirectoryTestProbe
-    init(probe: FilesDirectoryTestProbe) { self.probe = probe }
-    var supportedAuthenticationMethods: NIOSSHAvailableUserAuthenticationMethods { .password }
+    let publicKey: String?
+    init(probe: FilesDirectoryTestProbe, publicKey: String?) {
+        self.probe = probe; self.publicKey = publicKey
+    }
+    var supportedAuthenticationMethods: NIOSSHAvailableUserAuthenticationMethods {
+        publicKey == nil ? .password : [.password, .publicKey]
+    }
     func requestReceived(request: NIOSSHUserAuthenticationRequest, responsePromise: EventLoopPromise<NIOSSHUserAuthenticationOutcome>) {
-        if case .password(let login) = request.request {
+        switch request.request {
+        case .password(let login):
             probe.authenticated()
             responsePromise.succeed(request.username == "synthetic" && login.password == "synthetic-only" ? .success : .failure)
-        } else { responsePromise.succeed(.failure) }
+        case .publicKey(let login):
+            probe.authenticatedWithKey()
+            responsePromise.succeed(request.username == "synthetic" && String(openSSHPublicKey: login.publicKey) == publicKey ? .success : .failure)
+        default:
+            responsePromise.succeed(.failure)
+        }
     }
 }
 
@@ -168,10 +181,11 @@ private final class FilesDirectoryTestHandler: ChannelInboundHandler, @unchecked
 
 func filesDirectoryTestServer(plan: FilesDirectoryTestPlan = .empty, probe: FilesDirectoryTestProbe,
                               responseDelay: TimeAmount = .nanoseconds(0), downloadBytes: Data? = nil,
-                              hostKey: NIOSSHPrivateKey = NIOSSHPrivateKey(ed25519Key: .init())) async throws -> Channel {
+                              hostKey: NIOSSHPrivateKey = NIOSSHPrivateKey(ed25519Key: .init()),
+                              publicKey: String? = nil) async throws -> Channel {
     return try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton).childChannelInitializer { channel in
         probe.opened(channel)
-        return channel.pipeline.addHandler(NIOSSHHandler(role: .server(.init(hostKeys: [hostKey], userAuthDelegate: FilesDirectoryTestAuth(probe: probe))),
+        return channel.pipeline.addHandler(NIOSSHHandler(role: .server(.init(hostKeys: [hostKey], userAuthDelegate: FilesDirectoryTestAuth(probe: probe, publicKey: publicKey))),
             allocator: channel.allocator, inboundChildChannelInitializer: { child, _ in
                 probe.openedChild(child)
                 return child.pipeline.addHandlers(SSHChannelDataUnwrapper(), SSHOutboundChannelDataWrapper(), FilesDirectoryTestChunks(),

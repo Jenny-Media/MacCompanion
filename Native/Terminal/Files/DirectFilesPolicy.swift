@@ -13,12 +13,26 @@ struct DirectFilesDirectory: Sendable {
     let path: String
     let entries: [DirectFilesEntry]
 }
-struct DirectFilesAttributes: Sendable {
+struct DirectFilesAttributes: Equatable, Sendable {
     let kind: DirectFilesEntry.Kind
     let size: UInt64?
+    let modificationTime: Date?
+    let permissions: UInt32?
+    let userID: UInt32?
+    let groupID: UInt32?
+
+    init(kind: DirectFilesEntry.Kind, size: UInt64?, modificationTime: Date? = nil,
+         permissions: UInt32? = nil, userID: UInt32? = nil, groupID: UInt32? = nil) {
+        self.kind = kind
+        self.size = size
+        self.modificationTime = modificationTime
+        self.permissions = permissions
+        self.userID = userID
+        self.groupID = groupID
+    }
 }
 enum DirectFilesFailure: LocalizedError {
-    case invalidName, invalidPath, notRegular, tooManyFiles, changedFile, unsupportedReplace, interrupted, unavailable, timedOut, pendingTransfers
+    case invalidName, invalidPath, notRegular, tooManyFiles, changedFile, destinationChanged, unsupportedReplace, interrupted, unavailable, timedOut, pendingTransfers
     var errorDescription: String? {
         switch self {
         case .invalidName: "Use a filename without slashes or control characters, up to 255 UTF-8 bytes."
@@ -26,6 +40,7 @@ enum DirectFilesFailure: LocalizedError {
         case .notRegular: "Choose individual files. Folder transfers, links and special files are not supported yet."
         case .tooManyFiles: "Choose up to 32 files at a time."
         case .changedFile: "The file changed during transfer. Review it and retry."
+        case .destinationChanged: "The destination changed before it could be replaced. Review it and retry."
         case .unsupportedReplace: "This server cannot safely replace files. Choose Keep Both instead."
         case .interrupted: "Transfer interrupted. Review the result before retrying."
         case .unavailable: "The Files connection is unavailable. Reconnect to continue."

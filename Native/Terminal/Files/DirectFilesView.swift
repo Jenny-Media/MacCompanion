@@ -106,7 +106,7 @@ struct DirectFilesView: View {
                         Button("Setup Guide", systemImage: "questionmark.circle") { sheet = .setup }
                         #if os(iOS)
                         if standaloneRecovery?.reason == .rejectedLogin, !session.busy, !session.macRemoved {
-                            Button("Try Again", systemImage: "arrow.clockwise", action: connectCompanion)
+                            Button("Try Again", systemImage: "arrow.clockwise") { connectCompanion() }
                                 .accessibilityIdentifier("files-retry-saved-login")
                         }
                         #endif
@@ -146,7 +146,7 @@ struct DirectFilesView: View {
                     session.answerTrust($0, requestID: trust.id)
                 }.id(trust.id).directAppearance()
             }
-            .confirmationDialog("A file named \(conflict?.name ?? "") already exists",
+            .confirmationDialog(conflict?.title ?? "Replace file?",
                 isPresented: Binding(get: { conflict != nil && session.conflict?.id == conflict?.id }, set: { shown in
                     if !shown, let conflict { Task { @MainActor in session.answerConflict(.cancel, requestID: conflict.id) } }
                 }), titleVisibility: .visible, presenting: conflict) { prompt in
@@ -206,9 +206,9 @@ struct DirectFilesView: View {
         .directAppearance()
         .task {
             #if os(iOS)
-            refreshCompanionAccounts()
+            refreshCompanionAccounts(restoreSelection: true)
             if contextProvider == nil && session.phase != .ready && !session.busy && !pro.ready { await pro.refresh() }
-            if contextProvider != nil || session.phase != .ready { connectCompanion() }
+            if contextProvider != nil || session.phase != .ready { connectCompanion(automatically: true) }
             #else
             if contextProvider != nil { connectParent() }
             else { resumeSignIn(); if !pro.ready { await pro.refresh() } }
@@ -384,7 +384,9 @@ struct DirectFilesView: View {
                         filesConnectionButton("Saved Login", symbol: "person.badge.key", identifier: "files-saved-login") { sheet = .access }
                     } else {
                         let retry = session.phase == .interrupted && session.message != nil
-                        filesConnectionButton(retry ? "Try Again" : "Open Files", symbol: retry ? "arrow.clockwise" : "folder", identifier: "files-connect", action: connectCompanion)
+                        filesConnectionButton(retry ? "Try Again" : "Open Files", symbol: retry ? "arrow.clockwise" : "folder", identifier: "files-connect") {
+                            connectCompanion()
+                        }
                     }
                 }
             }
@@ -637,16 +639,16 @@ struct DirectFilesView: View {
         refreshCompanionAccounts()
         refreshSavedLoginRequirement(previous: previous, previouslyUsedSSH: previouslyUsedSSH, current: current)
     }
-    private func refreshCompanionAccounts() {
+    private func refreshCompanionAccounts(restoreSelection: Bool = false) {
         guard contextProvider == nil, accessAllowed(), sessionAvailable(), let profile = try? DirectMacAccessStore.load(mac.id) else { return }
         hasMacLogin = profile.login != nil; hasSSHOverride = profile.sshMethod != .inherit
         if !hasMacLogin { standaloneSSH = true }
         else if !hasSSHOverride { standaloneSSH = false }
-        else if session.phase == .ready {
-            standaloneSSH = session.account != profile.login?.username
+        else if restoreSelection, let signIn = session.standaloneSignIn {
+            standaloneSSH = signIn.usesTerminalSignIn
         }
     }
-    private func connectCompanion() {
+    private func connectCompanion(automatically: Bool = false) {
         let context = contextProvider?()
         if let context, !session.account.isEmpty {
             contextBlocked = session.account != context.account
@@ -671,8 +673,16 @@ struct DirectFilesView: View {
         }
         do {
             let profile = try DirectMacAccessStore.load(mac.id)
-            let useSSH = standaloneSSH || profile.login == nil
-            switch DirectFilesSession.SavedLogin(profile: profile, useSSH: useSSH) {
+            let useSSH = profile.sshMethod != .inherit && (standaloneSSH || profile.login == nil)
+            let login = DirectFilesSession.SavedLogin(profile: profile, useSSH: useSSH)
+            if automatically, let previous = session.standaloneSignIn, login.signIn(useSSH: useSSH) != previous {
+                if session.connectionRecovery?.reason != .identityChanged {
+                    session.clearConnectionRecovery()
+                    session.message = "Your previous Files sign-in changed or is unavailable. Review Saved Login before opening Files again."
+                }
+                return
+            }
+            switch login {
             case .key(_, let account):
                 guard let key = try usableSavedKey() else {
                     session.reportConnectionRecovery(.missingLogin, message: "Choose an available SSH key in Saved Login.")

@@ -29,6 +29,10 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         let id = UUID()
         let name: String
         let replaceAllowed: Bool
+        let destinationChanged: Bool
+        var title: String {
+            destinationChanged ? "“\(name)” changed. Choose again." : "A file named \(name) already exists"
+        }
     }
     private struct PendingConflict {
         let prompt: Conflict
@@ -72,7 +76,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         let generation: UUID
         let isCurrent: @MainActor () -> Bool
     }
-    private enum CredentialSource {
+    enum CredentialSource: Equatable {
         case macPassword
         case sshPassword
         case sshKey(UUID?)
@@ -150,10 +154,25 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         connectionRecovery = nil
     }
     #if os(iOS)
+    struct SavedSignIn: Equatable {
+        let account: String
+        let source: CredentialSource
+        var usesTerminalSignIn: Bool { source != .macPassword }
+    }
+    private(set) var standaloneSignIn: SavedSignIn?
+
     enum SavedLogin: Equatable {
         case password(DirectMacAccessProfile.Password)
         case key(id: UUID, account: String)
         case missing(String)
+
+        func signIn(useSSH: Bool) -> SavedSignIn? {
+            switch self {
+            case .password(let login): .init(account: login.username, source: useSSH ? .sshPassword : .macPassword)
+            case .key(let id, let account): .init(account: account, source: .sshKey(id))
+            case .missing: nil
+            }
+        }
 
         init(profile: DirectMacAccessProfile, useSSH: Bool) {
             if useSSH && profile.sshMethod == .key {
@@ -211,7 +230,10 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         self.libraryURL = libraryURL
         self.saveLogin = saveLogin
         #if os(iOS)
-        forgetObserver = DirectMacAccessForgetObservation(macID: mac.id) { [weak self] in self?.loginDraft = .init() }
+        forgetObserver = DirectMacAccessForgetObservation(macID: mac.id) { [weak self] in
+            self?.loginDraft = .init()
+            self?.standaloneSignIn = nil
+        }
         #endif
         removalObserver = DirectMacRemovalObservation(macID: mac.id, libraryURL: libraryURL) { [weak self] in self?.removedFromLibrary() }
     }
@@ -375,6 +397,10 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         let credential: CredentialSource
         if key != nil { credential = .sshKey(keyFileID ?? namedSelection?.id) }
         else { credential = useMacLogin ? .macPassword : .sshPassword }
+        #if os(iOS)
+        // The retained Files owner outlives the presented view and its SSH channel.
+        standaloneSignIn = .init(account: username, source: credential)
+        #endif
         let connectionAttempt = Connection(account: username, authority: .independent(credential))
         connectionState = .opening(connectionAttempt)
         busy = true; message = nil; status = "Contacting Remote Login…"; armDeadline(after: .seconds(60))
@@ -566,6 +592,38 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         guard account == resultsAccount else { message = "Reconnect as \(resultsAccount) to retry this transfer."; return }
         batch.items[index].outcome = .waiting; batch.items[index].bytes = 0; batch.items[index].message = "Waiting"; runTransfers()
     }
+    private func uploadDestination(for item: ResultItem, store: any DirectFilesRemoteStore, job: UUID,
+                                   destinationChanged: Bool, check: DirectFilesTransfer.Check) async throws
+        -> (name: String, replacing: DirectFilesAttributes?) {
+        let path = try DirectFilesPolicy.child(item.name, of: item.folder)
+        let attributes = try await store.attributes(path)
+        try check()
+        guard let attributes else { return (item.name, nil) }
+
+        deadline?.cancel()
+        let prompt = Conflict(name: item.name, replaceAllowed: attributes.kind == .file, destinationChanged: destinationChanged)
+        let choice = await withCheckedContinuation { reply in
+            batch.phase = .awaitingDecision(.init(prompt: prompt, job: job, item: item.id, destination: path, reply: reply))
+        }
+        try check()
+        armDeadline()
+        switch choice {
+        case .cancel:
+            throw CancellationError()
+        case .replace:
+            guard attributes.kind == .file else { throw DirectFilesFailure.notRegular }
+            return (item.name, attributes)
+        case .keepBoth:
+            for number in 2...1000 {
+                let candidate = DirectFilesPolicy.duplicateName(item.name, number: number)
+                let path = try DirectFilesPolicy.child(candidate, of: item.folder)
+                let attributes = try await store.attributes(path)
+                try check()
+                if attributes == nil { return (candidate, nil) }
+            }
+            throw DirectFilesFailure.invalidName
+        }
+    }
     private func runTransfers() {
         guard let store else { return }
         let token = generation; operation = UUID(); let job = operation
@@ -582,37 +640,23 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                         self.batch.items[index].bytes = bytes; self.batch.items[index].total = total; self.armDeadline()
                     }
                     if let source = batch.items[index].source {
-                        var name = batch.items[index].name; var replace = false
-                        let path = try DirectFilesPolicy.child(name, of: batch.items[index].folder)
-                        let attributes = try await store.attributes(path)
-                        try check()
-                        if let attrs = attributes {
-                            deadline?.cancel()
-                            let prompt = Conflict(name: name, replaceAllowed: attrs.kind == .file)
-                            let choice = await withCheckedContinuation { reply in
-                                batch.phase = .awaitingDecision(.init(prompt: prompt, job: job,
-                                    item: batch.items[index].id, destination: path, reply: reply))
-                            }
+                        let item = batch.items[index]
+                        var destinationChanged = false
+                        while true {
+                            let destination = try await uploadDestination(for: item, store: store, job: job,
+                                                                          destinationChanged: destinationChanged, check: check)
                             try check()
-                            armDeadline()
-                            switch choice {
-                            case .cancel: throw CancellationError()
-                            case .replace: guard attrs.kind == .file else { throw DirectFilesFailure.notRegular }; replace = true
-                            case .keepBoth:
-                                var found = false
-                                for number in 2...1000 {
-                                    let candidate = DirectFilesPolicy.duplicateName(name, number: number)
-                                    let candidatePath = try DirectFilesPolicy.child(candidate, of: batch.items[index].folder)
-                                    let candidateAttributes = try await store.attributes(candidatePath)
-                                    try check()
-                                    if candidateAttributes == nil { name = candidate; found = true; break }
-                                }
-                                guard found else { throw DirectFilesFailure.invalidName }
+                            batch.items[index].destinationName = destination.name
+                            do {
+                                try await DirectFilesTransfer.upload(source: source, name: destination.name, folder: item.folder,
+                                                                     replacing: destination.replacing, store: store, check: check, progress: progress)
+                                break
+                            } catch DirectFilesFailure.destinationChanged {
+                                try check()
+                                batch.items[index].bytes = 0
+                                destinationChanged = true
                             }
                         }
-                        batch.items[index].destinationName = name
-                        try await DirectFilesTransfer.upload(source: source, name: name, folder: batch.items[index].folder, replace: replace,
-                                                             store: store, check: check, progress: progress)
                     } else if let path = batch.items[index].remotePath {
                         let target = try DirectFilesLocalStore.emptyFile(in: root(), name: batch.items[index].name)
                         try await DirectFilesTransfer.download(path: path, to: target, store: store, check: check, progress: progress)
@@ -726,6 +770,9 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     func close() {
         connectionState = .closed
         loginDraft.invalidate()
+        #if os(iOS)
+        standaloneSignIn = nil
+        #endif
         backgroundObserver = nil
         removalObserver = nil
         disconnect()

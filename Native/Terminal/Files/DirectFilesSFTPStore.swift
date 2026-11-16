@@ -9,7 +9,9 @@ import Logging
     init(client: SFTPClient) { self.client = client }
     static func attributes(_ value: SFTPFileAttributes) -> DirectFilesAttributes {
         let type = (value.permissions ?? 0) & 0o170000
-        return .init(kind: type == 0o040000 ? .folder : type == 0o100000 ? .file : .other, size: value.size)
+        return .init(kind: type == 0o040000 ? .folder : type == 0o100000 ? .file : .other, size: value.size,
+                     modificationTime: value.accessModificationTime?.modificationTime, permissions: value.permissions,
+                     userID: value.uidgid?.userId, groupID: value.uidgid?.groupId)
     }
     func directory(_ path: String) async throws -> DirectFilesDirectory {
         let canonical = try await client.getRealPath(atPath: path)
