@@ -132,7 +132,7 @@ struct TerminalControlsHarness: View {
                 .fullScreenCover(isPresented: $showingTrackpadKeyboardEditor) {
                     TerminalLayoutSheet(profile: memory.profile, destination: .keyboard, editable: true,
                         apply: { (try? memory.store.save($0)) != nil }, compactTrackpadSelection: Binding(
-                            get: { memory.profile.compactTrackpadRowID(for: dockRow) },
+                            get: { memory.profile.compactTrackpadRow(UUID(uuidString: dockRow), hasPro: pro.hasPro)?.id },
                             set: { dockRow = $0?.uuidString ?? "" }))
                 }
                 .fullScreenCover(isPresented: $showingTerminal) {

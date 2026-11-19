@@ -15,7 +15,9 @@ struct TerminalControlsSettings: View {
     @State private var paywall = false
     @State private var layout: LayoutRequest?
     @AppStorage(TerminalControlsProfile.compactTrackpadRowPreference) private var compactTrackpadRow = ""
-    private var selectedCompactTrackpadRowID: UUID? { profile.compactTrackpadRowID(for: compactTrackpadRow) }
+    private var selectedCompactTrackpadRowID: UUID? {
+        profile.compactTrackpadRow(UUID(uuidString: compactTrackpadRow), hasPro: pro.hasPro)?.id
+    }
     private var compactTrackpadSelection: Binding<UUID?> {
         Binding(
             get: { selectedCompactTrackpadRowID },
@@ -42,7 +44,7 @@ struct TerminalControlsSettings: View {
                             }.accessibilityIdentifier("terminal-edit-keyboard")
                             if store.family == .remoteMac {
                                 NavigationLink {
-                                    CompactTrackpadRowPicker(profile: profile, selection: compactTrackpadSelection)
+                                    CompactTrackpadRowPicker(profile: profile, hasPro: pro.hasPro, selection: compactTrackpadSelection)
                                 } label: {
                                     entry(CompactTrackpadRowPicker.title, summary: compactTrackpadTitle, symbol: "rectangle.split.1x2")
                                 }
@@ -151,20 +153,25 @@ struct CompactTrackpadRowPicker: View {
     static let title = "Trackpad Keys"
     static let defaultTitle = "Default Navigation Keys"
     let profile: TerminalControlsProfile
+    let hasPro: Bool
     @Binding var selection: UUID?
 
     var body: some View {
         List {
-            Section {
-                option(Self.defaultTitle, keys: RemoteMacControls.compactNavigationKeys.map(\.title), id: nil)
-            } footer: {
-                Text("These keys appear in Trackpad mode while the on-screen keyboard is closed.")
+            let rows = profile.resolvedRows.compactMap { row -> (id: UUID, keys: [TerminalBarPlacement])? in
+                let keys = profile.compactTrackpadPlacements(in: row, hasPro: hasPro)
+                return keys.isEmpty ? nil : (row.id, keys)
             }
-            let rows = profile.compactTrackpadRows
+            let selected = rows.contains { $0.id == selection } ? selection : nil
+            Section {
+                option(Self.defaultTitle, keys: RemoteMacControls.compactNavigationKeys.map(\.title), id: nil, selected: selected == nil)
+            } footer: {
+                Text("Choose the keys to show in the compact Trackpad bar.")
+            }
             if !rows.isEmpty {
                 Section {
-                    ForEach(rows) { row in
-                        option(profile.rowTitle(row.id), keys: profile.barItems(in: row).map { $0.title(in: profile) }, id: row.id)
+                    ForEach(rows, id: \.id) { row in
+                        option(profile.rowTitle(row.id), keys: profile.compactTrackpadKeyNames(row.keys), id: row.id, selected: selected == row.id)
                     }
                 } header: {
                     Text("Your Keyboard Bar")
@@ -177,9 +184,8 @@ struct CompactTrackpadRowPicker: View {
         .directInlineNavigationTitle()
     }
 
-    private func option(_ title: String, keys: [String], id: UUID?) -> some View {
-        let selected = profile.compactTrackpadRowID(for: selection?.uuidString ?? "") == id
-        return Button { selection = id } label: {
+    private func option(_ title: String, keys: [String], id: UUID?, selected: Bool) -> some View {
+        Button { selection = id } label: {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title).foregroundStyle(.primary)
@@ -251,7 +257,7 @@ struct TerminalLayoutSheet: View {
         guard editable else { dismiss(); return }
         guard apply(profile) else { failed = true; return }
         if initialTrackpadRow != draftTrackpadRow {
-            compactTrackpadSelection?.wrappedValue = profile.compactTrackpadRowID(for: draftTrackpadRow?.uuidString ?? "")
+            compactTrackpadSelection?.wrappedValue = profile.compactTrackpadRow(draftTrackpadRow, hasPro: DirectProAccess.shared.hasPro)?.id
         }
         dismiss()
     }

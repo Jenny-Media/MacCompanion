@@ -1551,6 +1551,7 @@ import UIKit
         XCTAssertTrue(essentials.exists && functions.exists)
         XCTAssertTrue(functions.label.contains("F1"))
         XCTAssertTrue(essentials.label.contains("Escape"))
+        XCTAssertFalse(essentials.label.contains("Expand Rows"))
 
         functions.tap()
         XCTAssertTrue(functions.isSelected)
@@ -1580,7 +1581,7 @@ import UIKit
         let choice = app.buttons["terminal-editor-trackpad-dock-keys"]
         let rowMenu = app.buttons["Row Options for Row 2"]
         let picker = app.buttons["trackpad-compact-row-picker"]
-        func useRowTwo() {
+        func useRowTwo(checkUndo: Bool = false) {
             XCTAssertTrue(editor.waitForExistence(timeout: 5)); editor.tap()
             XCTAssertTrue(choice.waitForExistence(timeout: 5))
             XCTAssertEqual(choice.label, "Trackpad Keys")
@@ -1589,13 +1590,21 @@ import UIKit
             let trackpadKeys = app.navigationBars["Trackpad Keys"]
             XCTAssertTrue(trackpadKeys.waitForExistence(timeout: 5))
             trackpadKeys.buttons.element(boundBy: 0).tap()
+            if checkUndo {
+                rowMenu.tap(); app.buttons["Alignment"].tap(); app.collectionViews.buttons["Right"].tap()
+            }
             rowMenu.tap()
             app.buttons["Show This Row on Trackpad"].tap()
-            XCTAssertEqual(choice.value as? String, "Shows the outlined row")
+            XCTAssertEqual(choice.value as? String, "F1 · F2 · F3 + 9 more")
             XCTAssertEqual(rowMenu.value as? String, "Shown on Trackpad")
+            if checkUndo {
+                app.buttons["terminal-row-options"].tap()
+                app.buttons["Undo Keyboard Edit"].tap()
+                XCTAssertEqual(choice.value as? String, "F1 · F2 · F3 + 9 more")
+            }
         }
 
-        useRowTwo()
+        useRowTwo(checkUndo: true)
         app.buttons["terminal-layout-cancel"].tap()
         app.buttons["Discard Changes"].tap()
         openSettings(app)

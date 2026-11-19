@@ -410,6 +410,7 @@ final class TerminalKeyScrollView: UIScrollView {
     private weak var compactRowSlot: UIStackView?
     private weak var compactPresetRow: UIView?
     private var compactRowID: UUID?
+    private var compactExcludedKeys: [UIButton] = []
     private var compactRowPlacement: (view: TerminalKeyScrollView, parent: UIStackView, index: Int)?
     private var compactConstraints: [NSLayoutConstraint] = []
     private var compactKeys: [UIButton] = []
@@ -450,6 +451,7 @@ final class TerminalKeyScrollView: UIScrollView {
     var previewRowAction: ((UUID, TerminalKeyboardRow.MenuAction) -> Void)?
     var previewOffersTrackpadDock = false
     var previewTrackpadDockRow: UUID?
+    private var eligibleTrackpadPreviewRows: Set<UUID> = []
     var previewMoveRow: ((UUID, UUID?) -> Void)?
     var previewAddPreset: ((TerminalRowPreset, UUID?) -> Void)?
     var previewAddItem: ((TerminalBarItem, UUID, TerminalBarItem?) -> Void)?
@@ -517,8 +519,9 @@ final class TerminalKeyScrollView: UIScrollView {
         }
     }
     var showsExtraRows = false { didSet { updateVisibility() } }
+    private var hasExpandableRows = false
     var expandRowsTitle: String {
-        if compactContentsVisible { return "Show Keyboard Rows" }
+        if compactContentsVisible { return TerminalControlsProfile.compactTrackpadExpandTitle }
         return showsExtraRows ? "Collapse Rows" : "Expand Rows"
     }
     var height: CGFloat {
@@ -628,7 +631,16 @@ final class TerminalKeyScrollView: UIScrollView {
     }
     func configure(_ profile: TerminalControlsProfile, compactRowID: UUID? = nil, perform: @escaping (UUID) -> Void) {
         restoreCompactRow()
-        self.compactRowID = compactRowID
+        let hasPro = DirectProAccess.shared.hasPro
+        let compactRow = profile.compactTrackpadRow(compactRowID, hasPro: hasPro)
+        let compactPlacements = compactRow.map { profile.compactTrackpadPlacements(in: $0, hasPro: hasPro) } ?? []
+        let compactPlacementIDs = Set(compactPlacements.map(\.id))
+        self.compactRowID = compactRow?.id
+        compactExcludedKeys = []
+        hasExpandableRows = profile.hasExpandableKeyboardRows
+        eligibleTrackpadPreviewRows = previewOffersTrackpadDock ? Set(profile.resolvedRows.compactMap {
+            profile.compactTrackpadPlacements(in: $0, hasPro: hasPro).isEmpty ? nil : $0.id
+        }) : []
         let positions = rowScrollViews.mapValues(\.position)
         let previousRows = profileRows
         rowScrollViews = [:]; keyboardToggles = []; keypadToggles = []; expandToggles = []
@@ -672,7 +684,7 @@ final class TerminalKeyScrollView: UIScrollView {
             }
             for placement in profile.barPlacements(in: definition) {
                 let item = placement.item
-                if item.savedID != nil, !editingPreview && !DirectProAccess.shared.hasPro { continue }
+                if item.savedID != nil, !editingPreview && !hasPro { continue }
                 let title = item.title(in: profile)
                 let savedAction = item.savedID.flatMap { id in profile.actions.first { $0.id == id } }
                 let key: UIButton
@@ -759,6 +771,9 @@ final class TerminalKeyScrollView: UIScrollView {
                 }
                 if let identifier = key.accessibilityIdentifier, !usedIdentifiers.insert(identifier).inserted { key.accessibilityIdentifier = identifier + "-" + placement.id }
                 stack.addArrangedSubview(key)
+                if definition.id == self.compactRowID, !compactPlacementIDs.contains(placement.id) {
+                    compactExcludedKeys.append(key)
+                }
             }
             if stack.arrangedSubviews.isEmpty && editingPreview && !presentationPreview {
                 let label = UILabel(); label.text = editingPreview ? "Empty row · use Add" : definition.title
@@ -806,7 +821,7 @@ final class TerminalKeyScrollView: UIScrollView {
                     })
                 }
                 let wrapper = UIStackView(arrangedSubviews: [handle, container]); wrapper.axis = .horizontal; wrapper.spacing = 3
-                let usedInTrackpadDock = previewTrackpadDockRow == definition.id && definition.hidden != true && !definition.placements.isEmpty
+                let usedInTrackpadDock = previewTrackpadDockRow == definition.id && eligibleTrackpadPreviewRows.contains(definition.id)
                 if previewPreset == nil, previewAddToRow != nil {
                     let add = UIButton(type: .system)
                     let hasMenu = previewRowAction != nil
@@ -839,7 +854,7 @@ final class TerminalKeyScrollView: UIScrollView {
             let constraint = displayed.heightAnchor.constraint(equalToConstant: keyHeight); constraint.priority = UILayoutPriority(999); constraint.isActive = true; heights.append(constraint)
         }
         showsExtraRows = profile.rowsExpanded ?? false
-        updateVisibility(); placeCompactRow(); setKeyboardFocused(keyboardFocused ?? false); refresh()
+        placeCompactRow(); updateVisibility(); setKeyboardFocused(keyboardFocused ?? false); refresh()
         prioritizeRowPans()
     }
     private func editorRowMenu(_ definition: TerminalKeyboardRow) -> UIMenu {
@@ -849,7 +864,7 @@ final class TerminalKeyScrollView: UIScrollView {
             self.previewAddToRow?(definition.id)
         }
         var settings: [UIMenuElement] = []
-        if previewOffersTrackpadDock, definition.hidden != true, !definition.placements.isEmpty {
+        if eligibleTrackpadPreviewRows.contains(definition.id) {
             settings.append(UIAction(title: "Show This Row on Trackpad", image: UIImage(systemName: "rectangle.split.1x2"),
                 state: previewTrackpadDockRow == definition.id ? .on : .off) { [weak self] _ in
                 guard let self, self.layoutGeneration == generation else { return }
@@ -1112,8 +1127,13 @@ final class TerminalKeyScrollView: UIScrollView {
         for key in expandToggles {
             key.accessibilityLabel = expandRowsTitle
             key.accessibilityValue = compactContentsVisible ? nil : (showsExtraRows ? "Expanded" : "Collapsed")
-            key.isHidden = !profileRows.contains { $0.extra && $0.hidden != true }
+            key.isHidden = !hasExpandableRows
             keyWidths[ObjectIdentifier(key)]?.isActive = !key.isHidden
+        }
+        for key in compactExcludedKeys {
+            let hidden = compactRowPlacement != nil || (!hasExpandableRows && expandToggles.contains { $0 === key })
+            key.isHidden = hidden
+            keyWidths[ObjectIdentifier(key)]?.isActive = !hidden
         }
         for scroll in rowScrollViews.values { scroll.updateFill() }
         // The session button belongs to the live overlay. Editors have their own

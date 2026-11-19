@@ -53,6 +53,7 @@ struct TerminalKeyboardEditingPreview: View {
     var contextImage: UIImage?
     var insertion: UUID?
     var compactTrackpadSelection: Binding<UUID?>? = nil
+    @State private var pro = DirectProAccess.shared
     @State private var panel: TerminalLayoutPanel?
     @State private var history = TerminalLayoutHistory()
     @State private var previewing = false
@@ -77,7 +78,9 @@ struct TerminalKeyboardEditingPreview: View {
                 }
                 Spacer(minLength: 8)
                 Menu {
-                    if !history.values.isEmpty { Button("Undo Last Change", systemImage: "arrow.uturn.backward", action: undo) }
+                    if !history.values.isEmpty {
+                        Button(compactTrackpadSelection == nil ? "Undo Last Change" : "Undo Keyboard Edit", systemImage: "arrow.uturn.backward", action: undo)
+                    }
                     Button("Preview with Keyboard", systemImage: "keyboard") { previewing = true }
                         .accessibilityIdentifier("terminal-preview-keyboard")
                     Button("Restore Keyboard Bar…", systemImage: "arrow.counterclockwise") { restoring = true }
@@ -161,10 +164,12 @@ struct TerminalKeyboardEditingPreview: View {
             } message: { _ in Text("Saved shortcuts and text stay available. You can undo this change.") }
     }
     private func trackpadKeysLink(_ selection: Binding<UUID?>) -> some View {
-        let usesKeyboardRow = profile.compactTrackpadRowID(for: selection.wrappedValue?.uuidString ?? "") != nil
-        let status = usesKeyboardRow ? "Shows the outlined row" : "Shows the default keys"
+        let row = profile.compactTrackpadRow(selection.wrappedValue, hasPro: pro.hasPro)
+        let names = row.map { profile.compactTrackpadKeyNames(profile.compactTrackpadPlacements(in: $0, hasPro: pro.hasPro)) } ?? []
+        let preview = names.prefix(3).joined(separator: " · ")
+        let status = names.isEmpty ? "Shows the default keys" : preview + (names.count > 3 ? " + \(names.count - 3) more" : "")
         return NavigationLink {
-            CompactTrackpadRowPicker(profile: profile, selection: selection)
+            CompactTrackpadRowPicker(profile: profile, hasPro: pro.hasPro, selection: selection)
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: "rectangle.split.1x2").foregroundStyle(.tint)
@@ -196,7 +201,7 @@ struct TerminalKeyboardEditingPreview: View {
         case .alignment(let alignment): editRow(id) { $0.alignment = alignment }
         case .scrollStart(let value): editRow(id) { $0.scrollStart = value }
         case .useInTrackpadDock:
-            if profile.compactTrackpadRowID(for: id.uuidString) != nil { compactTrackpadSelection?.wrappedValue = id }
+            if profile.compactTrackpadRow(id, hasPro: pro.hasPro) != nil { compactTrackpadSelection?.wrappedValue = id }
         case .remove: removing = id
         }
     }

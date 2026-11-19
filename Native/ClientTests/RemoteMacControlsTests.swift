@@ -296,6 +296,53 @@ private final class MediaComposeSession: CompanionVNCSession {
         XCTAssertFalse(escape.isDescendant(of: slot))
     }
 
+    func testCompactTrackpadFallsBackForRowsWithoutAvailableKeys() throws {
+        let viewer = RemoteControlsTestViewer()
+        viewer.session = RemoteAnchorSession()
+        viewer.inputOnly = true
+        viewer.view.frame = CGRect(x: 0, y: 0, width: 390, height: 700)
+        let saved = TerminalControlAction(title: "Salutation", kind: .text, text: "Hello", inRow: true)
+        var fit = TerminalAppAction.fitToWindow.definition
+        fit.inRow = true
+        let main = TerminalKeyboardRow(id: TerminalKeyboardRow.mainID, kind: .main, title: "Main",
+            items: [.key("key-escape"), .control(.expand), .saved(fit.id)])
+        let expand = TerminalKeyboardRow(kind: .custom, title: "Expand", items: [.control(.expand)], expandedOnly: false)
+        let savedOnly = TerminalKeyboardRow(kind: .custom, title: "Saved", items: [.saved(saved.id)], expandedOnly: false)
+        let screenOnly = TerminalKeyboardRow(kind: .custom, title: "Screen", items: [.saved(fit.id)], expandedOnly: false)
+        var profile = TerminalControlsProfile.remoteDefaults
+        profile.actions = [saved, fit]
+        profile.keyboardRows = [main, expand, savedOnly, screenOnly]
+        profile.freezeKeyboardLayout()
+        XCTAssertTrue(profile.valid)
+        XCTAssertNil(profile.compactTrackpadRow(savedOnly.id, hasPro: false))
+        XCTAssertNotNil(profile.compactTrackpadRow(savedOnly.id, hasPro: true))
+        XCTAssertNil(profile.compactTrackpadRow(screenOnly.id, hasPro: true))
+        XCTAssertEqual(profile.compactTrackpadKeyNames(profile.compactTrackpadPlacements(in: main, hasPro: true)), ["Escape"])
+
+        let preference = TerminalControlsProfile.compactTrackpadRowPreference
+        let previous = UserDefaults.standard.string(forKey: preference)
+        defer { UserDefaults.standard.set(previous, forKey: preference) }
+        UserDefaults.standard.set(expand.id.uuidString, forKey: preference)
+        let controls = controls(viewer, data: try JSONEncoder().encode(profile))
+        let slot = try XCTUnwrap(descendants(controls.bar).first { $0.accessibilityIdentifier == "trackpad-navigation-keys" } as? UIStackView)
+        func visibleKeys() -> [String] {
+            slot.arrangedSubviews.filter { !$0.isHidden }.flatMap(descendants).compactMap {
+                guard let key = $0 as? UIButton, !key.isHidden else { return nil }
+                return key.accessibilityLabel
+            }
+        }
+        XCTAssertEqual(visibleKeys(), RemoteMacControls.compactNavigationKeys.map(\.title))
+        UserDefaults.standard.set(screenOnly.id.uuidString, forKey: preference)
+        controls.reload()
+        XCTAssertEqual(visibleKeys(), RemoteMacControls.compactNavigationKeys.map(\.title))
+        UserDefaults.standard.set(savedOnly.id.uuidString, forKey: preference)
+        controls.reload()
+        XCTAssertEqual(visibleKeys(), DirectProAccess.shared.hasPro ? ["Salutation"] : RemoteMacControls.compactNavigationKeys.map(\.title))
+        UserDefaults.standard.set(main.id.uuidString, forKey: preference)
+        controls.reload()
+        XCTAssertEqual(visibleKeys(), ["Escape"])
+    }
+
     func testIndexedVolumeRepliesAreStrictAndBounded() throws {
         struct Fixture: Decodable {
             struct Reply: Decodable { let wire: String; let level: Int?; let muted: Bool? }

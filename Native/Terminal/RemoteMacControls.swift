@@ -1,5 +1,6 @@
 #if os(iOS) && MACCOMPANION_VNC_DEVELOPMENT
 import SwiftUI
+import Observation
 
 /// Presentation adapter only. The VNC viewer retains admission and transport.
 @MainActor final class TerminalRemoteInput {
@@ -40,6 +41,7 @@ import SwiftUI
     private var keyboardIsFocused = false
     private var state = TerminalKeyboardState()
     private var profile = TerminalControlsProfile.remoteDefaults
+    private var renderedProAccess = false
     private var readable = false
     private var inputGeneration = UUID()
     private var customizing = false
@@ -97,6 +99,7 @@ import SwiftUI
             MainActor.assumeIsolated { self?.reload() }
         }
         reload()
+        observeProAccess()
     }
     isolated deinit { if let observation { NotificationCenter.default.removeObserver(observation) } }
 
@@ -280,10 +283,17 @@ import SwiftUI
         catch { readable = false; profile = .remoteDefaults }
         shortcutConfirmations.definitionsChanged(profile.actions)
         let preference = UserDefaults.standard.string(forKey: TerminalControlsProfile.compactTrackpadRowPreference) ?? ""
-        keyboardBar.configure(profile, compactRowID: profile.compactTrackpadRowID(for: preference)) { [weak self] in self?.use($0) }
+        renderedProAccess = DirectProAccess.shared.hasPro
+        keyboardBar.configure(profile, compactRowID: UUID(uuidString: preference)) { [weak self] in self?.use($0) }
         keyboardBar.showsExtraRows = profile.rowsExpanded ?? false
         refresh()
         viewer?.refreshControlsMenu()
+    }
+    private func observeProAccess() {
+        let hasPro = withObservationTracking { DirectProAccess.shared.hasPro } onChange: { [weak self] in
+            Task { @MainActor in self?.observeProAccess() }
+        }
+        if hasPro != renderedProAccess { reload() }
     }
     @objc func refresh() {
         keyboardBar.refresh()
