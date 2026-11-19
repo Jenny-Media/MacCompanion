@@ -293,7 +293,7 @@ struct TerminalRowScrollPosition {
     var rightEdge: Bool
 }
 
-private final class TerminalKeyScrollView: UIScrollView {
+final class TerminalKeyScrollView: UIScrollView {
     private let canvas = UIView()
     private var positioning: [NSLayoutConstraint] = []
     private weak var keyStack: UIStackView?
@@ -407,6 +407,8 @@ private final class TerminalKeyScrollView: UIScrollView {
     private var viewportConstraints: [NSLayoutConstraint] = []
     private var compactContents: UIView?
     private var compactConstraints: [NSLayoutConstraint] = []
+    private var compactKeys: [UIButton] = []
+    private var compactRowHeights: [NSLayoutConstraint] = []
     private(set) var compactContentsVisible = false
     private var keyHeight: CGFloat = 44
     private var keyboardFocused: Bool?
@@ -558,6 +560,20 @@ private final class TerminalKeyScrollView: UIScrollView {
             contents.leadingAnchor.constraint(equalTo: leadingAnchor), contents.trailingAnchor.constraint(equalTo: trailingAnchor),
             contents.topAnchor.constraint(equalTo: topAnchor), contents.bottomAnchor.constraint(equalTo: bottomAnchor)
         ]
+    }
+    func installCompactKeyRow(_ row: UIStackView, in scroll: TerminalKeyScrollView) {
+        row.spacing = keys.spacing
+        scroll.install(row)
+        let height = scroll.heightAnchor.constraint(equalToConstant: keyHeight)
+        height.priority = UILayoutPriority(999)
+        height.isActive = true
+        compactRowHeights.append(height)
+    }
+    func compactKey(_ title: String, symbol: String, action: @escaping @MainActor () -> Void) -> UIButton {
+        let key = UIButton(configuration: .plain(), primaryAction: UIAction { _ in action() })
+        configureButton(key, title: title, symbol: symbol)
+        compactKeys.append(key)
+        return key
     }
     func setCompactContentsVisible(_ visible: Bool) {
         guard let compactContents, visible != compactContentsVisible else { return }
@@ -1090,7 +1106,7 @@ private final class TerminalKeyScrollView: UIScrollView {
     private var allKeys: [UIButton] { generated + [keyboardButton, keypadButton, expandButton] }
     private func updateKeyMetrics() {
         let font = keyFont
-        for key in allKeys {
+        for key in allKeys + compactKeys {
             if let symbol = keySymbols[ObjectIdentifier(key)] { key.configuration?.image = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(font: font)) }
             key.setNeedsUpdateConfiguration(); key.updateConfiguration(); key.titleLabel?.numberOfLines = 1
             let text = (key.configuration?.title ?? "") as NSString
@@ -1098,7 +1114,7 @@ private final class TerminalKeyScrollView: UIScrollView {
             keyWidths[ObjectIdentifier(key)]?.constant = max(44, ceil(width) + 12)
         }
         keyHeight = max(44, ceil(font.lineHeight) + 8)
-        heights.forEach { $0.constant = keyHeight }
+        (heights + compactRowHeights).forEach { $0.constant = keyHeight }
         invalidateIntrinsicContentSize(); setNeedsLayout(); superview?.setNeedsLayout()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }

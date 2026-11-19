@@ -16,8 +16,8 @@ import SwiftUI
     let keyboardBar = TerminalKeyboardBar(terminal: nil, preferences: .init())
     private let trackpadDock = UIStackView()
     private let dockMenuAnchor = UIView()
-    private let navigationViewport = UIScrollView()
-    private let mediaViewport = UIScrollView()
+    private let navigationViewport = TerminalKeyScrollView()
+    private let mediaPanel = UIStackView()
     private let mediaStatus = UILabel()
     private var dockMedia: UIButton?
     private var mediaButtons: [UIButton] = []
@@ -92,19 +92,20 @@ import SwiftUI
         trackpadDock.accessibilityIdentifier = "trackpad-dock"
         let navigationRow = UIStackView()
         let keys: [(String, String, UInt32)] = [
-            ("Escape", "escape", 0xff1b), ("Left Arrow", "arrow.left", 0xff51),
-            ("Up Arrow", "arrow.up", 0xff52), ("Down Arrow", "arrow.down", 0xff54),
-            ("Right Arrow", "arrow.right", 0xff53), ("Return", "return", 0xff0d)
+            ("Escape", "escape", 0xff1b), ("Tab", "arrow.right.to.line", 0xff09),
+            ("Left Arrow", "arrow.left", 0xff51), ("Up Arrow", "arrow.up", 0xff52),
+            ("Down Arrow", "arrow.down", 0xff54), ("Right Arrow", "arrow.right", 0xff53),
+            ("Return", "return", 0xff0d)
         ]
         for (title, symbol, code) in keys {
-            let button = dockButton(title, symbol: symbol) { [weak self] in
+            let button = keyboardBar.compactKey(title, symbol: symbol) { [weak self] in
                 guard let self, sendKey(code) else { return }
                 keyboardBar.keyFeedback.feedback("key")
             }
             navigationRow.addArrangedSubview(button)
             trackpadNavigation.append(button)
         }
-        installDockRow(navigationRow, in: navigationViewport)
+        keyboardBar.installCompactKeyRow(navigationRow, in: navigationViewport)
         navigationViewport.accessibilityIdentifier = "trackpad-navigation-keys"
         let mediaRow = UIStackView()
         let volume: [(String, String, DirectTrackpadVolume)] = [
@@ -112,68 +113,45 @@ import SwiftUI
             ("Volume Up", "speaker.plus", .increase)
         ]
         for (title, symbol, operation) in volume {
-            let button = dockButton(title, symbol: symbol) { [weak self] in self?.runVolume(operation) }
+            let button = keyboardBar.compactKey(title, symbol: symbol) { [weak self] in self?.runVolume(operation) }
             mediaRow.addArrangedSubview(button)
             mediaButtons.append(button)
         }
-        installDockRow(mediaRow, in: mediaViewport)
+        let mediaViewport = TerminalKeyScrollView()
+        keyboardBar.installCompactKeyRow(mediaRow, in: mediaViewport)
         mediaStatus.font = .preferredFont(forTextStyle: .footnote)
         mediaStatus.adjustsFontForContentSizeCategory = true
         mediaStatus.numberOfLines = 0
-        mediaStatus.textAlignment = .center
+        mediaStatus.textAlignment = .natural
         mediaStatus.textColor = .secondaryLabel
-        mediaStatus.isHidden = true
+        mediaPanel.axis = .vertical
+        mediaPanel.spacing = trackpadDock.spacing
+        mediaPanel.addArrangedSubview(mediaStatus)
+        mediaPanel.addArrangedSubview(mediaViewport)
+        mediaPanel.isHidden = true
+        mediaPanel.accessibilityIdentifier = "trackpad-media-panel"
         let actions = UIStackView()
-        let compose = dockButton("Compose Text", symbol: "square.and.pencil") { [weak self] in self?.viewer?.showControlsComposer() }
+        let compose = keyboardBar.compactKey("Compose Text", symbol: "square.and.pencil") { [weak self] in self?.viewer?.showControlsComposer() }
         compose.accessibilityHint = "Edit text on this device, then send it to the Mac."
         dockCompose = compose
-        let type = dockButton("Type on Mac", symbol: "keyboard") { [weak self] in self?.viewer?.toggleControlsKeyboard() }
+        let type = keyboardBar.compactKey("Type on Mac", symbol: "keyboard") { [weak self] in self?.viewer?.toggleControlsKeyboard() }
         type.accessibilityHint = "Open the keyboard and send keystrokes as you type."
-        let media = dockButton("Media", symbol: "speaker.wave.2") { [weak self] in
+        let media = keyboardBar.compactKey("Media", symbol: "speaker.wave.2") { [weak self] in
             guard let self else { return }
             setMediaVisible(!showingMedia)
         }
+        media.accessibilityValue = "Collapsed"
         dockMedia = media
         for button in [type, compose, media] { actions.addArrangedSubview(button) }
-        let actionViewport = UIScrollView()
-        installDockRow(actions, in: actionViewport)
+        let actionViewport = TerminalKeyScrollView()
+        keyboardBar.installCompactKeyRow(actions, in: actionViewport)
         let bottom = UIStackView(arrangedSubviews: [actionViewport, dockMenuAnchor])
         bottom.spacing = 4
         dockMenuAnchor.isUserInteractionEnabled = false
         dockMenuAnchor.widthAnchor.constraint(equalToConstant: 52).isActive = true
+        trackpadDock.addArrangedSubview(mediaPanel)
         trackpadDock.addArrangedSubview(navigationViewport)
-        trackpadDock.addArrangedSubview(mediaStatus)
         trackpadDock.addArrangedSubview(bottom)
-    }
-
-    private func installDockRow(_ row: UIStackView, in scroll: UIScrollView) {
-        row.distribution = .fillEqually
-        row.spacing = 4
-        row.translatesAutoresizingMaskIntoConstraints = false
-        scroll.delaysContentTouches = false
-        scroll.addSubview(row)
-        let fillWidth = row.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor)
-        fillWidth.priority = .defaultHigh
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
-            row.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
-            row.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
-            scroll.heightAnchor.constraint(equalToConstant: 44),
-            fillWidth
-        ])
-    }
-
-    private func dockButton(_ title: String, symbol: String, action: @escaping @MainActor () -> Void) -> UIButton {
-        var configuration = UIButton.Configuration.tinted()
-        configuration.image = UIImage(systemName: symbol)
-        configuration.cornerStyle = .medium
-        configuration.contentInsets = .init(top: 0, leading: 0, bottom: 0, trailing: 0)
-        let button = UIButton(configuration: configuration, primaryAction: UIAction { _ in action() })
-        button.heightAnchor.constraint(equalToConstant: 44).isActive = true
-        button.widthAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
-        button.accessibilityLabel = title
-        return button
     }
 
     private func refreshDock() {
@@ -195,16 +173,13 @@ import SwiftUI
     private func setMediaVisible(_ visible: Bool) {
         guard showingMedia != visible else { return }
         showingMedia = visible
-        let removed = visible ? navigationViewport : mediaViewport
-        trackpadDock.removeArrangedSubview(removed)
-        removed.removeFromSuperview()
-        trackpadDock.insertArrangedSubview(visible ? mediaViewport : navigationViewport, at: 0)
-        dockMedia?.accessibilityLabel = visible ? "Show Navigation Keys" : "Media"
-        dockMedia?.configuration?.image = UIImage(systemName: visible ? "arrowkeys" : "speaker.wave.2")
-        mediaStatus.isHidden = !visible
-        mediaRequest = nil
-        mediaVolumeReadable = false
-        if visible { runVolume(.read) }
+        mediaPanel.isHidden = !visible
+        dockMedia?.isSelected = visible
+        dockMedia?.accessibilityValue = visible ? "Expanded" : "Collapsed"
+        if visible, mediaRequest == nil {
+            mediaVolumeReadable = false
+            runVolume(.read)
+        }
         viewer?.view.setNeedsLayout()
     }
 
@@ -219,7 +194,13 @@ import SwiftUI
             MainActor.assumeIsolated {
                 guard let self, let viewer, self.mediaRequest == request else { return }
                 self.mediaRequest = nil
-                guard viewer.controlsEpoch == epoch, self.showingMedia, self.ready else { self.setMediaVisible(false); return }
+                guard self.showingMedia else { return }
+                guard self.ready else { self.setMediaVisible(false); return }
+                guard viewer.controlsEpoch == epoch else {
+                    self.mediaVolumeReadable = false
+                    self.runVolume(.read)
+                    return
+                }
                 if let reply, let reading = DirectTrackpadVolume.Reading(response: reply) {
                     self.mediaVolumeReadable = true
                     self.mediaStatus.text = reading.muted ? "Mac sound muted" : "Mac volume \(reading.level)%"

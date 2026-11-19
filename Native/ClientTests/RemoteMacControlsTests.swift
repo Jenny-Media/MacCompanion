@@ -71,23 +71,47 @@ private final class RemoteAnchorSession: CompanionVNCSession {
     func testTrackpadDockKeepsNavigationAndTypingSeparateFromMedia() throws {
         let viewer = RemoteControlsTestViewer()
         viewer.inputOnly = true
+        viewer.view.frame = CGRect(x: 0, y: 0, width: 390, height: 700)
+        var profile = TerminalControlsProfile.remoteDefaults
+        profile.freezeKeyboardLayout()
+        profile.keyboardRows = [.init(id: TerminalKeyboardRow.mainID, kind: .main, title: "Main",
+                                      items: [.control(.keyboard), .key("key-f5"), .control(.keypad)])]
+        XCTAssertTrue(profile.valid)
         var operations: [Int] = []
         var reply: ((String?) -> Void)?
         viewer.trackpadVolumeHandler = { operation, completion in operations.append(operation); reply = completion }
-        let controls = controls(viewer)
+        let controls = controls(viewer, data: try JSONEncoder().encode(profile))
         let dock = try XCTUnwrap(descendants(controls.bar).first { $0.accessibilityIdentifier == "trackpad-dock" })
+        let navigation = try XCTUnwrap(descendants(dock).first { $0.accessibilityIdentifier == "trackpad-navigation-keys" })
+        let mediaPanel = try XCTUnwrap(descendants(dock).first { $0.accessibilityIdentifier == "trackpad-media-panel" })
+        let customKey = try XCTUnwrap(descendants(controls.bar).compactMap { $0 as? UIButton }.first { $0.accessibilityLabel == "F5" })
         func button(_ label: String) throws -> UIButton {
             try XCTUnwrap(descendants(dock).compactMap { $0 as? UIButton }.first { $0.accessibilityLabel == label })
         }
         XCTAssertFalse(dock.isHidden)
+        XCTAssertTrue(mediaPanel.isHidden)
+        XCTAssertFalse(customKey.isDescendant(of: dock))
+        XCTAssertEqual(descendants(navigation).compactMap { ($0 as? UIButton)?.accessibilityLabel },
+                       ["Escape", "Tab", "Left Arrow", "Up Arrow", "Down Arrow", "Right Arrow", "Return"])
+        XCTAssertEqual(try button("Tab").configuration?.background.backgroundColor, customKey.configuration?.background.backgroundColor)
         XCTAssertEqual(try button("Left Arrow").isEnabled, true)
+        try button("Tab").sendActions(for: .primaryActionTriggered)
         try button("Left Arrow").sendActions(for: .primaryActionTriggered)
-        XCTAssertEqual(viewer.events.compactMap { ($0["key"] as? NSNumber)?.uint32Value }, [0xff51, 0xff51])
+        XCTAssertEqual(viewer.events.compactMap { ($0["key"] as? NSNumber)?.uint32Value }, [0xff09, 0xff09, 0xff51, 0xff51])
         try button("Type on Mac").sendActions(for: .primaryActionTriggered)
         XCTAssertEqual(viewer.keyboardToggles, 1)
         XCTAssertTrue(try button("Compose Text").isEnabled)
         XCTAssertFalse(descendants(dock).contains { $0.accessibilityLabel == "Show Mac Screen" })
 
+        viewer.view.layoutIfNeeded()
+        let restingNavigation = navigation.convert(navigation.bounds, to: viewer.view)
+        XCTAssertGreaterThan(restingNavigation.height, 0)
+        try button("Media").sendActions(for: .primaryActionTriggered)
+        viewer.view.layoutIfNeeded()
+        XCTAssertFalse(mediaPanel.isHidden)
+        XCTAssertEqual(navigation.convert(navigation.bounds, to: viewer.view).minY, restingNavigation.minY, accuracy: 0.5)
+        XCTAssertTrue(try button("Left Arrow").isEnabled)
+        try button("Media").sendActions(for: .primaryActionTriggered)
         try button("Media").sendActions(for: .primaryActionTriggered)
         XCTAssertEqual(operations, [DirectTrackpadVolume.read.rawValue])
         XCTAssertFalse(try button("Volume Up").isEnabled)
@@ -97,14 +121,18 @@ private final class RemoteAnchorSession: CompanionVNCSession {
         XCTAssertEqual(operations, [DirectTrackpadVolume.read.rawValue, DirectTrackpadVolume.increase.rawValue])
         viewer.epoch += 1
         reply?("66:0\n")
-        XCTAssertNoThrow(try button("Left Arrow"))
+        XCTAssertEqual(operations, [DirectTrackpadVolume.read.rawValue, DirectTrackpadVolume.increase.rawValue, DirectTrackpadVolume.read.rawValue])
+        XCTAssertFalse(try button("Volume Up").isEnabled)
+        reply?("66:0\n")
 
         controls.toggleTrackpadKeyboardBar()
         XCTAssertTrue(dock.isHidden)
         XCTAssertFalse(controls.keyboardBar.compactContentsVisible)
+        XCTAssertTrue(customKey.isDescendant(of: controls.bar))
         controls.toggleTrackpadKeyboardBar()
         controls.keyboardFocused(true)
         XCTAssertTrue(dock.isHidden)
+        XCTAssertTrue(customKey.isDescendant(of: controls.bar))
         controls.keyboardFocused(false)
         XCTAssertFalse(dock.isHidden)
     }
