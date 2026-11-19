@@ -153,6 +153,32 @@
     XCTAssertFalse([viewer trackpadVolumeInputAvailable]);
     [session stop];
 }
+- (void)testTrackpadVolumeRevisionSurvivesNeitherCompositionNorGeometrySuspension {
+    CompanionVNCSession *session = [self sessionWithInputOnly:YES];
+    NSUInteger original = session.ordinaryControlInputRevision;
+    __block NSUInteger admissions = 0;
+    void (^admit)(void) = ^{ admissions++; };
+    XCTAssertTrue([session performWithOrdinaryControlInputAtRevision:original action:admit]);
+
+    // Compose Text reserves the native session directly.
+    NSString *owner = [session beginControlSequence];
+    XCTAssertNotNil(owner);
+    XCTAssertFalse([session performWithOrdinaryControlInputAtRevision:session.ordinaryControlInputRevision action:admit]);
+    [session endControlSequence:owner];
+    XCTAssertFalse([session performWithOrdinaryControlInputAtRevision:original action:admit]);
+    NSUInteger afterComposition = session.ordinaryControlInputRevision;
+    XCTAssertTrue([session performWithOrdinaryControlInputAtRevision:afterComposition action:admit]);
+
+    rfbClient *client = rfbGetClient(8,3,4); client->width = 1920; client->height = 1080;
+    [session configureClient:client];
+    XCTAssertTrue([session allocate:client]);
+    XCTAssertFalse(session.ordinaryControlInputAvailable);
+    [session setValue:@YES forKey:@"inputReady"]; // Model the worker resuming the same connection.
+    XCTAssertFalse([session performWithOrdinaryControlInputAtRevision:afterComposition action:admit]);
+    XCTAssertTrue([session performWithOrdinaryControlInputAtRevision:session.ordinaryControlInputRevision action:admit]);
+    XCTAssertEqual(admissions, 3);
+    [session stop]; rfbClientCleanup(client);
+}
 - (void)testShortcutWaitCannotChangePointerStateOrTheNextClickTarget {
     for (NSString *mode in @[@"pointer", @"trackpad", @"inputOnly", @"tabletop"]) for (NSNumber *cancel in @[@NO, @YES]) {
         CompanionVNCViewer *viewer=[CompanionVNCViewer new]; viewer.inputOnly=[mode isEqual:@"inputOnly"]; [viewer loadViewIfNeeded];

@@ -22,6 +22,7 @@ import SwiftUI
     private var dockMedia: UIButton?
     private var mediaButtons: [UIButton] = []
     private var mediaRequest: UUID?
+    private var mediaRequestRetired = false
     private var mediaVolumeReadable = false
     private var showingMedia = false
     @objc private(set) var trackpadShowsKeyboardBar = false
@@ -156,6 +157,7 @@ import SwiftUI
 
     private func refreshDock() {
         let compact = viewer?.inputOnly == true && !keyboardIsFocused && !trackpadShowsKeyboardBar && sequenceIdentifier == nil
+        if !ready { retireTrackpadVolume() }
         if showingMedia && (!compact || !ready) { setMediaVisible(false) }
         keyboardBar.setCompactContentsVisible(compact)
         for button in trackpadNavigation { button.isEnabled = ready }
@@ -170,15 +172,24 @@ import SwiftUI
         refreshDock()
     }
 
+    @objc func retireTrackpadVolume() {
+        if mediaRequest != nil { mediaRequestRetired = true }
+        mediaVolumeReadable = false
+    }
+
     private func setMediaVisible(_ visible: Bool) {
         guard showingMedia != visible else { return }
         showingMedia = visible
         mediaPanel.isHidden = !visible
         dockMedia?.isSelected = visible
         dockMedia?.accessibilityValue = visible ? "Expanded" : "Collapsed"
-        if visible, mediaRequest == nil {
-            mediaVolumeReadable = false
-            runVolume(.read)
+        if visible {
+            if mediaRequest == nil {
+                mediaVolumeReadable = false
+                runVolume(.read)
+            } else if mediaRequestRetired {
+                mediaStatus.text = "Checking Mac volume…"
+            }
         }
         viewer?.view.setNeedsLayout()
     }
@@ -186,17 +197,22 @@ import SwiftUI
     private func runVolume(_ operation: DirectTrackpadVolume) {
         guard showingMedia, ready, mediaRequest == nil, operation == .read || mediaVolumeReadable,
               let viewer, let handler = viewer.trackpadVolumeHandler else { return }
-        let request = UUID(), epoch = viewer.controlsEpoch
+        let request = UUID(), epoch = viewer.controlsEpoch, connection = viewer.controlsConnectionID
+        let session = viewer.session, nativeRevision = session.ordinaryControlInputRevision
         mediaRequest = request
+        mediaRequestRetired = false
         mediaStatus.text = operation == .read ? "Checking Mac volume…" : "Adjusting Mac volume…"
         refreshDock()
         handler(operation.rawValue) { [weak self, weak viewer] reply in
             MainActor.assumeIsolated {
                 guard let self, let viewer, self.mediaRequest == request else { return }
                 self.mediaRequest = nil
+                let retired = self.mediaRequestRetired
+                self.mediaRequestRetired = false
                 guard self.showingMedia else { return }
                 guard self.ready else { self.setMediaVisible(false); return }
-                guard viewer.controlsEpoch == epoch else {
+                guard !retired, viewer.controlsEpoch == epoch, viewer.controlsConnectionID == connection,
+                      viewer.session === session, session.ordinaryControlInputRevision == nativeRevision else {
                     self.mediaVolumeReadable = false
                     self.runVolume(.read)
                     return

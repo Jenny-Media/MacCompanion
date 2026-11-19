@@ -65,10 +65,11 @@ enum DirectTrackpadVolume: Int, CaseIterable, Sendable {
         // All interpolated content comes from this closed enum and fixed script.
         // The SSH channel can open while the UI is retiring. It cannot change
         // volume until that owner admits the command by writing the fixed line.
-        let gate = """
-            IFS= read -r admission && [ "$admission" = mac-companion-volume-v1 ] || exit 1
-            exec /usr/bin/osascript -e \(Self.shellArgument(script))
-            """
+        // Remote Login parses the outer command with the account's shell.
+        // osascript combines its -e arguments into lines of the same script.
+        let lines = script.split(separator: "\n").map { "-e \(Self.shellArgument(String($0)))" }
+        let gate = #"IFS= read -r admission && [ "$admission" = mac-companion-volume-v1 ] || exit 1; "#
+            + "exec /usr/bin/osascript " + lines.joined(separator: " ")
         return "/bin/sh -c " + Self.shellArgument(gate)
     }
 
@@ -76,43 +77,41 @@ enum DirectTrackpadVolume: Int, CaseIterable, Sendable {
         "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
-    func run(client: SSHClient, isCurrent: @escaping @MainActor @Sendable () -> Bool) async -> String? {
+    func run(
+        client: SSHClient,
+        isCurrent: @escaping @MainActor @Sendable () -> Bool,
+        admit: @escaping @MainActor @Sendable (() -> Void) -> Bool = { action in action(); return true }
+    ) async -> String? {
         let timeout = Duration.nanoseconds(Self.operationTimeout.nanoseconds)
         let deadline = ContinuousClock.now.advanced(by: timeout)
-        let retirementDeadline = Self.operationTimeout + Self.channelRetirementGrace
         do {
-            return try await withThrowingTaskGroup(of: String?.self) { group in
-                group.addTask {
-                    var reply = Data()
+            var reply = Data()
+            try Task.checkCancellation()
+            let status = try await client.withExec(
+                command, timeout: Self.operationTimeout, retirementGrace: Self.channelRetirementGrace
+            ) { inbound, outbound in
+                let admission = try await MainActor.run {
                     try Task.checkCancellation()
-                    let status = try await client.withExec(command, retirementDeadline: retirementDeadline) { inbound, outbound in
-                        let admission = try await MainActor.run {
-                            try Task.checkCancellation()
-                            guard ContinuousClock.now < deadline, isCurrent() else { throw CancellationError() }
-                            return outbound.enqueueWrite(ByteBuffer(string: Self.admission))
+                    guard ContinuousClock.now < deadline, isCurrent() else { throw CancellationError() }
+                    var pending: EventLoopFuture<Void>?
+                    let admitted = admit { pending = outbound.enqueueWrite(ByteBuffer(string: Self.admission)) }
+                    guard admitted, let write = pending else { throw CancellationError() }
+                    return write
+                }
+                try await admission.get()
+                for try await chunk in inbound {
+                    if case .stdout(let bytes) = chunk {
+                        guard reply.count + bytes.readableBytes <= Self.maximumReplyBytes else {
+                            throw CocoaError(.fileReadCorruptFile)
                         }
-                        try await admission.get()
-                        for try await chunk in inbound {
-                            if case .stdout(let bytes) = chunk {
-                                guard reply.count + bytes.readableBytes <= Self.maximumReplyBytes else {
-                                    throw CocoaError(.fileReadCorruptFile)
-                                }
-                                reply.append(contentsOf: bytes.readableBytesView)
-                            }
-                        }
+                        reply.append(contentsOf: bytes.readableBytesView)
                     }
-                    guard status == 0, await isCurrent(), !Task.isCancelled, ContinuousClock.now < deadline,
-                          let output = String(data: reply, encoding: .utf8),
-                          Reading(response: output) != nil else { return nil }
-                    return output
                 }
-                group.addTask {
-                    try await Task.sleep(until: deadline, clock: .continuous)
-                    throw CancellationError()
-                }
-                defer { group.cancelAll() }
-                return try await group.next() ?? nil
             }
+            guard status == 0, await isCurrent(), !Task.isCancelled, ContinuousClock.now < deadline,
+                  let output = String(data: reply, encoding: .utf8),
+                  Reading(response: output) != nil else { return nil }
+            return output
         } catch { return nil }
     }
 }

@@ -70,6 +70,7 @@ private final class RemoteAnchorSession: CompanionVNCSession {
 @MainActor final class RemoteMacControlsTests: XCTestCase {
     func testTrackpadDockKeepsNavigationAndTypingSeparateFromMedia() throws {
         let viewer = RemoteControlsTestViewer()
+        viewer.session = RemoteAnchorSession()
         viewer.inputOnly = true
         viewer.view.frame = CGRect(x: 0, y: 0, width: 390, height: 700)
         var profile = TerminalControlsProfile.remoteDefaults
@@ -115,13 +116,26 @@ private final class RemoteAnchorSession: CompanionVNCSession {
         try button("Media").sendActions(for: .primaryActionTriggered)
         XCTAssertEqual(operations, [DirectTrackpadVolume.read.rawValue])
         XCTAssertFalse(try button("Volume Up").isEnabled)
+        // An interruption collapses Media while its original read is still pending.
+        viewer.available = false
+        controls.refresh()
+        XCTAssertTrue(mediaPanel.isHidden)
+        viewer.available = true
+        controls.refresh()
+        try button("Media").sendActions(for: .primaryActionTriggered)
+        XCTAssertEqual(operations, [DirectTrackpadVolume.read.rawValue])
+        let cancelledRead = reply
+        cancelledRead?(nil)
+        XCTAssertEqual(operations, [DirectTrackpadVolume.read.rawValue, DirectTrackpadVolume.read.rawValue])
+        XCTAssertEqual(descendants(mediaPanel).compactMap { ($0 as? UILabel)?.text }.first, "Checking Mac volume…")
+        XCTAssertFalse(try button("Volume Up").isEnabled)
         reply?("60:0\n")
         XCTAssertTrue(try button("Volume Up").isEnabled)
         try button("Volume Up").sendActions(for: .primaryActionTriggered)
-        XCTAssertEqual(operations, [DirectTrackpadVolume.read.rawValue, DirectTrackpadVolume.increase.rawValue])
+        XCTAssertEqual(operations, [DirectTrackpadVolume.read.rawValue, DirectTrackpadVolume.read.rawValue, DirectTrackpadVolume.increase.rawValue])
         viewer.epoch += 1
         reply?("66:0\n")
-        XCTAssertEqual(operations, [DirectTrackpadVolume.read.rawValue, DirectTrackpadVolume.increase.rawValue, DirectTrackpadVolume.read.rawValue])
+        XCTAssertEqual(operations, [DirectTrackpadVolume.read.rawValue, DirectTrackpadVolume.read.rawValue, DirectTrackpadVolume.increase.rawValue, DirectTrackpadVolume.read.rawValue])
         XCTAssertFalse(try button("Volume Up").isEnabled)
         reply?("66:0\n")
 
@@ -143,6 +157,7 @@ private final class RemoteAnchorSession: CompanionVNCSession {
             let admission: String
             let operations: [String]
             let step: Int
+            let outerCommandSingleLine: Bool
             let maximumReplyBytes: Int
             let responses: [Reply]
         }
@@ -151,6 +166,9 @@ private final class RemoteAnchorSession: CompanionVNCSession {
         XCTAssertEqual(fixture.admission, DirectTrackpadVolume.admission)
         XCTAssertEqual(fixture.operations, DirectTrackpadVolume.allCases.map { String(describing: $0) })
         XCTAssertEqual(fixture.step, DirectTrackpadVolume.step)
+        for operation in DirectTrackpadVolume.allCases {
+            XCTAssertEqual(!operation.command.contains(where: \.isNewline), fixture.outerCommandSingleLine)
+        }
         XCTAssertEqual(fixture.maximumReplyBytes, DirectTrackpadVolume.maximumReplyBytes)
         for response in fixture.responses {
             let reading = DirectTrackpadVolume.Reading(response: response.wire)

@@ -843,7 +843,7 @@
       "path": "direct-trackpad-volume-v0.1.json",
       "kind": "directScreenSharing.trackpadVolume.v0.1",
       "expect": "valid",
-      "canonicalSHA256": "4fc2eddf9973c8a12293963ee399d11c377b032f8a14057fb1aaaf7adf8a85f9"
+      "canonicalSHA256": "1e9794da65c949228d9d345469d3680184fa57d60989f1203b2b93d34e95607e"
     }
   ]
 }

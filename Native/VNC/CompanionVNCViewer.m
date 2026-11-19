@@ -2360,7 +2360,10 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
 - (BOOL)trackpadVolumeInputAvailable {
     return self.inputOnly && [self sessionKeyInputAvailable] && self.session.ordinaryControlInputAvailable;
 }
-- (void)retireTrackpadVolume { if (self.retireTrackpadVolumeHandler) self.retireTrackpadVolumeHandler(); }
+- (void)retireTrackpadVolume {
+    [self.remoteControls retireTrackpadVolume];
+    if (self.retireTrackpadVolumeHandler) self.retireTrackpadVolumeHandler();
+}
 - (BOOL)sendControlEvents:(NSArray<NSDictionary *> *)events completion:(void (^)(BOOL))completion {
     if (![self sessionKeyInputAvailable]) return NO;
     return [self.session tryComposedTextEvents:events completion:completion];

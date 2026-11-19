@@ -101,6 +101,65 @@ public struct TTYStdinWriter: Sendable {
     }
 }
 
+// The close decision and child retirement are confined to the parent event loop.
+final class ExecChannelLifetime: @unchecked Sendable {
+    let session: SSHClientSession
+    private let completion: EventLoopPromise<Void>
+    private var child: Channel?
+    private var closeRequested = false
+    private var retired = false
+    private var childTimeout: Scheduled<Void>?
+    private var parentTimeout: Scheduled<Void>?
+
+    var closeFuture: EventLoopFuture<Void> { completion.futureResult }
+
+    init(session: SSHClientSession, timeout: TimeAmount, grace: TimeAmount) {
+        self.session = session
+        let parent = session.channel, loop = parent.eventLoop
+        completion = loop.makePromise(of: Void.self)
+        loop.execute {
+            self.childTimeout = loop.scheduleTask(in: timeout) { [weak self] in self?.requestChildClose() }
+            self.parentTimeout = loop.scheduleTask(in: timeout + grace) { [weak self] in
+                guard let self, !self.retired else { return }
+                parent.close(promise: nil)
+            }
+        }
+    }
+
+    func track(_ channel: Channel) {
+        session.channel.eventLoop.preconditionInEventLoop()
+        child = channel
+        channel.closeFuture.whenComplete { [weak self] _ in self?.finish() }
+        if closeRequested { channel.close(promise: nil) }
+    }
+
+    func openFailed() {
+        session.channel.eventLoop.preconditionInEventLoop()
+        if child == nil { finish() }
+    }
+
+    func requestChildClose() {
+        let loop = session.channel.eventLoop
+        guard loop.inEventLoop else {
+            loop.execute { self.requestChildClose() }
+            return
+        }
+        guard !retired, !closeRequested else { return }
+        closeRequested = true
+        child?.close(promise: nil)
+    }
+
+    private func finish() {
+        session.channel.eventLoop.preconditionInEventLoop()
+        guard !retired else { return }
+        retired = true
+        child = nil
+        childTimeout?.cancel()
+        parentTimeout?.cancel()
+        completion.succeed(())
+    }
+}
+
 final class ExecCommandHandler: ChannelDuplexHandler, Sendable {
     enum Output {
         case channelSuccess
@@ -284,7 +343,8 @@ extension SSHClient {
     internal func _executeCommandStream(
         environment: [SSHChannelRequestEvent.EnvironmentRequest] = [],
         mode: CommandMode,
-        terminalExitStatus: NIOLockedValueBox<Int?>? = nil
+        terminalExitStatus: NIOLockedValueBox<Int?>? = nil,
+        lifetime: ExecChannelLifetime? = nil
     ) async throws -> (channel: Channel, output: AsyncThrowingStream<ExecCommandOutput, Error>) {
         let (stream, streamContinuation) = AsyncThrowingStream<ExecCommandOutput, Error>.makeStream()
 
@@ -302,6 +362,7 @@ extension SSHClient {
                 self.logger.debug("EOF triggered, ending the command stream.")
                 if let error {
                     streamContinuation.finish(throwing: error)
+                    lifetime?.requestChildClose()
                 } else if signalled.withLockedValue({ $0 }) {
                     streamContinuation.finish(throwing: CommandSignalled())
                 } else if let exitCode = exitCode.withLockedValue({ $0 }), exitCode != 0 {
@@ -327,11 +388,15 @@ extension SSHClient {
             }
         }
 
-        let channel = try await eventLoop.flatSubmit { [eventLoop, sshHandler = session.sshHandler] in
+        let commandSession = lifetime?.session ?? session
+        let eventLoop = commandSession.channel.eventLoop
+        let channel = try await eventLoop.flatSubmit { [sshHandler = commandSession.sshHandler] in
             let createChannel = eventLoop.makePromise(of: Channel.self)
             sshHandler.value.createChannel(createChannel) { channel, _ in
-                channel.pipeline.addHandlers(handler)
+                lifetime?.track(channel)
+                return channel.pipeline.addHandlers(handler)
             }
+            createChannel.futureResult.whenFailure { _ in lifetime?.openFailed() }
 
             eventLoop.scheduleTask(in: .seconds(15)) {
                 createChannel.fail(CitadelError.channelCreationFailed)
@@ -455,8 +520,9 @@ extension SSHClient {
     /// - Parameters:
     ///   - command: The command to execute on the remote server
     ///   - environment: Array of environment variables to set for the command
-    ///   - retirementDeadline: Optional time limit after which the captured SSH parent is closed
-    ///     if the child has not retired. Use only on a connection owned by the caller.
+    ///   - timeout: Optional time limit before closing the exec child.
+    ///   - retirementGrace: Extra time to retire the child before closing the SSH parent.
+    ///     Use a timeout only on a connection owned by the caller.
     ///   - perform: Closure that receives input/output streams for bidirectional communication
     /// - Returns: The remote exit status, if the remote sent one.
     /// - Throws: Any errors that occur during exec setup or operation
@@ -486,33 +552,38 @@ extension SSHClient {
     public func withExec(
         _ command: String,
         environment: [SSHChannelRequestEvent.EnvironmentRequest] = [],
-        retirementDeadline: TimeAmount? = nil,
+        timeout: TimeAmount? = nil,
+        retirementGrace: TimeAmount = .seconds(1),
         perform: (_ inbound: TTYOutput, _ outbound: TTYStdinWriter) async throws -> Void
     ) async throws -> Int? {
-        let parent = session.channel
-        let watchdog = retirementDeadline.map { delay in
-            parent.eventLoop.scheduleTask(in: delay) { parent.close(promise: nil) }
-        }
-        defer { watchdog?.cancel() }
-
+        let lifetime = timeout.map { ExecChannelLifetime(session: session, timeout: $0, grace: retirementGrace) }
         let status = NIOLockedValueBox<Int?>(nil)
-        let (channel, output) = try await _executeCommandStream(
-            environment: environment,
-            mode: .command(command),
-            terminalExitStatus: status
-        )
-        do {
-            let inbound = TTYOutput(sequence: output)
-            try await perform(inbound, TTYStdinWriter(channel: channel))
-        } catch {
-            // A peer can close independently. Preserve the original stream or
-            // caller error even if closing an already-closed channel throws.
-            try? await channel.close()
-            throw error
+        return try await withTaskCancellationHandler {
+            do {
+                let (channel, output) = try await _executeCommandStream(
+                    environment: environment, mode: .command(command), terminalExitStatus: status, lifetime: lifetime
+                )
+                do {
+                    try await perform(TTYOutput(sequence: output), TTYStdinWriter(channel: channel))
+                } catch {
+                    // Preserve the original error if the peer closed independently.
+                    try? await channel.close()
+                    throw error
+                }
+                do { try await channel.close() }
+                catch ChannelError.alreadyClosed { }
+                if let lifetime { try await lifetime.closeFuture.get() }
+                return status.withLockedValue { $0 }
+            } catch {
+                if let lifetime {
+                    lifetime.requestChildClose()
+                    try? await lifetime.closeFuture.get()
+                }
+                throw error
+            }
+        } onCancel: {
+            lifetime?.requestChildClose()
         }
-        do { try await channel.close() }
-        catch ChannelError.alreadyClosed { }
-        return status.withLockedValue { $0 }
     }
 
     /// Executes a command and returns separate stdout and stderr streams

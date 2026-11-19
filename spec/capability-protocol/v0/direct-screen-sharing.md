@@ -93,7 +93,11 @@ volume change. After the channel opens, check the captured connection owner,
 foreground access, and ordinary native input admission on the main actor, then
 enqueue the fixed admission line in the same actor turn. An exclusive shortcut
 or input suspension retires pending volume work even if input later resumes.
+The native input revision covers Compose Text reservations and Trackpad geometry
+changes. Check that revision through enqueueing. Discard retired replies and
+read again if Media has reopened by the time the old channel retires.
 Without the admission line, the command exits without invoking the volume script.
+The outer command is a single line accepted by the Mac account's command shell.
 
 The command uses macOS Standard Additions to read state, change the level by
 6 percentage points saturating at 0 and 100 or toggle output mute, then read
@@ -104,7 +108,9 @@ stdout and a zero exit status, as described in the
 [indexed fixture](../../fixtures/direct-trackpad-volume-v0.1.json).
 Preserve operation failures through channel cleanup and discard stale results.
 The operation has five seconds to complete, then one second to retire its
-child channel. If channel retirement stalls, close the captured SSH parent so
+child channel. Request child closure on the SSH event loop even when the stdin
+write is pending. Disarm the parent fallback on that loop when the child closes.
+If channel retirement stalls, close the captured SSH parent so
 normal connection recovery can proceed. Keep the operation slot occupied until
 the child or its parent has retired. This profile does not send playback or
 brightness keys without a verified route for those actions.

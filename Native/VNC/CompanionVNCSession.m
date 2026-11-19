@@ -115,6 +115,9 @@ typedef NS_ENUM(NSInteger, CompanionVNCInputAdmission) {
     BOOL _reviewInputSuspended, _interruptionInputSuspended, _displayHandoffInputBlocked, _desktopResizeHandoff;
     void (^_reviewReleaseCompletion)(void);
     NSUInteger _presentationEpoch, _inputEpoch;
+#if TARGET_OS_IOS
+    NSUInteger _controlSequenceRevision;
+#endif
     dispatch_semaphore_t _wake;
     void (^_pauseCompletion)(void);
     NSString *_username, *_password;
@@ -1855,6 +1858,18 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 - (BOOL)ordinaryControlInputAvailable {
     [_lock lock]; BOOL ready = [self ordinaryControlInputAllowedLocked] && [self composedTextReadyLocked]; [_lock unlock]; return ready;
 }
+- (NSUInteger)ordinaryControlInputRevision {
+    // An exclusive reservation also retires ordinary input owners, but it must
+    // keep the worker's epoch for previously queued input intact.
+    [_lock lock]; NSUInteger revision = _inputEpoch + _controlSequenceRevision; [_lock unlock]; return revision;
+}
+- (BOOL)performWithOrdinaryControlInputAtRevision:(NSUInteger)revision action:(void (^)(void))action {
+    [_lock lock];
+    BOOL allowed = revision == _inputEpoch + _controlSequenceRevision
+        && [self ordinaryControlInputAllowedLocked] && [self composedTextReadyLocked];
+    if (allowed) action();
+    [_lock unlock]; return allowed;
+}
 - (BOOL)tryComposedTextEvents:(NSArray<NSDictionary *> *)events completion:(void (^)(BOOL))completion {
     [_lock lock];
     BOOL allowed = !_controlSequenceID && completion && [self composedTextReadyLocked]
@@ -1865,7 +1880,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 - (NSString *)beginControlSequence {
     [_lock lock];
     NSString *identifier = !_controlSequenceID && !_composedTextReplies.count && [self composedTextReadyLocked] ? NSUUID.UUID.UUIDString : nil;
-    if (identifier) { _controlSequenceID = identifier; [self enqueueControlCleanupLocked]; }
+    if (identifier) { _controlSequenceID = identifier; _controlSequenceRevision++; [self enqueueControlCleanupLocked]; }
     [_lock unlock]; dispatch_semaphore_signal(_wake); return identifier;
 }
 - (BOOL)ownsControlSequence:(NSString *)identifier {

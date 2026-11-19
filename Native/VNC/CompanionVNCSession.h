@@ -76,6 +76,9 @@ typedef UIImage CompanionVNCImage;
 /// Connection/input readiness plus the current shortcut reservation. UI gesture
 /// handlers must check this before changing local input state; cleanup is separate.
 @property(nonatomic, readonly) BOOL ordinaryControlInputAvailable;
+@property(nonatomic, readonly) NSUInteger ordinaryControlInputRevision;
+- (BOOL)performWithOrdinaryControlInputAtRevision:(NSUInteger)revision action:(NS_NOESCAPE void (^)(void))action
+    NS_SWIFT_NAME(performWithOrdinaryControlInput(atRevision:action:));
 /// Completion acknowledges local writes only, never remote application consumption.
 - (BOOL)tryComposedTextEvents:(NSArray<NSDictionary *> *)events completion:(void (^)(BOOL written))completion;
 /// A local reservation keeps other input out while a timed shortcut yields.
