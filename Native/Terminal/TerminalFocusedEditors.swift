@@ -84,23 +84,15 @@ struct TerminalKeyboardEditingPreview: View {
                 } label: { Image(systemName: "ellipsis.circle").font(.system(size: 22)).frame(minWidth: 44, minHeight: 44) }
                     .accessibilityLabel("Keyboard Options").accessibilityIdentifier("terminal-row-options")
             }.dynamicTypeSize(...DynamicTypeSize.xxxLarge).padding(.horizontal, 20).padding(.vertical, compact ? 0 : 20)
-            if let compactTrackpadSelection {
-                let choice = CompactTrackpadRowPicker.selectionTitle(for: compactTrackpadSelection.wrappedValue, in: profile)
-                NavigationLink {
-                    CompactTrackpadRowPicker(profile: profile, selection: compactTrackpadSelection)
-                } label: {
-                    Label("Trackpad Dock uses \(choice)", systemImage: "rectangle.split.1x2")
-                        .font(.subheadline).multilineTextAlignment(.leading)
-                }.accessibilityIdentifier("terminal-editor-trackpad-dock-keys")
-                    .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 20).padding(.bottom, compact ? 2 : 12)
-                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { trackpadSummaryHeight = $0 }
-            }
             if let pending, let action = profile.actions.first(where: { $0.id == pending }) {
                 Label("Choose a row’s Add Key action to place " + action.title, systemImage: "plus.circle").font(.subheadline).padding(.horizontal, 20)
             }
             Spacer(minLength: compact ? 0 : 12)
+            if let compactTrackpadSelection {
+                trackpadKeysLink(compactTrackpadSelection)
+                    .padding(.horizontal, 20).padding(.bottom, 8)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { trackpadSummaryHeight = $0 }
+            }
             ScrollView(.vertical) {
                 TerminalKeyboardBarPreview(profile: profile, allRows: true, handles: true,
                     select: { item, row in
@@ -167,6 +159,32 @@ struct TerminalKeyboardEditingPreview: View {
                     profile.removeEditorRow(id); removing = nil
                 }.accessibilityIdentifier("terminal-remove-row")
             } message: { _ in Text("Saved shortcuts and text stay available. You can undo this change.") }
+    }
+    private func trackpadKeysLink(_ selection: Binding<UUID?>) -> some View {
+        let usesKeyboardRow = profile.compactTrackpadRowID(for: selection.wrappedValue?.uuidString ?? "") != nil
+        let status = usesKeyboardRow ? "Shows the outlined row" : "Shows the default keys"
+        return NavigationLink {
+            CompactTrackpadRowPicker(profile: profile, selection: selection)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "rectangle.split.1x2").foregroundStyle(.tint)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(CompactTrackpadRowPicker.title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                    Text(status).font(.footnote).foregroundStyle(.secondary)
+                }.multilineTextAlignment(.leading)
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 8).frame(minHeight: 44)
+            .background(Color(uiColor: .secondarySystemBackground), in: .rect(cornerRadius: 12))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+        .accessibilityLabel(CompactTrackpadRowPicker.title).accessibilityValue(status)
+        .accessibilityIdentifier("terminal-editor-trackpad-dock-keys")
     }
     private func rowAction(_ id: UUID, _ action: TerminalKeyboardRow.MenuAction) {
         guard let row = profile.resolvedRows.first(where: { $0.id == id }) else { return }

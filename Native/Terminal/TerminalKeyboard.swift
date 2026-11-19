@@ -818,7 +818,7 @@ final class TerminalKeyScrollView: UIScrollView {
                     if hasMenu {
                         add.menu = editorRowMenu(definition)
                         add.showsMenuAsPrimaryAction = true
-                        if usedInTrackpadDock { add.accessibilityValue = "Used in Trackpad Dock" }
+                        if usedInTrackpadDock { add.accessibilityValue = "Shown on Trackpad" }
                     } else {
                         add.addAction(UIAction { [weak self] _ in
                             guard let self, self.layoutGeneration == generation else { return }
@@ -850,7 +850,7 @@ final class TerminalKeyScrollView: UIScrollView {
         }
         var settings: [UIMenuElement] = []
         if previewOffersTrackpadDock, definition.hidden != true, !definition.placements.isEmpty {
-            settings.append(UIAction(title: "Use in Trackpad Dock", image: UIImage(systemName: "rectangle.split.1x2"),
+            settings.append(UIAction(title: "Show This Row on Trackpad", image: UIImage(systemName: "rectangle.split.1x2"),
                 state: previewTrackpadDockRow == definition.id ? .on : .off) { [weak self] _ in
                 guard let self, self.layoutGeneration == generation else { return }
                 self.previewRowAction?(definition.id, .useInTrackpadDock)

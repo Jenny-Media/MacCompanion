@@ -23,7 +23,7 @@ struct TerminalControlsSettings: View {
         )
     }
     private var compactTrackpadTitle: String {
-        CompactTrackpadRowPicker.selectionTitle(for: selectedCompactTrackpadRowID, in: profile)
+        selectedCompactTrackpadRowID.map { "Keyboard Bar · \(profile.rowTitle($0))" } ?? CompactTrackpadRowPicker.defaultTitle
     }
     private struct LayoutRequest: Identifiable {
         var id = UUID()
@@ -148,22 +148,17 @@ struct TerminalControlsSettings: View {
 }
 
 struct CompactTrackpadRowPicker: View {
-    static let title = "Trackpad Dock Keys"
+    static let title = "Trackpad Keys"
     static let defaultTitle = "Default Navigation Keys"
     let profile: TerminalControlsProfile
     @Binding var selection: UUID?
-
-    static func selectionTitle(for id: UUID?, in profile: TerminalControlsProfile) -> String {
-        let row = profile.compactTrackpadRowID(for: id?.uuidString ?? "")
-        return row.map { "Keyboard Bar \(profile.rowTitle($0))" } ?? defaultTitle
-    }
 
     var body: some View {
         List {
             Section {
                 option(Self.defaultTitle, keys: RemoteMacControls.compactNavigationKeys.map(\.title), id: nil)
             } footer: {
-                Text("Choose which keys appear in the Trackpad dock while the on-screen keyboard is closed.")
+                Text("These keys appear in Trackpad mode while the on-screen keyboard is closed.")
             }
             let rows = profile.compactTrackpadRows
             if !rows.isEmpty {

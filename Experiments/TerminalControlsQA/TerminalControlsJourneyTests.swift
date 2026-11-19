@@ -1540,7 +1540,7 @@ import UIKit
 
         let picker = app.buttons["trackpad-compact-row-picker"]
         picker.tap()
-        let bar = app.navigationBars["Trackpad Dock Keys"]
+        let bar = app.navigationBars["Trackpad Keys"]
         XCTAssertTrue(bar.waitForExistence(timeout: 5))
         func option(_ title: String) -> XCUIElement {
             app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title)).firstMatch
@@ -1556,10 +1556,10 @@ import UIKit
         XCTAssertTrue(functions.isSelected)
         capture("compact-trackpad-row-choices", app: app)
         bar.buttons.element(boundBy: 0).tap()
-        XCTAssertEqual(picker.value as? String, "Keyboard Bar Row 2")
+        XCTAssertEqual(picker.value as? String, "Keyboard Bar · Row 2")
         closeSettings(app)
         openSettings(app)
-        XCTAssertEqual(picker.value as? String, "Keyboard Bar Row 2")
+        XCTAssertEqual(picker.value as? String, "Keyboard Bar · Row 2")
         picker.tap()
         navigation.tap()
         XCTAssertTrue(navigation.isSelected)
@@ -1583,11 +1583,16 @@ import UIKit
         func useRowTwo() {
             XCTAssertTrue(editor.waitForExistence(timeout: 5)); editor.tap()
             XCTAssertTrue(choice.waitForExistence(timeout: 5))
-            XCTAssertEqual(choice.label, "Trackpad Dock uses Default Navigation Keys")
+            XCTAssertEqual(choice.label, "Trackpad Keys")
+            XCTAssertEqual(choice.value as? String, "Shows the default keys")
+            choice.tap()
+            let trackpadKeys = app.navigationBars["Trackpad Keys"]
+            XCTAssertTrue(trackpadKeys.waitForExistence(timeout: 5))
+            trackpadKeys.buttons.element(boundBy: 0).tap()
             rowMenu.tap()
-            app.buttons["Use in Trackpad Dock"].tap()
-            XCTAssertEqual(choice.label, "Trackpad Dock uses Keyboard Bar Row 2")
-            XCTAssertEqual(rowMenu.value as? String, "Used in Trackpad Dock")
+            app.buttons["Show This Row on Trackpad"].tap()
+            XCTAssertEqual(choice.value as? String, "Shows the outlined row")
+            XCTAssertEqual(rowMenu.value as? String, "Shown on Trackpad")
         }
 
         useRowTwo()
@@ -1601,7 +1606,7 @@ import UIKit
         capture("keyboard-editor-trackpad-dock-row", app: app)
         app.buttons["terminal-controls-save"].tap()
         openSettings(app)
-        XCTAssertEqual(picker.value as? String, "Keyboard Bar Row 2")
+        XCTAssertEqual(picker.value as? String, "Keyboard Bar · Row 2")
         closeSettings(app)
     }
 
