@@ -5,6 +5,7 @@ import StoreKit
 import Crypto
 import NIO
 import NIOSSH
+import NIOConcurrencyHelpers
 import Citadel
 import Darwin
 import ActivityKit
@@ -78,6 +79,32 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
             return view.subviews.contains(where: containsField)
         }
         if containsField(window) { credentialFrames += 1 }
+    }
+}
+
+// Model exactly one parent-socket write whose completion stays pending after
+// the remote child channel closes. Forward the original encrypted frame so
+// subsequent SSH frames remain in sequence, while holding its completion.
+private final class HeldParentWrite: ChannelOutboundHandler, Sendable {
+    typealias OutboundIn = ByteBuffer
+    private let armed = NIOLockedValueBox(false)
+    private let held = NIOLockedValueBox<EventLoopPromise<Void>?>(nil)
+    func holdNextWrite() { armed.withLockedValue { $0 = true } }
+    var didHold: Bool { held.withLockedValue { $0 != nil } }
+    func release() {
+        let pending = held.withLockedValue { state in let pending = state; state = nil; return pending }
+        pending?.fail(ChannelError.ioOnClosedChannel)
+    }
+    func write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
+        if let promise {
+            let shouldHold = armed.withLockedValue { state in let value = state; state = false; return value }
+            if shouldHold {
+                held.withLockedValue { $0 = promise }
+                context.write(data, promise: nil)
+                return
+            }
+        }
+        context.write(data, promise: promise)
     }
 }
 
@@ -594,6 +621,80 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
             try await client.close()
         }
     }
+    func testTrackpadVolumeRetirementGraceStartsWhenDelayedEventLoopResumes() async throws {
+        let operation = DirectTrackpadVolume.read
+        let record = SSHTestRecord(echoInput: false, volumeExec: .init(command: operation.command,
+            admission: DirectTrackpadVolume.admission, response: .waitForClose))
+        let key = NIOSSHPrivateKey(ed25519Key: .init())
+        let server = try await server(record: record, key: key)
+        defer { _ = server.close() }
+        let client = try await SSHClient.connect(host: "127.0.0.1", port: try XCTUnwrap(server.localAddress?.port),
+            authenticationMethod: .passwordBased(username: "synthetic", password: "synthetic-only"),
+            hostKeyValidator: .trustedKeys([key.publicKey]), reconnect: .never, connectTimeout: .seconds(3))
+        let loop = client.eventLoop
+        let perform: @Sendable (TTYOutput, TTYStdinWriter) async throws -> Void = { inbound, outbound in
+            try await outbound.write(ByteBuffer(string: DirectTrackpadVolume.admission))
+            loop.execute {
+                let blocked = DispatchSemaphore(value: 0)
+                _ = blocked.wait(timeout: .now() + .milliseconds(2300))
+            }
+            for try await _ in inbound { }
+        }
+        let status = try await client.withExec(
+            operation.command, timeout: .seconds(1), retirementGrace: .seconds(1), perform: perform
+        )
+        XCTAssertNil(status)
+        XCTAssertEqual(record.received, Array(DirectTrackpadVolume.admission.utf8))
+        XCTAssertTrue(client.isConnected)
+        try await client.close()
+    }
+
+    func testTrackpadVolumeReturnsWhenChildRetiresBeforeParentWriteResolves() async throws {
+        let operation = DirectTrackpadVolume.read
+        let held = HeldParentWrite()
+        let peerClosed = NIOLockedValueBox(false)
+        let fixture = SSHTestVolumeExec(command: operation.command, admission: DirectTrackpadVolume.admission,
+            response: .waitForClose,
+            onExec: { child in
+                child.eventLoop.scheduleTask(in: .milliseconds(300)) { child.close(promise: nil) }
+            },
+            onClose: { peerClosed.withLockedValue { $0 = true } })
+        let record = SSHTestRecord(echoInput: false, volumeExec: fixture)
+        let key = NIOSSHPrivateKey(ed25519Key: .init())
+        let server = try await server(record: record, key: key)
+        defer { _ = server.close() }
+        let port = try XCTUnwrap(server.localAddress?.port)
+        let parent = try await ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+            .channelOption(ChannelOptions.autoRead, value: false)
+            .channelInitializer { $0.pipeline.addHandler(held, position: .first) }
+            .connect(host: "127.0.0.1", port: port).get()
+        let settings = SSHClientSettings(host: "127.0.0.1", port: port,
+            authenticationMethod: { .passwordBased(username: "synthetic", password: "synthetic-only") },
+            hostKeyValidator: .trustedKeys([key.publicKey]))
+        var finished = false
+        let task = Task { @MainActor in
+            let client = try await SSHClient.connect(on: parent, settings: settings)
+            let result = await operation.run(client: client, isCurrent: { true }, admit: { enqueue in
+                held.holdNextWrite()
+                enqueue()
+                return true
+            })
+            finished = true
+            return result
+        }
+        defer { held.release(); task.cancel(); _ = parent.close() }
+        try await wait("held write and peer child retirement") {
+            held.didHold && peerClosed.withLockedValue { $0 }
+        }
+        try await wait("volume operation to return while the parent still owns the pending write") { finished }
+        XCTAssertTrue(parent.isActive)
+        XCTAssertTrue(held.didHold)
+        XCTAssertEqual(record.received, Array(DirectTrackpadVolume.admission.utf8))
+        let reply = try await task.value
+        XCTAssertNil(reply)
+        XCTAssertTrue(finished)
+    }
+
     func testTrackpadVolumeDeadlineRetiresOnlyUnresponsiveParents() async throws {
         let operation = DirectTrackpadVolume.increase
         let cases: [(name: String, stallBeforeOpen: Bool, response: SSHTestVolumeExec.Response, connected: Bool)] = [

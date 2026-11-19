@@ -193,6 +193,7 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
 @property NSLayoutConstraint *canvasLeading, *canvasTrailing, *toolbarLeading, *toolbarTrailing, *loginLeading, *loginTrailing, *statusCenter;
 @property UIEdgeInsets previousCanvasInset;
 @property UIStackView *trackpadTip;
+@property NSLayoutConstraint *trackpadTipCenter, *trackpadTipWidth;
 @property CompanionVNCTrackpadFeedback *trackpadFeedback, *tabletopFeedback;
 @property UIGestureRecognizer *click;
 @property UITapGestureRecognizer *secondaryTap, *smartTap, *tabletopSecondaryTap;
@@ -1331,6 +1332,8 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
     self.canvasTrailing.constant = book && !self.inputOnly ? CGRectGetMaxX(content) - CGRectGetMaxX(safe) : 0;
     self.toolbarLeading.constant = book ? input.origin.x - safe.origin.x + 6 : 6;
     self.toolbarTrailing.constant = book ? CGRectGetMaxX(input) - CGRectGetMaxX(safe) - 6 : -6;
+    self.trackpadTipCenter.constant = book ? CGRectGetMidX(input) - CGRectGetMidX(safe) : 0;
+    self.trackpadTipWidth.constant = book ? CGRectGetWidth(input) - CGRectGetWidth(safe) - 32 : -32;
     self.statusCenter.constant = book ? CGRectGetMidX(content) - CGRectGetMidX(self.view.bounds) : 0;
     CGRect loginRegion = self.connectionPanelHost ? self.loginPanelContent.view.bounds : safe;
     if (!self.connectionPanelHost) loginRegion.size.height = MAX(0, loginRegion.size.height - self.keyboardOverlap);
@@ -1642,7 +1645,14 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
     CGPoint local = CGPointMake(self.trackpadOrigin.x - self.activeCrop.origin.x + step.x * gain,
                                self.trackpadOrigin.y - self.activeCrop.origin.y + step.y * gain);
     BOOL valid = CompanionVNCPointerPoint(self.activeCrop, local, true, p);
-    if (valid) self.trackpadOrigin = *p;
+    if (valid) {
+        // Precision & Reach must retain motion smaller than one remote pixel.
+        // Keep the origin within the crop so reversing at an edge responds immediately.
+        self.trackpadOrigin = tuned
+            ? CGPointMake(self.activeCrop.origin.x + MAX(0, MIN(self.activeCrop.size.width - 1, local.x)),
+                          self.activeCrop.origin.y + MAX(0, MIN(self.activeCrop.size.height - 1, local.y)))
+            : *p;
+    }
     return valid;
 }
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture shouldRequireFailureOfGestureRecognizer:(UIGestureRecognizer *)other {
@@ -2434,10 +2444,11 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
     [self.view insertSubview:self.trackpadTip belowSubview:self.controls];
 
     UILayoutGuide *safe = self.view.safeAreaLayoutGuide;
+    self.trackpadTipCenter = [self.trackpadTip.centerXAnchor constraintEqualToAnchor:safe.centerXAnchor];
+    self.trackpadTipWidth = [self.trackpadTip.widthAnchor constraintLessThanOrEqualToAnchor:safe.widthAnchor constant:-32];
     [NSLayoutConstraint activateConstraints:@[
         [self.trackpadTip.topAnchor constraintEqualToAnchor:safe.topAnchor constant:16],
-        [self.trackpadTip.centerXAnchor constraintEqualToAnchor:safe.centerXAnchor],
-        [self.trackpadTip.widthAnchor constraintLessThanOrEqualToAnchor:safe.widthAnchor constant:-32],
+        self.trackpadTipCenter, self.trackpadTipWidth,
         [self.trackpadTip.widthAnchor constraintLessThanOrEqualToConstant:340]
     ]];
 }
@@ -3000,15 +3011,21 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
                 complete(DirectTextDeliveryStatusRejected, @"The session changed. Nothing was sent."); return;
             }
             [current clearControlModifiers];
-            if (![DirectTextComposer sendDesktopText:text session:owner current:^BOOL {
+            BOOL started = [DirectTextComposer sendDesktopText:text session:owner current:^BOOL {
                 CompanionVNCViewer *active = weak;
                 return active && owner && active.session == owner && active.textGeneration == generation
                     && [active composedTextAvailable];
             } completion:^(BOOL written) {
-                if (!written && weak.textGeneration == generation) weak.textSendInterrupted = YES;
+                CompanionVNCViewer *active = weak;
+                if (active && active.session == owner && active.textGeneration == generation) {
+                    if (!written) active.textSendInterrupted = YES;
+                    [active.remoteControls refresh];
+                }
                 complete(written ? DirectTextDeliveryStatusWritten : DirectTextDeliveryStatusUncertain,
                          written ? nil : @"Text may have been partially sent. Check your Mac before sending it again.");
-            }]) complete(DirectTextDeliveryStatusRejected, @"Input is busy. Nothing was queued. Try Send Text again.");
+            }];
+            if (started) [current.remoteControls refresh];
+            else complete(DirectTextDeliveryStatusRejected, @"Input is busy. Nothing was queued. Try Send Text again.");
         }];
     };
     if (self.presentedViewController) [self dismissViewControllerAnimated:YES completion:present];

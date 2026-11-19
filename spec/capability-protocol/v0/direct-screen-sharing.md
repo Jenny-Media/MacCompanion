@@ -94,8 +94,9 @@ foreground access, and ordinary native input admission on the main actor, then
 enqueue the fixed admission line in the same actor turn. An exclusive shortcut
 or input suspension retires pending volume work even if input later resumes.
 The native input revision covers Compose Text reservations and Trackpad geometry
-changes. Check that revision through enqueueing. Discard retired replies and
-read again if Media has reopened by the time the old channel retires.
+changes, including display-layout changes within the same framebuffer size.
+Check that revision through enqueueing. Discard retired replies and read again
+when Media is open and native input is available.
 Without the admission line, the command exits without invoking the volume script.
 The outer command is a single line accepted by the Mac account's command shell.
 
@@ -104,12 +105,14 @@ The command uses macOS Standard Additions to read state, change the level by
 back the effect. A numeric readback alone does not establish that an output
 supports adjustment. A target that cannot be read or an unchanged value when
 a different one was requested is unavailable. Accept only the complete bounded
-stdout and a zero exit status, as described in the
+stdout without a byte-order mark and a zero exit status, as described in the
 [indexed fixture](../../fixtures/direct-trackpad-volume-v0.1.json).
 Preserve operation failures through channel cleanup and discard stale results.
 The operation has five seconds to complete, then one second to retire its
-child channel. Request child closure on the SSH event loop even when the stdin
-write is pending. Disarm the parent fallback on that loop when the child closes.
+child channel. Start the grace period on the SSH event loop when timeout
+processing requests child closure, even when a write is pending. When the
+child closes, disarm the parent fallback and release waits on writes still
+owned by the parent socket.
 If channel retirement stalls, close the captured SSH parent so
 normal connection recovery can proceed. Keep the operation slot occupied until
 the child or its parent has retired. This profile does not send playback or

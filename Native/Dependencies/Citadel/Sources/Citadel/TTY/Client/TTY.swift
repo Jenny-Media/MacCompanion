@@ -77,6 +77,12 @@ public struct TTYOutput: AsyncSequence {
 /// Allows writing data to a TTY's standard input and controlling terminal properties
 public struct TTYStdinWriter: Sendable {
     internal let channel: Channel
+    private let lifetime: ExecChannelLifetime?
+
+    internal init(channel: Channel, lifetime: ExecChannelLifetime? = nil) {
+        self.channel = channel
+        self.lifetime = lifetime
+    }
 
     /// Write raw bytes to the TTY's standard input
     /// - Parameter buffer: The bytes to write
@@ -86,7 +92,8 @@ public struct TTYStdinWriter: Sendable {
 
     /// Enqueue the write synchronously so callers can authorize it and enqueue it in one actor turn.
     public func enqueueWrite(_ buffer: ByteBuffer) -> EventLoopFuture<Void> {
-        channel.writeAndFlush(SSHChannelData(type: .channel, data: .byteBuffer(buffer)))
+        let write = channel.writeAndFlush(SSHChannelData(type: .channel, data: .byteBuffer(buffer)))
+        return lifetime?.whileChildIsOpen(write) ?? write
     }
 
     public func changeSize(cols: Int, rows: Int, pixelWidth:Int, pixelHeight:Int) async throws {
@@ -118,12 +125,25 @@ final class ExecChannelLifetime: @unchecked Sendable {
         let parent = session.channel, loop = parent.eventLoop
         completion = loop.makePromise(of: Void.self)
         loop.execute {
-            self.childTimeout = loop.scheduleTask(in: timeout) { [weak self] in self?.requestChildClose() }
-            self.parentTimeout = loop.scheduleTask(in: timeout + grace) { [weak self] in
+            self.childTimeout = loop.scheduleTask(in: timeout) { [weak self] in
                 guard let self, !self.retired else { return }
-                parent.close(promise: nil)
+                self.requestChildClose()
+                guard !self.retired else { return }
+                self.parentTimeout = loop.scheduleTask(in: grace) { [weak self] in
+                    guard let self, !self.retired else { return }
+                    parent.close(promise: nil)
+                }
             }
         }
+    }
+
+    func whileChildIsOpen(_ write: EventLoopFuture<Void>) -> EventLoopFuture<Void> {
+        // SSH can pass the promise to the parent socket, which may still hold
+        // the write after the exec child retires. Release just the caller's wait.
+        let result = write.eventLoop.makePromise(of: Void.self)
+        write.cascade(to: result)
+        closeFuture.whenComplete { _ in result.fail(ChannelError.ioOnClosedChannel) }
+        return result.futureResult
     }
 
     func track(_ channel: Channel) {
@@ -405,20 +425,24 @@ extension SSHClient {
             return createChannel.futureResult
         }.get()
 
-        for env in environment {
-            try await channel.triggerUserOutboundEvent(env)
+        func sendRequest(_ event: any Sendable) async throws {
+            let promise = channel.eventLoop.makePromise(of: Void.self)
+            channel.triggerUserOutboundEvent(event, promise: promise)
+            let write = promise.futureResult
+            try await (lifetime?.whileChildIsOpen(write) ?? write).get()
         }
 
+        for env in environment { try await sendRequest(env) }
         switch mode {
         case .pty(let request):
-            try await channel.triggerUserOutboundEvent(request)
+            try await sendRequest(request)
             fallthrough
         case .tty:
-            try await channel.triggerUserOutboundEvent(SSHChannelRequestEvent.ShellRequest(
+            try await sendRequest(SSHChannelRequestEvent.ShellRequest(
                 wantReply: true
             ))
         case .command(let command):
-            try await channel.triggerUserOutboundEvent(SSHChannelRequestEvent.ExecRequest(
+            try await sendRequest(SSHChannelRequestEvent.ExecRequest(
                 command: command,
                 wantReply: true
             ))
@@ -564,7 +588,7 @@ extension SSHClient {
                     environment: environment, mode: .command(command), terminalExitStatus: status, lifetime: lifetime
                 )
                 do {
-                    try await perform(TTYOutput(sequence: output), TTYStdinWriter(channel: channel))
+                    try await perform(TTYOutput(sequence: output), TTYStdinWriter(channel: channel, lifetime: lifetime))
                 } catch {
                     // Preserve the original error if the peer closed independently.
                     try? await channel.close()

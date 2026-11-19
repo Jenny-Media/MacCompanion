@@ -23,6 +23,7 @@ import SwiftUI
     private var mediaButtons: [UIButton] = []
     private var mediaRequest: UUID?
     private var mediaRequestRetired = false
+    private var mediaNeedsRead = false
     private var mediaVolumeReadable = false
     private var showingMedia = false
     @objc private(set) var trackpadShowsKeyboardBar = false
@@ -162,8 +163,10 @@ import SwiftUI
         keyboardBar.setCompactContentsVisible(compact)
         for button in trackpadNavigation { button.isEnabled = ready }
         dockCompose?.isEnabled = ready
-        dockMedia?.isEnabled = ready && viewer?.trackpadVolumeHandler != nil
-        for button in mediaButtons { button.isEnabled = ready && mediaVolumeReadable && mediaRequest == nil }
+        let mediaReady = self.mediaReady
+        dockMedia?.isEnabled = mediaReady && viewer?.trackpadVolumeHandler != nil
+        for button in mediaButtons { button.isEnabled = mediaReady && mediaVolumeReadable && mediaRequest == nil }
+        if mediaNeedsRead { runVolume(.read) }
     }
 
     @objc func toggleTrackpadKeyboardBar() {
@@ -183,24 +186,29 @@ import SwiftUI
         mediaPanel.isHidden = !visible
         dockMedia?.isSelected = visible
         dockMedia?.accessibilityValue = visible ? "Expanded" : "Collapsed"
-        if visible {
-            if mediaRequest == nil {
-                mediaVolumeReadable = false
-                runVolume(.read)
-            } else if mediaRequestRetired {
-                mediaStatus.text = "Checking Mac volume…"
-            }
+        if visible && (mediaRequest == nil || mediaRequestRetired) {
+            requestMediaRead()
+        } else if !visible {
+            mediaNeedsRead = false
         }
         viewer?.view.setNeedsLayout()
     }
 
+    private func requestMediaRead() {
+        mediaNeedsRead = true
+        mediaVolumeReadable = false
+        mediaStatus.text = "Checking Mac volume…"
+        refreshDock()
+    }
+
     private func runVolume(_ operation: DirectTrackpadVolume) {
-        guard showingMedia, ready, mediaRequest == nil, operation == .read || mediaVolumeReadable,
+        guard showingMedia, mediaReady, mediaRequest == nil, operation == .read || mediaVolumeReadable,
               let viewer, let handler = viewer.trackpadVolumeHandler else { return }
         let request = UUID(), epoch = viewer.controlsEpoch, connection = viewer.controlsConnectionID
         let session = viewer.session, nativeRevision = session.ordinaryControlInputRevision
         mediaRequest = request
         mediaRequestRetired = false
+        mediaNeedsRead = false
         mediaStatus.text = operation == .read ? "Checking Mac volume…" : "Adjusting Mac volume…"
         refreshDock()
         handler(operation.rawValue) { [weak self, weak viewer] reply in
@@ -213,8 +221,7 @@ import SwiftUI
                 guard self.ready else { self.setMediaVisible(false); return }
                 guard !retired, viewer.controlsEpoch == epoch, viewer.controlsConnectionID == connection,
                       viewer.session === session, session.ordinaryControlInputRevision == nativeRevision else {
-                    self.mediaVolumeReadable = false
-                    self.runVolume(.read)
+                    self.requestMediaRead()
                     return
                 }
                 if let reply, let reading = DirectTrackpadVolume.Reading(response: reply) {
@@ -231,6 +238,7 @@ import SwiftUI
     }
 
     private var ready: Bool { sequenceIdentifier == nil && viewer?.controlsInputAvailable() == true && DirectAppLockV1.shared.canAccess }
+    private var mediaReady: Bool { ready && viewer?.trackpadVolumeInputAvailable() == true }
     private func canUse(_ action: TerminalControlAction) -> Bool {
         sequenceIdentifier == nil && (action.isLocalKeyboardControl || ready && !(action.operation?.requiresScreen == true && viewer?.inputOnly == true)
             && (action.operation != .copyScreenText || viewer?.controlsCopyTextAvailable() == true))

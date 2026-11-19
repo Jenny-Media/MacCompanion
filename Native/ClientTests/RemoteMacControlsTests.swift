@@ -19,6 +19,7 @@ private final class RemoteAnchorSession: CompanionVNCSession {
 
 @MainActor private final class RemoteControlsTestViewer: CompanionVNCViewer {
     var available = true, accepts = true
+    var useNativeVolumeAdmission = false
     var epoch: UInt = 1
     var events: [[AnyHashable: Any]] = []
     var shown: UIViewController?
@@ -39,6 +40,7 @@ private final class RemoteAnchorSession: CompanionVNCSession {
     override var controlsEpoch: UInt { epoch }
     override var controlsConnectionID: String { connectionID }
     override func controlsInputAvailable() -> Bool { available }
+    override func trackpadVolumeInputAvailable() -> Bool { useNativeVolumeAdmission ? super.trackpadVolumeInputAvailable() : available }
     override func toggleControlsKeyboard() { keyboardToggles += 1 }
     override func controlsSoftwareKeyboardVisible() -> Bool { softwareKeyboard }
     override func controlsExecutionKeyboardCurrent() -> Bool { keyboardCurrent }
@@ -67,7 +69,65 @@ private final class RemoteAnchorSession: CompanionVNCSession {
     override func present(_ viewControllerToPresent: UIViewController, animated flag: Bool, completion: (() -> Void)? = nil) { shown = viewControllerToPresent; completion?() }
 }
 
+private final class MediaComposeSession: CompanionVNCSession {
+    var acknowledge: ((Bool) -> Void)?
+    override func tryControlSequenceEvents(_ events: [[AnyHashable: Any]], identifier: String, completion: @escaping (Bool) -> Void) -> Bool {
+        guard ownsControlSequence(identifier) else { return false }
+        acknowledge = completion
+        return true
+    }
+}
+
 @MainActor final class RemoteMacControlsTests: XCTestCase {
+    func testMediaReadWaitsForComposeTextToReleaseInput() throws {
+        let viewer = RemoteControlsTestViewer()
+        viewer.useNativeVolumeAdmission = true
+        let session = MediaComposeSession()
+        viewer.inputOnly = true; session.inputOnly = true; viewer.session = session
+        viewer.view.frame = CGRect(x: 0, y: 0, width: 390, height: 700)
+        viewer.setValue(true, forKey: "foreground")
+        for key in ["running", "established", "inputReady"] { session.setValue(true, forKey: key) }
+        let epoch = viewer.controlsEpoch
+        let origin = session.ordinaryControlInputRevision
+        XCTAssertTrue(viewer.trackpadVolumeInputAvailable())
+        XCTAssertTrue(viewer.controlsInputAvailable())
+        defer { session.stop() }
+        var attempted = 0
+        var original: ((String?) -> Void)?
+        viewer.trackpadVolumeHandler = { [weak viewer] operation, reply in
+            XCTAssertEqual(operation, DirectTrackpadVolume.read.rawValue)
+            attempted += 1
+            // Same native admission gate used by the production coordinator.
+            guard viewer?.trackpadVolumeInputAvailable() == true else { reply(nil); return }
+            if attempted == 1 { original = reply } else { reply("50:0\n") }
+        }
+        let controls = controls(viewer, data: try JSONEncoder().encode(TerminalControlsProfile.remoteDefaults))
+        let dock = try XCTUnwrap(descendants(controls.bar).first { $0.accessibilityIdentifier == "trackpad-dock" })
+        let button = try XCTUnwrap(descendants(dock).compactMap { $0 as? UIButton }.first { $0.accessibilityLabel == "Media" })
+        let up = try XCTUnwrap(descendants(dock).compactMap { $0 as? UIButton }.first { $0.accessibilityLabel == "Volume Up" })
+        let panel = try XCTUnwrap(descendants(dock).first { $0.accessibilityIdentifier == "trackpad-media-panel" })
+        let status = try XCTUnwrap(descendants(panel).compactMap { $0 as? UILabel }.first)
+        button.sendActions(for: .primaryActionTriggered)
+        XCTAssertEqual(attempted, 1)
+        var composeResult: Bool?
+        XCTAssertTrue(DirectTextComposer.sendDesktopText("a", session: session, current: { true }) { composeResult = $0 })
+        XCTAssertNotEqual(session.ordinaryControlInputRevision, origin)
+        XCTAssertEqual(viewer.controlsEpoch, epoch)
+        XCTAssertFalse(viewer.trackpadVolumeInputAvailable())
+        try XCTUnwrap(original)(nil)
+        XCTAssertEqual(attempted, 1)
+        XCTAssertFalse(up.isEnabled)
+        XCTAssertEqual(status.text, "Checking Mac volume…")
+        try XCTUnwrap(session.acknowledge)(true)
+        session.acknowledge = nil
+        XCTAssertEqual(composeResult, true)
+        XCTAssertTrue(viewer.trackpadVolumeInputAvailable())
+        controls.refresh()
+        XCTAssertEqual(attempted, 2)
+        XCTAssertEqual(status.text, "Mac volume 50%")
+        XCTAssertTrue(up.isEnabled)
+    }
+
     func testTrackpadDockKeepsNavigationAndTypingSeparateFromMedia() throws {
         let viewer = RemoteControlsTestViewer()
         viewer.session = RemoteAnchorSession()

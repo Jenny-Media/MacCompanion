@@ -43,6 +43,7 @@
 - (void)dragAt:(UIPanGestureRecognizer *)gesture;
 - (void)clickAt:(UIGestureRecognizer *)gesture;
 - (void)receivedCursor:(UIImage *)image hotspot:(CGPoint)hotspot position:(CGPoint)position known:(BOOL)known;
+- (void)updateTrackpadTip;
 - (void)updateConnectionChrome;
 @end
 @interface AdaptiveViewer : CompanionVNCViewer
@@ -442,6 +443,35 @@ static char keyboardDuringScaleUpdateKey;
     XCTAssertNil([controls valueForKey:@"panel"]); XCTAssertEqual(actions,0);
     [viewer stopViewer];
 }
+- (void)testTrackpadTipStaysInBookInputPaneAndRecentersAfterUnfolding {
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    NSString *key = @"direct-trackpad-gesture-tip-seen";
+    id previous = [defaults objectForKey:key]; [defaults removeObjectForKey:key];
+    @try {
+        AdaptiveViewer *viewer = [AdaptiveViewer new]; viewer.preventsAutomaticConnection = YES;
+        viewer.division = CGRectMake(465,0,20,669); viewer.inputOnly = YES;
+        [viewer loadViewIfNeeded]; viewer.view.frame = CGRectMake(0,0,951,669);
+        AdaptiveSession *session = [AdaptiveSession new]; viewer.session = session;
+        ((UIView *)[viewer valueForKey:@"loginScroll"]).hidden = YES;
+        [viewer setValue:@YES forKey:@"foreground"]; [viewer updateTrackpadTip];
+        [viewer.view setNeedsLayout]; [viewer.view layoutIfNeeded];
+        UIStackView *tip = [viewer valueForKey:@"trackpadTip"];
+        UIView *dismiss = tip.arrangedSubviews.lastObject;
+        CGRect button = [dismiss convertRect:dismiss.bounds toView:viewer.view];
+        CGRect toolbar = ((UIView *)[viewer valueForKey:@"toolbar"]).frame;
+        XCTAssertFalse(tip.hidden); XCTAssertGreaterThan(button.size.height, 43);
+        XCTAssertGreaterThanOrEqual(CGRectGetMinX(toolbar), 485);
+        XCTAssertGreaterThanOrEqual(CGRectGetMinX(tip.frame), CGRectGetMaxX(viewer.division));
+        XCTAssertFalse(CGRectIntersectsRect(button, viewer.division));
+        viewer.division = CGRectNull;
+        [viewer.view setNeedsLayout]; [viewer.view layoutIfNeeded];
+        XCTAssertEqualWithAccuracy(CGRectGetMidX(tip.frame), CGRectGetMidX(viewer.view.bounds), 1);
+        [viewer stopViewer];
+    } @finally {
+        if (previous) [defaults setObject:previous forKey:key]; else [defaults removeObjectForKey:key];
+    }
+}
+
 - (void)testBookRegionsUseReservedFrameOnceAndRequireUsablePages {
     CGRect safe = CGRectMake(20,40,911,600), content = CGRectNull, input = CGRectNull;
     XCTAssertTrue(CompanionVNCBookRegions(safe,CGRectMake(465,0,20,669),&content,&input));

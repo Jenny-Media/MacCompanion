@@ -43,6 +43,9 @@
     },
     {
       "wire": "8:0"
+    },
+    {
+      "wire": "\ufeff66:0\n"
     }
   ],
   "execReplies": [
@@ -61,6 +64,10 @@
     },
     {
       "chunks": ["66:0\n"]
+    },
+    {
+      "chunks": ["\ufeff", "66:0\n"],
+      "exitStatus": 0
     }
   ]
 }

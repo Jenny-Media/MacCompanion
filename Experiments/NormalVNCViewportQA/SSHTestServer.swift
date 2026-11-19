@@ -14,6 +14,7 @@ struct SSHTestVolumeExec {
     let command: String
     let admission: String
     let response: Response
+    var onExec: (@Sendable (Channel) -> Void)?
     var onClose: (@Sendable () -> Void)?
 }
 
@@ -115,6 +116,7 @@ final class SSHTestPTY: ChannelDuplexHandler, @unchecked Sendable {
             if request.command == record.volumeExec?.command {
                 awaitingVolumeAdmission = true
                 record.executed()
+                record.volumeExec?.onExec?(context.channel)
                 if let onClose = record.volumeExec?.onClose {
                     context.channel.closeFuture.whenComplete { _ in onClose() }
                 }

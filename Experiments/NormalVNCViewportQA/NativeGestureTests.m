@@ -26,6 +26,7 @@
 - (void)secondaryClickAt:(UITapGestureRecognizer *)gesture;
 - (void)setTrackpadModeEnabled:(BOOL)enabled;
 - (void)becameInactive;
+- (BOOL)pointerForGesture:(UIGestureRecognizer *)gesture point:(CGPoint *)point;
 - (void)dragAt:(UIPanGestureRecognizer *)gesture;
 - (void)holdAt:(UILongPressGestureRecognizer *)gesture;
 - (void)clickAt:(UIGestureRecognizer *)gesture;
@@ -52,6 +53,13 @@
 @implementation ReservedPointerPan
 - (CGPoint)locationInView:(UIView *)view { return self.point; }
 @end
+@interface SlowTrackpadPan : SyntheticScroll
+@property CGFloat sampleSpeed;
+@end
+@implementation SlowTrackpadPan
+- (CGPoint)velocityInView:(UIView *)view { return CGPointMake(self.sampleSpeed, self.sampleSpeed); }
+@end
+
 @interface ReservedPointerHold : UILongPressGestureRecognizer
 @property UIGestureRecognizerState sampleState;
 @property CGPoint point;
@@ -128,6 +136,38 @@
     XCTAssertEqualObjects([self takeEvents:s].firstObject[@"scrollPhase"],@1);
     [s stop];
 }
+- (void)testPrecisionAndReachAccumulatesSlowMotionInBothDirections {
+    CompanionVNCViewer *viewer = [CompanionVNCViewer new]; viewer.inputOnly = YES;
+    [viewer loadViewIfNeeded]; viewer.session = [self sessionWithInputOnly:YES];
+    [viewer setTrackpadModeEnabled:YES];
+    viewer.pointerSpeed = 1.5;
+    [viewer setValue:[NSValue valueWithCGRect:CGRectMake(0,0,800,600)] forKey:@"activeCrop"];
+    UIView *canvas = [viewer valueForKey:@"canvas"];
+    SlowTrackpadPan *pan = [SlowTrackpadPan new]; [canvas addGestureRecognizer:pan];
+    for (NSNumber *tuned in @[@NO, @YES]) {
+        viewer.trackpadPrecisionAndReach = tuned.boolValue;
+        for (NSNumber *sample in @[@0.5, @-0.5]) {
+            CGFloat step = sample.doubleValue;
+            [viewer setValue:[NSValue valueWithCGPoint:CGPointMake(400,300)] forKey:@"cursorPosition"];
+            [viewer setValue:@YES forKey:@"cursorPositionKnown"];
+            CGPoint point = CGPointZero; pan.delta = CGPointZero;
+            pan.sampleSpeed = step * 60;
+            pan.syntheticState = UIGestureRecognizerStateBegan;
+            XCTAssertTrue([viewer pointerForGesture:pan point:&point]);
+            XCTAssertEqual(point.x, 400);
+            pan.syntheticState = UIGestureRecognizerStateChanged;
+            for (NSUInteger index = 1; index <= 60; index++) {
+                pan.delta = CGPointMake(index * step, index * step);
+                XCTAssertTrue([viewer pointerForGesture:pan point:&point]);
+            }
+            NSInteger expected = tuned.boolValue ? (step > 0 ? 58 : -59) : (step > 0 ? 60 : -120);
+            XCTAssertEqual((NSInteger)point.x - 400, expected);
+            XCTAssertEqual((NSInteger)point.y - 300, expected);
+        }
+    }
+    [viewer.session stop];
+}
+
 - (void)testTrackpadVolumeAdmissionRetiresWhenAnotherInputOwnerTakesOver {
     CompanionVNCViewer *viewer = [CompanionVNCViewer new]; viewer.inputOnly = YES; [viewer loadViewIfNeeded];
     CompanionVNCSession *session = [self sessionWithInputOnly:YES]; viewer.session = session;

@@ -109,7 +109,7 @@ enum DirectTrackpadVolume: Int, CaseIterable, Sendable {
                 }
             }
             guard status == 0, await isCurrent(), !Task.isCancelled, ContinuousClock.now < deadline,
-                  let output = String(data: reply, encoding: .utf8),
+                  let output = String(validating: reply, as: UTF8.self),
                   Reading(response: output) != nil else { return nil }
             return output
         } catch { return nil }
