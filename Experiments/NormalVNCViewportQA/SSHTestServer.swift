@@ -11,9 +11,12 @@ final class SSHTestRecord: @unchecked Sendable {
     let respondToInstall: Bool
     let echoInput: Bool
     let inputLimit: Int
-    init(respondToInstall: Bool = true, echoInput: Bool = true, initialOutput: String = "synthetic-ready\r\n", inputLimit: Int = 512) {
+    let volumeExec: (command: String, admission: String, reply: String)?
+    init(respondToInstall: Bool = true, echoInput: Bool = true, initialOutput: String = "synthetic-ready\r\n",
+         inputLimit: Int = 512, volumeExec: (String, String, String)? = nil) {
         precondition((1...32768).contains(inputLimit))
         self.respondToInstall = respondToInstall; self.echoInput = echoInput; self.initialOutput = initialOutput; self.inputLimit = inputLimit
+        self.volumeExec = volumeExec
     }
     private let lock=NSLock()
     private var auth=0, keyAuth=0
@@ -77,6 +80,7 @@ final class SSHTestPTY: ChannelDuplexHandler, @unchecked Sendable {
     typealias OutboundIn=SSHChannelData
     typealias OutboundOut=SSHChannelData
     let record:SSHTestRecord
+    private var awaitingVolumeAdmission = false
     init(_ record:SSHTestRecord) { self.record=record }
     func userInboundEventTriggered(context:ChannelHandlerContext,event:Any) {
         if let request=event as? SSHChannelRequestEvent.PseudoTerminalRequest {
@@ -87,6 +91,12 @@ final class SSHTestPTY: ChannelDuplexHandler, @unchecked Sendable {
             context.triggerUserOutboundEvent(ChannelSuccessEvent(),promise:nil)
             context.writeAndFlush(wrapOutboundOut(SSHChannelData(type:.channel,data:.byteBuffer(ByteBuffer(string: record.initialOutput)))),promise:nil)
         } else if let request = event as? SSHChannelRequestEvent.ExecRequest {
+            if request.command == record.volumeExec?.command {
+                awaitingVolumeAdmission = true
+                record.executed()
+                context.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil)
+                return
+            }
             guard request.command.hasPrefix("/bin/sh -c '"), request.command.contains("authorized_keys"), request.command.contains("ssh-ed25519") else { context.close(promise: nil); return }
             record.executed(); guard record.respondToInstall else { return }
             context.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil)
@@ -99,6 +109,15 @@ final class SSHTestPTY: ChannelDuplexHandler, @unchecked Sendable {
     func channelRead(context:ChannelHandlerContext,data:NIOAny) {
         let value = unwrapInboundIn(data)
         if case .byteBuffer(let buffer) = value.data { record.received(Array(buffer.readableBytesView)) }
+        if awaitingVolumeAdmission, let fixture = record.volumeExec {
+            if record.received == Array(fixture.admission.utf8) {
+                awaitingVolumeAdmission = false
+                context.writeAndFlush(wrapOutboundOut(SSHChannelData(type: .channel, data: .byteBuffer(ByteBuffer(string: fixture.reply)))), promise: nil)
+                context.triggerUserOutboundEvent(SSHChannelRequestEvent.ExitStatus(exitStatus: 0), promise: nil)
+                context.close(promise: nil)
+            }
+            return
+        }
         if record.echoInput { context.writeAndFlush(wrapOutboundOut(value),promise:nil) }
     }
     func errorCaught(context:ChannelHandlerContext,error:Error) { context.close(promise:nil) }

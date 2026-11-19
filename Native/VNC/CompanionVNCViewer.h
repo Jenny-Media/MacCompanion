@@ -37,6 +37,8 @@ typedef NS_ENUM(NSInteger, CompanionVNCRecoveryPhase) {
 @property(nonatomic, copy, nullable) NSArray<NSString *> *connectionAddresses;
 @property(nonatomic, copy, nullable) NSString *preferenceID;
 @property(nonatomic) CGFloat pointerSpeed;
+@property(nonatomic) BOOL trackpadPrecisionAndReach;
+@property(nonatomic, copy, nullable) void (^trackpadVolumeHandler)(NSInteger, void (^)(NSString * _Nullable));
 @property(nonatomic) CGFloat scrollSpeed;
 @property(nonatomic) BOOL showsTouchPoints;
 @property(nonatomic) BOOL trackpadHapticsEnabled;
@@ -87,6 +89,8 @@ typedef NS_ENUM(NSInteger, CompanionVNCRecoveryPhase) {
 - (void)cancelControlSequence:(NSString *)identifier;
 - (void)sendOrdinaryControlEvents:(NSArray<NSDictionary *> *)events;
 - (void)toggleControlsKeyboard;
+- (BOOL)controlsCanShowMacScreen;
+- (void)showMacScreenFromTrackpad;
 /// Temporary shortcut presentation; never retires the connection input epoch.
 - (BOOL)controlsSoftwareKeyboardVisible;
 - (BOOL)controlsExecutionKeyboardCurrent;

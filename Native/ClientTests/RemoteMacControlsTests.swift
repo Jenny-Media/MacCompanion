@@ -23,6 +23,7 @@ private final class RemoteAnchorSession: CompanionVNCSession {
     var events: [[AnyHashable: Any]] = []
     var shown: UIViewController?
     var keyboardToggles = 0
+    var screenRequests = 0
     var softwareKeyboard = false, keyboardCurrent = true
     var keyboardHides = 0, keyboardRestores = 0
     var composerReview: (text: String, title: String, available: () -> Bool)?
@@ -40,6 +41,8 @@ private final class RemoteAnchorSession: CompanionVNCSession {
     override var controlsConnectionID: String { connectionID }
     override func controlsInputAvailable() -> Bool { available }
     override func toggleControlsKeyboard() { keyboardToggles += 1 }
+    override func controlsCanShowMacScreen() -> Bool { available }
+    override func showMacScreenFromTrackpad() { screenRequests += 1 }
     override func controlsSoftwareKeyboardVisible() -> Bool { softwareKeyboard }
     override func controlsExecutionKeyboardCurrent() -> Bool { keyboardCurrent }
     override func hideControlsExecutionKeyboard() -> Bool { keyboardHides += 1; softwareKeyboard = false; return true }
@@ -68,6 +71,69 @@ private final class RemoteAnchorSession: CompanionVNCSession {
 }
 
 @MainActor final class RemoteMacControlsTests: XCTestCase {
+    func testTrackpadDockKeepsNavigationAndTypingSeparateFromMedia() throws {
+        let viewer = RemoteControlsTestViewer()
+        viewer.inputOnly = true
+        var operations: [Int] = []
+        var reply: ((String?) -> Void)?
+        viewer.trackpadVolumeHandler = { operation, completion in operations.append(operation); reply = completion }
+        let controls = controls(viewer)
+        let dock = try XCTUnwrap(descendants(controls.bar).first { $0.accessibilityIdentifier == "trackpad-dock" })
+        func button(_ label: String) throws -> UIButton {
+            try XCTUnwrap(descendants(dock).compactMap { $0 as? UIButton }.first { $0.accessibilityLabel == label })
+        }
+        XCTAssertFalse(dock.isHidden)
+        XCTAssertEqual(try button("Left Arrow").isEnabled, true)
+        try button("Left Arrow").sendActions(for: .primaryActionTriggered)
+        XCTAssertEqual(viewer.events.compactMap { ($0["key"] as? NSNumber)?.uint32Value }, [0xff51, 0xff51])
+        try button("Type on Mac").sendActions(for: .primaryActionTriggered)
+        XCTAssertEqual(viewer.keyboardToggles, 1)
+        try button("Show Mac Screen").sendActions(for: .primaryActionTriggered)
+        XCTAssertEqual(viewer.screenRequests, 1)
+
+        try button("Media").sendActions(for: .primaryActionTriggered)
+        XCTAssertEqual(operations, [DirectTrackpadVolume.read.rawValue])
+        XCTAssertFalse(try button("Volume Up").isEnabled)
+        reply?("60:0\n")
+        XCTAssertTrue(try button("Volume Up").isEnabled)
+        try button("Volume Up").sendActions(for: .primaryActionTriggered)
+        XCTAssertEqual(operations, [DirectTrackpadVolume.read.rawValue, DirectTrackpadVolume.increase.rawValue])
+        viewer.epoch += 1
+        reply?("66:0\n")
+        XCTAssertNoThrow(try button("Left Arrow"))
+
+        controls.toggleTrackpadKeyboardBar()
+        XCTAssertTrue(dock.isHidden)
+        XCTAssertFalse(controls.keyboardBar.compactContentsVisible)
+        controls.toggleTrackpadKeyboardBar()
+        controls.keyboardFocused(true)
+        XCTAssertTrue(dock.isHidden)
+        controls.keyboardFocused(false)
+        XCTAssertFalse(dock.isHidden)
+    }
+
+    func testIndexedVolumeRepliesAreStrictAndBounded() throws {
+        struct Fixture: Decodable {
+            struct Reply: Decodable { let wire: String; let level: Int?; let muted: Bool? }
+            let admission: String
+            let operations: [String]
+            let step: Int
+            let maximumReplyBytes: Int
+            let responses: [Reply]
+        }
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-trackpad-volume-v0.1", withExtension: "json"))
+        let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: url))
+        XCTAssertEqual(fixture.admission, DirectTrackpadVolume.admission)
+        XCTAssertEqual(fixture.operations, DirectTrackpadVolume.allCases.map { String(describing: $0) })
+        XCTAssertEqual(fixture.step, DirectTrackpadVolume.step)
+        XCTAssertEqual(fixture.maximumReplyBytes, DirectTrackpadVolume.maximumReplyBytes)
+        for response in fixture.responses {
+            let reading = DirectTrackpadVolume.Reading(response: response.wire)
+            XCTAssertEqual(reading?.level, response.level)
+            XCTAssertEqual(reading?.muted, response.muted)
+        }
+    }
+
     func testKeyboardRestoresDuringNativeDismissalAnimationAndDoesNotStealFocus() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previous = scene.windows.first(where: \.isKeyWindow), window = UIWindow(windowScene: scene)
@@ -409,7 +475,8 @@ private final class RemoteAnchorSession: CompanionVNCSession {
             XCTAssertTrue(bar.isUserInteractionEnabled); XCTAssertFalse(bar.accessibilityElementsHidden)
             XCTAssertEqual(bar.bounds.height, restingHeight)
             XCTAssertEqual(scrollers.map(\.contentOffset), offsets, "Restoring rows must not reset manual scrolling")
-            XCTAssertTrue(bar.subviews.compactMap { $0 as? UIStackView }.allSatisfy { !$0.isHidden })
+            XCTAssertTrue(bar.subviews.compactMap { $0 as? UIStackView }
+                .filter { $0.accessibilityIdentifier != "trackpad-dock" }.allSatisfy { !$0.isHidden })
             window.isHidden = true; window.rootViewController = nil; previous?.makeKeyAndVisible()
         }
     }

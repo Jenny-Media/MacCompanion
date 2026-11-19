@@ -405,6 +405,9 @@ private final class TerminalKeyScrollView: UIScrollView {
     private var keySymbols: [ObjectIdentifier: String] = [:]
     private var heights: [NSLayoutConstraint] = []
     private var viewportConstraints: [NSLayoutConstraint] = []
+    private var compactContents: UIView?
+    private var compactConstraints: [NSLayoutConstraint] = []
+    private(set) var compactContentsVisible = false
     private var keyHeight: CGFloat = 44
     private var keyboardFocused: Bool?
     let keyboardButton: UIButton = TerminalKeyPreviewButton(type: .system)
@@ -491,7 +494,7 @@ private final class TerminalKeyScrollView: UIScrollView {
             executionHeightConstraint?.isActive = false
             // Retain the real rows and their scroll state at their natural size.
             // Only the dock participates in the owner's layout during execution.
-            rows.isHidden = executionToolbarHeight > 0
+            rows.isHidden = executionToolbarHeight > 0 || compactContentsVisible
             if let bottom = viewportConstraints.first(where: { $0.firstAttribute == .bottom }), bottom.isActive {
                 bottom.isActive = false
                 bottom.priority = executionToolbarHeight > 0 ? .defaultHigh : .required
@@ -545,6 +548,33 @@ private final class TerminalKeyScrollView: UIScrollView {
         keyScroll.accessibilityIdentifier = "terminal-modifier-keys"; keyScroll.accessibilityLabel = "Terminal keys"
         registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (bar: TerminalKeyboardBar, _: UITraitCollection) in bar.updateKeyMetrics() }
         configure(preferences)
+    }
+    func installCompactContents(_ contents: UIView) {
+        compactContents = contents
+        contents.translatesAutoresizingMaskIntoConstraints = false
+        contents.isHidden = true
+        addSubview(contents)
+        compactConstraints = [
+            contents.leadingAnchor.constraint(equalTo: leadingAnchor), contents.trailingAnchor.constraint(equalTo: trailingAnchor),
+            contents.topAnchor.constraint(equalTo: topAnchor), contents.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ]
+    }
+    func setCompactContentsVisible(_ visible: Bool) {
+        guard let compactContents, visible != compactContentsVisible else { return }
+        dismissKeyPreviews()
+        compactContentsVisible = visible
+        compactContents.isHidden = !visible
+        rows.isHidden = visible || executionToolbarHeight > 0
+        if visible {
+            NSLayoutConstraint.deactivate(viewportConstraints)
+            NSLayoutConstraint.activate(compactConstraints)
+        } else {
+            NSLayoutConstraint.deactivate(compactConstraints)
+            NSLayoutConstraint.activate(viewportConstraints)
+        }
+        invalidateIntrinsicContentSize()
+        setNeedsLayout()
+        superview?.setNeedsLayout()
     }
     func configure(_ preferences: TerminalKeyboardPreferences) {
         var profile = TerminalControlsProfile.defaults
@@ -1036,6 +1066,7 @@ private final class TerminalKeyScrollView: UIScrollView {
     // The menu lives in a sibling overlay. Finish both nested stacks before
     // that overlay converts its anchor frame after a row-count change.
     func layoutRows() {
+        if compactContentsVisible { return }
         if editingPreview {
             let frame = CGRect(x: 4, y: 4, width: max(0, bounds.width - 8), height: max(0, bounds.height - 8))
             if rows.frame != frame { rows.frame = frame }
@@ -1071,7 +1102,9 @@ private final class TerminalKeyScrollView: UIScrollView {
         invalidateIntrinsicContentSize(); setNeedsLayout(); superview?.setNeedsLayout()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-    override var intrinsicContentSize: CGSize { CGSize(width: UIView.noIntrinsicMetric, height: height) }
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: UIView.noIntrinsicMetric, height: compactContentsVisible ? UIView.noIntrinsicMetric : height)
+    }
     private func configureButton(_ key: UIButton, title: String, symbol: String? = nil) {
         var configuration = UIButton.Configuration.plain(); configuration.cornerStyle = .fixed
         configuration.background.cornerRadius = 8; configuration.background.backgroundColor = .secondarySystemBackground

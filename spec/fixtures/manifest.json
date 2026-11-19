@@ -838,6 +838,12 @@
       "kind": "client.terminalCompatibility.v1",
       "expect": "valid",
       "canonicalSHA256": "4aabc38025e2680f569d0007cbd6a543382fb4128c5e5b1b8cd88bd44bb24ff1"
+    },
+    {
+      "path": "direct-trackpad-volume-v0.1.json",
+      "kind": "directScreenSharing.trackpadVolume.v0.1",
+      "expect": "valid",
+      "canonicalSHA256": "eefe93e121720c10d92a630f71ff5599c31bcc9ba6bfcb7cb01dc8057301367e"
     }
   ]
 }

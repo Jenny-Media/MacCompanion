@@ -278,18 +278,25 @@ static char keyboardDuringScaleUpdateKey;
 }
 - (void)testNarrowModifierRowScrollsInsteadOfShrinkingKeysBelowTouchTarget {
     CompanionVNCViewer *viewer = [CompanionVNCViewer new]; [viewer loadViewIfNeeded];
-    viewer.view.frame = CGRectMake(0,0,320,680); [viewer.view layoutIfNeeded];
-    UIView *toolbar = [viewer valueForKey:@"toolbar"];
-    NSMutableArray<UIView *> *pending = [NSMutableArray arrayWithObject:toolbar];
-    NSMutableArray<UIButton *> *keys = [NSMutableArray new]; UIScrollView *scroll = nil;
-    for (NSUInteger index = 0; index < pending.count; index++) {
-        UIView *view = pending[index]; [pending addObjectsFromArray:view.subviews];
-        if ([view isKindOfClass:UIScrollView.class] && [view.accessibilityIdentifier isEqual:@"terminal-modifier-keys"]) scroll = (id)view;
-        if ([view isKindOfClass:UIButton.class] && !view.hidden) [keys addObject:(id)view];
+    for (NSNumber *inputOnly in @[@NO, @YES]) {
+        viewer.inputOnly = inputOnly.boolValue;
+        viewer.view.frame = CGRectMake(0, 0, inputOnly.boolValue ? 240 : 320, 680);
+        UIView *toolbar = [viewer valueForKey:@"toolbar"];
+        [viewer.view layoutIfNeeded]; [toolbar layoutIfNeeded];
+        NSMutableArray<UIView *> *pending = toolbar.subviews.mutableCopy;
+        NSMutableArray<UIButton *> *keys = [NSMutableArray new]; UIScrollView *scroll = nil;
+        NSString *rowID = inputOnly.boolValue ? @"trackpad-navigation-keys" : @"terminal-modifier-keys";
+        for (NSUInteger index = 0; index < pending.count; index++) {
+            UIView *view = pending[index];
+            if (view.hidden) continue;
+            [pending addObjectsFromArray:view.subviews];
+            if ([view isKindOfClass:UIScrollView.class] && [view.accessibilityIdentifier isEqual:rowID]) scroll = (id)view;
+            if ([view isKindOfClass:UIButton.class]) [keys addObject:(id)view];
+        }
+        XCTAssertNotNil(scroll); XCTAssertGreaterThan(scroll.contentSize.width,scroll.bounds.size.width);
+        XCTAssertGreaterThan(keys.count,6);
+        for (UIButton *key in keys) { XCTAssertGreaterThanOrEqual(key.bounds.size.width,44); XCTAssertGreaterThanOrEqual(key.bounds.size.height,44); }
     }
-    XCTAssertNotNil(scroll); XCTAssertGreaterThan(scroll.contentSize.width,scroll.bounds.size.width);
-    XCTAssertGreaterThan(keys.count,6);
-    for (UIButton *key in keys) { XCTAssertGreaterThanOrEqual(key.bounds.size.width,44); XCTAssertGreaterThanOrEqual(key.bounds.size.height,44); }
     [viewer stopViewer];
 }
 - (void)testLowerTrackpadUsesRelativeMotionAndBalancedClickWhileDesktopRemainsInPointerMode {
@@ -364,7 +371,7 @@ static char keyboardDuringScaleUpdateKey;
         XCTAssertTrue(((UIView *)[viewer valueForKey:@"loginDetails"]).hidden);
         XCTAssertFalse(((UIView *)[viewer valueForKey:@"loginCancel"]).hidden);
         XCTAssertEqualObjects(((UILabel *)[viewer valueForKey:@"loginSubtitle"]).text, inputOnly.boolValue ? @"Trackpad & Keyboard" : @"Screen Sharing");
-        XCTAssertTrue(((UIView *)[viewer valueForKey:@"trackpadHelp"]).hidden);
+        XCTAssertTrue(((UIView *)[viewer valueForKey:@"trackpadTip"]).hidden);
         XCTAssertEqualWithAccuracy(CGRectGetMaxY(card.frame), CGRectGetMaxY(scroll.bounds) - 12, 2);
         CGFloat signInHeight = card.bounds.size.height;
         [viewer setValue:@YES forKey:@"starting"]; [viewer updateConnectionChrome]; [viewer.view layoutIfNeeded];

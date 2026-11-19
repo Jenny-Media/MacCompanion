@@ -81,6 +81,28 @@ stream. Describe this SSH transport accurately, without inheriting application
 pairing or grant claims from the historical paired protocol. Deployment and
 physical-device acceptance remain separate release gates.
 
+### Trackpad audio controls
+
+In an authenticated foreground Trackpad & Keyboard session, opening Media may
+read the Mac's output volume and mute state. Volume Down, Volume Up, and Mute
+send one of the closed commands over a temporary RFC 4254 exec channel on the
+same verified SSH parent. Use the existing Desktop account. Do not open another
+SSH connection, use a PTY, install a helper, or interpolate user or host data
+into the command. Keep at most one exec in flight and never queue or retry a
+volume change. Check ownership and foreground input readiness after the channel
+opens before sending the fixed admission line. Without that line, the command
+must exit without invoking the volume script.
+
+The command uses macOS Standard Additions to read state, change the level by
+6 percentage points saturating at 0 and 100 or toggle output mute, then read
+back the effect. A numeric readback alone does not establish that an output
+supports adjustment. A target that cannot be read or an unchanged value when
+a different one was requested is unavailable. Accept only the bounded output
+in the [indexed fixture](../../fixtures/direct-trackpad-volume-v0.1.json).
+Cancel on input retirement and discard stale results. Never report a successful
+change based only on command admission. This profile does not send playback
+or brightness keys without a verified route for those actions.
+
 ## Saved Macs and credentials
 
 Store UUID, display name, ordered addresses and port in the direct library. Schema

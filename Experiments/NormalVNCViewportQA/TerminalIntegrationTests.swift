@@ -548,6 +548,24 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         XCTAssertEqual(session.recovery?.reason, .loginRejected); XCTAssertEqual(record.passwordRequests, 1)
         XCTAssertEqual(try TerminalSecretStore.login(mac.id)?.password, "wrong-synthetic-only", "A failed attempt must not erase the saved login")
     }
+    func testTrackpadVolumeExecRequiresTheCurrentOwnersAdmissionLine() async throws {
+        let operation = DirectTrackpadVolume.increase
+        let record = SSHTestRecord(echoInput: false, volumeExec: (operation.command, DirectTrackpadVolume.admission, "66:0\n"))
+        let key = NIOSSHPrivateKey(ed25519Key: .init())
+        let server = try await server(record: record, key: key)
+        defer { _ = server.close() }
+        let client = try await SSHClient.connect(host: "127.0.0.1", port: try XCTUnwrap(server.localAddress?.port),
+            authenticationMethod: .passwordBased(username: "synthetic", password: "synthetic-only"),
+            hostKeyValidator: .trustedKeys([key.publicKey]), reconnect: .never, connectTimeout: .seconds(3))
+        let retired = await operation.run(client: client, isCurrent: { false })
+        XCTAssertNil(retired)
+        XCTAssertTrue(record.received.isEmpty)
+        let current = await operation.run(client: client, isCurrent: { true })
+        XCTAssertEqual(current, "66:0\n")
+        XCTAssertEqual(record.received, Array(DirectTrackpadVolume.admission.utf8))
+        XCTAssertEqual(record.passwordRequests, 1)
+        try await client.close()
+    }
     func testConnectedSocketPreservesEarlyServerBannerUntilSSHHandlersExist() async throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-screen-sharing-v1", withExtension: "json"))
         let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])

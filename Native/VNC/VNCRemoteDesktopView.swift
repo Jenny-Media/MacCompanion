@@ -84,6 +84,13 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         }
         viewer.preferenceID = mac.id.uuidString.lowercased()
         viewer.pointerSpeed = VNCSessionPreferences.speed(mac.id)
+        viewer.trackpadPrecisionAndReach = VNCSessionPreferences.precisionAndReach(mac.id)
+        viewer.trackpadVolumeHandler = { [weak coordinator = context.coordinator] rawValue, reply in
+            MainActor.assumeIsolated {
+                guard let coordinator, let operation = DirectTrackpadVolume(rawValue: rawValue) else { reply(nil); return }
+                coordinator.runTrackpadVolume(operation, reply: reply)
+            }
+        }
         viewer.scrollSpeed = VNCSessionPreferences.scrollSpeed
         viewer.showsTouchPoints = VNCSessionPreferences.showsTouchPoints
         viewer.trackpadHapticsEnabled = VNCSessionPreferences.trackpadHaptics
@@ -168,6 +175,7 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         private var generation = UUID()
         private var diagnosticTicket = UUID()
         private var tunnel: DirectDesktopSSHTunnel?
+        private var trackpadVolumeWork: Task<Void, Never>?
         private var retirement: Task<Void, Never>?
         private var trustReply: CheckedContinuation<Bool, Never>?
         private var trustController: UIViewController?
@@ -224,7 +232,10 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
             }, NotificationCenter.default.addObserver(forName: VNCSessionPreferences.actionsChanged, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.refreshControls() }
             }, NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.viewer?.becameInactive() }
+                MainActor.assumeIsolated {
+                    self?.trackpadVolumeWork?.cancel()
+                    self?.viewer?.becameInactive()
+                }
             }, NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.pause() }
             }, NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
@@ -470,6 +481,24 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
             controller.sheetPresentationController?.prefersGrabberVisible = true
             viewer.present(controller, animated: true)
         }
+        fileprivate func runTrackpadVolume(_ operation: DirectTrackpadVolume, reply: @escaping (String?) -> Void) {
+            guard trackpadVolumeWork == nil, let viewer, let tunnel else { reply(nil); return }
+            let inputEpoch = viewer.controlsEpoch
+            let connection = viewer.controlsConnectionID
+            let current: @MainActor @Sendable () -> Bool = { [weak self, weak viewer, weak tunnel] in
+                guard let self, let viewer, let tunnel else { return false }
+                return !self.removed && self.tunnel === tunnel && !connection.isEmpty
+                    && viewer.controlsConnectionID == connection && viewer.controlsEpoch == inputEpoch
+                    && viewer.inputOnly && viewer.controlsInputAvailable()
+                    && DirectAppLockV1.shared.canAccess && UIApplication.shared.applicationState == .active
+            }
+            guard current() else { reply(nil); return }
+            trackpadVolumeWork = Task { [weak self] in
+                let response = await operation.run(client: tunnel.client, isCurrent: current)
+                self?.trackpadVolumeWork = nil
+                reply(current() && !Task.isCancelled ? response : nil)
+            }
+        }
         func showAppSettings() {
             guard let viewer, viewer.presentedViewController == nil else { return }
             viewer.view.endEditing(true)
@@ -512,6 +541,7 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
             reply?.resume(returning: accepted)
         }
         func disconnect() {
+            trackpadVolumeWork?.cancel()
             let pendingConnection = work
             generation = UUID(); work?.cancel(); work = nil; answerTrust(false)
             viewer?.showAttemptingAddress(nil)
