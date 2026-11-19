@@ -8,6 +8,7 @@ import SwiftUI
     var toggle: (TerminalModifiers, Bool) -> Void = { _, _ in }
     var send: (TerminalPaletteKey) -> Void = { _ in }
     var toggleKeyboard: () -> Void = {}
+    var revealKeyboardBar: () -> Void = {}
     var canUse: (TerminalControlAction) -> Bool = { _ in true }
 }
 
@@ -16,6 +17,7 @@ import SwiftUI
     let keyboardBar = TerminalKeyboardBar(terminal: nil, preferences: .init())
     private let trackpadDock = UIStackView()
     private let dockMenuAnchor = UIView()
+    private let navigationSlot = UIStackView()
     private let navigationViewport = TerminalKeyScrollView()
     private let mediaPanel = UIStackView()
     private let mediaStatus = UILabel()
@@ -47,6 +49,7 @@ import SwiftUI
     private var sequenceBanner: TerminalSequenceBannerController?
     private var shortcutConfirmations = TerminalShortcutConfirmations()
     @objc var bar: UIView { keyboardBar }
+    @objc var compactDockVisible: Bool { keyboardBar.compactContentsVisible }
     @objc var menuAnchor: UIView { keyboardBar.compactContentsVisible ? dockMenuAnchor : keyboardBar.menuAnchor }
     @objc func layoutRows() { keyboardBar.layoutIfNeeded(); keyboardBar.layoutRows() }
     @objc var keyboardButton: UIButton { keyboardBar.keyboardButton }
@@ -61,7 +64,7 @@ import SwiftUI
         self.viewer = viewer; self.store = store
         super.init()
         configureTrackpadDock()
-        keyboardBar.installCompactContents(trackpadDock)
+        keyboardBar.installCompactContents(trackpadDock, rowSlot: navigationSlot, presetRow: navigationViewport)
         keyboardBar.keyFeedback = viewer.controlsFeedback
         let input = TerminalRemoteInput()
         input.ready = { [weak self] in self?.ready == true }
@@ -69,6 +72,11 @@ import SwiftUI
         input.toggle = { [weak self] modifier, lock in self?.state.toggle(modifier, lock: lock) }
         input.send = { [weak self] key in self?.sendPalette(key) }
         input.toggleKeyboard = { [weak viewer] in viewer?.toggleControlsKeyboard() }
+        input.revealKeyboardBar = { [weak self] in
+            guard let self else { return }
+            trackpadShowsKeyboardBar = true
+            refreshDock()
+        }
         input.canUse = { [weak self] action in self?.canUse(action) == true }
         keyboardBar.remoteInput = input
         keyboardBar.openKeypad = { [weak self] _ in self?.showKeypad() }
@@ -88,11 +96,12 @@ import SwiftUI
 
     private func configureTrackpadDock() {
         trackpadDock.axis = .vertical
-        trackpadDock.spacing = 3
+        trackpadDock.spacing = 8
         trackpadDock.isLayoutMarginsRelativeArrangement = true
         trackpadDock.directionalLayoutMargins = .init(top: 4, leading: 4, bottom: 4, trailing: 4)
         trackpadDock.accessibilityIdentifier = "trackpad-dock"
         let navigationRow = UIStackView()
+        navigationRow.spacing = 3
         let keys: [(String, String, UInt32)] = [
             ("Escape", "escape", 0xff1b), ("Tab", "arrow.right.to.line", 0xff09),
             ("Left Arrow", "arrow.left", 0xff51), ("Up Arrow", "arrow.up", 0xff52),
@@ -107,53 +116,73 @@ import SwiftUI
             navigationRow.addArrangedSubview(button)
             trackpadNavigation.append(button)
         }
-        keyboardBar.installCompactKeyRow(navigationRow, in: navigationViewport)
-        navigationViewport.accessibilityIdentifier = "trackpad-navigation-keys"
+        navigationViewport.install(navigationRow)
+        navigationSlot.axis = .vertical
+        navigationSlot.accessibilityIdentifier = "trackpad-navigation-keys"
+        navigationSlot.addArrangedSubview(navigationViewport)
+        keyboardBar.sizeCompactRow(navigationSlot)
         let mediaRow = UIStackView()
+        mediaRow.spacing = 3
         let volume: [(String, String, DirectTrackpadVolume)] = [
             ("Volume Down", "speaker.minus", .decrease), ("Mute or Unmute", "speaker.slash", .toggleMute),
             ("Volume Up", "speaker.plus", .increase)
         ]
         for (title, symbol, operation) in volume {
             let button = keyboardBar.compactKey(title, symbol: symbol) { [weak self] in self?.runVolume(operation) }
+            button.configuration?.background.backgroundColor = .systemBackground
             mediaRow.addArrangedSubview(button)
             mediaButtons.append(button)
         }
-        let mediaViewport = TerminalKeyScrollView()
-        keyboardBar.installCompactKeyRow(mediaRow, in: mediaViewport)
+        keyboardBar.sizeCompactRow(mediaRow)
         mediaStatus.font = .preferredFont(forTextStyle: .footnote)
         mediaStatus.adjustsFontForContentSizeCategory = true
         mediaStatus.numberOfLines = 0
         mediaStatus.textAlignment = .natural
         mediaStatus.textColor = .secondaryLabel
-        mediaPanel.axis = .vertical
-        mediaPanel.spacing = trackpadDock.spacing
-        mediaPanel.addArrangedSubview(mediaStatus)
-        mediaPanel.addArrangedSubview(mediaViewport)
+        let volumeCard = UIStackView(arrangedSubviews: [mediaRow, mediaStatus])
+        volumeCard.alignment = .center
+        volumeCard.spacing = 10
+        volumeCard.isLayoutMarginsRelativeArrangement = true
+        volumeCard.directionalLayoutMargins = .init(top: 6, leading: 6, bottom: 6, trailing: 10)
+        volumeCard.backgroundColor = .secondarySystemBackground
+        volumeCard.layer.cornerRadius = 14
+        mediaPanel.alignment = .center
+        mediaPanel.addArrangedSubview(UIView())
+        mediaPanel.addArrangedSubview(volumeCard)
         mediaPanel.isHidden = true
-        mediaPanel.accessibilityIdentifier = "trackpad-media-panel"
+        mediaPanel.accessibilityIdentifier = "trackpad-volume-panel"
         let actions = UIStackView()
+        actions.distribution = .fillEqually
+        actions.spacing = 4
+        actions.accessibilityIdentifier = "trackpad-session-actions"
         let compose = keyboardBar.compactKey("Compose Text", symbol: "square.and.pencil") { [weak self] in self?.viewer?.showControlsComposer() }
         compose.accessibilityHint = "Edit text on this device, then send it to the Mac."
         dockCompose = compose
         let type = keyboardBar.compactKey("Type on Mac", symbol: "keyboard") { [weak self] in self?.viewer?.toggleControlsKeyboard() }
         type.accessibilityHint = "Open the keyboard and send keystrokes as you type."
-        let media = keyboardBar.compactKey("Media", symbol: "speaker.wave.2") { [weak self] in
+        let media = keyboardBar.compactKey("Volume", symbol: "speaker.wave.2") { [weak self] in
             guard let self else { return }
             setMediaVisible(!showingMedia)
         }
         media.accessibilityValue = "Collapsed"
         dockMedia = media
-        for button in [type, compose, media] { actions.addArrangedSubview(button) }
-        let actionViewport = TerminalKeyScrollView()
-        keyboardBar.installCompactKeyRow(actions, in: actionViewport)
-        let bottom = UIStackView(arrangedSubviews: [actionViewport, dockMenuAnchor])
-        bottom.spacing = 4
+        for view in [type, compose, media, dockMenuAnchor] { actions.addArrangedSubview(view) }
+        keyboardBar.sizeCompactRow(actions)
         dockMenuAnchor.isUserInteractionEnabled = false
-        dockMenuAnchor.widthAnchor.constraint(equalToConstant: 52).isActive = true
+        let dock = UIStackView(arrangedSubviews: [navigationSlot, actions])
+        dock.axis = .vertical
+        dock.spacing = 6
+        dock.isLayoutMarginsRelativeArrangement = true
+        dock.directionalLayoutMargins = .init(top: 6, leading: 6, bottom: 6, trailing: 6)
+        dock.backgroundColor = .systemBackground
+        dock.layer.cornerRadius = 16
+        dock.layer.borderWidth = 1
+        dock.layer.borderColor = UIColor.separator.resolvedColor(with: dock.traitCollection).cgColor
+        dock.registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (dock: UIStackView, _: UITraitCollection) in
+            dock.layer.borderColor = UIColor.separator.resolvedColor(with: dock.traitCollection).cgColor
+        }
         trackpadDock.addArrangedSubview(mediaPanel)
-        trackpadDock.addArrangedSubview(navigationViewport)
-        trackpadDock.addArrangedSubview(bottom)
+        trackpadDock.addArrangedSubview(dock)
     }
 
     private func refreshDock() {
@@ -180,12 +209,15 @@ import SwiftUI
         mediaVolumeReadable = false
     }
 
+    @objc func closeVolumePanel() { setMediaVisible(false) }
+
     private func setMediaVisible(_ visible: Bool) {
         guard showingMedia != visible else { return }
         showingMedia = visible
         mediaPanel.isHidden = !visible
         dockMedia?.isSelected = visible
         dockMedia?.accessibilityValue = visible ? "Expanded" : "Collapsed"
+        dockMedia?.configuration?.background.backgroundColor = visible ? UIColor.systemBlue.withAlphaComponent(0.15) : .secondarySystemBackground
         if visible && (mediaRequest == nil || mediaRequestRetired) {
             requestMediaRead()
         } else if !visible {
@@ -247,7 +279,8 @@ import SwiftUI
         do { profile = try activeStore.load(); readable = true }
         catch { readable = false; profile = .remoteDefaults }
         shortcutConfirmations.definitionsChanged(profile.actions)
-        keyboardBar.configure(profile) { [weak self] in self?.use($0) }
+        let preference = UserDefaults.standard.string(forKey: TerminalControlsProfile.compactTrackpadRowPreference) ?? ""
+        keyboardBar.configure(profile, compactRowID: profile.compactTrackpadRowID(for: preference)) { [weak self] in self?.use($0) }
         keyboardBar.showsExtraRows = profile.rowsExpanded ?? false
         refresh()
         viewer?.refreshControlsMenu()
@@ -393,7 +426,7 @@ import SwiftUI
             if action.operation == .rightClick || action.operation?.modifierAlone != nil { item["inputAction"] = true }
             if action.operation == .pointerMode { item["defersInterfaceFeedback"] = true }
             if action.operation == .keyboard { item["title"] = keyboardBar.keyboardButton.accessibilityLabel }
-            if action.operation == .expandRows { item["title"] = keyboardBar.showsExtraRows ? "Collapse Rows" : "Expand Rows" }
+            if action.operation == .expandRows { item["title"] = keyboardBar.expandRowsTitle }
             return item
         }
     }
@@ -440,7 +473,7 @@ import SwiftUI
         case .builtIn:
             if let code = action.operation?.modifierAlone { _ = sendModifierAlone(code) }
             else if action.operation == .keyboard { viewer?.toggleControlsKeyboard() }
-            else if action.operation == .expandRows { keyboardBar.showsExtraRows.toggle(); keyboardBar.layoutChanged?() }
+            else if action.operation == .expandRows { keyboardBar.performExpandToggle(feedback: false) }
             else if action.operation == .paste, let text = UIPasteboard.general.string { reviewText(text) }
             else if action.operation == .composeText { viewer?.showControlsComposer() }
             else if let operation = action.operation {

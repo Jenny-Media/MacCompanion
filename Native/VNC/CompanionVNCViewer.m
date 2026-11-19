@@ -354,6 +354,7 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
     self.controls.actionHandler = ^(NSDictionary *action) { [weak performControlAction:action]; };
     self.controls.categoryActions = RemoteMacControls.navigationItems;
     self.controls.openingHandler = ^{
+        [weak.remoteControls closeVolumePanel];
         [weak retirePointerForMenu];
         if (weak.quickActionsProvider) weak.quickActions = weak.quickActionsProvider(weak.inputOnly);
         else [weak refreshControlsMenu];
@@ -1395,6 +1396,7 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
     // the sibling overlay. Hidden bars retain the normal fullscreen fallback.
     [self.remoteControls layoutRows];
     self.controls.buttonAnchorView = self.toolbar.hidden ? nil : self.remoteControls.menuAnchor;
+    self.controls.usesCompactDockButton = !self.toolbar.hidden && self.remoteControls.compactDockVisible;
     [self.controls setNeedsLayout]; [self.controls layoutIfNeeded];
     if (!self.connectionPanelHost) [DirectConnectionBridge styleCard:self.login];
     self.tabletopPad.hidden = !self.tabletop || !self.login.hidden || self.recoveryPanel != nil;

@@ -90,6 +90,7 @@ void CompanionVNCPlayInterfaceFeedback(NSString *kind) {
 @property NSUInteger fadeGeneration;
 @property NSUInteger quickCount;
 @property NSString *renderedPreviewID;
+@property UIButtonConfiguration *standaloneButtonConfiguration;
 @end
 @implementation CompanionVNCControls
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -106,6 +107,7 @@ void CompanionVNCPlayInterfaceFeedback(NSString *kind) {
         // largest text size; menu titles and actions still scale normally.
         config.preferredSymbolConfigurationForImage = [UIImageSymbolConfiguration configurationWithPointSize:20 weight:UIImageSymbolWeightMedium];
         config.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
+        _standaloneButtonConfiguration = config;
         _button.configuration = config; _button.accessibilityLabel = @"Session Controls";
         _button.accessibilityIdentifier = @"session-controls";
         _button.accessibilityHint = @"Tap to open. Hold, slide to an action, then release to choose.";
@@ -118,6 +120,23 @@ void CompanionVNCPlayInterfaceFeedback(NSString *kind) {
         [_button addGestureRecognizer:_slide];
     }
     return self;
+}
+- (void)setUsesCompactDockButton:(BOOL)value {
+    if (_usesCompactDockButton == value) return;
+    _usesCompactDockButton = value;
+    UIButtonConfiguration *config = self.standaloneButtonConfiguration;
+    if (value) {
+        config = [UIButtonConfiguration plainButtonConfiguration];
+        config.image = [UIImage systemImageNamed:@"ellipsis"];
+        config.cornerStyle = UIButtonConfigurationCornerStyleFixed;
+        config.background.cornerRadius = 8;
+        config.background.backgroundColor = UIColor.secondarySystemBackgroundColor;
+        config.baseForegroundColor = UIColor.systemBlueColor;
+        config.preferredSymbolConfigurationForImage = [UIImageSymbolConfiguration configurationWithPointSize:17 weight:UIImageSymbolWeightMedium];
+    }
+    self.button.configuration = config;
+    self.button.accessibilityLabel = value ? @"More Controls" : @"Session Controls";
+    [self setNeedsLayout];
 }
 - (BOOL)hapticsEnabled { return [NSUserDefaults.standardUserDefaults objectForKey:CompanionVNCControlsHapticsPreference] == nil || [NSUserDefaults.standardUserDefaults boolForKey:CompanionVNCControlsHapticsPreference]; }
 - (void)setHapticsEnabled:(BOOL)value { [NSUserDefaults.standardUserDefaults setBool:value forKey:CompanionVNCControlsHapticsPreference]; }
@@ -173,7 +192,7 @@ void CompanionVNCPlayInterfaceFeedback(NSString *kind) {
             // Compact keyboard rows may be shorter than the standalone button.
             // Keep its hit target inside the reserved slot in every mode.
             CGFloat side = MIN(52, MIN(slot.size.width, slot.size.height));
-            self.button.bounds = CGRectMake(0,0,side,side);
+            self.button.bounds = self.usesCompactDockButton ? (CGRect){CGPointZero, slot.size} : CGRectMake(0,0,side,side);
             self.button.center = CGPointMake(CGRectGetMidX(slot), CGRectGetMidY(slot));
         }
     }

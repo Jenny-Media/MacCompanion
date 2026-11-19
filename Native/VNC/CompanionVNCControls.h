@@ -31,6 +31,7 @@ NS_SWIFT_UI_ACTOR
 @property(nonatomic) CGFloat bottomInset;
 /// Optional toolbar slot; the shared button and its gestures remain in this overlay.
 @property(nonatomic, weak, nullable) UIView *buttonAnchorView;
+@property(nonatomic) BOOL usesCompactDockButton;
 @property(nonatomic, readonly) UIButton *button;
 @property(nonatomic, readonly) BOOL menuOpen;
 @property(nonatomic, copy, nullable) void (^actionHandler)(NSDictionary *);
