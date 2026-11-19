@@ -27,7 +27,6 @@ import SwiftUI
     @objc private(set) var trackpadShowsKeyboardBar = false
     private var trackpadNavigation: [UIButton] = []
     private var dockCompose: UIButton?
-    private var dockScreen: UIButton?
     private var keyboardIsFocused = false
     private var state = TerminalKeyboardState()
     private var profile = TerminalControlsProfile.remoteDefaults
@@ -128,8 +127,6 @@ import SwiftUI
         let compose = dockButton("Compose Text", symbol: "square.and.pencil") { [weak self] in self?.viewer?.showControlsComposer() }
         compose.accessibilityHint = "Edit text on this device, then send it to the Mac."
         dockCompose = compose
-        let screen = dockButton("Show Mac Screen", symbol: "desktopcomputer") { [weak self] in self?.viewer?.showMacScreenFromTrackpad() }
-        dockScreen = screen
         let type = dockButton("Type on Mac", symbol: "keyboard") { [weak self] in self?.viewer?.toggleControlsKeyboard() }
         type.accessibilityHint = "Open the keyboard and send keystrokes as you type."
         let media = dockButton("Media", symbol: "speaker.wave.2") { [weak self] in
@@ -137,7 +134,7 @@ import SwiftUI
             setMediaVisible(!showingMedia)
         }
         dockMedia = media
-        for button in [type, compose, screen, media] { actions.addArrangedSubview(button) }
+        for button in [type, compose, media] { actions.addArrangedSubview(button) }
         let actionViewport = UIScrollView()
         installDockRow(actions, in: actionViewport)
         let bottom = UIStackView(arrangedSubviews: [actionViewport, dockMenuAnchor])
@@ -185,7 +182,6 @@ import SwiftUI
         keyboardBar.setCompactContentsVisible(compact)
         for button in trackpadNavigation { button.isEnabled = ready }
         dockCompose?.isEnabled = ready
-        dockScreen?.isEnabled = sequenceIdentifier == nil && viewer?.controlsCanShowMacScreen() == true
         dockMedia?.isEnabled = ready && viewer?.trackpadVolumeHandler != nil
         for button in mediaButtons { button.isEnabled = ready && mediaVolumeReadable && mediaRequest == nil }
     }

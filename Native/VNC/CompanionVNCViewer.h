@@ -89,8 +89,6 @@ typedef NS_ENUM(NSInteger, CompanionVNCRecoveryPhase) {
 - (void)cancelControlSequence:(NSString *)identifier;
 - (void)sendOrdinaryControlEvents:(NSArray<NSDictionary *> *)events;
 - (void)toggleControlsKeyboard;
-- (BOOL)controlsCanShowMacScreen;
-- (void)showMacScreenFromTrackpad;
 /// Temporary shortcut presentation; never retires the connection input epoch.
 - (BOOL)controlsSoftwareKeyboardVisible;
 - (BOOL)controlsExecutionKeyboardCurrent;

@@ -193,8 +193,6 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
 @property NSLayoutConstraint *canvasLeading, *canvasTrailing, *toolbarLeading, *toolbarTrailing, *loginLeading, *loginTrailing, *statusCenter;
 @property UIEdgeInsets previousCanvasInset;
 @property UIStackView *trackpadTip;
-@property UIButton *trackpadReturn;
-@property BOOL showsTrackpadReturn;
 @property CompanionVNCTrackpadFeedback *trackpadFeedback, *tabletopFeedback;
 @property UIGestureRecognizer *click;
 @property UITapGestureRecognizer *secondaryTap, *smartTap, *tabletopSecondaryTap;
@@ -631,7 +629,7 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
     [self.remember addTarget:self action:@selector(loginEdited) forControlEvents:UIControlEventValueChanged];
     self.savedPassword = nil;
     [self refreshAccessEditing];
-    [self prepareTrackpadPresentation];
+    [self prepareTrackpadTip];
     for (UILabel *label in @[title, subtitle, rememberLabel, self.progressLabel]) {
         label.adjustsFontForContentSizeCategory = YES; label.numberOfLines = 0;
         if (!label.font || label.font.pointSize == 17) label.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
@@ -1938,7 +1936,7 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
     else reply(CGRectNull);
 }
 - (void)updateKeyboardButton {
-    [self updateTrackpadPresentation];
+    [self updateTrackpadTip];
     if (self.remoteControls) { [self.remoteControls keyboardFocused:self.input.isFirstResponder]; return; }
     BOOL active = self.input.isFirstResponder;
     UIImage *symbol = [UIImage systemImageNamed:active ? @"keyboard.chevron.compact.down" : @"keyboard"];
@@ -2147,7 +2145,7 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
     }
     self.controls.hidden = !self.loginScroll.hidden;
     self.toolbar.hidden = !self.loginScroll.hidden || self.fullscreen || self.recoveryPanel != nil;
-    [self updateTrackpadPresentation];
+    [self updateTrackpadTip];
     if (!self.loginScroll.hidden || (self.session.connected && !self.displayHandoff.active && !self.checkingResume && !self.restoreViewportPending && NSProcessInfo.processInfo.systemUptime >= self.displayNoticeUntil)) self.status.hidden = YES;
     [self updateStatusPresentation];
     [self.view setNeedsLayout];
@@ -2179,7 +2177,6 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
         }
     }
     if (_inputOnly != value) { [self retireTextDraft]; self.textComposer = nil; }
-    if (value) self.showsTrackpadReturn = NO;
     _inputOnly = value;
     if (self.quickActionsProvider) self.quickActions = self.quickActionsProvider(value);
     else if (self.remoteControls) [self.remoteControls reload];
@@ -2402,7 +2399,7 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
     self.restoresControlsKeyboard = NO; [self updateRemoteKeyAvailability];
 }
 - (void)toggleControlsKeyboard { [self toggleKeyboardWithFeedback:YES]; }
-- (void)prepareTrackpadPresentation {
+- (void)prepareTrackpadTip {
     UILabel *hint = [UILabel new];
     hint.text = @"Slide to move. Tap to click. Hold to drag. Use two fingers to scroll or right-click.";
     hint.font = [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
@@ -2424,64 +2421,22 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
     self.trackpadTip.accessibilityIdentifier = @"trackpad-gesture-tip";
     [self.view insertSubview:self.trackpadTip belowSubview:self.controls];
 
-    self.trackpadReturn = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.trackpadReturn.hidden = YES;
-    self.trackpadReturn.translatesAutoresizingMaskIntoConstraints = NO;
-    self.trackpadReturn.accessibilityIdentifier = @"trackpad-screen-toggle";
-    [self.trackpadReturn addTarget:self action:@selector(toggleTrackpadScreen) forControlEvents:UIControlEventTouchUpInside];
-    [self.view insertSubview:self.trackpadReturn belowSubview:self.controls];
     UILayoutGuide *safe = self.view.safeAreaLayoutGuide;
     [NSLayoutConstraint activateConstraints:@[
         [self.trackpadTip.topAnchor constraintEqualToAnchor:safe.topAnchor constant:16],
         [self.trackpadTip.centerXAnchor constraintEqualToAnchor:safe.centerXAnchor],
         [self.trackpadTip.widthAnchor constraintLessThanOrEqualToAnchor:safe.widthAnchor constant:-32],
-        [self.trackpadTip.widthAnchor constraintLessThanOrEqualToConstant:340],
-        [self.trackpadReturn.topAnchor constraintEqualToAnchor:safe.topAnchor constant:8],
-        [self.trackpadReturn.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-8],
-        [self.trackpadReturn.heightAnchor constraintGreaterThanOrEqualToConstant:44]
+        [self.trackpadTip.widthAnchor constraintLessThanOrEqualToConstant:340]
     ]];
 }
 - (void)dismissTrackpadTip {
     [NSUserDefaults.standardUserDefaults setBool:YES forKey:@"direct-trackpad-gesture-tip-seen"];
-    [self updateTrackpadPresentation];
+    [self updateTrackpadTip];
 }
-- (void)updateTrackpadPresentation {
+- (void)updateTrackpadTip {
     BOOL visible = self.loginScroll.hidden && !self.recoveryController && self.foreground && !self.inputInactive && !self.exited;
     self.trackpadTip.hidden = !visible || !self.inputOnly || !self.session.connected || self.input.isFirstResponder
         || [NSUserDefaults.standardUserDefaults boolForKey:@"direct-trackpad-gesture-tip-seen"];
-    BOOL overlay = self.inputOnly ? self.input.isFirstResponder && [self controlsCanShowMacScreen] : self.showsTrackpadReturn;
-    self.trackpadReturn.hidden = !visible || !overlay || self.textReview;
-    if (!self.trackpadReturn.hidden) {
-        UIButtonConfiguration *configuration = [UIButtonConfiguration filledButtonConfiguration];
-        configuration.image = [UIImage systemImageNamed:self.inputOnly ? @"desktopcomputer" : @"rectangle.and.hand.point.up.left"];
-        configuration.title = self.inputOnly ? @"Show Mac Screen" : @"Trackpad";
-        configuration.imagePadding = 6;
-        configuration.baseBackgroundColor = UIColor.secondarySystemBackgroundColor;
-        configuration.baseForegroundColor = UIColor.labelColor;
-        self.trackpadReturn.configuration = configuration;
-        self.trackpadReturn.accessibilityLabel = self.inputOnly ? @"Show Mac Screen" : @"Return to Trackpad & Keyboard";
-    }
-}
-- (void)toggleTrackpadScreen {
-    if (self.inputOnly) [self showMacScreenFromTrackpad];
-    else [self returnToTrackpad];
-}
-- (BOOL)controlsCanShowMacScreen {
-    return self.inputOnly && self.connectionForegroundAvailable && !self.starting && !self.checkingResume
-        && !self.restoreViewportPending && !self.controlsCustomization && !self.textReview && !self.presentedViewController
-        && self.session.established;
-}
-- (void)showMacScreenFromTrackpad {
-    if (![self controlsCanShowMacScreen]) return;
-    [self performControlAction:@{@"kind": @"inputOnly"}];
-    if (!self.inputOnly) {
-        self.showsTrackpadReturn = YES;
-        [self updateTrackpadPresentation];
-    }
-}
-- (void)returnToTrackpad {
-    if (!self.showsTrackpadReturn || self.inputOnly || !self.connectionForegroundAvailable || self.presentedViewController) return;
-    [self performControlAction:@{@"kind": @"inputOnly"}];
 }
 - (BOOL)controlsSoftwareKeyboardVisible {
     UIWindow *window = self.view.window;
@@ -2530,7 +2485,7 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
         && [self sessionKeyInputAvailable] && self.session.ordinaryControlInputAvailable;
 }
 - (void)updateRemoteKeyAvailability {
-    [self updateTrackpadPresentation];
+    [self updateTrackpadTip];
     [self.remoteControls refresh];
     BOOL ready = [self sessionKeyInputAvailable];
     for (UIButton *key in self.keyRow.arrangedSubviews) {

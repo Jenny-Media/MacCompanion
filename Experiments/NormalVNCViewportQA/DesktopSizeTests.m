@@ -194,7 +194,7 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     DesktopSizeSession *session=[DesktopSizeSession new]; DesktopSizeViewer *viewer=[self viewerWithSession:session];
     session.catalogue=@{@"views":@[@{@"id":@5},@{@"id":@1}]};
     viewer.inputOnly=YES;
-    XCTAssertEqualObjects([self kindsInSections:[viewer displayMenuSections]],(@[@"inputOnly",@"fullscreen"]));
+    XCTAssertEqualObjects([self kindsInSections:[viewer displayMenuSections]],(@[@"inputOnly",@"fullscreen",@"trackpadKeyboardBar"]));
     XCTAssertEqualObjects([viewer displayMenuSections][0][@"items"][0][@"title"],@"Show Mac Screen");
     XCTAssertEqualObjects([self kindsInSections:[viewer inputMenuSections]],(@[@"composeText",@"keyboard",@"keys"]));
     XCTAssertFalse([[self kindsInSections:[viewer displayMenuSections]] containsObject:@"desktopSizeMenu"]);

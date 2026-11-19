@@ -23,7 +23,6 @@ private final class RemoteAnchorSession: CompanionVNCSession {
     var events: [[AnyHashable: Any]] = []
     var shown: UIViewController?
     var keyboardToggles = 0
-    var screenRequests = 0
     var softwareKeyboard = false, keyboardCurrent = true
     var keyboardHides = 0, keyboardRestores = 0
     var composerReview: (text: String, title: String, available: () -> Bool)?
@@ -41,8 +40,6 @@ private final class RemoteAnchorSession: CompanionVNCSession {
     override var controlsConnectionID: String { connectionID }
     override func controlsInputAvailable() -> Bool { available }
     override func toggleControlsKeyboard() { keyboardToggles += 1 }
-    override func controlsCanShowMacScreen() -> Bool { available }
-    override func showMacScreenFromTrackpad() { screenRequests += 1 }
     override func controlsSoftwareKeyboardVisible() -> Bool { softwareKeyboard }
     override func controlsExecutionKeyboardCurrent() -> Bool { keyboardCurrent }
     override func hideControlsExecutionKeyboard() -> Bool { keyboardHides += 1; softwareKeyboard = false; return true }
@@ -88,8 +85,8 @@ private final class RemoteAnchorSession: CompanionVNCSession {
         XCTAssertEqual(viewer.events.compactMap { ($0["key"] as? NSNumber)?.uint32Value }, [0xff51, 0xff51])
         try button("Type on Mac").sendActions(for: .primaryActionTriggered)
         XCTAssertEqual(viewer.keyboardToggles, 1)
-        try button("Show Mac Screen").sendActions(for: .primaryActionTriggered)
-        XCTAssertEqual(viewer.screenRequests, 1)
+        XCTAssertTrue(try button("Compose Text").isEnabled)
+        XCTAssertFalse(descendants(dock).contains { $0.accessibilityLabel == "Show Mac Screen" })
 
         try button("Media").sendActions(for: .primaryActionTriggered)
         XCTAssertEqual(operations, [DirectTrackpadVolume.read.rawValue])
