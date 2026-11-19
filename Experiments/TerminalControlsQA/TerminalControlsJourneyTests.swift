@@ -1540,7 +1540,7 @@ import UIKit
 
         let picker = app.buttons["trackpad-compact-row-picker"]
         picker.tap()
-        let bar = app.navigationBars["Compact Trackpad Row"]
+        let bar = app.navigationBars["Trackpad Dock Keys"]
         XCTAssertTrue(bar.waitForExistence(timeout: 5))
         func option(_ title: String) -> XCUIElement {
             app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title)).firstMatch
@@ -1564,6 +1564,44 @@ import UIKit
         navigation.tap()
         XCTAssertTrue(navigation.isSelected)
         bar.buttons.element(boundBy: 0).tap()
+        closeSettings(app)
+    }
+
+    func testKeyboardEditorCanUseARowInTheTrackpadDock() {
+        continueAfterFailure = false
+        let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.controlsqa.ios")
+        app.launchEnvironment["MACCOMPANION_CONTROLS_FUNCTIONAL_TEST"] = "1"
+        app.launchEnvironment["MACCOMPANION_CONTROLS_REMOTE_MODE"] = "trackpad"
+        app.launchEnvironment["MACCOMPANION_COMPACT_TRACKPAD_PICKER_QA"] = "1"
+        app.launch()
+        defer { app.terminate() }
+
+        let editor = app.buttons["controls-qa-trackpad-keyboard-editor"]
+        let choice = app.buttons["terminal-editor-trackpad-dock-keys"]
+        let rowMenu = app.buttons["Row Options for Row 2"]
+        let picker = app.buttons["trackpad-compact-row-picker"]
+        func useRowTwo() {
+            XCTAssertTrue(editor.waitForExistence(timeout: 5)); editor.tap()
+            XCTAssertTrue(choice.waitForExistence(timeout: 5))
+            XCTAssertEqual(choice.label, "Trackpad Dock uses Default Navigation Keys")
+            rowMenu.tap()
+            app.buttons["Use in Trackpad Dock"].tap()
+            XCTAssertEqual(choice.label, "Trackpad Dock uses Keyboard Bar Row 2")
+            XCTAssertEqual(rowMenu.value as? String, "Used in Trackpad Dock")
+        }
+
+        useRowTwo()
+        app.buttons["terminal-layout-cancel"].tap()
+        app.buttons["Discard Changes"].tap()
+        openSettings(app)
+        XCTAssertEqual(picker.value as? String, "Default Navigation Keys")
+        closeSettings(app)
+
+        useRowTwo()
+        capture("keyboard-editor-trackpad-dock-row", app: app)
+        app.buttons["terminal-controls-save"].tap()
+        openSettings(app)
+        XCTAssertEqual(picker.value as? String, "Keyboard Bar Row 2")
         closeSettings(app)
     }
 

@@ -299,7 +299,7 @@ struct TerminalKeyboardRow: Codable, Identifiable, Equatable {
     var scrollStart: ScrollStart?
     var startsAtRight: Bool { scrollStart == .right || (scrollStart ?? .automatic) == .automatic && resolvedAlignment == .right }
     enum Visibility: String, CaseIterable { case always = "Always", expanded = "When Expanded", hidden = "Hidden" }
-    enum MenuAction { case visibility(Visibility), alignment(Alignment), scrollStart(ScrollStart), remove }
+    enum MenuAction { case visibility(Visibility), alignment(Alignment), scrollStart(ScrollStart), useInTrackpadDock, remove }
     var visibility: Visibility {
         get { hidden == true ? .hidden : extra ? .expanded : .always }
         set { hidden = newValue == .hidden; expandedOnly = newValue == .expanded }

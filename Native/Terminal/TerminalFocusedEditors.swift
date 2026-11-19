@@ -52,12 +52,14 @@ struct TerminalKeyboardEditingPreview: View {
     let select: (UUID?) -> Void
     var contextImage: UIImage?
     var insertion: UUID?
+    var compactTrackpadSelection: Binding<UUID?>? = nil
     @State private var panel: TerminalLayoutPanel?
     @State private var history = TerminalLayoutHistory()
     @State private var previewing = false
     @State private var restoring = false
     @State private var barHeight: CGFloat = 180
     @State private var editorHeight: CGFloat = 600
+    @State private var trackpadSummaryHeight: CGFloat = 0
     @State private var pending: UUID?
     @State private var started = false
     @State private var removing: UUID?
@@ -82,6 +84,19 @@ struct TerminalKeyboardEditingPreview: View {
                 } label: { Image(systemName: "ellipsis.circle").font(.system(size: 22)).frame(minWidth: 44, minHeight: 44) }
                     .accessibilityLabel("Keyboard Options").accessibilityIdentifier("terminal-row-options")
             }.dynamicTypeSize(...DynamicTypeSize.xxxLarge).padding(.horizontal, 20).padding(.vertical, compact ? 0 : 20)
+            if let compactTrackpadSelection {
+                let choice = CompactTrackpadRowPicker.selectionTitle(for: compactTrackpadSelection.wrappedValue, in: profile)
+                NavigationLink {
+                    CompactTrackpadRowPicker(profile: profile, selection: compactTrackpadSelection)
+                } label: {
+                    Label("Trackpad Dock uses \(choice)", systemImage: "rectangle.split.1x2")
+                        .font(.subheadline).multilineTextAlignment(.leading)
+                }.accessibilityIdentifier("terminal-editor-trackpad-dock-keys")
+                    .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20).padding(.bottom, compact ? 2 : 12)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { trackpadSummaryHeight = $0 }
+            }
             if let pending, let action = profile.actions.first(where: { $0.id == pending }) {
                 Label("Choose a row’s Add Key action to place " + action.title, systemImage: "plus.circle").font(.subheadline).padding(.horizontal, 20)
             }
@@ -102,6 +117,7 @@ struct TerminalKeyboardEditingPreview: View {
                         selectedRow = row
                         if !placePending(in: row) { show(.add(row, nil)) }
                     }, rowAction: rowAction,
+                    compactTrackpadSelection: compactTrackpadSelection,
                     placementSelect: { placement, row in
                         selectedRow = row
                         if !placePending(in: row) { show(.placement(placement, row)) }
@@ -111,7 +127,7 @@ struct TerminalKeyboardEditingPreview: View {
                     .accessibilityIdentifier("terminal-live-bar-preview")
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { if $0 > 0 { barHeight = $0 } }
             }.scrollBounceBehavior(.basedOnSize)
-                .frame(height: min(barHeight, max(60, editorHeight - (compact ? 126 : 226))))
+                .frame(height: min(barHeight, max(60, editorHeight - (compact ? 126 : 226) - trackpadSummaryHeight)))
                 .background(Color(uiColor: .systemBackground))
             HStack {
                 Button("Add Row", systemImage: "plus") { show(.rows) }.buttonStyle(.bordered)
@@ -161,6 +177,8 @@ struct TerminalKeyboardEditingPreview: View {
             editRow(id) { $0.visibility = visibility }
         case .alignment(let alignment): editRow(id) { $0.alignment = alignment }
         case .scrollStart(let value): editRow(id) { $0.scrollStart = value }
+        case .useInTrackpadDock:
+            if profile.compactTrackpadRowID(for: id.uuidString) != nil { compactTrackpadSelection?.wrappedValue = id }
         case .remove: removing = id
         }
     }

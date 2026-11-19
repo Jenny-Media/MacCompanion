@@ -448,6 +448,8 @@ final class TerminalKeyScrollView: UIScrollView {
     var previewSelectRow: ((UUID) -> Void)?
     var previewAddToRow: ((UUID) -> Void)?
     var previewRowAction: ((UUID, TerminalKeyboardRow.MenuAction) -> Void)?
+    var previewOffersTrackpadDock = false
+    var previewTrackpadDockRow: UUID?
     var previewMoveRow: ((UUID, UUID?) -> Void)?
     var previewAddPreset: ((TerminalRowPreset, UUID?) -> Void)?
     var previewAddItem: ((TerminalBarItem, UUID, TerminalBarItem?) -> Void)?
@@ -804,6 +806,7 @@ final class TerminalKeyScrollView: UIScrollView {
                     })
                 }
                 let wrapper = UIStackView(arrangedSubviews: [handle, container]); wrapper.axis = .horizontal; wrapper.spacing = 3
+                let usedInTrackpadDock = previewTrackpadDockRow == definition.id && definition.hidden != true && !definition.placements.isEmpty
                 if previewPreset == nil, previewAddToRow != nil {
                     let add = UIButton(type: .system)
                     let hasMenu = previewRowAction != nil
@@ -815,6 +818,7 @@ final class TerminalKeyScrollView: UIScrollView {
                     if hasMenu {
                         add.menu = editorRowMenu(definition)
                         add.showsMenuAsPrimaryAction = true
+                        if usedInTrackpadDock { add.accessibilityValue = "Used in Trackpad Dock" }
                     } else {
                         add.addAction(UIAction { [weak self] _ in
                             guard let self, self.layoutGeneration == generation else { return }
@@ -826,7 +830,8 @@ final class TerminalKeyScrollView: UIScrollView {
                 }
                 wrapper.layer.cornerRadius = 8
                 wrapper.layer.borderColor = UIColor.systemBlue.cgColor
-                wrapper.layer.borderWidth = selectedPreviewItem == nil && selectedPreviewRow == definition.id ? 1.5 : 0
+                let selected = selectedPreviewItem == nil && selectedPreviewRow == definition.id
+                wrapper.layer.borderWidth = selected || usedInTrackpadDock ? 1.5 : 0
                 displayed = wrapper
             } else { displayed = container }
             rowContainers[definition.id] = displayed
@@ -844,6 +849,13 @@ final class TerminalKeyScrollView: UIScrollView {
             self.previewAddToRow?(definition.id)
         }
         var settings: [UIMenuElement] = []
+        if previewOffersTrackpadDock, definition.hidden != true, !definition.placements.isEmpty {
+            settings.append(UIAction(title: "Use in Trackpad Dock", image: UIImage(systemName: "rectangle.split.1x2"),
+                state: previewTrackpadDockRow == definition.id ? .on : .off) { [weak self] _ in
+                guard let self, self.layoutGeneration == generation else { return }
+                self.previewRowAction?(definition.id, .useInTrackpadDock)
+            })
+        }
         let alignmentChoices = TerminalKeyboardRow.Alignment.allCases.map { alignment in
             UIAction(title: alignment.rawValue, image: UIImage(systemName: alignment.symbol), state: definition.resolvedAlignment == alignment ? .on : .off) { [weak self] _ in
                 guard let self, self.layoutGeneration == generation else { return }

@@ -211,6 +211,8 @@ struct TerminalKeyboardBarPreview: UIViewRepresentable {
         let presentation: Bool
         let rowAdditions: Bool
         let rowMenu: Bool
+        let offersTrackpadDock: Bool
+        let trackpadRow: UUID?
         let preset: TerminalRowPreset?
         let unavailable: Set<TerminalBarItem>
         let canAdd: Bool
@@ -237,6 +239,7 @@ struct TerminalKeyboardBarPreview: UIViewRepresentable {
     var catalogDragBegan: (() -> Void)? = nil
     var addToRow: ((UUID) -> Void)? = nil
     var rowAction: ((UUID, TerminalKeyboardRow.MenuAction) -> Void)? = nil
+    var compactTrackpadSelection: Binding<UUID?>? = nil
     var placementSelect: ((TerminalBarPlacement, UUID) -> Void)? = nil
     var placementMove: ((String, UUID, UUID, String?) -> Void)? = nil
     var placementRemove: ((String, UUID) -> Void)? = nil
@@ -260,9 +263,12 @@ struct TerminalKeyboardBarPreview: UIViewRepresentable {
         bar.previewSelectRow = enabled ? selectRow : nil; bar.previewMoveRow = enabled ? moveRow : nil
         bar.previewAddToRow = enabled ? addToRow : nil
         bar.previewRowAction = enabled ? rowAction : nil
+        bar.previewOffersTrackpadDock = enabled && compactTrackpadSelection != nil
+        bar.previewTrackpadDockRow = enabled ? compactTrackpadSelection?.wrappedValue : nil
         bar.previewAddPreset = enabled ? addPreset : nil; bar.previewAddItem = enabled ? addItem : nil
         bar.previewCatalogDragBegan = enabled ? catalogDragBegan : nil
         let configuration = Configuration(profile: profile, selected: selected, row: row, allRows: allRows, handles: handles, presentation: presentation, rowAdditions: addToRow != nil, rowMenu: rowAction != nil,
+            offersTrackpadDock: bar.previewOffersTrackpadDock, trackpadRow: bar.previewTrackpadDockRow,
             preset: preset, unavailable: unavailable, canAdd: canAddPreset, enabled: enabled, textSize: context.environment.dynamicTypeSize)
         guard context.coordinator.configuration != configuration else { return }
         // UIKit invalidates intrinsic size during configuration. Rebuilding on

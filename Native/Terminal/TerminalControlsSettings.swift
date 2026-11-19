@@ -23,7 +23,7 @@ struct TerminalControlsSettings: View {
         )
     }
     private var compactTrackpadTitle: String {
-        selectedCompactTrackpadRowID.map { "Keyboard Bar \(profile.rowTitle($0))" } ?? CompactTrackpadRowPicker.defaultTitle
+        CompactTrackpadRowPicker.selectionTitle(for: selectedCompactTrackpadRowID, in: profile)
     }
     private struct LayoutRequest: Identifiable {
         var id = UUID()
@@ -44,9 +44,9 @@ struct TerminalControlsSettings: View {
                                 NavigationLink {
                                     CompactTrackpadRowPicker(profile: profile, selection: compactTrackpadSelection)
                                 } label: {
-                                    entry("Compact Trackpad Row", summary: compactTrackpadTitle, symbol: "rectangle.split.1x2")
+                                    entry(CompactTrackpadRowPicker.title, summary: compactTrackpadTitle, symbol: "rectangle.split.1x2")
                                 }
-                                .accessibilityLabel("Compact Trackpad Row").accessibilityValue(compactTrackpadTitle)
+                                .accessibilityLabel(CompactTrackpadRowPicker.title).accessibilityValue(compactTrackpadTitle)
                                 .accessibilityIdentifier("trackpad-compact-row-picker").disabled(!readable)
                             }
                             Button { layout = .init(destination: .menu) } label: {
@@ -83,7 +83,8 @@ struct TerminalControlsSettings: View {
             .onAppear(perform: reload)
             .fullScreenCover(item: $layout) { request in
                 TerminalLayoutSheet(profile: profile, destination: request.destination, item: request.item,
-                    editable: readable && pro.hasPro, contextImage: contextImage, apply: commit)
+                    editable: readable && pro.hasPro, contextImage: contextImage, apply: commit,
+                    compactTrackpadSelection: store.family == .remoteMac && request.destination == .keyboard ? compactTrackpadSelection : nil)
             }
             .sheet(isPresented: $paywall) { DirectProView() }
     }
@@ -147,14 +148,22 @@ struct TerminalControlsSettings: View {
 }
 
 struct CompactTrackpadRowPicker: View {
+    static let title = "Trackpad Dock Keys"
     static let defaultTitle = "Default Navigation Keys"
     let profile: TerminalControlsProfile
     @Binding var selection: UUID?
 
+    static func selectionTitle(for id: UUID?, in profile: TerminalControlsProfile) -> String {
+        let row = profile.compactTrackpadRowID(for: id?.uuidString ?? "")
+        return row.map { "Keyboard Bar \(profile.rowTitle($0))" } ?? defaultTitle
+    }
+
     var body: some View {
         List {
-            Section("Built-In") {
+            Section {
                 option(Self.defaultTitle, keys: RemoteMacControls.compactNavigationKeys.map(\.title), id: nil)
+            } footer: {
+                Text("Choose which keys appear in the Trackpad dock while the on-screen keyboard is closed.")
             }
             let rows = profile.compactTrackpadRows
             if !rows.isEmpty {
@@ -169,17 +178,17 @@ struct CompactTrackpadRowPicker: View {
                 }
             }
         }
-        .navigationTitle("Compact Trackpad Row")
+        .navigationTitle(Self.title)
         .directInlineNavigationTitle()
     }
 
     private func option(_ title: String, keys: [String], id: UUID?) -> some View {
-        let selected = selection == id
+        let selected = profile.compactTrackpadRowID(for: selection?.uuidString ?? "") == id
         return Button { selection = id } label: {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title).foregroundStyle(.primary)
-                    Text(keys.joined(separator: " · "))
+                    Text(keys.joined(separator: "\u{00a0}· "))
                         .font(.subheadline).foregroundStyle(.secondary)
                         .accessibilityLabel(keys.formatted(.list(type: .and)))
                 }
@@ -198,41 +207,58 @@ struct CompactTrackpadRowPicker: View {
     }
 }
 
-private struct TerminalLayoutSheet: View {
+struct TerminalLayoutSheet: View {
     @State var profile: TerminalControlsProfile
     let destination: TerminalControlsDestination
     var item: UUID?
     let editable: Bool
     var contextImage: UIImage?
     let apply: (TerminalControlsProfile) -> Bool
+    var compactTrackpadSelection: Binding<UUID?>? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var failed = false
     @State private var initial: TerminalControlsProfile?
+    @State private var initialTrackpadRow: UUID?
+    @State private var draftTrackpadRow: UUID?
     @State private var discarding = false
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 if failed { Text("Couldn’t save. Your draft is still open. Close and reload if controls changed in another window.").font(.caption).foregroundStyle(.red).padding(12) }
                 if editable {
-                    TerminalControlsEditor(profile: $profile, destination: destination, contextImage: contextImage, insertion: item)
+                    TerminalControlsEditor(profile: $profile, destination: destination, contextImage: contextImage, insertion: item,
+                        compactTrackpadSelection: compactTrackpadSelection.map { _ in $draftTrackpadRow })
                 } else {
                     ContentUnavailableView("Customization Unavailable", systemImage: "slider.horizontal.3", description: Text("Close this editor to check Pro access or reload your saved controls."))
                 }
             }.navigationTitle(destination == .keyboard ? "Keyboard Bar" : "Menu Favorites").directInlineNavigationTitle()
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("Cancel") {
-                        if let initial, initial != profile { discarding = true } else { dismiss() }
+                        if let initial, initial != profile || initialTrackpadRow != draftTrackpadRow { discarding = true } else { dismiss() }
                     }.accessibilityIdentifier("terminal-layout-cancel") }
                     ToolbarItem(placement: .confirmationAction) {
-                        Button("Done") { if !editable || apply(profile) { dismiss() } else { failed = true } }
+                        Button("Done", action: save)
                             .buttonStyle(.borderedProminent).accessibilityIdentifier("terminal-controls-save")
                     }
                 }
-        }.interactiveDismissDisabled().directAppearance().onAppear { if initial == nil { initial = profile } }
+        }.interactiveDismissDisabled().directAppearance().onAppear {
+            guard initial == nil else { return }
+            initial = profile
+            initialTrackpadRow = compactTrackpadSelection?.wrappedValue
+            draftTrackpadRow = initialTrackpadRow
+        }
             .confirmationDialog("Discard changes?", isPresented: $discarding, titleVisibility: .visible) {
                 Button("Discard Changes", role: .destructive) { dismiss() }
                 Button("Keep Editing", role: .cancel) {}
             } message: { Text("Your layout changes have not been saved.") }
+    }
+    private func save() {
+        guard editable else { dismiss(); return }
+        guard apply(profile) else { failed = true; return }
+        if initialTrackpadRow != draftTrackpadRow {
+            compactTrackpadSelection?.wrappedValue = profile.compactTrackpadRowID(for: draftTrackpadRow?.uuidString ?? "")
+        }
+        dismiss()
     }
 }
 
@@ -244,13 +270,15 @@ struct TerminalControlsEditor: View {
     var libraryOnly = false
     var contextImage: UIImage?
     var insertion: UUID?
+    var compactTrackpadSelection: Binding<UUID?>? = nil
     @State private var selectedRow = TerminalKeyboardRow.mainID
     var body: some View {
         Group {
             if libraryOnly {
                 TerminalSavedLibrary(profile: $profile, section: .shortcuts, editable: editable, persist: { profile = $0; return true }, place: { _, _ in })
             } else if destination == .keyboard {
-                TerminalKeyboardEditingPreview(profile: $profile, selected: nil, selectedRow: $selectedRow, select: { _ in }, contextImage: contextImage, insertion: insertion)
+                TerminalKeyboardEditingPreview(profile: $profile, selected: nil, selectedRow: $selectedRow, select: { _ in },
+                    contextImage: contextImage, insertion: insertion, compactTrackpadSelection: compactTrackpadSelection)
             } else {
                 TerminalFloatingMenuEditor(profile: $profile, contextImage: contextImage, insertion: insertion)
             }

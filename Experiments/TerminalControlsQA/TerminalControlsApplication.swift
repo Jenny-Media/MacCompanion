@@ -89,6 +89,8 @@ struct TerminalControlsHarness: View {
     @State private var live = TerminalControlsLiveHost()
     @State private var showingTerminal = false
     @State private var showingRemote = false
+    @State private var showingTrackpadKeyboardEditor = false
+    @AppStorage(TerminalControlsProfile.compactTrackpadRowPreference) private var dockRow = ""
     @State private var failure = ""
     @State private var reviewFinished = false
     var body: some View {
@@ -97,6 +99,12 @@ struct TerminalControlsHarness: View {
                 Text(pro.hasPro ? "Pro ready" : "Checking Pro").accessibilityIdentifier("controls-qa-pro")
                 Button("Refresh Pro") { Task { await pro.refresh() } }.accessibilityIdentifier("controls-qa-refresh-pro")
                 Button("Customize Controls") { controlsEntry = .settings }.accessibilityIdentifier("controls-qa-open")
+                if ProcessInfo.processInfo.environment["MACCOMPANION_COMPACT_TRACKPAD_PICKER_QA"] == "1" {
+                    Button("Edit Keyboard Bar for Trackpad") {
+                        if (try? memory.store.load()) != nil { showingTrackpadKeyboardEditor = true }
+                    }
+                        .accessibilityIdentifier("controls-qa-trackpad-keyboard-editor")
+                }
                 Button("Manage Shortcuts") { controlsEntry = .shortcuts }.accessibilityIdentifier("controls-qa-shortcuts")
                 Button("Manage Saved Text") { controlsEntry = .text }.accessibilityIdentifier("controls-qa-text")
                 Button("Open Remote Controls") { showingRemote = true }.accessibilityIdentifier("controls-qa-remote")
@@ -121,6 +129,12 @@ struct TerminalControlsHarness: View {
                         close: { memory.dismissals += 1; controlsEntry = nil })
                 }
                 .fullScreenCover(isPresented: $showingRemote) { TerminalRemoteControlsHost(close: { showingRemote = false }) }
+                .fullScreenCover(isPresented: $showingTrackpadKeyboardEditor) {
+                    TerminalLayoutSheet(profile: memory.profile, destination: .keyboard, editable: true,
+                        apply: { (try? memory.store.save($0)) != nil }, compactTrackpadSelection: Binding(
+                            get: { memory.profile.compactTrackpadRowID(for: dockRow) },
+                            set: { dockRow = $0?.uuidString ?? "" }))
+                }
                 .fullScreenCover(isPresented: $showingTerminal) {
                     if let session = live.session {
                         DirectTerminalView(mac: session.mac, session: session, autoConnect: false, exit: { showingTerminal = false })
