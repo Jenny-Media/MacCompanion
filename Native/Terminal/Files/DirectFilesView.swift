@@ -104,7 +104,10 @@ struct DirectFilesView: View {
                 ToolbarItem(placement: .primaryAction) {
                     Menu("More", systemImage: "ellipsis.circle") {
                         if !session.macRemoved {
-                            Button("Connection Details", systemImage: "info.circle") { sheet = .connectionDetails }
+                            Button("Connection Details", systemImage: "info.circle") {
+                                if session.phase != .connecting { sheet = .connectionDetails }
+                            }
+                                .disabled(session.phase == .connecting)
                                 .accessibilityIdentifier("files-connection-details")
                         }
                         Button("Setup Guide", systemImage: "questionmark.circle") { sheet = .setup }
@@ -237,6 +240,7 @@ struct DirectFilesView: View {
         }
         .onChange(of: draft.method) { _, _ in prepareSignIn() }
         .onChange(of: session.phase) { _, phase in
+            if phase == .connecting, sheet == .connectionDetails { sheet = nil }
             if phase != .ready { refreshSignIn() }
         }
         .onChange(of: session.busy) { _, busy in

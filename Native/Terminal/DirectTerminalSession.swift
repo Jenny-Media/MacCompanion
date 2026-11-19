@@ -421,7 +421,7 @@ private enum TerminalPTY {
                 #if os(iOS)
                 self.connectionProgress.advance(to: .startingSession)
                 #endif
-                self.phase = "Opening a new shell"
+                self.phase = "Opening a new shell"; self.status = "Opening Terminal…"
                 let requestedColumns = columns, requestedRows = rows
                 let exitStatus = try await TerminalPTY.run(client: client, columns: requestedColumns, rows: requestedRows, ready: { writer in
                     guard self.generation == id, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { throw CancellationError() }
