@@ -1528,6 +1528,45 @@ import UIKit
         XCTAssertEqual(app.staticTexts["controls-qa-writes"].label, "Writes: 0")
     }
 
+    func testCompactTrackpadPickerShowsTheKeysInEachSavedRow() {
+        continueAfterFailure = false
+        let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.controlsqa.ios")
+        app.launchEnvironment["MACCOMPANION_CONTROLS_FUNCTIONAL_TEST"] = "1"
+        app.launchEnvironment["MACCOMPANION_CONTROLS_REMOTE_MODE"] = "trackpad"
+        app.launchEnvironment["MACCOMPANION_COMPACT_TRACKPAD_PICKER_QA"] = "1"
+        app.launch()
+        defer { app.terminate() }
+        openSettings(app)
+
+        let picker = app.buttons["trackpad-compact-row-picker"]
+        picker.tap()
+        let bar = app.navigationBars["Compact Trackpad Row"]
+        XCTAssertTrue(bar.waitForExistence(timeout: 5))
+        func option(_ title: String) -> XCUIElement {
+            app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title)).firstMatch
+        }
+        let navigation = option("Default Navigation Keys")
+        XCTAssertTrue(navigation.label.contains("Return"))
+        let essentials = option("Row 1"), functions = option("Row 2")
+        XCTAssertTrue(essentials.exists && functions.exists)
+        XCTAssertTrue(functions.label.contains("F1"))
+        XCTAssertTrue(essentials.label.contains("Escape"))
+
+        functions.tap()
+        XCTAssertTrue(functions.isSelected)
+        capture("compact-trackpad-row-choices", app: app)
+        bar.buttons.element(boundBy: 0).tap()
+        XCTAssertEqual(picker.value as? String, "Keyboard Bar Row 2")
+        closeSettings(app)
+        openSettings(app)
+        XCTAssertEqual(picker.value as? String, "Keyboard Bar Row 2")
+        picker.tap()
+        navigation.tap()
+        XCTAssertTrue(navigation.isSelected)
+        bar.buttons.element(boundBy: 0).tap()
+        closeSettings(app)
+    }
+
     func testRemoteControlsRecoveryKeepsPointerSettingsWithUnreadableData() async throws {
         for mode in ["desktop", "trackpad"] {
             let (app, store) = try await launchPro(remoteMode: mode, failRead: true)

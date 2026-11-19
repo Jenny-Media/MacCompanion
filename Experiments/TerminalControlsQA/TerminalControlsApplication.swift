@@ -44,6 +44,9 @@ final class TerminalControlsScene: UIResponder, UIWindowSceneDelegate {
         // Transaction journeys start after migration; migration has its own
         // hosted tests. A failed explicit Save must not fail the initial load.
         profile.freezeKeyboardLayout()
+        if ProcessInfo.processInfo.environment["MACCOMPANION_COMPACT_TRACKPAD_PICKER_QA"] == "1" {
+            profile.addPreset(.functions, before: nil)
+        }
         if ProcessInfo.processInfo.environment["MACCOMPANION_CONTROLS_LEGACY_ROWS"] == "1" {
             // An unreleased saved layout with custom row options. Its rows
             // reset while its saved definitions and favorites remain intact.

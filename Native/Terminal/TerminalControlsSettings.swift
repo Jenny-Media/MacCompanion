@@ -16,14 +16,14 @@ struct TerminalControlsSettings: View {
     @State private var layout: LayoutRequest?
     @AppStorage(TerminalControlsProfile.compactTrackpadRowPreference) private var compactTrackpadRow = ""
     private var selectedCompactTrackpadRowID: UUID? { profile.compactTrackpadRowID(for: compactTrackpadRow) }
-    private var compactTrackpadSelection: Binding<String> {
+    private var compactTrackpadSelection: Binding<UUID?> {
         Binding(
-            get: { selectedCompactTrackpadRowID?.uuidString ?? "" },
-            set: { if readable && DirectAppLockV1.shared.canAccess { compactTrackpadRow = $0 } }
+            get: { selectedCompactTrackpadRowID },
+            set: { if readable && DirectAppLockV1.shared.canAccess { compactTrackpadRow = $0?.uuidString ?? "" } }
         )
     }
     private var compactTrackpadTitle: String {
-        selectedCompactTrackpadRowID.map(profile.rowTitle) ?? "Trackpad Navigation"
+        selectedCompactTrackpadRowID.map { "Keyboard Bar \(profile.rowTitle($0))" } ?? CompactTrackpadRowPicker.defaultTitle
     }
     private struct LayoutRequest: Identifiable {
         var id = UUID()
@@ -41,22 +41,11 @@ struct TerminalControlsSettings: View {
                                 entry("Keyboard Bar", summary: "\(profile.resolvedRows.count) customizable \(profile.resolvedRows.count == 1 ? "row" : "rows")", symbol: "keyboard")
                             }.accessibilityIdentifier("terminal-edit-keyboard")
                             if store.family == .remoteMac {
-                                Menu {
-                                    Picker("Compact Trackpad Row", selection: compactTrackpadSelection) {
-                                        Text("Trackpad Navigation").tag("")
-                                        ForEach(profile.compactTrackpadRows) { row in
-                                            Text(profile.rowTitle(row.id)).tag(row.id.uuidString)
-                                        }
-                                    }.pickerStyle(.inline).labelsHidden()
+                                NavigationLink {
+                                    CompactTrackpadRowPicker(profile: profile, selection: compactTrackpadSelection)
                                 } label: {
-                                    HStack {
-                                        entry("Compact Trackpad Row", summary: compactTrackpadTitle, symbol: "rectangle.split.1x2")
-                                        Image(systemName: "chevron.up.chevron.down")
-                                            .font(.footnote.weight(.semibold)).foregroundStyle(.secondary).accessibilityHidden(true)
-                                    }
-                                    .contentShape(Rectangle())
+                                    entry("Compact Trackpad Row", summary: compactTrackpadTitle, symbol: "rectangle.split.1x2")
                                 }
-                                .menuIndicator(.hidden)
                                 .accessibilityLabel("Compact Trackpad Row").accessibilityValue(compactTrackpadTitle)
                                 .accessibilityIdentifier("trackpad-compact-row-picker").disabled(!readable)
                             }
@@ -154,6 +143,58 @@ struct TerminalControlsSettings: View {
             readable = false; issue = .make(.controlsUnavailable, message: TerminalControlsStore.newerFormatMessage)
         } catch { issue = .make(.saveFailed) }
         return false
+    }
+}
+
+struct CompactTrackpadRowPicker: View {
+    static let defaultTitle = "Default Navigation Keys"
+    let profile: TerminalControlsProfile
+    @Binding var selection: UUID?
+
+    var body: some View {
+        List {
+            Section("Built-In") {
+                option(Self.defaultTitle, keys: RemoteMacControls.compactNavigationKeys.map(\.title), id: nil)
+            }
+            let rows = profile.compactTrackpadRows
+            if !rows.isEmpty {
+                Section {
+                    ForEach(rows) { row in
+                        option(profile.rowTitle(row.id), keys: profile.barItems(in: row).map { $0.title(in: profile) }, id: row.id)
+                    }
+                } header: {
+                    Text("Your Keyboard Bar")
+                } footer: {
+                    Text("Edit these rows in Keyboard Bar to change their keys.")
+                }
+            }
+        }
+        .navigationTitle("Compact Trackpad Row")
+        .directInlineNavigationTitle()
+    }
+
+    private func option(_ title: String, keys: [String], id: UUID?) -> some View {
+        let selected = selection == id
+        return Button { selection = id } label: {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title).foregroundStyle(.primary)
+                    Text(keys.joined(separator: " · "))
+                        .font(.subheadline).foregroundStyle(.secondary)
+                        .accessibilityLabel(keys.formatted(.list(type: .and)))
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "checkmark")
+                    .foregroundStyle(Color.accentColor)
+                    .opacity(selected ? 1 : 0)
+                    .accessibilityHidden(true)
+            }
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 

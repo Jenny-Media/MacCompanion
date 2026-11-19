@@ -13,6 +13,12 @@ import SwiftUI
 }
 
 @MainActor @objc final class RemoteMacControls: NSObject {
+    static let compactNavigationKeys: [(title: String, symbol: String, code: UInt32)] = [
+        ("Escape", "escape", 0xff1b), ("Tab", "arrow.right.to.line", 0xff09),
+        ("Left Arrow", "arrow.left", 0xff51), ("Up Arrow", "arrow.up", 0xff52),
+        ("Down Arrow", "arrow.down", 0xff54), ("Right Arrow", "arrow.right", 0xff53),
+        ("Return", "return", 0xff0d)
+    ]
     private weak var viewer: CompanionVNCViewer?
     let keyboardBar = TerminalKeyboardBar(terminal: nil, preferences: .init())
     private let trackpadDock = UIStackView()
@@ -102,13 +108,7 @@ import SwiftUI
         trackpadDock.accessibilityIdentifier = "trackpad-dock"
         let navigationRow = UIStackView()
         navigationRow.spacing = 3
-        let keys: [(String, String, UInt32)] = [
-            ("Escape", "escape", 0xff1b), ("Tab", "arrow.right.to.line", 0xff09),
-            ("Left Arrow", "arrow.left", 0xff51), ("Up Arrow", "arrow.up", 0xff52),
-            ("Down Arrow", "arrow.down", 0xff54), ("Right Arrow", "arrow.right", 0xff53),
-            ("Return", "return", 0xff0d)
-        ]
-        for (title, symbol, code) in keys {
+        for (title, symbol, code) in Self.compactNavigationKeys {
             let button = keyboardBar.compactKey(title, symbol: symbol) { [weak self] in
                 guard let self, sendKey(code) else { return }
                 keyboardBar.keyFeedback.feedback("key")
