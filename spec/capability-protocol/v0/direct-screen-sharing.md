@@ -81,6 +81,43 @@ stream. Describe this SSH transport accurately, without inheriting application
 pairing or grant claims from the historical paired protocol. Deployment and
 physical-device acceptance remain separate release gates.
 
+### Trackpad audio controls
+
+In an authenticated foreground Trackpad & Keyboard session, opening Media may
+read the Mac's output volume and mute state. Volume Down, Volume Up, and Mute
+send one of the closed commands over a temporary RFC 4254 exec channel on the
+same verified SSH parent. Use the existing Desktop account. Do not open another
+SSH connection, use a PTY, install a helper, or interpolate user or host data
+into the command. Keep at most one exec in flight and never queue or retry a
+volume change. After the channel opens, check the captured connection owner,
+foreground access, and ordinary native input admission on the main actor, then
+enqueue the fixed admission line in the same actor turn. An exclusive shortcut
+or input suspension retires pending volume work even if input later resumes.
+The native input revision covers Compose Text reservations and Trackpad geometry
+changes, including display-layout changes within the same framebuffer size.
+Check that revision through enqueueing. Discard retired replies and read again
+when Media is open and native input is available.
+Without the admission line, the command exits without invoking the volume script.
+The outer command is a single line accepted by the Mac account's command shell.
+
+The command uses macOS Standard Additions to read state, change the level by
+6 percentage points saturating at 0 and 100 or toggle output mute, then read
+back the effect. A numeric readback alone does not establish that an output
+supports adjustment. A target that cannot be read or an unchanged value when
+a different one was requested is unavailable. Accept only the complete bounded
+stdout without a byte-order mark and a zero exit status, as described in the
+[indexed fixture](../../fixtures/direct-trackpad-volume-v0.1.json).
+Preserve operation failures through channel cleanup and discard stale results.
+The operation has five seconds to complete, then one second to retire its
+child channel. Start the grace period on the SSH event loop when timeout
+processing requests child closure, even when a write is pending. When the
+child closes, disarm the parent fallback and release waits on writes still
+owned by the parent socket.
+If channel retirement stalls, close the captured SSH parent so
+normal connection recovery can proceed. Keep the operation slot occupied until
+the child or its parent has retired. This profile does not send playback or
+brightness keys without a verified route for those actions.
+
 ## Saved Macs and credentials
 
 Store UUID, display name, ordered addresses and port in the direct library. Schema

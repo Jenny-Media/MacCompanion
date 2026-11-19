@@ -8,12 +8,30 @@ import SwiftUI
     var toggle: (TerminalModifiers, Bool) -> Void = { _, _ in }
     var send: (TerminalPaletteKey) -> Void = { _ in }
     var toggleKeyboard: () -> Void = {}
+    var revealKeyboardBar: () -> Void = {}
     var canUse: (TerminalControlAction) -> Bool = { _ in true }
 }
 
 @MainActor @objc final class RemoteMacControls: NSObject {
     private weak var viewer: CompanionVNCViewer?
     let keyboardBar = TerminalKeyboardBar(terminal: nil, preferences: .init())
+    private let trackpadDock = UIStackView()
+    private let dockMenuAnchor = UIView()
+    private let navigationSlot = UIStackView()
+    private let navigationViewport = TerminalKeyScrollView()
+    private let mediaPanel = UIStackView()
+    private let mediaStatus = UILabel()
+    private var dockMedia: UIButton?
+    private var mediaButtons: [UIButton] = []
+    private var mediaRequest: UUID?
+    private var mediaRequestRetired = false
+    private var mediaNeedsRead = false
+    private var mediaVolumeReadable = false
+    private var showingMedia = false
+    @objc private(set) var trackpadShowsKeyboardBar = false
+    private var trackpadNavigation: [UIButton] = []
+    private var dockCompose: UIButton?
+    private var keyboardIsFocused = false
     private var state = TerminalKeyboardState()
     private var profile = TerminalControlsProfile.remoteDefaults
     private var readable = false
@@ -31,7 +49,8 @@ import SwiftUI
     private var sequenceBanner: TerminalSequenceBannerController?
     private var shortcutConfirmations = TerminalShortcutConfirmations()
     @objc var bar: UIView { keyboardBar }
-    @objc var menuAnchor: UIView { keyboardBar.menuAnchor }
+    @objc var compactDockVisible: Bool { keyboardBar.compactContentsVisible }
+    @objc var menuAnchor: UIView { keyboardBar.compactContentsVisible ? dockMenuAnchor : keyboardBar.menuAnchor }
     @objc func layoutRows() { keyboardBar.layoutIfNeeded(); keyboardBar.layoutRows() }
     @objc var keyboardButton: UIButton { keyboardBar.keyboardButton }
     @objc var modifierButtons: [UIButton] { keyboardBar.renderedModifiers }
@@ -44,6 +63,8 @@ import SwiftUI
     init(viewer: CompanionVNCViewer, store: TerminalControlsStore) {
         self.viewer = viewer; self.store = store
         super.init()
+        configureTrackpadDock()
+        keyboardBar.installCompactContents(trackpadDock, rowSlot: navigationSlot, presetRow: navigationViewport)
         keyboardBar.keyFeedback = viewer.controlsFeedback
         let input = TerminalRemoteInput()
         input.ready = { [weak self] in self?.ready == true }
@@ -51,6 +72,11 @@ import SwiftUI
         input.toggle = { [weak self] modifier, lock in self?.state.toggle(modifier, lock: lock) }
         input.send = { [weak self] key in self?.sendPalette(key) }
         input.toggleKeyboard = { [weak viewer] in viewer?.toggleControlsKeyboard() }
+        input.revealKeyboardBar = { [weak self] in
+            guard let self else { return }
+            trackpadShowsKeyboardBar = true
+            refreshDock()
+        }
         input.canUse = { [weak self] action in self?.canUse(action) == true }
         keyboardBar.remoteInput = input
         keyboardBar.openKeypad = { [weak self] _ in self?.showKeypad() }
@@ -67,7 +93,184 @@ import SwiftUI
         reload()
     }
     isolated deinit { if let observation { NotificationCenter.default.removeObserver(observation) } }
+
+    private func configureTrackpadDock() {
+        trackpadDock.axis = .vertical
+        trackpadDock.spacing = 8
+        trackpadDock.isLayoutMarginsRelativeArrangement = true
+        trackpadDock.directionalLayoutMargins = .init(top: 4, leading: 4, bottom: 4, trailing: 4)
+        trackpadDock.accessibilityIdentifier = "trackpad-dock"
+        let navigationRow = UIStackView()
+        navigationRow.spacing = 3
+        let keys: [(String, String, UInt32)] = [
+            ("Escape", "escape", 0xff1b), ("Tab", "arrow.right.to.line", 0xff09),
+            ("Left Arrow", "arrow.left", 0xff51), ("Up Arrow", "arrow.up", 0xff52),
+            ("Down Arrow", "arrow.down", 0xff54), ("Right Arrow", "arrow.right", 0xff53),
+            ("Return", "return", 0xff0d)
+        ]
+        for (title, symbol, code) in keys {
+            let button = keyboardBar.compactKey(title, symbol: symbol) { [weak self] in
+                guard let self, sendKey(code) else { return }
+                keyboardBar.keyFeedback.feedback("key")
+            }
+            navigationRow.addArrangedSubview(button)
+            trackpadNavigation.append(button)
+        }
+        navigationViewport.install(navigationRow)
+        navigationSlot.axis = .vertical
+        navigationSlot.accessibilityIdentifier = "trackpad-navigation-keys"
+        navigationSlot.addArrangedSubview(navigationViewport)
+        keyboardBar.sizeCompactRow(navigationSlot)
+        let mediaRow = UIStackView()
+        mediaRow.spacing = 3
+        let volume: [(String, String, DirectTrackpadVolume)] = [
+            ("Volume Down", "speaker.minus", .decrease), ("Mute or Unmute", "speaker.slash", .toggleMute),
+            ("Volume Up", "speaker.plus", .increase)
+        ]
+        for (title, symbol, operation) in volume {
+            let button = keyboardBar.compactKey(title, symbol: symbol) { [weak self] in self?.runVolume(operation) }
+            button.configuration?.background.backgroundColor = .systemBackground
+            mediaRow.addArrangedSubview(button)
+            mediaButtons.append(button)
+        }
+        keyboardBar.sizeCompactRow(mediaRow)
+        mediaStatus.font = .preferredFont(forTextStyle: .footnote)
+        mediaStatus.adjustsFontForContentSizeCategory = true
+        mediaStatus.numberOfLines = 0
+        mediaStatus.textAlignment = .natural
+        mediaStatus.textColor = .secondaryLabel
+        let volumeCard = UIStackView(arrangedSubviews: [mediaRow, mediaStatus])
+        volumeCard.alignment = .center
+        volumeCard.spacing = 10
+        volumeCard.isLayoutMarginsRelativeArrangement = true
+        volumeCard.directionalLayoutMargins = .init(top: 6, leading: 6, bottom: 6, trailing: 10)
+        volumeCard.backgroundColor = .secondarySystemBackground
+        volumeCard.layer.cornerRadius = 14
+        mediaPanel.alignment = .center
+        mediaPanel.addArrangedSubview(UIView())
+        mediaPanel.addArrangedSubview(volumeCard)
+        mediaPanel.isHidden = true
+        mediaPanel.accessibilityIdentifier = "trackpad-volume-panel"
+        let actions = UIStackView()
+        actions.distribution = .fillEqually
+        actions.spacing = 4
+        actions.accessibilityIdentifier = "trackpad-session-actions"
+        let compose = keyboardBar.compactKey("Compose Text", symbol: "square.and.pencil") { [weak self] in self?.viewer?.showControlsComposer() }
+        compose.accessibilityHint = "Edit text on this device, then send it to the Mac."
+        dockCompose = compose
+        let type = keyboardBar.compactKey("Type on Mac", symbol: "keyboard") { [weak self] in self?.viewer?.toggleControlsKeyboard() }
+        type.accessibilityHint = "Open the keyboard and send keystrokes as you type."
+        let media = keyboardBar.compactKey("Volume", symbol: "speaker.wave.2") { [weak self] in
+            guard let self else { return }
+            setMediaVisible(!showingMedia)
+        }
+        media.accessibilityValue = "Collapsed"
+        dockMedia = media
+        for view in [type, compose, media, dockMenuAnchor] { actions.addArrangedSubview(view) }
+        keyboardBar.sizeCompactRow(actions)
+        dockMenuAnchor.isUserInteractionEnabled = false
+        let dock = UIStackView(arrangedSubviews: [navigationSlot, actions])
+        dock.axis = .vertical
+        dock.spacing = 6
+        dock.isLayoutMarginsRelativeArrangement = true
+        dock.directionalLayoutMargins = .init(top: 6, leading: 6, bottom: 6, trailing: 6)
+        dock.backgroundColor = .systemBackground
+        dock.layer.cornerRadius = 16
+        dock.layer.borderWidth = 1
+        dock.layer.borderColor = UIColor.separator.resolvedColor(with: dock.traitCollection).cgColor
+        dock.registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (dock: UIStackView, _: UITraitCollection) in
+            dock.layer.borderColor = UIColor.separator.resolvedColor(with: dock.traitCollection).cgColor
+        }
+        trackpadDock.addArrangedSubview(mediaPanel)
+        trackpadDock.addArrangedSubview(dock)
+    }
+
+    private func refreshDock() {
+        let compact = viewer?.inputOnly == true && !keyboardIsFocused && !trackpadShowsKeyboardBar && sequenceIdentifier == nil
+        if !ready { retireTrackpadVolume() }
+        if showingMedia && (!compact || !ready) { setMediaVisible(false) }
+        keyboardBar.setCompactContentsVisible(compact)
+        for button in trackpadNavigation { button.isEnabled = ready }
+        dockCompose?.isEnabled = ready
+        let mediaReady = self.mediaReady
+        dockMedia?.isEnabled = mediaReady && viewer?.trackpadVolumeHandler != nil
+        for button in mediaButtons { button.isEnabled = mediaReady && mediaVolumeReadable && mediaRequest == nil }
+        if mediaNeedsRead { runVolume(.read) }
+    }
+
+    @objc func toggleTrackpadKeyboardBar() {
+        guard viewer?.inputOnly == true, sequenceIdentifier == nil else { return }
+        trackpadShowsKeyboardBar.toggle()
+        refreshDock()
+    }
+
+    @objc func retireTrackpadVolume() {
+        if mediaRequest != nil { mediaRequestRetired = true }
+        mediaVolumeReadable = false
+    }
+
+    @objc func closeVolumePanel() { setMediaVisible(false) }
+
+    private func setMediaVisible(_ visible: Bool) {
+        guard showingMedia != visible else { return }
+        showingMedia = visible
+        mediaPanel.isHidden = !visible
+        dockMedia?.isSelected = visible
+        dockMedia?.accessibilityValue = visible ? "Expanded" : "Collapsed"
+        dockMedia?.configuration?.background.backgroundColor = visible ? UIColor.systemBlue.withAlphaComponent(0.15) : .secondarySystemBackground
+        if visible && (mediaRequest == nil || mediaRequestRetired) {
+            requestMediaRead()
+        } else if !visible {
+            mediaNeedsRead = false
+        }
+        viewer?.view.setNeedsLayout()
+    }
+
+    private func requestMediaRead() {
+        mediaNeedsRead = true
+        mediaVolumeReadable = false
+        mediaStatus.text = "Checking Mac volume…"
+        refreshDock()
+    }
+
+    private func runVolume(_ operation: DirectTrackpadVolume) {
+        guard showingMedia, mediaReady, mediaRequest == nil, operation == .read || mediaVolumeReadable,
+              let viewer, let handler = viewer.trackpadVolumeHandler else { return }
+        let request = UUID(), epoch = viewer.controlsEpoch, connection = viewer.controlsConnectionID
+        let session = viewer.session, nativeRevision = session.ordinaryControlInputRevision
+        mediaRequest = request
+        mediaRequestRetired = false
+        mediaNeedsRead = false
+        mediaStatus.text = operation == .read ? "Checking Mac volume…" : "Adjusting Mac volume…"
+        refreshDock()
+        handler(operation.rawValue) { [weak self, weak viewer] reply in
+            MainActor.assumeIsolated {
+                guard let self, let viewer, self.mediaRequest == request else { return }
+                self.mediaRequest = nil
+                let retired = self.mediaRequestRetired
+                self.mediaRequestRetired = false
+                guard self.showingMedia else { return }
+                guard self.ready else { self.setMediaVisible(false); return }
+                guard !retired, viewer.controlsEpoch == epoch, viewer.controlsConnectionID == connection,
+                      viewer.session === session, session.ordinaryControlInputRevision == nativeRevision else {
+                    self.requestMediaRead()
+                    return
+                }
+                if let reply, let reading = DirectTrackpadVolume.Reading(response: reply) {
+                    self.mediaVolumeReadable = true
+                    self.mediaStatus.text = reading.muted ? "Mac sound muted" : "Mac volume \(reading.level)%"
+                    if operation != .read { self.keyboardBar.keyFeedback.feedback("selection") }
+                } else {
+                    self.mediaStatus.text = operation == .read ? "Mac volume unavailable" : "Volume change couldn’t be verified"
+                }
+                if let message = self.mediaStatus.text { UIAccessibility.post(notification: .announcement, argument: message) }
+                self.refreshDock()
+            }
+        }
+    }
+
     private var ready: Bool { sequenceIdentifier == nil && viewer?.controlsInputAvailable() == true && DirectAppLockV1.shared.canAccess }
+    private var mediaReady: Bool { ready && viewer?.trackpadVolumeInputAvailable() == true }
     private func canUse(_ action: TerminalControlAction) -> Bool {
         sequenceIdentifier == nil && (action.isLocalKeyboardControl || ready && !(action.operation?.requiresScreen == true && viewer?.inputOnly == true)
             && (action.operation != .copyScreenText || viewer?.controlsCopyTextAvailable() == true))
@@ -76,13 +279,15 @@ import SwiftUI
         do { profile = try activeStore.load(); readable = true }
         catch { readable = false; profile = .remoteDefaults }
         shortcutConfirmations.definitionsChanged(profile.actions)
-        keyboardBar.configure(profile) { [weak self] in self?.use($0) }
+        let preference = UserDefaults.standard.string(forKey: TerminalControlsProfile.compactTrackpadRowPreference) ?? ""
+        keyboardBar.configure(profile, compactRowID: profile.compactTrackpadRowID(for: preference)) { [weak self] in self?.use($0) }
         keyboardBar.showsExtraRows = profile.rowsExpanded ?? false
         refresh()
         viewer?.refreshControlsMenu()
     }
     @objc func refresh() {
         keyboardBar.refresh()
+        refreshDock()
         keypad?.ready = ready && keypad?.ready == true
         keypad?.armed = state.armed; keypad?.locked = state.locked
     }
@@ -99,7 +304,11 @@ import SwiftUI
         if let panel, viewer?.presentedViewController === panel { viewer?.dismiss(animated: false) }
         panel = nil; clearModifiers()
     }
-    @objc func keyboardFocused(_ focused: Bool) { keyboardBar.setKeyboardFocused(focused) }
+    @objc func keyboardFocused(_ focused: Bool) {
+        keyboardIsFocused = focused
+        keyboardBar.setKeyboardFocused(focused)
+        refreshDock()
+    }
     private func modifiers(_ flags: TerminalModifiers) -> [UInt32] {
         [(TerminalModifiers.shift, UInt32(0xffe1)), (.ctrl, 0xffe3), (.alt, 0xffe9), (.command, 0xffeb)].compactMap { flags.contains($0.0) ? $0.1 : nil }
     }
@@ -200,6 +409,7 @@ import SwiftUI
     private func applyPointerSettings() {
         guard let viewer, let id = viewer.preferenceID.flatMap(UUID.init(uuidString:)) else { return }
         viewer.pointerSpeed = VNCSessionPreferences.speed(id)
+        viewer.trackpadPrecisionAndReach = VNCSessionPreferences.precisionAndReach(id)
         viewer.followCursorEnabled = VNCSessionPreferences.followCursor(id)
         if !viewer.inputOnly { viewer.performSharedControlAction(VNCSessionPreferences.trackpad(id) ? "setTrackpad" : "setPointer") }
     }
@@ -216,7 +426,7 @@ import SwiftUI
             if action.operation == .rightClick || action.operation?.modifierAlone != nil { item["inputAction"] = true }
             if action.operation == .pointerMode { item["defersInterfaceFeedback"] = true }
             if action.operation == .keyboard { item["title"] = keyboardBar.keyboardButton.accessibilityLabel }
-            if action.operation == .expandRows { item["title"] = keyboardBar.showsExtraRows ? "Collapse Rows" : "Expand Rows" }
+            if action.operation == .expandRows { item["title"] = keyboardBar.expandRowsTitle }
             return item
         }
     }
@@ -263,7 +473,7 @@ import SwiftUI
         case .builtIn:
             if let code = action.operation?.modifierAlone { _ = sendModifierAlone(code) }
             else if action.operation == .keyboard { viewer?.toggleControlsKeyboard() }
-            else if action.operation == .expandRows { keyboardBar.showsExtraRows.toggle(); keyboardBar.layoutChanged?() }
+            else if action.operation == .expandRows { keyboardBar.performExpandToggle(feedback: false) }
             else if action.operation == .paste, let text = UIPasteboard.general.string { reviewText(text) }
             else if action.operation == .composeText { viewer?.showControlsComposer() }
             else if let operation = action.operation {
@@ -299,6 +509,7 @@ import SwiftUI
     private func runOwned(_ action: TerminalControlAction, plan: [TerminalSequenceOperation<[[String: Any]]>], requiresPro: Bool) {
         guard ready, let viewer, let identifier = viewer.beginControlSequence() else { notice("Input is busy. Nothing was queued."); return }
         sequenceIdentifier = identifier
+        refreshDock()
         let epoch = viewer.controlsEpoch, token = inputGeneration
         let progress = TerminalSequenceProgress(action: action, batching: !action.hasSequenceWait)
         let keyboard = TerminalSequenceKeyboard(visible: { [weak viewer] in viewer?.controlsSoftwareKeyboardVisible() == true }, current: { [weak self, weak viewer] in

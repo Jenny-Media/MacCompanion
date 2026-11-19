@@ -360,6 +360,14 @@ struct TerminalControlsProfile: Codable, Equatable {
         return rows
     }
     func rowTitle(_ id: UUID) -> String { "Row \((resolvedRows.firstIndex { $0.id == id } ?? 0) + 1)" }
+    static let compactTrackpadRowPreference = "direct-remote-compact-trackpad-row"
+    var compactTrackpadRows: [TerminalKeyboardRow] {
+        resolvedRows.filter { $0.hidden != true && !barItems(in: $0).isEmpty }
+    }
+    func compactTrackpadRowID(for preference: String) -> UUID? {
+        guard let id = UUID(uuidString: preference), compactTrackpadRows.contains(where: { $0.id == id }) else { return nil }
+        return id
+    }
     func barPlacements(in row: TerminalKeyboardRow) -> [TerminalBarPlacement] {
         var row = row; row.items = barItems(in: row); return row.placements
     }

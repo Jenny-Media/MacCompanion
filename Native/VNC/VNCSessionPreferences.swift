@@ -143,6 +143,10 @@ struct VNCQuickAction: Codable, Identifiable, Equatable, Sendable {
         return value.isFinite ? min(3, max(0.5, value)) : 1.5
     }
     static func setSpeed(_ value: Double, mac id: UUID) { if value.isFinite { UserDefaults.standard.set(min(3, max(0.5, value)), forKey: prefix(id) + "speed"); changed(id) } }
+    static func precisionAndReach(_ id: UUID) -> Bool { UserDefaults.standard.bool(forKey: prefix(id) + "precision-and-reach") }
+    static func setPrecisionAndReach(_ value: Bool, mac id: UUID) {
+        UserDefaults.standard.set(value, forKey: prefix(id) + "precision-and-reach")
+    }
     static func display(_ id: UUID) -> NSNumber? { UserDefaults.standard.object(forKey: prefix(id) + "display") as? NSNumber }
     static func setDisplay(_ value: NSNumber?, mac id: UUID) { UserDefaults.standard.set(value, forKey: prefix(id) + "display"); changed(id) }
     // Device-local mode: zero mirrors the Mac; 1–3 choose a virtual landscape size.
@@ -250,7 +254,7 @@ struct VNCQuickAction: Codable, Identifiable, Equatable, Sendable {
         clear(id)
     }
     static func clear(_ id: UUID) {
-        for suffix in ["speed", "display", "trackpad", "follow-cursor", "fullscreen", "desktop-size",
+        for suffix in ["speed", "precision-and-reach", "display", "trackpad", "follow-cursor", "fullscreen", "desktop-size",
                        "virtual-desktop-size", "display-shortcuts"] {
             UserDefaults.standard.removeObject(forKey: prefix(id) + suffix)
         }
@@ -276,6 +280,7 @@ struct VNCPointerSettings: View {
     let mode: DirectControlMode
     var changed: () -> Void = {}
     @State private var speed = 1.5
+    @State private var precisionAndReach = false
     @State private var scrollSpeed = VNCSessionPreferences.scrollSpeed
     @State private var showsTouchPoints = VNCSessionPreferences.showsTouchPoints
     @State private var haptics = VNCSessionPreferences.trackpadHaptics
@@ -284,6 +289,7 @@ struct VNCPointerSettings: View {
     init(macID: UUID?, mode: DirectControlMode, changed: @escaping () -> Void = {}) {
         self.macID = macID; self.mode = mode; self.changed = changed
         _speed = State(initialValue: macID.map(VNCSessionPreferences.speed) ?? 1.5)
+        _precisionAndReach = State(initialValue: macID.map(VNCSessionPreferences.precisionAndReach) ?? false)
         _followCursor = State(initialValue: macID.map(VNCSessionPreferences.followCursor) ?? true)
         _trackpad = State(initialValue: macID.map(VNCSessionPreferences.trackpad) ?? true)
     }
@@ -299,6 +305,12 @@ struct VNCPointerSettings: View {
                     LabeledContent("Pointer Speed", value: speed.formatted(.number.precision(.fractionLength(1))))
                     Slider(value: $speed, in: 0.5...3, step: 0.1).accessibilityLabel("Pointer Speed")
                     Button("Reset Pointer Speed") { speed = 1.5 }
+                    if mode == .trackpad {
+                        Picker("Pointer Response", selection: $precisionAndReach) {
+                            Text("Standard").tag(false)
+                            Text("Precision & Reach").tag(true)
+                        }.accessibilityIdentifier("trackpad-pointer-response")
+                    }
                     if mode == .desktop {
                         Toggle("Keep Pointer Visible", isOn: $followCursor).accessibilityIdentifier("follow-cursor-toggle")
                     }
@@ -316,6 +328,11 @@ struct VNCPointerSettings: View {
             } header: { Text("Touch & Haptics") } footer: { Text("Scrolling and feedback apply to every Mac on this device.") }
         }.navigationTitle("Pointer & Gestures").directInlineNavigationTitle()
             .onChange(of: speed) { _, _ in save() }
+            .onChange(of: precisionAndReach) { _, value in
+                guard let macID, DirectAppLockV1.shared.canAccess else { return }
+                VNCSessionPreferences.setPrecisionAndReach(value, mac: macID)
+                changed()
+            }
             .onChange(of: scrollSpeed) { _, _ in save() }
             .onChange(of: showsTouchPoints) { _, _ in save() }
             .onChange(of: haptics) { _, _ in save() }

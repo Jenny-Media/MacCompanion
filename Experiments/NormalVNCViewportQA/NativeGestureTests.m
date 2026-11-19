@@ -26,6 +26,7 @@
 - (void)secondaryClickAt:(UITapGestureRecognizer *)gesture;
 - (void)setTrackpadModeEnabled:(BOOL)enabled;
 - (void)becameInactive;
+- (BOOL)pointerForGesture:(UIGestureRecognizer *)gesture point:(CGPoint *)point;
 - (void)dragAt:(UIPanGestureRecognizer *)gesture;
 - (void)holdAt:(UILongPressGestureRecognizer *)gesture;
 - (void)clickAt:(UIGestureRecognizer *)gesture;
@@ -52,6 +53,13 @@
 @implementation ReservedPointerPan
 - (CGPoint)locationInView:(UIView *)view { return self.point; }
 @end
+@interface SlowTrackpadPan : SyntheticScroll
+@property CGFloat sampleSpeed;
+@end
+@implementation SlowTrackpadPan
+- (CGPoint)velocityInView:(UIView *)view { return CGPointMake(self.sampleSpeed, self.sampleSpeed); }
+@end
+
 @interface ReservedPointerHold : UILongPressGestureRecognizer
 @property UIGestureRecognizerState sampleState;
 @property CGPoint point;
@@ -127,6 +135,89 @@
     XCTAssertEqual([[s valueForKey:@"gestureLifecycleEpoch"] unsignedIntegerValue],epoch);
     XCTAssertEqualObjects([self takeEvents:s].firstObject[@"scrollPhase"],@1);
     [s stop];
+}
+- (void)testPrecisionAndReachAccumulatesSlowMotionInBothDirections {
+    CompanionVNCViewer *viewer = [CompanionVNCViewer new]; viewer.inputOnly = YES;
+    [viewer loadViewIfNeeded]; viewer.session = [self sessionWithInputOnly:YES];
+    [viewer setTrackpadModeEnabled:YES];
+    viewer.pointerSpeed = 1.5;
+    [viewer setValue:[NSValue valueWithCGRect:CGRectMake(0,0,800,600)] forKey:@"activeCrop"];
+    UIView *canvas = [viewer valueForKey:@"canvas"];
+    SlowTrackpadPan *pan = [SlowTrackpadPan new]; [canvas addGestureRecognizer:pan];
+    for (NSNumber *tuned in @[@NO, @YES]) {
+        viewer.trackpadPrecisionAndReach = tuned.boolValue;
+        for (NSNumber *sample in @[@0.5, @-0.5]) {
+            CGFloat step = sample.doubleValue;
+            [viewer setValue:[NSValue valueWithCGPoint:CGPointMake(400,300)] forKey:@"cursorPosition"];
+            [viewer setValue:@YES forKey:@"cursorPositionKnown"];
+            CGPoint point = CGPointZero; pan.delta = CGPointZero;
+            pan.sampleSpeed = step * 60;
+            pan.syntheticState = UIGestureRecognizerStateBegan;
+            XCTAssertTrue([viewer pointerForGesture:pan point:&point]);
+            XCTAssertEqual(point.x, 400);
+            pan.syntheticState = UIGestureRecognizerStateChanged;
+            for (NSUInteger index = 1; index <= 60; index++) {
+                pan.delta = CGPointMake(index * step, index * step);
+                XCTAssertTrue([viewer pointerForGesture:pan point:&point]);
+            }
+            NSInteger expected = tuned.boolValue ? (step > 0 ? 58 : -59) : (step > 0 ? 60 : -120);
+            XCTAssertEqual((NSInteger)point.x - 400, expected);
+            XCTAssertEqual((NSInteger)point.y - 300, expected);
+        }
+    }
+    [viewer.session stop];
+}
+
+- (void)testTrackpadVolumeAdmissionRetiresWhenAnotherInputOwnerTakesOver {
+    CompanionVNCViewer *viewer = [CompanionVNCViewer new]; viewer.inputOnly = YES; [viewer loadViewIfNeeded];
+    CompanionVNCSession *session = [self sessionWithInputOnly:YES]; viewer.session = session;
+    __block NSUInteger retirements = 0;
+    viewer.retireTrackpadVolumeHandler = ^{ retirements++; };
+    XCTAssertTrue([viewer trackpadVolumeInputAvailable]);
+    NSString *owner = [viewer beginControlSequence];
+    XCTAssertNotNil(owner);
+    XCTAssertEqual(retirements, 1);
+    XCTAssertTrue([viewer controlsInputAvailable]);
+    XCTAssertFalse([viewer trackpadVolumeInputAvailable]);
+    [viewer endControlSequence:owner];
+    XCTAssertTrue([viewer trackpadVolumeInputAvailable]);
+
+    [viewer beginKeyboardCustomization];
+    XCTAssertEqual(retirements, 2);
+    XCTAssertFalse([viewer trackpadVolumeInputAvailable]);
+    [viewer endKeyboardCustomization];
+    XCTAssertTrue([viewer trackpadVolumeInputAvailable]);
+
+    [viewer becameInactive];
+    XCTAssertEqual(retirements, 3);
+    XCTAssertFalse([viewer trackpadVolumeInputAvailable]);
+    [session stop];
+}
+- (void)testTrackpadVolumeRevisionSurvivesNeitherCompositionNorGeometrySuspension {
+    CompanionVNCSession *session = [self sessionWithInputOnly:YES];
+    NSUInteger original = session.ordinaryControlInputRevision;
+    __block NSUInteger admissions = 0;
+    void (^admit)(void) = ^{ admissions++; };
+    XCTAssertTrue([session performWithOrdinaryControlInputAtRevision:original action:admit]);
+
+    // Compose Text reserves the native session directly.
+    NSString *owner = [session beginControlSequence];
+    XCTAssertNotNil(owner);
+    XCTAssertFalse([session performWithOrdinaryControlInputAtRevision:session.ordinaryControlInputRevision action:admit]);
+    [session endControlSequence:owner];
+    XCTAssertFalse([session performWithOrdinaryControlInputAtRevision:original action:admit]);
+    NSUInteger afterComposition = session.ordinaryControlInputRevision;
+    XCTAssertTrue([session performWithOrdinaryControlInputAtRevision:afterComposition action:admit]);
+
+    rfbClient *client = rfbGetClient(8,3,4); client->width = 1920; client->height = 1080;
+    [session configureClient:client];
+    XCTAssertTrue([session allocate:client]);
+    XCTAssertFalse(session.ordinaryControlInputAvailable);
+    [session setValue:@YES forKey:@"inputReady"]; // Model the worker resuming the same connection.
+    XCTAssertFalse([session performWithOrdinaryControlInputAtRevision:afterComposition action:admit]);
+    XCTAssertTrue([session performWithOrdinaryControlInputAtRevision:session.ordinaryControlInputRevision action:admit]);
+    XCTAssertEqual(admissions, 3);
+    [session stop]; rfbClientCleanup(client);
 }
 - (void)testShortcutWaitCannotChangePointerStateOrTheNextClickTarget {
     for (NSString *mode in @[@"pointer", @"trackpad", @"inputOnly", @"tabletop"]) for (NSNumber *cancel in @[@NO, @YES]) {

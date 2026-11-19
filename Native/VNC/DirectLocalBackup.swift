@@ -30,6 +30,7 @@ struct DirectLocalBackup: Codable {
         var swipeLeft: DirectMacSwipeAction
         var swipeRight: DirectMacSwipeAction
         var pointerSpeed: Double
+        var precisionAndReach: Bool?
         var display: UInt32?
         var fullscreen: Bool
         var trackpad: Bool
@@ -44,6 +45,7 @@ struct DirectLocalBackup: Codable {
             modelIdentifier = record.modelIdentifier; preferredConnection = record.preferredConnection
             swipeLeft = record.swipeLeft; swipeRight = record.swipeRight
             pointerSpeed = VNCSessionPreferences.speed(record.id)
+            precisionAndReach = VNCSessionPreferences.precisionAndReach(record.id)
             display = VNCSessionPreferences.display(record.id)?.uint32Value
             fullscreen = VNCSessionPreferences.fullscreen(record.id)
             trackpad = VNCSessionPreferences.trackpad(record.id)
@@ -66,6 +68,7 @@ struct DirectLocalBackup: Codable {
         }
         @MainActor func applyPreferences(to id: UUID) {
             VNCSessionPreferences.setSpeed(pointerSpeed, mac: id)
+            VNCSessionPreferences.setPrecisionAndReach(precisionAndReach ?? false, mac: id)
             VNCSessionPreferences.setDisplay(display.map(NSNumber.init(value:)), mac: id)
             VNCSessionPreferences.setFullscreen(fullscreen, mac: id)
             VNCSessionPreferences.setTrackpad(trackpad, mac: id)

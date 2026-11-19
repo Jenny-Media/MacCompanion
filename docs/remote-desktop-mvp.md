@@ -628,7 +628,9 @@ Save to My Macs and Save Login are separate choices. A new Mac is added only aft
 ## iOS 1.1 local backup and restore
 
 App Settings → Backup & Restore creates a versioned JSON file through Files;
-iCloud is not required. It contains saved Macs and connection preferences,
+iCloud is not required. It contains saved Macs and connection preferences
+(including the per-Mac Precision & Reach choice, which defaults to Standard
+when absent from an older backup),
 Terminal and shared Screen Sharing / Trackpad keyboard layouts, shortcuts,
 saved text, button positions and recovered alternatives. The file includes
 network addresses and saved text, so keep it private. It contains no passwords,

@@ -293,7 +293,7 @@ struct TerminalRowScrollPosition {
     var rightEdge: Bool
 }
 
-private final class TerminalKeyScrollView: UIScrollView {
+final class TerminalKeyScrollView: UIScrollView {
     private let canvas = UIView()
     private var positioning: [NSLayoutConstraint] = []
     private weak var keyStack: UIStackView?
@@ -305,6 +305,7 @@ private final class TerminalKeyScrollView: UIScrollView {
     private var alignment = TerminalKeyboardRow.Alignment.left
     private var fillKeys: [ObjectIdentifier] = []
     private var fillConstraints: [NSLayoutConstraint] = []
+    var hasVisibleKeys: Bool { keyStack?.arrangedSubviews.contains { !$0.isHidden } == true }
     var position: TerminalRowScrollPosition {
         pending ?? resizingPosition ?? .init(offset: contentOffset.x, rightEdge: lastMaximum > 0 ? abs(contentOffset.x - lastMaximum) < 1 : pinnedRight)
     }
@@ -405,6 +406,15 @@ private final class TerminalKeyScrollView: UIScrollView {
     private var keySymbols: [ObjectIdentifier: String] = [:]
     private var heights: [NSLayoutConstraint] = []
     private var viewportConstraints: [NSLayoutConstraint] = []
+    private var compactContents: UIView?
+    private weak var compactRowSlot: UIStackView?
+    private weak var compactPresetRow: UIView?
+    private var compactRowID: UUID?
+    private var compactRowPlacement: (view: TerminalKeyScrollView, parent: UIStackView, index: Int)?
+    private var compactConstraints: [NSLayoutConstraint] = []
+    private var compactKeys: [UIButton] = []
+    private var compactRowHeights: [NSLayoutConstraint] = []
+    private(set) var compactContentsVisible = false
     private var keyHeight: CGFloat = 44
     private var keyboardFocused: Bool?
     let keyboardButton: UIButton = TerminalKeyPreviewButton(type: .system)
@@ -491,7 +501,7 @@ private final class TerminalKeyScrollView: UIScrollView {
             executionHeightConstraint?.isActive = false
             // Retain the real rows and their scroll state at their natural size.
             // Only the dock participates in the owner's layout during execution.
-            rows.isHidden = executionToolbarHeight > 0
+            rows.isHidden = executionToolbarHeight > 0 || compactContentsVisible
             if let bottom = viewportConstraints.first(where: { $0.firstAttribute == .bottom }), bottom.isActive {
                 bottom.isActive = false
                 bottom.priority = executionToolbarHeight > 0 ? .defaultHigh : .required
@@ -505,6 +515,10 @@ private final class TerminalKeyScrollView: UIScrollView {
         }
     }
     var showsExtraRows = false { didSet { updateVisibility() } }
+    var expandRowsTitle: String {
+        if compactContentsVisible { return "Show Keyboard Rows" }
+        return showsExtraRows ? "Collapse Rows" : "Expand Rows"
+    }
     var height: CGFloat {
         if executionToolbarHeight > 0 { return executionToolbarHeight }
         let count = max(1, rows.arrangedSubviews.filter { !$0.isHidden }.count)
@@ -546,12 +560,73 @@ private final class TerminalKeyScrollView: UIScrollView {
         registerForTraitChanges([UITraitPreferredContentSizeCategory.self]) { (bar: TerminalKeyboardBar, _: UITraitCollection) in bar.updateKeyMetrics() }
         configure(preferences)
     }
+    func installCompactContents(_ contents: UIView, rowSlot: UIStackView, presetRow: UIView) {
+        compactContents = contents
+        compactRowSlot = rowSlot
+        compactPresetRow = presetRow
+        contents.translatesAutoresizingMaskIntoConstraints = false
+        contents.isHidden = true
+        addSubview(contents)
+        compactConstraints = [
+            contents.leadingAnchor.constraint(equalTo: leadingAnchor), contents.trailingAnchor.constraint(equalTo: trailingAnchor),
+            contents.topAnchor.constraint(equalTo: topAnchor), contents.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ]
+    }
+    func sizeCompactRow(_ view: UIView) {
+        let height = view.heightAnchor.constraint(equalToConstant: keyHeight)
+        height.priority = UILayoutPriority(999)
+        height.isActive = true
+        compactRowHeights.append(height)
+    }
+    func compactKey(_ title: String, symbol: String, action: @escaping @MainActor () -> Void) -> UIButton {
+        let key = UIButton(configuration: .plain(), primaryAction: UIAction { _ in action() })
+        configureButton(key, title: title, symbol: symbol)
+        compactKeys.append(key)
+        return key
+    }
+    func setCompactContentsVisible(_ visible: Bool) {
+        guard let compactContents, visible != compactContentsVisible else { return }
+        dismissKeyPreviews()
+        compactContentsVisible = visible
+        compactContents.isHidden = !visible
+        rows.isHidden = visible || executionToolbarHeight > 0
+        if visible {
+            NSLayoutConstraint.deactivate(viewportConstraints)
+            NSLayoutConstraint.activate(compactConstraints)
+            placeCompactRow()
+        } else {
+            restoreCompactRow()
+            NSLayoutConstraint.deactivate(compactConstraints)
+            NSLayoutConstraint.activate(viewportConstraints)
+        }
+        updateVisibility()
+    }
+    private func placeCompactRow() {
+        guard compactContentsVisible, let compactRowSlot, let compactRowID,
+              let view = rowScrollViews[compactRowID], view.hasVisibleKeys,
+              let parent = view.superview as? UIStackView,
+              let index = parent.arrangedSubviews.firstIndex(of: view) else { return }
+        compactRowPlacement = (view, parent, index)
+        view.removeFromSuperview()
+        compactPresetRow?.isHidden = true
+        compactRowSlot.addArrangedSubview(view)
+        view.isHidden = false
+    }
+    private func restoreCompactRow() {
+        guard let placement = compactRowPlacement else { return }
+        compactRowPlacement = nil
+        placement.view.removeFromSuperview()
+        placement.parent.insertArrangedSubview(placement.view, at: placement.index)
+        compactPresetRow?.isHidden = false
+    }
     func configure(_ preferences: TerminalKeyboardPreferences) {
         var profile = TerminalControlsProfile.defaults
         profile.actions += preferences.keys.map { .init(title: $0.title, kind: .key, key: $0, inRow: true, inMenu: false) }
         configure(profile) { _ in }
     }
-    func configure(_ profile: TerminalControlsProfile, perform: @escaping (UUID) -> Void) {
+    func configure(_ profile: TerminalControlsProfile, compactRowID: UUID? = nil, perform: @escaping (UUID) -> Void) {
+        restoreCompactRow()
+        self.compactRowID = compactRowID
         let positions = rowScrollViews.mapValues(\.position)
         let previousRows = profileRows
         rowScrollViews = [:]; keyboardToggles = []; keypadToggles = []; expandToggles = []
@@ -759,7 +834,7 @@ private final class TerminalKeyScrollView: UIScrollView {
             let constraint = displayed.heightAnchor.constraint(equalToConstant: keyHeight); constraint.priority = UILayoutPriority(999); constraint.isActive = true; heights.append(constraint)
         }
         showsExtraRows = profile.rowsExpanded ?? false
-        updateVisibility(); setKeyboardFocused(keyboardFocused ?? false); refresh()
+        updateVisibility(); placeCompactRow(); setKeyboardFocused(keyboardFocused ?? false); refresh()
         prioritizeRowPans()
     }
     private func editorRowMenu(_ definition: TerminalKeyboardRow) -> UIMenu {
@@ -1018,11 +1093,13 @@ private final class TerminalKeyScrollView: UIScrollView {
         let all = editingPreview && previewShowsAllRows
         for definition in profileRows {
             let hidden = !all && (definition.hidden == true || definition.extra && !showsExtraRows)
-            if let container = rowContainers[definition.id], container.isHidden != hidden { container.isHidden = hidden }
+            if let container = rowContainers[definition.id], container !== compactRowPlacement?.view, container.isHidden != hidden {
+                container.isHidden = hidden
+            }
         }
         for key in expandToggles {
-            key.accessibilityLabel = showsExtraRows ? "Collapse Rows" : "Expand Rows"
-            key.accessibilityValue = showsExtraRows ? "Expanded" : "Collapsed"
+            key.accessibilityLabel = expandRowsTitle
+            key.accessibilityValue = compactContentsVisible ? nil : (showsExtraRows ? "Expanded" : "Collapsed")
             key.isHidden = !profileRows.contains { $0.extra && $0.hidden != true }
             keyWidths[ObjectIdentifier(key)]?.isActive = !key.isHidden
         }
@@ -1036,6 +1113,7 @@ private final class TerminalKeyScrollView: UIScrollView {
     // The menu lives in a sibling overlay. Finish both nested stacks before
     // that overlay converts its anchor frame after a row-count change.
     func layoutRows() {
+        if compactContentsVisible { return }
         if editingPreview {
             let frame = CGRect(x: 4, y: 4, width: max(0, bounds.width - 8), height: max(0, bounds.height - 8))
             if rows.frame != frame { rows.frame = frame }
@@ -1059,7 +1137,7 @@ private final class TerminalKeyScrollView: UIScrollView {
     private var allKeys: [UIButton] { generated + [keyboardButton, keypadButton, expandButton] }
     private func updateKeyMetrics() {
         let font = keyFont
-        for key in allKeys {
+        for key in allKeys + compactKeys {
             if let symbol = keySymbols[ObjectIdentifier(key)] { key.configuration?.image = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(font: font)) }
             key.setNeedsUpdateConfiguration(); key.updateConfiguration(); key.titleLabel?.numberOfLines = 1
             let text = (key.configuration?.title ?? "") as NSString
@@ -1067,11 +1145,13 @@ private final class TerminalKeyScrollView: UIScrollView {
             keyWidths[ObjectIdentifier(key)]?.constant = max(44, ceil(width) + 12)
         }
         keyHeight = max(44, ceil(font.lineHeight) + 8)
-        heights.forEach { $0.constant = keyHeight }
+        (heights + compactRowHeights).forEach { $0.constant = keyHeight }
         invalidateIntrinsicContentSize(); setNeedsLayout(); superview?.setNeedsLayout()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-    override var intrinsicContentSize: CGSize { CGSize(width: UIView.noIntrinsicMetric, height: height) }
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: UIView.noIntrinsicMetric, height: compactContentsVisible ? UIView.noIntrinsicMetric : height)
+    }
     private func configureButton(_ key: UIButton, title: String, symbol: String? = nil) {
         var configuration = UIButton.Configuration.plain(); configuration.cornerStyle = .fixed
         configuration.background.cornerRadius = 8; configuration.background.backgroundColor = .secondarySystemBackground
@@ -1101,9 +1181,14 @@ private final class TerminalKeyScrollView: UIScrollView {
         let before = terminal.isFirstResponder; toggleKeyboard?()
         if before != terminal.isFirstResponder { keyFeedback.feedback("selection") }
     }
-    private func performExpandToggle() {
+    func performExpandToggle(feedback: Bool = true) {
         guard !executionActive else { return }
-        showsExtraRows.toggle(); keyFeedback.feedback("selection"); layoutChanged?()
+        if compactContentsVisible {
+            remoteInput?.revealKeyboardBar()
+            showsExtraRows = true
+        } else { showsExtraRows.toggle() }
+        if feedback { keyFeedback.feedback("selection") }
+        layoutChanged?()
     }
     func toggle(_ modifier: TerminalModifiers, lock: Bool = false) {
         if let remoteInput { guard remoteInput.ready() else { return }; remoteInput.toggle(modifier, lock); keyFeedback.feedback("selection"); refresh(); return }

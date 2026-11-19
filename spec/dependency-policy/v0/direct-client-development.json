@@ -3,7 +3,7 @@
   "releaseAdmitted": false,
   "vendorPackage": "Native/Dependencies/Citadel",
   "sourceLockPath": "Native/Terminal/source-lock.json",
-  "sourceLockSHA256": "e95749a687659156d8e4bd3940f865215f93116c3cec1ee6cc94b088abbe8eda",
+  "sourceLockSHA256": "13d2ff6423707afd6b9edaf991a900d1796e2d09468219dcbba9225145c1a46e",
   "resolvedLockfilePath": "Native/Terminal/Package.resolved",
   "resolvedLockfileSHA256": "29b3df8602d0787d62a02e930de45b40f6a7644e9b6c5ccd2cd3d368aa5dc1c2",
   "uikitSwiftTermPressEndpoint": {

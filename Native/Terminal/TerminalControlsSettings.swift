@@ -14,6 +14,17 @@ struct TerminalControlsSettings: View {
     @State private var pro = DirectProAccess.shared
     @State private var paywall = false
     @State private var layout: LayoutRequest?
+    @AppStorage(TerminalControlsProfile.compactTrackpadRowPreference) private var compactTrackpadRow = ""
+    private var selectedCompactTrackpadRowID: UUID? { profile.compactTrackpadRowID(for: compactTrackpadRow) }
+    private var compactTrackpadSelection: Binding<String> {
+        Binding(
+            get: { selectedCompactTrackpadRowID?.uuidString ?? "" },
+            set: { if readable && DirectAppLockV1.shared.canAccess { compactTrackpadRow = $0 } }
+        )
+    }
+    private var compactTrackpadTitle: String {
+        selectedCompactTrackpadRowID.map(profile.rowTitle) ?? "Trackpad Navigation"
+    }
     private struct LayoutRequest: Identifiable {
         var id = UUID()
         let destination: TerminalControlsDestination
@@ -29,6 +40,26 @@ struct TerminalControlsSettings: View {
                             Button { layout = .init(destination: .keyboard) } label: {
                                 entry("Keyboard Bar", summary: "\(profile.resolvedRows.count) customizable \(profile.resolvedRows.count == 1 ? "row" : "rows")", symbol: "keyboard")
                             }.accessibilityIdentifier("terminal-edit-keyboard")
+                            if store.family == .remoteMac {
+                                Menu {
+                                    Picker("Compact Trackpad Row", selection: compactTrackpadSelection) {
+                                        Text("Trackpad Navigation").tag("")
+                                        ForEach(profile.compactTrackpadRows) { row in
+                                            Text(profile.rowTitle(row.id)).tag(row.id.uuidString)
+                                        }
+                                    }.pickerStyle(.inline).labelsHidden()
+                                } label: {
+                                    HStack {
+                                        entry("Compact Trackpad Row", summary: compactTrackpadTitle, symbol: "rectangle.split.1x2")
+                                        Image(systemName: "chevron.up.chevron.down")
+                                            .font(.footnote.weight(.semibold)).foregroundStyle(.secondary).accessibilityHidden(true)
+                                    }
+                                    .contentShape(Rectangle())
+                                }
+                                .menuIndicator(.hidden)
+                                .accessibilityLabel("Compact Trackpad Row").accessibilityValue(compactTrackpadTitle)
+                                .accessibilityIdentifier("trackpad-compact-row-picker").disabled(!readable)
+                            }
                             Button { layout = .init(destination: .menu) } label: {
                                 entry("Floating Menu", summary: "\(profile.placed(.menu).count) favorites", symbol: "ellipsis.circle")
                             }.accessibilityIdentifier("terminal-edit-menu")

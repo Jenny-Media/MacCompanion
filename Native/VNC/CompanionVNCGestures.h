@@ -6,6 +6,13 @@
 #include <string.h>
 #include <math.h>
 
+static inline double CompanionVNCTrackpadResponse(double velocity, bool precisionAndReach) {
+    velocity = isfinite(velocity) ? fmax(0, velocity) : 0;
+    if (!precisionAndReach) return 1 + fmin(1.5, fmax(0, velocity - 100) / 500);
+    double progress = fmin(1, fmax(0, (velocity - 65) / 750));
+    return .65 + 2.45 * progress * progress * (3 - 2 * progress);
+}
+
 enum { CompanionVNCMagnifyBegan = 1, CompanionVNCMagnifyChanged = 2, CompanionVNCMagnifyEnded = 4 };
 typedef struct { bool active; int x, y; } CompanionVNCMagnification;
 

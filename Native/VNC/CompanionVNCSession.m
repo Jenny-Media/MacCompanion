@@ -115,6 +115,9 @@ typedef NS_ENUM(NSInteger, CompanionVNCInputAdmission) {
     BOOL _reviewInputSuspended, _interruptionInputSuspended, _displayHandoffInputBlocked, _desktopResizeHandoff;
     void (^_reviewReleaseCompletion)(void);
     NSUInteger _presentationEpoch, _inputEpoch;
+#if TARGET_OS_IOS
+    NSUInteger _controlInputRevision;
+#endif
     dispatch_semaphore_t _wake;
     void (^_pauseCompletion)(void);
     NSString *_username, *_password;
@@ -1396,7 +1399,8 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     if (encoding == 1101) { [self report:@"Connected"]; return TRUE; }
     // A same-geometry layout can signal an agent handoff that dropped arming.
     _automaticUpdatePending = YES;
-    BOOL changed = _coverageLayoutValid && (!parsed || _coverageLayout.width != decoded.width || _coverageLayout.height != decoded.height || _coverageLayout.count != decoded.count || memcmp(_coverageLayout.displays, decoded.displays, sizeof(CompanionVNCDisplay) * decoded.count) != 0);
+    BOOL hadLayout = _coverageLayoutValid;
+    BOOL changed = hadLayout && (!parsed || _coverageLayout.width != decoded.width || _coverageLayout.height != decoded.height || _coverageLayout.count != decoded.count || memcmp(_coverageLayout.displays, decoded.displays, sizeof(CompanionVNCDisplay) * decoded.count) != 0);
     changed = changed || probeVirtualChanged;
     _coverageLayoutValid = parsed; if (parsed) _coverageLayout = decoded;
     // A display-info response can announce a new canvas without DesktopSize.
@@ -1440,6 +1444,9 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     }
     [_lock lock];
     BOOL gestureLayout = CompanionVNCNativeGesturesSupported(YES, parsed, client->width, client->height, parsed ? decoded.width : 0, parsed ? decoded.height : 0);
+#if TARGET_OS_IOS
+    if (_inputOnly && _established && (changed || hadLayout != parsed)) _controlInputRevision++;
+#endif
     if (changed || _nativeGestureLayout != gestureLayout) [self retireNativeGesturesLocked];
     _nativeGestureLayout = gestureLayout; [_lock unlock];
     if ((changed || firstMatchingLayout) && _coverage.seen && !probeAdoptedLayout) {
@@ -1855,6 +1862,18 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 - (BOOL)ordinaryControlInputAvailable {
     [_lock lock]; BOOL ready = [self ordinaryControlInputAllowedLocked] && [self composedTextReadyLocked]; [_lock unlock]; return ready;
 }
+- (NSUInteger)ordinaryControlInputRevision {
+    // Layout metadata and exclusive reservations retire ordinary control owners
+    // while leaving the worker's epoch for previously queued input intact.
+    [_lock lock]; NSUInteger revision = _inputEpoch + _controlInputRevision; [_lock unlock]; return revision;
+}
+- (BOOL)performWithOrdinaryControlInputAtRevision:(NSUInteger)revision action:(void (^)(void))action {
+    [_lock lock];
+    BOOL allowed = revision == _inputEpoch + _controlInputRevision
+        && [self ordinaryControlInputAllowedLocked] && [self composedTextReadyLocked];
+    if (allowed) action();
+    [_lock unlock]; return allowed;
+}
 - (BOOL)tryComposedTextEvents:(NSArray<NSDictionary *> *)events completion:(void (^)(BOOL))completion {
     [_lock lock];
     BOOL allowed = !_controlSequenceID && completion && [self composedTextReadyLocked]
@@ -1865,7 +1884,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 - (NSString *)beginControlSequence {
     [_lock lock];
     NSString *identifier = !_controlSequenceID && !_composedTextReplies.count && [self composedTextReadyLocked] ? NSUUID.UUID.UUIDString : nil;
-    if (identifier) { _controlSequenceID = identifier; [self enqueueControlCleanupLocked]; }
+    if (identifier) { _controlSequenceID = identifier; _controlInputRevision++; [self enqueueControlCleanupLocked]; }
     [_lock unlock]; dispatch_semaphore_signal(_wake); return identifier;
 }
 - (BOOL)ownsControlSequence:(NSString *)identifier {

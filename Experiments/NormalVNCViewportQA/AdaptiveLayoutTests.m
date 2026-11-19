@@ -43,6 +43,7 @@
 - (void)dragAt:(UIPanGestureRecognizer *)gesture;
 - (void)clickAt:(UIGestureRecognizer *)gesture;
 - (void)receivedCursor:(UIImage *)image hotspot:(CGPoint)hotspot position:(CGPoint)position known:(BOOL)known;
+- (void)updateTrackpadTip;
 - (void)updateConnectionChrome;
 @end
 @interface AdaptiveViewer : CompanionVNCViewer
@@ -278,18 +279,25 @@ static char keyboardDuringScaleUpdateKey;
 }
 - (void)testNarrowModifierRowScrollsInsteadOfShrinkingKeysBelowTouchTarget {
     CompanionVNCViewer *viewer = [CompanionVNCViewer new]; [viewer loadViewIfNeeded];
-    viewer.view.frame = CGRectMake(0,0,320,680); [viewer.view layoutIfNeeded];
-    UIView *toolbar = [viewer valueForKey:@"toolbar"];
-    NSMutableArray<UIView *> *pending = [NSMutableArray arrayWithObject:toolbar];
-    NSMutableArray<UIButton *> *keys = [NSMutableArray new]; UIScrollView *scroll = nil;
-    for (NSUInteger index = 0; index < pending.count; index++) {
-        UIView *view = pending[index]; [pending addObjectsFromArray:view.subviews];
-        if ([view isKindOfClass:UIScrollView.class] && [view.accessibilityIdentifier isEqual:@"terminal-modifier-keys"]) scroll = (id)view;
-        if ([view isKindOfClass:UIButton.class] && !view.hidden) [keys addObject:(id)view];
+    for (NSNumber *inputOnly in @[@NO, @YES]) {
+        viewer.inputOnly = inputOnly.boolValue;
+        viewer.view.frame = CGRectMake(0, 0, inputOnly.boolValue ? 240 : 320, 680);
+        UIView *toolbar = [viewer valueForKey:@"toolbar"];
+        [viewer.view layoutIfNeeded]; [toolbar layoutIfNeeded];
+        NSMutableArray<UIView *> *pending = toolbar.subviews.mutableCopy;
+        NSMutableArray<UIButton *> *keys = [NSMutableArray new]; UIScrollView *scroll = nil;
+        NSString *rowID = inputOnly.boolValue ? @"trackpad-navigation-keys" : @"terminal-modifier-keys";
+        for (NSUInteger index = 0; index < pending.count; index++) {
+            UIView *view = pending[index];
+            if (view.hidden) continue;
+            [pending addObjectsFromArray:view.subviews];
+            if ([view isKindOfClass:UIScrollView.class] && [view.accessibilityIdentifier isEqual:rowID]) scroll = (id)view;
+            if ([view isKindOfClass:UIButton.class]) [keys addObject:(id)view];
+        }
+        XCTAssertNotNil(scroll); XCTAssertGreaterThan(scroll.contentSize.width,scroll.bounds.size.width);
+        XCTAssertGreaterThan(keys.count,6);
+        for (UIButton *key in keys) { XCTAssertGreaterThanOrEqual(key.bounds.size.width,44); XCTAssertGreaterThanOrEqual(key.bounds.size.height,44); }
     }
-    XCTAssertNotNil(scroll); XCTAssertGreaterThan(scroll.contentSize.width,scroll.bounds.size.width);
-    XCTAssertGreaterThan(keys.count,6);
-    for (UIButton *key in keys) { XCTAssertGreaterThanOrEqual(key.bounds.size.width,44); XCTAssertGreaterThanOrEqual(key.bounds.size.height,44); }
     [viewer stopViewer];
 }
 - (void)testLowerTrackpadUsesRelativeMotionAndBalancedClickWhileDesktopRemainsInPointerMode {
@@ -364,7 +372,7 @@ static char keyboardDuringScaleUpdateKey;
         XCTAssertTrue(((UIView *)[viewer valueForKey:@"loginDetails"]).hidden);
         XCTAssertFalse(((UIView *)[viewer valueForKey:@"loginCancel"]).hidden);
         XCTAssertEqualObjects(((UILabel *)[viewer valueForKey:@"loginSubtitle"]).text, inputOnly.boolValue ? @"Trackpad & Keyboard" : @"Screen Sharing");
-        XCTAssertTrue(((UIView *)[viewer valueForKey:@"trackpadHelp"]).hidden);
+        XCTAssertTrue(((UIView *)[viewer valueForKey:@"trackpadTip"]).hidden);
         XCTAssertEqualWithAccuracy(CGRectGetMaxY(card.frame), CGRectGetMaxY(scroll.bounds) - 12, 2);
         CGFloat signInHeight = card.bounds.size.height;
         [viewer setValue:@YES forKey:@"starting"]; [viewer updateConnectionChrome]; [viewer.view layoutIfNeeded];
@@ -435,6 +443,35 @@ static char keyboardDuringScaleUpdateKey;
     XCTAssertNil([controls valueForKey:@"panel"]); XCTAssertEqual(actions,0);
     [viewer stopViewer];
 }
+- (void)testTrackpadTipStaysInBookInputPaneAndRecentersAfterUnfolding {
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    NSString *key = @"direct-trackpad-gesture-tip-seen";
+    id previous = [defaults objectForKey:key]; [defaults removeObjectForKey:key];
+    @try {
+        AdaptiveViewer *viewer = [AdaptiveViewer new]; viewer.preventsAutomaticConnection = YES;
+        viewer.division = CGRectMake(465,0,20,669); viewer.inputOnly = YES;
+        [viewer loadViewIfNeeded]; viewer.view.frame = CGRectMake(0,0,951,669);
+        AdaptiveSession *session = [AdaptiveSession new]; viewer.session = session;
+        ((UIView *)[viewer valueForKey:@"loginScroll"]).hidden = YES;
+        [viewer setValue:@YES forKey:@"foreground"]; [viewer updateTrackpadTip];
+        [viewer.view setNeedsLayout]; [viewer.view layoutIfNeeded];
+        UIStackView *tip = [viewer valueForKey:@"trackpadTip"];
+        UIView *dismiss = tip.arrangedSubviews.lastObject;
+        CGRect button = [dismiss convertRect:dismiss.bounds toView:viewer.view];
+        CGRect toolbar = ((UIView *)[viewer valueForKey:@"toolbar"]).frame;
+        XCTAssertFalse(tip.hidden); XCTAssertGreaterThan(button.size.height, 43);
+        XCTAssertGreaterThanOrEqual(CGRectGetMinX(toolbar), 485);
+        XCTAssertGreaterThanOrEqual(CGRectGetMinX(tip.frame), CGRectGetMaxX(viewer.division));
+        XCTAssertFalse(CGRectIntersectsRect(button, viewer.division));
+        viewer.division = CGRectNull;
+        [viewer.view setNeedsLayout]; [viewer.view layoutIfNeeded];
+        XCTAssertEqualWithAccuracy(CGRectGetMidX(tip.frame), CGRectGetMidX(viewer.view.bounds), 1);
+        [viewer stopViewer];
+    } @finally {
+        if (previous) [defaults setObject:previous forKey:key]; else [defaults removeObjectForKey:key];
+    }
+}
+
 - (void)testBookRegionsUseReservedFrameOnceAndRequireUsablePages {
     CGRect safe = CGRectMake(20,40,911,600), content = CGRectNull, input = CGRectNull;
     XCTAssertTrue(CompanionVNCBookRegions(safe,CGRectMake(465,0,20,669),&content,&input));

@@ -5,6 +5,7 @@ import StoreKit
 import Crypto
 import NIO
 import NIOSSH
+import NIOConcurrencyHelpers
 import Citadel
 import Darwin
 import ActivityKit
@@ -78,6 +79,32 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
             return view.subviews.contains(where: containsField)
         }
         if containsField(window) { credentialFrames += 1 }
+    }
+}
+
+// Model exactly one parent-socket write whose completion stays pending after
+// the remote child channel closes. Forward the original encrypted frame so
+// subsequent SSH frames remain in sequence, while holding its completion.
+private final class HeldParentWrite: ChannelOutboundHandler, Sendable {
+    typealias OutboundIn = ByteBuffer
+    private let armed = NIOLockedValueBox(false)
+    private let held = NIOLockedValueBox<EventLoopPromise<Void>?>(nil)
+    func holdNextWrite() { armed.withLockedValue { $0 = true } }
+    var didHold: Bool { held.withLockedValue { $0 != nil } }
+    func release() {
+        let pending = held.withLockedValue { state in let pending = state; state = nil; return pending }
+        pending?.fail(ChannelError.ioOnClosedChannel)
+    }
+    func write(context: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
+        if let promise {
+            let shouldHold = armed.withLockedValue { state in let value = state; state = false; return value }
+            if shouldHold {
+                held.withLockedValue { $0 = promise }
+                context.write(data, promise: nil)
+                return
+            }
+        }
+        context.write(data, promise: promise)
     }
 }
 
@@ -547,6 +574,209 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         try await Task.sleep(for: .milliseconds(500))
         XCTAssertEqual(session.recovery?.reason, .loginRejected); XCTAssertEqual(record.passwordRequests, 1)
         XCTAssertEqual(try TerminalSecretStore.login(mac.id)?.password, "wrong-synthetic-only", "A failed attempt must not erase the saved login")
+    }
+    func testTrackpadVolumeExecRequiresTheCurrentOwnersAdmissionLine() async throws {
+        let operation = DirectTrackpadVolume.increase
+        let record = SSHTestRecord(echoInput: false, volumeExec: .init(command: operation.command,
+            admission: DirectTrackpadVolume.admission, response: .finish(chunks: ["66:0\n"], exitStatus: 0)))
+        let key = NIOSSHPrivateKey(ed25519Key: .init())
+        let server = try await server(record: record, key: key)
+        defer { _ = server.close() }
+        let client = try await SSHClient.connect(host: "127.0.0.1", port: try XCTUnwrap(server.localAddress?.port),
+            authenticationMethod: .passwordBased(username: "synthetic", password: "synthetic-only"),
+            hostKeyValidator: .trustedKeys([key.publicKey]), reconnect: .never, connectTimeout: .seconds(3))
+        let retired = await operation.run(client: client, isCurrent: { false })
+        XCTAssertNil(retired)
+        XCTAssertTrue(record.received.isEmpty)
+        let current = await operation.run(client: client, isCurrent: { true })
+        XCTAssertEqual(current, "66:0\n")
+        XCTAssertEqual(record.received, Array(DirectTrackpadVolume.admission.utf8))
+        XCTAssertEqual(record.passwordRequests, 1)
+        try await client.close()
+    }
+    func testTrackpadVolumeExecRequiresCompleteOutputAndSuccessfulExit() async throws {
+        struct Fixture: Decodable {
+            struct Reply: Decodable { let chunks: [String]; let exitStatus: Int?; let reply: String? }
+            let operationTimeoutSeconds: Int64
+            let channelRetirementGraceSeconds: Int64
+            let execReplies: [Reply]
+        }
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-trackpad-volume-v0.1", withExtension: "json"))
+        let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: url))
+        XCTAssertEqual(DirectTrackpadVolume.operationTimeout, .seconds(fixture.operationTimeoutSeconds))
+        XCTAssertEqual(DirectTrackpadVolume.channelRetirementGrace, .seconds(fixture.channelRetirementGraceSeconds))
+        let operation = DirectTrackpadVolume.increase
+        for (index, vector) in fixture.execReplies.enumerated() {
+            let record = SSHTestRecord(echoInput: false, volumeExec: .init(command: operation.command,
+                admission: DirectTrackpadVolume.admission, response: .finish(chunks: vector.chunks, exitStatus: vector.exitStatus)))
+            let key = NIOSSHPrivateKey(ed25519Key: .init())
+            let server = try await server(record: record, key: key)
+            defer { _ = server.close() }
+            let client = try await SSHClient.connect(host: "127.0.0.1", port: try XCTUnwrap(server.localAddress?.port),
+                authenticationMethod: .passwordBased(username: "synthetic", password: "synthetic-only"),
+                hostKeyValidator: .trustedKeys([key.publicKey]), reconnect: .never, connectTimeout: .seconds(3))
+            let reply = await operation.run(client: client, isCurrent: { true })
+            XCTAssertEqual(reply, vector.reply, "Reply fixture \(index)")
+            XCTAssertTrue(client.isConnected)
+            try await client.close()
+        }
+    }
+    func testTrackpadVolumeRetirementGraceStartsWhenDelayedEventLoopResumes() async throws {
+        let operation = DirectTrackpadVolume.read
+        let record = SSHTestRecord(echoInput: false, volumeExec: .init(command: operation.command,
+            admission: DirectTrackpadVolume.admission, response: .waitForClose))
+        let key = NIOSSHPrivateKey(ed25519Key: .init())
+        let server = try await server(record: record, key: key)
+        defer { _ = server.close() }
+        let client = try await SSHClient.connect(host: "127.0.0.1", port: try XCTUnwrap(server.localAddress?.port),
+            authenticationMethod: .passwordBased(username: "synthetic", password: "synthetic-only"),
+            hostKeyValidator: .trustedKeys([key.publicKey]), reconnect: .never, connectTimeout: .seconds(3))
+        let loop = client.eventLoop
+        let perform: @Sendable (TTYOutput, TTYStdinWriter) async throws -> Void = { inbound, outbound in
+            try await outbound.write(ByteBuffer(string: DirectTrackpadVolume.admission))
+            loop.execute {
+                let blocked = DispatchSemaphore(value: 0)
+                _ = blocked.wait(timeout: .now() + .milliseconds(2300))
+            }
+            for try await _ in inbound { }
+        }
+        let status = try await client.withExec(
+            operation.command, timeout: .seconds(1), retirementGrace: .seconds(1), perform: perform
+        )
+        XCTAssertNil(status)
+        XCTAssertEqual(record.received, Array(DirectTrackpadVolume.admission.utf8))
+        XCTAssertTrue(client.isConnected)
+        try await client.close()
+    }
+
+    func testTrackpadVolumeReturnsWhenChildRetiresBeforeParentWriteResolves() async throws {
+        let operation = DirectTrackpadVolume.read
+        let held = HeldParentWrite()
+        let peerClosed = NIOLockedValueBox(false)
+        let fixture = SSHTestVolumeExec(command: operation.command, admission: DirectTrackpadVolume.admission,
+            response: .waitForClose,
+            onExec: { child in
+                child.eventLoop.scheduleTask(in: .milliseconds(300)) { child.close(promise: nil) }
+            },
+            onClose: { peerClosed.withLockedValue { $0 = true } })
+        let record = SSHTestRecord(echoInput: false, volumeExec: fixture)
+        let key = NIOSSHPrivateKey(ed25519Key: .init())
+        let server = try await server(record: record, key: key)
+        defer { _ = server.close() }
+        let port = try XCTUnwrap(server.localAddress?.port)
+        let parent = try await ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+            .channelOption(ChannelOptions.autoRead, value: false)
+            .channelInitializer { $0.pipeline.addHandler(held, position: .first) }
+            .connect(host: "127.0.0.1", port: port).get()
+        let settings = SSHClientSettings(host: "127.0.0.1", port: port,
+            authenticationMethod: { .passwordBased(username: "synthetic", password: "synthetic-only") },
+            hostKeyValidator: .trustedKeys([key.publicKey]))
+        var finished = false
+        let task = Task { @MainActor in
+            let client = try await SSHClient.connect(on: parent, settings: settings)
+            let result = await operation.run(client: client, isCurrent: { true }, admit: { enqueue in
+                held.holdNextWrite()
+                enqueue()
+                return true
+            })
+            finished = true
+            return result
+        }
+        defer { held.release(); task.cancel(); _ = parent.close() }
+        try await wait("held write and peer child retirement") {
+            held.didHold && peerClosed.withLockedValue { $0 }
+        }
+        try await wait("volume operation to return while the parent still owns the pending write") { finished }
+        XCTAssertTrue(parent.isActive)
+        XCTAssertTrue(held.didHold)
+        XCTAssertEqual(record.received, Array(DirectTrackpadVolume.admission.utf8))
+        let reply = try await task.value
+        XCTAssertNil(reply)
+        XCTAssertTrue(finished)
+    }
+
+    func testTrackpadVolumeDeadlineRetiresOnlyUnresponsiveParents() async throws {
+        let operation = DirectTrackpadVolume.increase
+        let cases: [(name: String, stallBeforeOpen: Bool, response: SSHTestVolumeExec.Response, connected: Bool)] = [
+            ("channel open stalls", true, .waitForClose, false),
+            ("child close stalls", false, .stallTransport, false),
+            ("child closes normally", false, .waitForClose, true),
+        ]
+        for scenario in cases {
+            let record = SSHTestRecord(echoInput: false, volumeExec: .init(command: operation.command,
+                admission: DirectTrackpadVolume.admission, response: scenario.response))
+            let key = NIOSSHPrivateKey(ed25519Key: .init())
+            let server = try await server(record: record, key: key)
+            defer { _ = server.close() }
+            let client = try await SSHClient.connect(host: "127.0.0.1", port: try XCTUnwrap(server.localAddress?.port),
+                authenticationMethod: .passwordBased(username: "synthetic", password: "synthetic-only"),
+                hostKeyValidator: .trustedKeys([key.publicKey]), reconnect: .never, connectTimeout: .seconds(3))
+            if scenario.stallBeforeOpen { try await XCTUnwrap(record.stallTransport()).get() }
+            let started = ContinuousClock.now
+            let reply = await operation.run(client: client, isCurrent: { true })
+            XCTAssertNil(reply, scenario.name)
+            let elapsed = started.duration(to: .now)
+            XCTAssertGreaterThanOrEqual(elapsed, .seconds(5), scenario.name)
+            XCTAssertLessThan(elapsed, .seconds(9), scenario.name)
+            XCTAssertEqual(client.isConnected, scenario.connected, scenario.name)
+            XCTAssertEqual(record.received, scenario.stallBeforeOpen ? [] : Array(DirectTrackpadVolume.admission.utf8))
+            if client.isConnected { try await client.close() }
+        }
+    }
+    func testTrackpadVolumeExecPreservesParentAfterChildRetiresBeforeCallerResumes() async throws {
+        let operation = DirectTrackpadVolume.read
+        let record = SSHTestRecord(echoInput: false, volumeExec: .init(command: operation.command,
+            admission: DirectTrackpadVolume.admission, response: .finish(chunks: ["50:0\n"], exitStatus: 0)))
+        let key = NIOSSHPrivateKey(ed25519Key: .init())
+        let server = try await server(record: record, key: key)
+        defer { _ = server.close() }
+        let client = try await SSHClient.connect(host: "127.0.0.1", port: try XCTUnwrap(server.localAddress?.port),
+            authenticationMethod: .passwordBased(username: "synthetic", password: "synthetic-only"),
+            hostKeyValidator: .trustedKeys([key.publicKey]), reconnect: .never, connectTimeout: .seconds(3))
+        let perform: @Sendable (TTYOutput, TTYStdinWriter) async throws -> Void = { inbound, outbound in
+            try await outbound.write(ByteBuffer(string: DirectTrackpadVolume.admission))
+            var reply = ""
+            for try await chunk in inbound {
+                if case .stdout(let bytes) = chunk { reply += String(buffer: bytes) }
+            }
+            XCTAssertEqual(reply, "50:0\n")
+            try await Task.sleep(for: .milliseconds(2300))
+        }
+        let status = try await client.withExec(
+            operation.command, timeout: .seconds(1), retirementGrace: .seconds(1), perform: perform
+        )
+        XCTAssertEqual(status, 0)
+        XCTAssertTrue(client.isConnected)
+        try await client.close()
+    }
+    func testTrackpadVolumeDeadlineClosesChildWhileCallerWaitsOnPendingWrite() async throws {
+        let operation = DirectTrackpadVolume.read
+        // Model a pending NIO write whose future only resolves on child closure.
+        let waiting = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        defer { waiting.shutdownGracefully { _ in } }
+        let pendingWrite = waiting.next().makePromise(of: Void.self)
+        let stopWaiting = pendingWrite.futureResult.eventLoop.scheduleTask(in: .seconds(8)) {
+            pendingWrite.fail(CancellationError())
+        }
+        defer { stopWaiting.cancel() }
+        let record = SSHTestRecord(echoInput: false, volumeExec: .init(command: operation.command,
+            admission: DirectTrackpadVolume.admission, response: .waitForClose,
+            onClose: { pendingWrite.succeed(()) }))
+        let key = NIOSSHPrivateKey(ed25519Key: .init())
+        let server = try await server(record: record, key: key)
+        defer { _ = server.close() }
+        let client = try await SSHClient.connect(host: "127.0.0.1", port: try XCTUnwrap(server.localAddress?.port),
+            authenticationMethod: .passwordBased(username: "synthetic", password: "synthetic-only"),
+            hostKeyValidator: .trustedKeys([key.publicKey]), reconnect: .never, connectTimeout: .seconds(3))
+        let perform: @Sendable (TTYOutput, TTYStdinWriter) async throws -> Void = { _, _ in
+            try await pendingWrite.futureResult.get()
+        }
+        let status = try await client.withExec(
+            operation.command, timeout: .seconds(1), retirementGrace: .seconds(1), perform: perform
+        )
+        XCTAssertNil(status)
+        XCTAssertTrue(client.isConnected)
+        try await client.close()
     }
     func testConnectedSocketPreservesEarlyServerBannerUntilSSHHandlersExist() async throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-screen-sharing-v1", withExtension: "json"))

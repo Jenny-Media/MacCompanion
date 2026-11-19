@@ -194,7 +194,7 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     DesktopSizeSession *session=[DesktopSizeSession new]; DesktopSizeViewer *viewer=[self viewerWithSession:session];
     session.catalogue=@{@"views":@[@{@"id":@5},@{@"id":@1}]};
     viewer.inputOnly=YES;
-    XCTAssertEqualObjects([self kindsInSections:[viewer displayMenuSections]],(@[@"inputOnly",@"fullscreen"]));
+    XCTAssertEqualObjects([self kindsInSections:[viewer displayMenuSections]],(@[@"inputOnly",@"fullscreen",@"trackpadKeyboardBar"]));
     XCTAssertEqualObjects([viewer displayMenuSections][0][@"items"][0][@"title"],@"Show Mac Screen");
     XCTAssertEqualObjects([self kindsInSections:[viewer inputMenuSections]],(@[@"composeText",@"keyboard",@"keys"]));
     XCTAssertFalse([[self kindsInSections:[viewer displayMenuSections]] containsObject:@"desktopSizeMenu"]);
@@ -318,6 +318,45 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     XCTAssertTrue([session displayLayout:client encoding:1105]);
     [session updatedX:0 y:0 width:0 height:0]; // Metadata contributes no pixel coverage.
 }
+- (void)testSameSizeDisplayRearrangementRetiresVolumeRevision {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, pair), 0);
+    rfbClient *client = rfbGetClient(8,3,4); client->sock=pair[0]; client->width=3200; client->height=1200;
+    CompanionVNCSession *session = [CompanionVNCSession new]; session.inputOnly = YES;
+    [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    for (NSString *key in @[@"running",@"established",@"inputReady"]) [session setValue:@YES forKey:key];
+    NSDictionary *layout = self.fixture[@"monitorLayouts"][@"all"];
+    [self deliverLayout:layout session:session client:client peer:pair[1]];
+    XCTAssertTrue(session.ordinaryControlInputAvailable);
+    NSUInteger revision = session.ordinaryControlInputRevision;
+    NSUInteger gestureEpoch = [[session valueForKey:@"gestureLifecycleEpoch"] unsignedIntegerValue];
+    NSArray *oldRecords = [session valueForKey:@"layoutDiagnostics"][@"records"];
+
+    // Swap the two displays' identities without changing the canvas size.
+    NSMutableString *sameSize = [layout[@"bodyHex"] mutableCopy];
+    NSString *firstID = [sameSize substringWithRange:NSMakeRange((20+16)*2,8)];
+    NSString *secondID = [sameSize substringWithRange:NSMakeRange((20+56+16)*2,8)];
+    XCTAssertNotEqualObjects(firstID, secondID);
+    [sameSize replaceCharactersInRange:NSMakeRange((20+16)*2,8) withString:secondID];
+    [sameSize replaceCharactersInRange:NSMakeRange((20+56+16)*2,8) withString:firstID];
+    NSMutableDictionary *rearranged = [layout mutableCopy]; rearranged[@"bodyHex"] = sameSize;
+    [self deliverLayout:rearranged session:session client:client peer:pair[1]];
+    NSArray *newRecords = [session valueForKey:@"layoutDiagnostics"][@"records"];
+    XCTAssertEqual(oldRecords.count, 2); XCTAssertEqual(newRecords.count, 2);
+    XCTAssertEqualObjects(oldRecords[0][@"id"], newRecords[1][@"id"]);
+    XCTAssertEqualObjects(oldRecords[1][@"id"], newRecords[0][@"id"]);
+    XCTAssertGreaterThan([[session valueForKey:@"gestureLifecycleEpoch"] unsignedIntegerValue], gestureEpoch);
+    XCTAssertNotEqual(session.ordinaryControlInputRevision, revision);
+    __block BOOL admitted = NO;
+    XCTAssertFalse([session performWithOrdinaryControlInputAtRevision:revision action:^{ admitted = YES; }]);
+    XCTAssertFalse(admitted);
+    NSUInteger rearrangedRevision = session.ordinaryControlInputRevision;
+    [self deliverLayout:rearranged session:session client:client peer:pair[1]];
+    XCTAssertEqual(session.ordinaryControlInputRevision, rearrangedRevision);
+    XCTAssertTrue([session performWithOrdinaryControlInputAtRevision:rearrangedRevision action:^{ admitted = YES; }]);
+    XCTAssertTrue(admitted);
+    [session setValue:@NO forKey:@"running"]; [session stop]; rfbClientCleanup(client); close(pair[1]);
+}
+
 - (void)testViewportBoundsAndPacketUseAuthoritativeVectors {
     NSURL *url = [[NSBundle bundleForClass:self.class] URLForResource:@"ios-dynamic-resolution-prototype-v1" withExtension:@"json"];
     NSDictionary *fixture = [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:url] options:0 error:NULL];

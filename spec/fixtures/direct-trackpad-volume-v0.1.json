@@ -1,0 +1,73 @@
+{
+  "admission": "mac-companion-volume-v1\n",
+  "operations": [
+    "read",
+    "decrease",
+    "increase",
+    "toggleMute"
+  ],
+  "step": 6,
+  "outerCommandSingleLine": true,
+  "accountShells": ["/bin/sh", "/bin/bash", "/bin/zsh", "/bin/csh", "/bin/tcsh"],
+  "maximumReplyBytes": 16,
+  "operationTimeoutSeconds": 5,
+  "channelRetirementGraceSeconds": 1,
+  "responses": [
+    {
+      "wire": "0:0\n",
+      "level": 0,
+      "muted": false
+    },
+    {
+      "wire": "100:1\n",
+      "level": 100,
+      "muted": true
+    },
+    {
+      "wire": "unavailable\n"
+    },
+    {
+      "wire": "101:0\n"
+    },
+    {
+      "wire": "-1:0\n"
+    },
+    {
+      "wire": "05:1\n"
+    },
+    {
+      "wire": "8:2\n"
+    },
+    {
+      "wire": "8:0\n9:0\n"
+    },
+    {
+      "wire": "8:0"
+    },
+    {
+      "wire": "\ufeff66:0\n"
+    }
+  ],
+  "execReplies": [
+    {
+      "chunks": ["6", "6:0\n"],
+      "exitStatus": 0,
+      "reply": "66:0\n"
+    },
+    {
+      "chunks": ["66:0\n", "oversize trailing output\n"],
+      "exitStatus": 0
+    },
+    {
+      "chunks": ["66:0\n"],
+      "exitStatus": 1
+    },
+    {
+      "chunks": ["66:0\n"]
+    },
+    {
+      "chunks": ["\ufeff", "66:0\n"],
+      "exitStatus": 0
+    }
+  ]
+}
