@@ -409,7 +409,7 @@ private final class InputTestScroll: NSEvent {
                 inboundChildChannelInitializer: { child, _ in child.pipeline.addHandler(SSHTestPTY(record)) }))
         }.bind(host: "127.0.0.1", port: 0).get()
         defer { Task { try? await server.close() } }
-        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic SSH", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic SSH", addresses: ["127.0.0.2", "127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
         let first = DirectTerminalSession(mac: mac), second = DirectTerminalSession(mac: mac)
         defer { first.stop(); second.stop(); try? TerminalSecretStore.remove(mac.id) }
         first.connect(username: "synthetic", password: "synthetic-only", remember: false)
@@ -420,6 +420,9 @@ private final class InputTestScroll: NSEvent {
         second.connect(username: "synthetic", password: "synthetic-only", remember: false)
         try await wait { second.connected || !second.connecting }
         guard second.connected, records.connections.count == 2 else { XCTFail(second.status); throw POSIXError(.ENOTCONN) }
+        let endpoint = DirectConnectionEndpoint(address: "127.0.0.1", port: mac.sshPort)
+        XCTAssertEqual(first.activeEndpoint, endpoint)
+        XCTAssertEqual(first.filesContext?.endpoint, endpoint)
         if !checkNativeFocus { try await verifyPointerAdmission(session: first) }
         let viewA = MacRemoteTerminalSurface(frame: CGRect(x: 0, y: 0, width: 700, height: 440), font: .monospacedSystemFont(ofSize: 14, weight: .regular))
         let viewB = MacRemoteTerminalSurface(frame: viewA.frame, font: viewA.font)
@@ -459,6 +462,8 @@ private final class InputTestScroll: NSEvent {
         first.resize(columns: 101, rows: 31); second.resize(columns: 120, rows: 40)
         try await wait("independent resize") { records.connections[0].size == [101, 31] && records.connections[1].size == [120, 40] }
         first.stop(); windowA.close()
+        XCTAssertNil(first.activeEndpoint)
+        XCTAssertEqual(second.activeEndpoint, endpoint)
         XCTAssertTrue(second.connected)
         try await records.connections[1].emit("background output survives")
         if checkNativeFocus { viewB.insertText("C", replacementRange: NSRange(location: 0, length: 0)) }
@@ -466,8 +471,10 @@ private final class InputTestScroll: NSEvent {
         try await wait("second input after first closes") { records.connections[1].received == [66, 67] }
         try await records.connections[1].finish(status: nil, transportFailed: true)
         try await wait("lost SSH connection") { !second.connected }; XCTAssertNotNil(second.recovery)
+        XCTAssertNil(second.activeEndpoint)
         second.connect(username: "synthetic", password: "synthetic-only", remember: false)
         try await wait { second.connected || !second.connecting }; XCTAssertTrue(second.connected, second.status)
+        XCTAssertEqual(second.activeEndpoint, endpoint)
         XCTAssertEqual(records.connections.count, 3)
         XCTAssertTrue(records.connections[2].received.isEmpty, "Input from the retired shell must not replay")
         second.stop(); try await server.close()

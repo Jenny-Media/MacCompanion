@@ -191,7 +191,7 @@ struct DirectConnectionDisclosure<Content: View>: View {
     private(set) var startedAt = ProcessInfo.processInfo.systemUptime
 
     @objc var tryingAddressText: String? {
-        routeAddress.map { String(localized: "Trying \($0)") }
+        routeAddress.map(DirectConnectionEndpoint.tryingLabel)
     }
 
     @objc(beginWaitingForDisplays:) func begin(waitingForDisplays: Bool) {

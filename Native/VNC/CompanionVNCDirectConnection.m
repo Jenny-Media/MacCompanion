@@ -61,7 +61,8 @@ static int ConnectAddress(NSString *host, NSInteger port, double phaseBudget, do
 }
 
 int CompanionVNCConnectAddresses(NSArray<NSString *> *hosts, NSInteger port,
-    BOOL (^cancelled)(void), BOOL (^registerSocket)(int), void (^progress)(NSUInteger, NSUInteger), NSInteger *failure) {
+    BOOL (^cancelled)(void), BOOL (^registerSocket)(int), void (^progress)(NSUInteger, NSUInteger),
+    NSInteger *failure, NSInteger *connectedIndex) {
     if (!hosts.count || hosts.count > 8 || port < 1 || port > 65535) { *failure = 10; return -1; }
     double deadline = NSProcessInfo.processInfo.systemUptime + 16;
     double budget = hosts.count == 1 ? 8 : 2;
@@ -69,11 +70,14 @@ int CompanionVNCConnectAddresses(NSArray<NSString *> *hosts, NSInteger port,
         if (cancelled() || NSProcessInfo.processInfo.systemUptime >= deadline) break;
         if (progress) progress(i + 1, hosts.count);
         int socket = ConnectAddress(hosts[i], port, budget, deadline, cancelled, registerSocket, failure);
-        if (socket >= 0) return socket;
+        if (socket >= 0) {
+            if (connectedIndex) *connectedIndex = (NSInteger)i;
+            return socket;
+        }
     }
     return -1;
 }
 int CompanionVNCConnectLocal(NSString *host, BOOL (^cancelled)(void), BOOL (^registerSocket)(int)) {
     NSInteger failure = 0;
-    return CompanionVNCConnectAddresses(@[host], 5900, cancelled, registerSocket, nil, &failure);
+    return CompanionVNCConnectAddresses(@[host], 5900, cancelled, registerSocket, nil, &failure, NULL);
 }

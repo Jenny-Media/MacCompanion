@@ -124,6 +124,7 @@ final class DirectDesktopSSHTunnel: @unchecked Sendable {
     static let maximumPacketBytes = 1024 * 1024
     static let retirementSeconds: Int64 = 2
     let client: SSHClient
+    let endpoint: DirectConnectionEndpoint
     let remote: Channel
     let bridge: Channel
     private var consumerSocket: Int32
@@ -133,9 +134,9 @@ final class DirectDesktopSSHTunnel: @unchecked Sendable {
     private let lock = NSLock()
     private let opening: DesktopSSHOpening
     private let relays: (DesktopSSHRelay, DesktopSSHRelay)
-    private init(client: SSHClient, remote: Channel, bridge: Channel, socket: Int32,
+    private init(client: SSHClient, endpoint: DirectConnectionEndpoint, remote: Channel, bridge: Channel, socket: Int32,
                  cancellationSocket: Int32, opening: DesktopSSHOpening, relays: (DesktopSSHRelay, DesktopSSHRelay)) {
-        self.client = client; self.remote = remote; self.bridge = bridge
+        self.client = client; self.endpoint = endpoint; self.remote = remote; self.bridge = bridge
         consumerSocket = socket; self.cancellationSocket = cancellationSocket; self.relays = relays; self.opening = opening
     }
     func takeSocket() -> Int32 {
@@ -231,23 +232,8 @@ final class DirectDesktopSSHTunnel: @unchecked Sendable {
               (1...8).contains(addresses.count) else { throw DesktopSSHFailure.socket }
         try Task.checkCancellation()
         await progress("Connecting to Remote Login…")
-        // The established C resolver validates each numeric sockaddr and dials
-        // that exact address. It stops fallback before SSH authentication.
-        let attempts = AsyncStream<String>.makeStream(bufferingPolicy: .bufferingNewest(1))
-        let publishAttempts = Task { @MainActor in
-            for await address in attempts.stream { attemptingAddress(address) }
-        }
-        let (fd, failure) = await Task.detached { () -> (Int32, Int) in
-            var failure = 0
-            let fd = CompanionVNCConnectAddresses(addresses, sshPort, { opening.isCancelled },
-                { opening.registerSocket($0) }, { number, _ in
-                    attempts.continuation.yield(addresses[Int(number) - 1])
-                }, &failure)
-            return (fd, failure)
-        }.value
-        attempts.continuation.finish()
-        // Deliver the last attempted address before the connected socket is handed off.
-        await publishAttempts.value
+        let (fd, failure, index) = await connectDirectSocket(addresses: addresses, port: sshPort,
+            cancelled: { opening.isCancelled }, registerSocket: { opening.registerSocket($0) }, attemptingAddress: attemptingAddress)
         guard fd >= 0 else {
             if opening.isCancelled { throw CancellationError() }
             throw failure == 10 ? TerminalConnectionFailure.lookup : DesktopSSHFailure.socket
@@ -312,7 +298,8 @@ final class DirectDesktopSSHTunnel: @unchecked Sendable {
             remote.closeFuture.whenComplete { _ in parent.close(promise: nil) }
             try await local.setOption(ChannelOptions.autoRead, value: true).get()
             try Task.checkCancellation()
-            return DirectDesktopSSHTunnel(client: client, remote: remote, bridge: local, socket: pair[0],
+            let endpoint = DirectConnectionEndpoint(address: addresses[index], port: sshPort)
+            return DirectDesktopSSHTunnel(client: client, endpoint: endpoint, remote: remote, bridge: local, socket: pair[0],
                              cancellationSocket: cancelFD, opening: opening, relays: relays)
         } catch {
             if let bridge { try? await bridge.close() }

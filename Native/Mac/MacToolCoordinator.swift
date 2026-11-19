@@ -25,7 +25,7 @@ enum MacScreenSharingFailure: Error, Equatable {
 }
 
 enum MacScreenSharingState: Equatable {
-    case idle, opening, openedExternally, failed(MacScreenSharingFailure)
+    case idle, opening, openedExternally(address: String), failed(MacScreenSharingFailure)
     var title: String {
         switch self {
         case .idle: "Opens Apple Screen Sharing"
@@ -132,7 +132,7 @@ enum MacScreenSharingEndpoint {
                 let url = try MacScreenSharingEndpoint.url(host: numeric, port: machine.desktopPort)
                 try await opener(url)
                 guard self?.admit(token, machine) == true, !Task.isCancelled else { return }
-                self?.finish(token, machine.id, .openedExternally)
+                self?.finish(token, machine.id, .openedExternally(address: numeric))
             } catch {
                 guard self?.admit(token, machine) == true, !Task.isCancelled else { return }
                 self?.finish(token, machine.id, .failed(error as? MacScreenSharingFailure ?? .launchFailed))

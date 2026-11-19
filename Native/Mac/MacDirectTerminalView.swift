@@ -31,7 +31,7 @@ struct MacDirectTerminalView: View {
     @State private var storedFontSize: Double
     @State private var closed = false
     @Environment(\.colorScheme) private var colorScheme
-    private enum Sheet: String, Identifiable { case keys, controls, keyboard, install, manual, identity, pro; var id: String { rawValue } }
+    private enum Sheet: String, Identifiable { case keys, controls, keyboard, install, manual, identity, pro, connectionDetails; var id: String { rawValue } }
     init(mac: DirectMacRecordV1, sessionID: UUID = UUID(), libraryURL: URL = DirectMacLibraryV1.defaultURL,
          session: DirectTerminalSession? = nil, loginDraft: DirectFilesLoginDraft = DirectFilesLoginDraft()) {
         self.mac = mac; self.sessionID = sessionID; self.sessionLibraryURL = libraryURL; _session = State(initialValue: session ?? DirectTerminalSession(mac: mac, libraryURL: libraryURL))
@@ -81,7 +81,9 @@ struct MacDirectTerminalView: View {
                     HStack {
                         if busy {
                             ProgressView().controlSize(.small)
-                            Text(preparingKey ? "Reading key file…" : session.status).font(.subheadline).foregroundStyle(.secondary)
+                            Text(preparingKey ? "Reading key file…" : session.connectionStatus)
+                                .font(.subheadline).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                                .help(preparingKey ? "Reading key file…" : session.connectionStatus)
                             Spacer()
                             Button("Cancel") { cancelPreparation(); session.cancelConnection(); loginAttempt = nil }
                         } else {
@@ -108,6 +110,8 @@ struct MacDirectTerminalView: View {
                 .help("Browse files using this Terminal connection").accessibilityIdentifier("session-files")
 
             if session.connected {
+                Button("Connection Details", systemImage: "info.circle") { sheet = .connectionDetails }
+                    .help(session.activeEndpoint?.inUseLabel ?? "Connection Details")
                 Button("Disconnect", systemImage: "power") { session.stop() }
                     .labelStyle(.titleAndIcon).help("End this SSH connection and keep its window open")
                 Menu("Text Size", systemImage: "textformat.size") {
@@ -141,6 +145,7 @@ struct MacDirectTerminalView: View {
                 case .manual: TerminalManualKeySetupView(mac: mac)
                 case .identity: TerminalIdentityGuide(macName: mac.name)
                 case .pro: DirectProView()
+                case .connectionDetails: DirectConnectionInfo(mac: session.mac, activeEndpoint: session.activeEndpoint)
                 }
             }.frame(minWidth: 520).modifier(MacSheetPrivacyCover())
         }

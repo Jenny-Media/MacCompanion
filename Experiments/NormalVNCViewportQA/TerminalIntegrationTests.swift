@@ -935,12 +935,14 @@ private final class HeldParentWrite: ChannelOutboundHandler, Sendable {
         XCTAssertTrue(session.requestSetupDismissal(), "The user may close after reviewing the cancelled outcome")
         XCTAssertEqual(session.recovery?.reason, .setupIncomplete)
     }
-    private func server(record:SSHTestRecord,key:NIOSSHPrivateKey, publicKey: NIOSSHPublicKey? = nil) async throws -> Channel {
+    private func server(record:SSHTestRecord,key:NIOSSHPrivateKey, publicKey: NIOSSHPublicKey? = nil,
+                        beforeShell: EventLoopFuture<Void>? = nil) async throws -> Channel {
         let auth=SSHTestAuth(record, publicKey: publicKey)
         return try await ServerBootstrap(group:MultiThreadedEventLoopGroup.singleton).childChannelInitializer { channel in
             record.openedTransport(channel)
             return channel.pipeline.addHandler(NIOSSHHandler(role:.server(.init(hostKeys:[key],userAuthDelegate:auth)),allocator:channel.allocator,inboundChildChannelInitializer:{ child,type in
-                child.pipeline.addHandler(SSHTestPTY(record))
+                guard let beforeShell else { return child.pipeline.addHandler(SSHTestPTY(record)) }
+                return beforeShell.hop(to: child.eventLoop).flatMap { child.pipeline.addHandler(SSHTestPTY(record)) }
             }))
         }.bind(host:"127.0.0.1",port:0).get()
     }
@@ -1511,16 +1513,27 @@ private final class HeldParentWrite: ChannelOutboundHandler, Sendable {
     }
     func testRealSSHTrustBeforeLoginInteractivePTYOrderedInputResizeAndPreservedShell() async throws {
         let record=SSHTestRecord(),key=NIOSSHPrivateKey(ed25519Key:.init())
-        let server=try await server(record:record,key:key)
-        let mac=DirectMacRecordV1(id:UUID(),name:"Synthetic SSH",addresses:["127.0.0.1"],sshPort:try XCTUnwrap(server.localAddress?.port))
+        let shellGate = MultiThreadedEventLoopGroup.singleton.next().makePromise(of: Void.self)
+        var shellReleased = false
+        defer { if !shellReleased { shellGate.succeed(()) } }
+        let server=try await server(record:record,key:key,beforeShell:shellGate.futureResult)
+        let mac=DirectMacRecordV1(id:UUID(),name:"Synthetic SSH",addresses:["127.0.0.2", "127.0.0.1"],sshPort:try XCTUnwrap(server.localAddress?.port))
         let session=DirectTerminalSession(mac:mac)
         var output=[UInt8](); session.received={ output += $0 }
         defer { session.stop(); try? TerminalSecretStore.remove(mac.id) }
         session.connect(username:"synthetic",password:"synthetic-only",remember:true)
         try await wait { session.trust != nil || !session.connecting }
         XCTAssertNotNil(session.trust); XCTAssertEqual(record.passwordRequests,0)
-        session.answerTrust(true); try await wait { session.connected || !session.connecting }
+        XCTAssertNil(session.activeEndpoint)
+        XCTAssertNil(session.connectionProgress.tryingAddressText, "The address attempt ends before the trust prompt")
+        session.answerTrust(true)
+        try await wait("SSH authenticated while the shell is pending") { session.phase == "Opening a new shell" }
+        XCTAssertFalse(session.connected)
+        XCTAssertEqual(session.connectionStatus, "Opening Terminal…")
+        shellReleased = true; shellGate.succeed(())
+        try await wait { session.connected || !session.connecting }
         XCTAssertTrue(session.connected,session.status); XCTAssertEqual(record.passwordRequests,1)
+        XCTAssertEqual(session.activeEndpoint, .init(address: "127.0.0.1", port: mac.sshPort))
         try await wait { String(decoding:output,as:UTF8.self).contains("synthetic-ready") }
         session.send(Array("A".utf8)); session.send(Array("B".utf8)); session.resize(columns:100,rows:30)
         try await wait { String(decoding:output,as:UTF8.self).hasSuffix("AB") && record.size == [100,30] }
@@ -1574,6 +1587,8 @@ private final class HeldParentWrite: ChannelOutboundHandler, Sendable {
         session.background(); await session.waitForLifecycleUpdates()
         session.foreground(); session.stop(); await session.waitForLifecycleUpdates()
         XCTAssertFalse(session.connected); XCTAssertFalse(session.suspended)
+        XCTAssertNil(session.activeEndpoint)
+        XCTAssertNil(session.attemptingAddress)
         session.send(Array("MUST-NOT-REPLAY".utf8)); XCTAssertFalse(session.connected)
         try await server.close()
     }

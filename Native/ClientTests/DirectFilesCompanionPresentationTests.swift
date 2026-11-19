@@ -170,7 +170,7 @@ import NIOSSH
             let root = try DirectFilesLocalStore.root()
             defer { try? FileManager.default.removeItem(at: root) }
             let library = DirectMacLibraryV1(url: root.appendingPathComponent("macs.json"), removeLogin: { _ in })
-            let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Files Reopen", addresses: ["127.0.0.1"],
+            let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Files Reopen", addresses: ["127.0.0.2", "127.0.0.1"],
                                         sshPort: try XCTUnwrap(server.localAddress?.port))
             XCTAssertTrue(library.save(id: mac.id, name: mac.name, addresses: mac.addresses, sshPort: mac.sshPort))
             defer { try? TerminalSecretStore.removeTemporaryIdentity(mac.id) }
@@ -185,6 +185,9 @@ import NIOSSH
             files.connect(username: "synthetic", password: key == nil ? "synthetic-only" : "", key: key, remember: key == nil)
             try await wait { !files.busy }
             XCTAssertEqual(files.phase, .ready, files.message ?? files.status)
+            let endpoint = DirectConnectionEndpoint(address: "127.0.0.1", port: mac.sshPort)
+            XCTAssertEqual(files.activeEndpoint, endpoint)
+            XCTAssertNil(files.attemptingAddress)
             let mount = try CompanionFilesMount(DirectFilesView(mac: mac, session: files, retainWhenDismissed: true))
             defer { mount.close() }
 
@@ -193,6 +196,8 @@ import NIOSSH
                 await Task.yield()
                 NotificationCenter.default.post(name: DirectClientPlatformV1.didEnterBackground, object: nil)
                 try await wait { files.phase == .interrupted && !DirectMacConnections.shared.isActive(mac.id) }
+                XCTAssertNil(files.activeEndpoint)
+                XCTAssertNil(files.attemptingAddress)
             }
 
             try await dismissAndInterrupt()
@@ -200,6 +205,7 @@ import NIOSSH
             mount.show(DirectFilesView(mac: mac, session: files, retainWhenDismissed: true))
             try await wait { !files.busy && (probe.authentications > passwordAttempts || probe.keyAuthentications > keyAttempts) }
             XCTAssertEqual(files.phase, .ready, files.message ?? files.status)
+            XCTAssertEqual(files.activeEndpoint, endpoint)
             XCTAssertEqual(files.account, "synthetic")
             XCTAssertEqual(probe.authentications, passwordAttempts + (usesKey ? 0 : 1))
             XCTAssertEqual(probe.keyAuthentications, keyAttempts + (usesKey ? 1 : 0))

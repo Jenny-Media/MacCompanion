@@ -3,6 +3,24 @@ import StoreKitTest
 import UIKit
 
 @MainActor final class TerminalControlsJourneyTests: XCTestCase {
+    func testConnectionDetailsShowsTheLiveSSHAddress() async throws {
+        let (app, store) = try await launchPro()
+        defer { app.terminate(); store.clearTransactions() }
+        live(app)
+        app.buttons["terminal-controls"].tap()
+        app.buttons["session-action-session"].tap()
+        let details = app.descendants(matching: .any)["session-menu-connectionInfo"].firstMatch
+        XCTAssertTrue(details.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["In use · 127.0.0.1"].exists)
+        details.tap()
+        XCTAssertTrue(app.navigationBars["Connection Details"].waitForExistence(timeout: 5))
+        capture("terminal-connection-details", app: app)
+        XCTAssertTrue(app.staticTexts["In use, 127.0.0.1"].exists)
+        app.navigationBars["Connection Details"].buttons["Done"].tap()
+        XCTAssertTrue(app.navigationBars["Connection Details"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["terminal-controls"].isHittable)
+    }
+
     func testEscapeKeyboardAndExpansionHaveRealTouchPreviews() async throws {
         XCUIDevice.shared.orientation = .portrait
         let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.controlsqa.ios")

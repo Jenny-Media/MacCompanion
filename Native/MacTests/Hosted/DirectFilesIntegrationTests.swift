@@ -764,11 +764,12 @@ private struct FilesTestWindowRoot: View {
         let root = try DirectFilesLocalStore.root(); defer { try? FileManager.default.removeItem(at: root) }
         let server = try await self.server(root: root, record: SSHTestRecord())
         defer { Task { try? await server.close() } }
-        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Retained Files", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Retained Files", addresses: ["127.0.0.2", "127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
         let session = DirectFilesSession(mac: mac); defer { session.close(); try? TerminalSecretStore.remove(mac.id) }
         session.connect(username: "synthetic", password: "synthetic-only", key: nil, remember: true)
         try await wait { session.trust != nil }; session.answerTrust(true)
         try await wait { session.phase != .connecting }; XCTAssertEqual(session.phase, .ready)
+        XCTAssertEqual(session.activeEndpoint, .init(address: "127.0.0.1", port: mac.sshPort))
         // Reopening UIKit's retained sheet creates an entirely new view. Mount
         // that shared SwiftUI view while its existing owner is still Ready.
         let host = NSHostingView(rootView: DirectFilesView(mac: mac, session: session, retainWhenDismissed: true))
@@ -780,6 +781,7 @@ private struct FilesTestWindowRoot: View {
         try await Task.sleep(for: .milliseconds(200)); host.layoutSubtreeIfNeeded()
         XCTAssertNil(fields(), "Reopening connected Files must preserve the browser")
         session.disconnect()
+        XCTAssertNil(session.activeEndpoint)
         try await wait { fields()?.account.stringValue == "synthetic" }
         let pair = try XCTUnwrap(fields()); XCTAssertEqual(pair.secret.stringValue, "synthetic-only")
         pair.account.stringValue = "synthetic-edited-account"; pair.secret.stringValue = "synthetic-edited-password"

@@ -683,9 +683,9 @@
     struct sockaddr_in address = {.sin_len = sizeof(address), .sin_family = AF_INET, .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
     XCTAssertEqual(bind(listener, (void *)&address, sizeof(address)), 0); XCTAssertEqual(listen(listener, 1), 0);
     socklen_t length = sizeof(address); getsockname(listener, (void *)&address, &length);
-    __block NSUInteger attempts = 0; NSInteger failure = 0;
-    int client = CompanionVNCConnectAddresses(@[@"203.0.113.1", @"127.0.0.1", @"127.0.0.2"], ntohs(address.sin_port), ^{ return NO; }, ^BOOL(int fd) { return YES; }, ^(NSUInteger index, NSUInteger count) { attempts++; }, &failure);
-    XCTAssertGreaterThanOrEqual(client, 0); XCTAssertEqual(attempts, 2);
+    __block NSUInteger attempts = 0; NSInteger failure = 0, connectedIndex = -1;
+    int client = CompanionVNCConnectAddresses(@[@"203.0.113.1", @"127.0.0.1", @"127.0.0.2"], ntohs(address.sin_port), ^{ return NO; }, ^BOOL(int fd) { return YES; }, ^(NSUInteger index, NSUInteger count) { attempts++; }, &failure, &connectedIndex);
+    XCTAssertGreaterThanOrEqual(client, 0); XCTAssertEqual(attempts, 2); XCTAssertEqual(connectedIndex, 1);
     if (client >= 0) close(client); close(listener);
 }
 - (void)testFeedbackMarksLocalSelectionOnlyAndOptOutKeepsSlideActions {

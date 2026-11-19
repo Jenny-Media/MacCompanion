@@ -14,9 +14,12 @@ import UIKit
     private(set) var framebuffer = CGSize.zero
     private(set) var displays: [Display] = []
     private(set) var connected = false
+    var activeEndpoint: DirectConnectionEndpoint? { connected ? tunnel?.endpoint : nil }
     private(set) var connecting = false
     private(set) var suspended = false
     private(set) var status = "Sign in to Screen Sharing over SSH"
+    private var attemptingAddress: String?
+    var connectionStatus: String { attemptingAddress.map(DirectConnectionEndpoint.tryingLabel) ?? status }
     var recovery: DirectRecoveryNotice?
     var trust: DirectTerminalSession.TrustRequest?
     var zoom: CGFloat = 1
@@ -140,8 +143,14 @@ import UIKit
                         self.trust = nil
                         guard accepted, self.generation == token, DirectAppLockV1.shared.canAccess else { throw TerminalSecretStore.Failure.rejectedKey }
                         try TerminalSecretStore.approveHostKey(key, id: self.mac.id)
+                    }, attemptingAddress: { [weak self] address in
+                        guard let self, self.generation == token else { return }
+                        self.attemptingAddress = address
                     }, progress: { [weak self] progress in
-                        guard let self, self.generation == token else { return }; self.status = progress
+                        guard let self, self.generation == token else { return }
+                        // The tunnel delivers all address updates before it moves to SSH verification.
+                        self.attemptingAddress = nil
+                        self.status = progress
                     })
                 guard self.generation == token, !Task.isCancelled, !self.suspended, DirectAppLockV1.shared.canAccess else {
                     await tunnel.close(); return
@@ -279,6 +288,7 @@ import UIKit
     func close() { guard !closed else { return }; retire(); closed = true }
     private func retire() {
         releaseInput(); generation = UUID()
+        attemptingAddress = nil
         trustReply?.resume(returning: false); trustReply = nil; trust = nil
         work?.cancel(); work = nil
         let old = transport; transport = nil

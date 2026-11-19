@@ -29,6 +29,27 @@ final class TerminalSocketOwner: @unchecked Sendable {
     deinit { cancel() }
 }
 
+/// Reports the address entering the resolver while the existing dialer tries the saved routes.
+func connectDirectSocket(addresses: [String], port: Int, cancelled: @escaping @Sendable () -> Bool,
+                         registerSocket: @escaping @Sendable (Int32) -> Bool,
+                         attemptingAddress: @escaping @MainActor @Sendable (String) -> Void) async -> (Int32, Int, Int) {
+    let attempts = AsyncStream<String>.makeStream(bufferingPolicy: .bufferingNewest(1))
+    let publishAttempts = Task { @MainActor in
+        for await address in attempts.stream { attemptingAddress(address) }
+    }
+    let result = await Task.detached(priority: .userInitiated) {
+        var failure = 0, connectedIndex = 0
+        let fd = CompanionVNCConnectAddresses(addresses, port, cancelled, registerSocket, { number, _ in
+            attempts.continuation.yield(addresses[Int(number) - 1])
+        }, &failure, &connectedIndex)
+        return (fd, failure, connectedIndex)
+    }.value
+    attempts.continuation.finish()
+    // Drain pending updates before the caller can move to verification or show a failure.
+    await publishAttempts.value
+    return result
+}
+
 /// Runs on the SSH event loop and forwards the original authentication offer
 /// unchanged. UI observation never blocks login or owns its promise.
 final class TerminalAuthenticationProgress: NIOSSHClientUserAuthenticationDelegate {
@@ -159,6 +180,15 @@ private enum TerminalPTY {
     #endif
     var connecting = false
     var connected = false
+    private(set) var attemptingAddress: String? {
+        didSet {
+            #if os(iOS)
+            connectionProgress.recordRouteAddress(attemptingAddress)
+            #endif
+        }
+    }
+    var connectionStatus: String { attemptingAddress.map(DirectConnectionEndpoint.tryingLabel) ?? status }
+    private(set) var activeEndpoint: DirectConnectionEndpoint?
     private(set) var completedNormally = false
     var trust: TrustRequest?
     var installedKey: UUID?
@@ -252,6 +282,7 @@ private enum TerminalPTY {
         guard connected, let client, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { return nil }
         let token = generation
         return .init(client: client, macID: mac.id, ownerID: accessOwnerID, account: authenticatedAccount, keyID: authenticatedKeyID, generation: token,
+                     endpoint: activeEndpoint,
                      isCurrent: { [weak self] in
                          guard let self else { return false }
                          return self.connected && self.generation == token && !self.macRemoved &&
@@ -328,7 +359,7 @@ private enum TerminalPTY {
                 #if !os(iOS)
                 if installation == nil && key == nil && !remember { try TerminalSecretStore.forgetLogin(mac.id) }
                 #endif
-                let client = try await dial(addresses: addresses, port: port, authentication: authentication, owner: owner, id: id)
+                let (client, endpoint) = try await dial(addresses: addresses, port: port, authentication: authentication, owner: owner, id: id)
                 self.client = client
                 if let installation {
                     let deadline = Task { [weak self] in
@@ -349,7 +380,7 @@ private enum TerminalPTY {
                         try await client.close(); self.client = nil; self.channel = nil
                         self.phase = "Testing key login"; self.status = "Verifying key login…"
                         let target = try Curve25519.Signing.PrivateKey(rawRepresentation: installation.key.seed)
-                        let verification = try await dial(addresses: endpoint.map { [$0] } ?? addresses, port: port,
+                        let (verification, _) = try await dial(addresses: endpoint.map { [$0] } ?? addresses, port: port,
                             authentication: { .ed25519(username: username, privateKey: target) }, owner: owner, id: id)
                         self.client = verification
                     }
@@ -390,7 +421,7 @@ private enum TerminalPTY {
                 #if os(iOS)
                 self.connectionProgress.advance(to: .startingSession)
                 #endif
-                self.phase = "Opening a new shell"
+                self.phase = "Opening a new shell"; self.status = "Opening Terminal…"
                 let requestedColumns = columns, requestedRows = rows
                 let exitStatus = try await TerminalPTY.run(client: client, columns: requestedColumns, rows: requestedRows, ready: { writer in
                     guard self.generation == id, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { throw CancellationError() }
@@ -408,6 +439,7 @@ private enum TerminalPTY {
                     self.prepareTerminal?(id)
                     guard self.generation == id, DirectAppLockV1.shared.canAccess, DirectClientPlatformV1.sessionAvailable else { throw CancellationError() }
                     #endif
+                    self.activeEndpoint = endpoint
                     self.writer = writer; self.connected = true; self.connecting = false; self.status = "Connected"; self.phase = "Shell open"; self.recovery = nil
                     #if os(iOS)
                     // Surface preparation can resize after the PTY request.
@@ -449,23 +481,24 @@ private enum TerminalPTY {
         }
     }
     private func dial(addresses: [String], port: Int, authentication: @escaping @Sendable () -> SSHAuthenticationMethod,
-                      owner: TerminalSocketOwner, id: UUID) async throws -> SSHClient {
-        let connection = await Task.detached(priority: .userInitiated) {
-            var failure = 0
-            let fd = CompanionVNCConnectAddresses(addresses, port, { owner.isCancelled }, { owner.register($0) }, nil, &failure)
-            return (fd, failure)
-        }.value
-        let (socket, failure) = connection
-        guard socket >= 0 else {
+                      owner: TerminalSocketOwner, id: UUID) async throws -> (SSHClient, DirectConnectionEndpoint) {
+        let (fd, failure, index) = await connectDirectSocket(addresses: addresses, port: port,
+            cancelled: { owner.isCancelled }, registerSocket: { owner.register($0) }, attemptingAddress: { [weak self] address in
+                guard let self, self.generation == id, !owner.isCancelled else { return }
+                self.attemptingAddress = address
+            })
+        if generation == id { attemptingAddress = nil }
+        guard fd >= 0 else {
             if owner.isCancelled { throw CancellationError() }
             throw failure == 10 ? TerminalConnectionFailure.lookup : TerminalConnectionFailure.socket
         }
-        let fd = socket
+        if owner.isCancelled || generation != id { Darwin.close(fd); throw CancellationError() }
+        let endpoint = DirectConnectionEndpoint(address: addresses[index], port: port)
         phase = "SSH handshake"
+        status = "Verifying SSH server…"
         #if os(iOS)
         connectionProgress.advance(to: .securing)
         #endif
-        if owner.isCancelled || generation != id { Darwin.close(fd); throw CancellationError() }
         // The server can send its banner as soon as this socket is registered.
         // Keep it queued until Citadel has installed its SSH parser.
         let channel = try await ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
@@ -479,15 +512,17 @@ private enum TerminalPTY {
                 guard saved == key else {
                     self.identityDetails = [.init(name: "Previously trusted", value: TerminalSecretStore.fingerprint(saved) ?? "Unavailable"), .init(name: "Presented by server", value: TerminalSecretStore.fingerprint(key) ?? "Unavailable")]
                     throw TerminalSecretStore.Failure.changedKey
-                }; self.phase = "Signing in"; return
+                }
+            } else {
+                guard let fingerprint = TerminalSecretStore.fingerprint(key) else { throw TerminalSecretStore.Failure.rejectedKey }
+                self.trust = .init(fingerprint: fingerprint)
+                let accepted = await withCheckedContinuation { self.trustReply = $0 }
+                self.trust = nil
+                guard accepted, self.generation == id, DirectAppLockV1.shared.canAccess else { throw TerminalSecretStore.Failure.rejectedKey }
+                try TerminalSecretStore.approveHostKey(key, id: self.mac.id)
             }
-            guard let fingerprint = TerminalSecretStore.fingerprint(key) else { throw TerminalSecretStore.Failure.rejectedKey }
-            self.trust = .init(fingerprint: fingerprint)
-            let accepted = await withCheckedContinuation { self.trustReply = $0 }
-            self.trust = nil
-            guard accepted, self.generation == id, DirectAppLockV1.shared.canAccess else { throw TerminalSecretStore.Failure.rejectedKey }
-            try TerminalSecretStore.approveHostKey(key, id: self.mac.id)
             self.phase = "Signing in"
+            self.status = "Signing in to Remote Login…"
         }
         #if os(iOS)
         let observedAuthentication: @Sendable () -> SSHAuthenticationMethod = { [weak self] in
@@ -504,7 +539,7 @@ private enum TerminalPTY {
         settings.connectTimeout = .seconds(60)
         let client = try await SSHClient.connect(on: channel, settings: settings)
         guard generation == id, !Task.isCancelled else { try? await client.close(); throw CancellationError() }
-        return client
+        return (client, endpoint)
     }
     func answerTrust(_ accepted: Bool) {
         let reply = trustReply; trustReply = nil; trust = nil; reply?.resume(returning: accepted)
@@ -783,7 +818,8 @@ private enum TerminalPTY {
         #endif
         socketOwner?.cancel(); socketOwner = nil
         let client = self.client, channel = self.channel; self.client = nil; self.channel = nil; writer = nil
-        connected = false; connecting = false; completedNormally = false; queuedBytes = 0
+        attemptingAddress = nil
+        activeEndpoint = nil; connected = false; connecting = false; completedNormally = false; queuedBytes = 0
         #if os(iOS)
         let lease = accessLease; accessLease = nil
         #endif

@@ -257,13 +257,14 @@ private func desktopWriterFinished(_ group: DispatchGroup) -> Bool { group.wait(
                     XCTAssertEqual(server.record.count("auth"), 0)
                     XCTAssertFalse(messages.contains("Signing in to Remote Login…"))
                     trusted = true
+                }, attemptingAddress: { address in
+                    messages.append(DirectConnectionEndpoint.tryingLabel(address))
                 }, progress: { message in
                     if message == "Signing in to Remote Login…" { XCTAssertTrue(trusted) }
                     messages.append(message)
                 })
             try await wait("The real SSH user-authentication request reports progress") { messages.contains("Signing in to Remote Login…") }
-            XCTAssertTrue(messages.contains("Connecting to Remote Login…"))
-            XCTAssertTrue(messages.contains("Verifying SSH server…"))
+            XCTAssertEqual(Array(messages.prefix(3)), ["Connecting to Remote Login…", "Trying 127.0.0.1", "Verifying SSH server…"])
             XCTAssertTrue(messages.contains("Opening encrypted connection…"))
             XCTAssertEqual(server.record.count("auth"), 1, "Observing progress must not change the authentication offer")
             await tunnel.close()

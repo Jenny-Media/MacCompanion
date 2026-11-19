@@ -735,9 +735,13 @@ struct DirectCloudInformationSheet: View {
 struct DirectConnectionDetailsRows: View {
     let mac: DirectMacRecordV1
     let desktop: Bool
+    var activeEndpoint: DirectConnectionEndpoint? = nil
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(mac.addresses.enumerated()), id: \.offset) { index, address in
+            if let activeEndpoint {
+                LabeledContent("In use", value: activeEndpoint.address).textSelection(.enabled)
+            }
+            ForEach(Array(mac.addresses.enumerated()).filter { $0.element != activeEndpoint?.address }, id: \.offset) { index, address in
                 LabeledContent(index == 0 ? "Address" : "Fallback \(index)", value: address)
                     .textSelection(.enabled)
             }
@@ -755,10 +759,39 @@ struct DirectConnectionDetailsRows: View {
     }
     private var sshDetails: some View {
         VStack(alignment: .leading, spacing: 8) {
-            LabeledContent("Remote Login · SSH", value: String(mac.sshPort))
+            LabeledContent("Remote Login · SSH", value: String(activeEndpoint?.port ?? mac.sshPort))
             Label("Server identity is verified before login.", systemImage: "lock.shield")
                 .font(.caption).foregroundStyle(.secondary)
         }
+    }
+}
+
+struct DirectConnectionInfo: View {
+    let mac: DirectMacRecordV1
+    var desktop = false
+    var activeEndpoint: DirectConnectionEndpoint? = nil
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    LabeledContent("Mac", value: mac.name)
+                    DirectConnectionDetailsRows(mac: mac, desktop: desktop, activeEndpoint: activeEndpoint)
+                }
+            }.navigationTitle("Connection Details")
+                #if os(iOS)
+                .navigationBarTitleDisplayMode(.inline)
+                #elseif os(macOS)
+                .formStyle(.grouped)
+                #endif
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }
+        #if os(iOS)
+        .presentationDetents([.medium, .large])
+        #elseif os(macOS)
+        .frame(minWidth: 460, minHeight: 320)
+        #endif
     }
 }
 
