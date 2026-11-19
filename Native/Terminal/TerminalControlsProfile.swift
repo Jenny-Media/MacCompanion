@@ -299,7 +299,7 @@ struct TerminalKeyboardRow: Codable, Identifiable, Equatable {
     var scrollStart: ScrollStart?
     var startsAtRight: Bool { scrollStart == .right || (scrollStart ?? .automatic) == .automatic && resolvedAlignment == .right }
     enum Visibility: String, CaseIterable { case always = "Always", expanded = "When Expanded", hidden = "Hidden" }
-    enum MenuAction { case visibility(Visibility), alignment(Alignment), scrollStart(ScrollStart), remove }
+    enum MenuAction { case visibility(Visibility), alignment(Alignment), scrollStart(ScrollStart), useInTrackpadDock, remove }
     var visibility: Visibility {
         get { hidden == true ? .hidden : extra ? .expanded : .always }
         set { hidden = newValue == .hidden; expandedOnly = newValue == .expanded }
@@ -361,12 +361,34 @@ struct TerminalControlsProfile: Codable, Equatable {
     }
     func rowTitle(_ id: UUID) -> String { "Row \((resolvedRows.firstIndex { $0.id == id } ?? 0) + 1)" }
     static let compactTrackpadRowPreference = "direct-remote-compact-trackpad-row"
-    var compactTrackpadRows: [TerminalKeyboardRow] {
-        resolvedRows.filter { $0.hidden != true && !barItems(in: $0).isEmpty }
+    static let compactTrackpadExpandTitle = "Show Keyboard Rows"
+    var hasExpandableKeyboardRows: Bool { resolvedRows.contains { $0.extra && $0.hidden != true } }
+    func compactTrackpadPlacements(in row: TerminalKeyboardRow, hasPro: Bool) -> [TerminalBarPlacement] {
+        guard row.hidden != true else { return [] }
+        let canExpand = hasExpandableKeyboardRows
+        return barPlacements(in: row).filter { placement in
+            let item = placement.item
+            if let id = item.savedID {
+                guard hasPro, let action = actions.first(where: { $0.id == id }), action.operation?.requiresScreen != true else { return false }
+                return canExpand || action.operation != .expandRows
+            }
+            return item.control != .retiredNumbers && (canExpand || item.control != .expand)
+        }
     }
-    func compactTrackpadRowID(for preference: String) -> UUID? {
-        guard let id = UUID(uuidString: preference), compactTrackpadRows.contains(where: { $0.id == id }) else { return nil }
-        return id
+    func compactTrackpadRow(_ id: UUID?, hasPro: Bool) -> TerminalKeyboardRow? {
+        guard let id, let row = resolvedRows.first(where: { $0.id == id }),
+              !compactTrackpadPlacements(in: row, hasPro: hasPro).isEmpty else { return nil }
+        return row
+    }
+    func compactTrackpadKeyNames(_ placements: [TerminalBarPlacement]) -> [String] {
+        placements.map { placement in
+            let item = placement.item
+            if item.control == .expand { return Self.compactTrackpadExpandTitle }
+            if let id = item.savedID, actions.first(where: { $0.id == id })?.operation == .expandRows {
+                return Self.compactTrackpadExpandTitle
+            }
+            return item.title(in: self)
+        }
     }
     func barPlacements(in row: TerminalKeyboardRow) -> [TerminalBarPlacement] {
         var row = row; row.items = barItems(in: row); return row.placements

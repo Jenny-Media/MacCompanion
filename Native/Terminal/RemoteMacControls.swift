@@ -1,5 +1,6 @@
 #if os(iOS) && MACCOMPANION_VNC_DEVELOPMENT
 import SwiftUI
+import Observation
 
 /// Presentation adapter only. The VNC viewer retains admission and transport.
 @MainActor final class TerminalRemoteInput {
@@ -13,6 +14,12 @@ import SwiftUI
 }
 
 @MainActor @objc final class RemoteMacControls: NSObject {
+    static let compactNavigationKeys: [(title: String, symbol: String, code: UInt32)] = [
+        ("Escape", "escape", 0xff1b), ("Tab", "arrow.right.to.line", 0xff09),
+        ("Left Arrow", "arrow.left", 0xff51), ("Up Arrow", "arrow.up", 0xff52),
+        ("Down Arrow", "arrow.down", 0xff54), ("Right Arrow", "arrow.right", 0xff53),
+        ("Return", "return", 0xff0d)
+    ]
     private weak var viewer: CompanionVNCViewer?
     let keyboardBar = TerminalKeyboardBar(terminal: nil, preferences: .init())
     private let trackpadDock = UIStackView()
@@ -34,6 +41,7 @@ import SwiftUI
     private var keyboardIsFocused = false
     private var state = TerminalKeyboardState()
     private var profile = TerminalControlsProfile.remoteDefaults
+    private var renderedProAccess = false
     private var readable = false
     private var inputGeneration = UUID()
     private var customizing = false
@@ -91,6 +99,7 @@ import SwiftUI
             MainActor.assumeIsolated { self?.reload() }
         }
         reload()
+        observeProAccess()
     }
     isolated deinit { if let observation { NotificationCenter.default.removeObserver(observation) } }
 
@@ -102,13 +111,7 @@ import SwiftUI
         trackpadDock.accessibilityIdentifier = "trackpad-dock"
         let navigationRow = UIStackView()
         navigationRow.spacing = 3
-        let keys: [(String, String, UInt32)] = [
-            ("Escape", "escape", 0xff1b), ("Tab", "arrow.right.to.line", 0xff09),
-            ("Left Arrow", "arrow.left", 0xff51), ("Up Arrow", "arrow.up", 0xff52),
-            ("Down Arrow", "arrow.down", 0xff54), ("Right Arrow", "arrow.right", 0xff53),
-            ("Return", "return", 0xff0d)
-        ]
-        for (title, symbol, code) in keys {
+        for (title, symbol, code) in Self.compactNavigationKeys {
             let button = keyboardBar.compactKey(title, symbol: symbol) { [weak self] in
                 guard let self, sendKey(code) else { return }
                 keyboardBar.keyFeedback.feedback("key")
@@ -280,10 +283,17 @@ import SwiftUI
         catch { readable = false; profile = .remoteDefaults }
         shortcutConfirmations.definitionsChanged(profile.actions)
         let preference = UserDefaults.standard.string(forKey: TerminalControlsProfile.compactTrackpadRowPreference) ?? ""
-        keyboardBar.configure(profile, compactRowID: profile.compactTrackpadRowID(for: preference)) { [weak self] in self?.use($0) }
+        renderedProAccess = DirectProAccess.shared.hasPro
+        keyboardBar.configure(profile, compactRowID: UUID(uuidString: preference)) { [weak self] in self?.use($0) }
         keyboardBar.showsExtraRows = profile.rowsExpanded ?? false
         refresh()
         viewer?.refreshControlsMenu()
+    }
+    private func observeProAccess() {
+        let hasPro = withObservationTracking { DirectProAccess.shared.hasPro } onChange: { [weak self] in
+            Task { @MainActor in self?.observeProAccess() }
+        }
+        if hasPro != renderedProAccess { reload() }
     }
     @objc func refresh() {
         keyboardBar.refresh()

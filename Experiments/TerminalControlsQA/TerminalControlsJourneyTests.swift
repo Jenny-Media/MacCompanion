@@ -1528,6 +1528,97 @@ import UIKit
         XCTAssertEqual(app.staticTexts["controls-qa-writes"].label, "Writes: 0")
     }
 
+    func testCompactTrackpadPickerShowsTheKeysInEachSavedRow() {
+        continueAfterFailure = false
+        let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.controlsqa.ios")
+        app.launchEnvironment["MACCOMPANION_CONTROLS_FUNCTIONAL_TEST"] = "1"
+        app.launchEnvironment["MACCOMPANION_CONTROLS_REMOTE_MODE"] = "trackpad"
+        app.launchEnvironment["MACCOMPANION_COMPACT_TRACKPAD_PICKER_QA"] = "1"
+        app.launch()
+        defer { app.terminate() }
+        openSettings(app)
+
+        let picker = app.buttons["trackpad-compact-row-picker"]
+        picker.tap()
+        let bar = app.navigationBars["Trackpad Keys"]
+        XCTAssertTrue(bar.waitForExistence(timeout: 5))
+        func option(_ title: String) -> XCUIElement {
+            app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title)).firstMatch
+        }
+        let navigation = option("Default Navigation Keys")
+        XCTAssertTrue(navigation.label.contains("Return"))
+        let essentials = option("Row 1"), functions = option("Row 2")
+        XCTAssertTrue(essentials.exists && functions.exists)
+        XCTAssertTrue(functions.label.contains("F1"))
+        XCTAssertTrue(essentials.label.contains("Escape"))
+        XCTAssertFalse(essentials.label.contains("Expand Rows"))
+
+        functions.tap()
+        XCTAssertTrue(functions.isSelected)
+        capture("compact-trackpad-row-choices", app: app)
+        bar.buttons.element(boundBy: 0).tap()
+        XCTAssertEqual(picker.value as? String, "Keyboard Bar · Row 2")
+        closeSettings(app)
+        openSettings(app)
+        XCTAssertEqual(picker.value as? String, "Keyboard Bar · Row 2")
+        picker.tap()
+        navigation.tap()
+        XCTAssertTrue(navigation.isSelected)
+        bar.buttons.element(boundBy: 0).tap()
+        closeSettings(app)
+    }
+
+    func testKeyboardEditorCanUseARowInTheTrackpadDock() {
+        continueAfterFailure = false
+        let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.controlsqa.ios")
+        app.launchEnvironment["MACCOMPANION_CONTROLS_FUNCTIONAL_TEST"] = "1"
+        app.launchEnvironment["MACCOMPANION_CONTROLS_REMOTE_MODE"] = "trackpad"
+        app.launchEnvironment["MACCOMPANION_COMPACT_TRACKPAD_PICKER_QA"] = "1"
+        app.launch()
+        defer { app.terminate() }
+
+        let editor = app.buttons["controls-qa-trackpad-keyboard-editor"]
+        let choice = app.buttons["terminal-editor-trackpad-dock-keys"]
+        let rowMenu = app.buttons["Row Options for Row 2"]
+        let picker = app.buttons["trackpad-compact-row-picker"]
+        func useRowTwo(checkUndo: Bool = false) {
+            XCTAssertTrue(editor.waitForExistence(timeout: 5)); editor.tap()
+            XCTAssertTrue(choice.waitForExistence(timeout: 5))
+            XCTAssertEqual(choice.label, "Trackpad Keys")
+            XCTAssertEqual(choice.value as? String, "Shows the default keys")
+            choice.tap()
+            let trackpadKeys = app.navigationBars["Trackpad Keys"]
+            XCTAssertTrue(trackpadKeys.waitForExistence(timeout: 5))
+            trackpadKeys.buttons.element(boundBy: 0).tap()
+            if checkUndo {
+                rowMenu.tap(); app.buttons["Alignment"].tap(); app.collectionViews.buttons["Right"].tap()
+            }
+            rowMenu.tap()
+            app.buttons["Show This Row on Trackpad"].tap()
+            XCTAssertEqual(choice.value as? String, "F1 · F2 · F3 + 9 more")
+            XCTAssertEqual(rowMenu.value as? String, "Shown on Trackpad")
+            if checkUndo {
+                app.buttons["terminal-row-options"].tap()
+                app.buttons["Undo Keyboard Edit"].tap()
+                XCTAssertEqual(choice.value as? String, "F1 · F2 · F3 + 9 more")
+            }
+        }
+
+        useRowTwo(checkUndo: true)
+        app.buttons["terminal-layout-cancel"].tap()
+        app.buttons["Discard Changes"].tap()
+        openSettings(app)
+        XCTAssertEqual(picker.value as? String, "Default Navigation Keys")
+        closeSettings(app)
+
+        useRowTwo()
+        capture("keyboard-editor-trackpad-dock-row", app: app)
+        app.buttons["terminal-controls-save"].tap()
+        openSettings(app)
+        XCTAssertEqual(picker.value as? String, "Keyboard Bar · Row 2")
+        closeSettings(app)
+    }
+
     func testRemoteControlsRecoveryKeepsPointerSettingsWithUnreadableData() async throws {
         for mode in ["desktop", "trackpad"] {
             let (app, store) = try await launchPro(remoteMode: mode, failRead: true)

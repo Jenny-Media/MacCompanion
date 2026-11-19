@@ -52,12 +52,15 @@ struct TerminalKeyboardEditingPreview: View {
     let select: (UUID?) -> Void
     var contextImage: UIImage?
     var insertion: UUID?
+    var compactTrackpadSelection: Binding<UUID?>? = nil
+    @State private var pro = DirectProAccess.shared
     @State private var panel: TerminalLayoutPanel?
     @State private var history = TerminalLayoutHistory()
     @State private var previewing = false
     @State private var restoring = false
     @State private var barHeight: CGFloat = 180
     @State private var editorHeight: CGFloat = 600
+    @State private var trackpadSummaryHeight: CGFloat = 0
     @State private var pending: UUID?
     @State private var started = false
     @State private var removing: UUID?
@@ -75,7 +78,9 @@ struct TerminalKeyboardEditingPreview: View {
                 }
                 Spacer(minLength: 8)
                 Menu {
-                    if !history.values.isEmpty { Button("Undo Last Change", systemImage: "arrow.uturn.backward", action: undo) }
+                    if !history.values.isEmpty {
+                        Button(compactTrackpadSelection == nil ? "Undo Last Change" : "Undo Keyboard Edit", systemImage: "arrow.uturn.backward", action: undo)
+                    }
                     Button("Preview with Keyboard", systemImage: "keyboard") { previewing = true }
                         .accessibilityIdentifier("terminal-preview-keyboard")
                     Button("Restore Keyboard Bar…", systemImage: "arrow.counterclockwise") { restoring = true }
@@ -86,6 +91,11 @@ struct TerminalKeyboardEditingPreview: View {
                 Label("Choose a row’s Add Key action to place " + action.title, systemImage: "plus.circle").font(.subheadline).padding(.horizontal, 20)
             }
             Spacer(minLength: compact ? 0 : 12)
+            if let compactTrackpadSelection {
+                trackpadKeysLink(compactTrackpadSelection)
+                    .padding(.horizontal, 20).padding(.bottom, 8)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { trackpadSummaryHeight = $0 }
+            }
             ScrollView(.vertical) {
                 TerminalKeyboardBarPreview(profile: profile, allRows: true, handles: true,
                     select: { item, row in
@@ -102,6 +112,7 @@ struct TerminalKeyboardEditingPreview: View {
                         selectedRow = row
                         if !placePending(in: row) { show(.add(row, nil)) }
                     }, rowAction: rowAction,
+                    compactTrackpadSelection: compactTrackpadSelection,
                     placementSelect: { placement, row in
                         selectedRow = row
                         if !placePending(in: row) { show(.placement(placement, row)) }
@@ -111,7 +122,7 @@ struct TerminalKeyboardEditingPreview: View {
                     .accessibilityIdentifier("terminal-live-bar-preview")
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { if $0 > 0 { barHeight = $0 } }
             }.scrollBounceBehavior(.basedOnSize)
-                .frame(height: min(barHeight, max(60, editorHeight - (compact ? 126 : 226))))
+                .frame(height: min(barHeight, max(60, editorHeight - (compact ? 126 : 226) - trackpadSummaryHeight)))
                 .background(Color(uiColor: .systemBackground))
             HStack {
                 Button("Add Row", systemImage: "plus") { show(.rows) }.buttonStyle(.bordered)
@@ -152,6 +163,34 @@ struct TerminalKeyboardEditingPreview: View {
                 }.accessibilityIdentifier("terminal-remove-row")
             } message: { _ in Text("Saved shortcuts and text stay available. You can undo this change.") }
     }
+    private func trackpadKeysLink(_ selection: Binding<UUID?>) -> some View {
+        let row = profile.compactTrackpadRow(selection.wrappedValue, hasPro: pro.hasPro)
+        let names = row.map { profile.compactTrackpadKeyNames(profile.compactTrackpadPlacements(in: $0, hasPro: pro.hasPro)) } ?? []
+        let preview = names.prefix(3).joined(separator: " · ")
+        let status = names.isEmpty ? "Shows the default keys" : preview + (names.count > 3 ? " + \(names.count - 3) more" : "")
+        return NavigationLink {
+            CompactTrackpadRowPicker(profile: profile, hasPro: pro.hasPro, selection: selection)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "rectangle.split.1x2").foregroundStyle(.tint)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(CompactTrackpadRowPicker.title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                    Text(status).font(.footnote).foregroundStyle(.secondary)
+                }.multilineTextAlignment(.leading)
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 8).frame(minHeight: 44)
+            .background(Color(uiColor: .secondarySystemBackground), in: .rect(cornerRadius: 12))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+        .accessibilityLabel(CompactTrackpadRowPicker.title).accessibilityValue(status)
+        .accessibilityIdentifier("terminal-editor-trackpad-dock-keys")
+    }
     private func rowAction(_ id: UUID, _ action: TerminalKeyboardRow.MenuAction) {
         guard let row = profile.resolvedRows.first(where: { $0.id == id }) else { return }
         selectedRow = id
@@ -161,6 +200,8 @@ struct TerminalKeyboardEditingPreview: View {
             editRow(id) { $0.visibility = visibility }
         case .alignment(let alignment): editRow(id) { $0.alignment = alignment }
         case .scrollStart(let value): editRow(id) { $0.scrollStart = value }
+        case .useInTrackpadDock:
+            if profile.compactTrackpadRow(id, hasPro: pro.hasPro) != nil { compactTrackpadSelection?.wrappedValue = id }
         case .remove: removing = id
         }
     }
