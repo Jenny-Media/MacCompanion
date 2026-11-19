@@ -1,8 +1,29 @@
 #if os(iOS)
+import Darwin
+import NIO
 import XCTest
 @testable import Mac_Companion
 
 @MainActor final class ConnectionProgressTests: XCTestCase {
+    func testSocketProgressReportsEachAttemptBeforeReturningTheFallback() async throws {
+        let probe = FilesDirectoryTestProbe()
+        let listener = try await filesDirectoryTestServer(probe: probe)
+        defer { Task { await probe.shutdown(); try? await listener.close() } }
+        let port = try XCTUnwrap(listener.localAddress?.port)
+        let addresses = ["127.0.0.2", "127.0.0.1"]
+        let reported = DispatchSemaphore(value: 0)
+        var attempts: [String] = []
+        let (fd, _, index) = await connectDirectSocket(addresses: addresses, port: port, cancelled: { false },
+            registerSocket: { fd in fd < 0 || reported.wait(timeout: .now() + 2) == .success }, attemptingAddress: { address in
+                attempts.append(address)
+                reported.signal()
+            })
+        if fd >= 0 { Darwin.close(fd) }
+        XCTAssertGreaterThanOrEqual(fd, 0)
+        XCTAssertEqual(attempts, addresses)
+        XCTAssertEqual(index, 1)
+    }
+
     func testSecurityIsNotClaimedWhileReachingOrVerifyingTheMac() {
         let progress = DirectConnectionProgressState()
         XCTAssertFalse(progress.encrypted)

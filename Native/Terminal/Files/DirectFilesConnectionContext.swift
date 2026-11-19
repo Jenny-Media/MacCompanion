@@ -10,6 +10,7 @@ import Foundation
     let account: String
     let keyID: UUID?
     let generation: UUID
+    var endpoint: DirectConnectionEndpoint? = nil
     var isCurrent: @MainActor () -> Bool = { true }
 }
 #endif

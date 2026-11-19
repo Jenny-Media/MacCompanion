@@ -88,6 +88,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         }
         let account: String
         let authority: Authority
+        var endpoint: DirectConnectionEndpoint? = nil
 
         var parent: ParentConnection? {
             if case .borrowed(let parent) = authority { return parent }
@@ -121,6 +122,12 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         }
     }
     private var connectionIsCurrent: Bool { connection?.parent?.isCurrent() != false }
+    private(set) var attemptingAddress: String?
+    var connectionStatus: String { attemptingAddress.map(DirectConnectionEndpoint.tryingLabel) ?? activityTitle }
+    var activeEndpoint: DirectConnectionEndpoint? {
+        guard case .ready(let connection) = connectionState, connectionIsCurrent else { return nil }
+        return connection.endpoint
+    }
     @ObservationIgnored var activityChanged: (@MainActor (String) -> Void)?
     private(set) var status = "Sign In Required" { didSet { activityChanged?(activityTitle) } }
     private(set) var directory: DirectFilesDirectory?
@@ -306,7 +313,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
         let previousPath = account == context.account ? directory?.path : nil
         observeLifecycle(); retire(); let token = generation
         let parent = ParentConnection(ownerID: context.ownerID, generation: context.generation, isCurrent: context.isCurrent)
-        let attempt = Connection(account: context.account, authority: .borrowed(parent))
+        let attempt = Connection(account: context.account, authority: .borrowed(parent), endpoint: context.endpoint)
         connectionState = .opening(attempt)
         #if os(iOS)
         connectionLease = DirectMacConnections.shared.begin(macID: mac.id, kind: "files", keyID: context.keyID, ownerID: context.ownerID,
@@ -417,27 +424,31 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                     message = "The saved SSH login could not be removed. Files did not connect."
                     return
                 }
-                let (fd, failure) = await Task.detached(priority: .userInitiated) {
-                    var failure = 0
-                    let fd = CompanionVNCConnectAddresses(addresses, port, { owner.isCancelled }, { owner.register($0) }, nil, &failure)
-                    return (fd, failure)
-                }.value
+                let (fd, failure, index) = await connectDirectSocket(addresses: addresses, port: port,
+                    cancelled: { owner.isCancelled }, registerSocket: { owner.register($0) }, attemptingAddress: { [weak self] address in
+                        guard let self, self.generation == token, !owner.isCancelled else { return }
+                        self.attemptingAddress = address
+                    })
                 guard fd >= 0 else { throw failure == 10 ? TerminalConnectionFailure.lookup : TerminalConnectionFailure.socket }
                 do { try check(token) } catch { Darwin.close(fd); throw error }
+                attemptingAddress = nil
+                status = "Verifying SSH server…"
                 let channel = try await ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
                     .channelOption(ChannelOptions.autoRead, value: false).withConnectedSocket(fd).get()
                 do { try check(token) } catch { try? await channel.close(); throw error }
                 self.channel = channel
                 let validator = TerminalHostValidator { [weak self] publicKey in
                     guard let self else { throw CancellationError() }; try self.check(token)
-                    if try TerminalSecretStore.matchesTrustedHostKey(publicKey, id: self.mac.id) { return }
-                    guard let fingerprint = TerminalSecretStore.fingerprint(publicKey) else { throw TerminalSecretStore.Failure.rejectedKey }
-                    self.status = "Verify this Mac’s identity"; self.trust = .init(fingerprint: fingerprint)
-                    let accepted = await withCheckedContinuation { self.trustReply = $0 }
-                    try self.check(token)
-                    guard accepted else { throw TerminalSecretStore.Failure.rejectedKey }
-                    do { try TerminalSecretStore.approveHostKey(publicKey, id: self.mac.id) }
-                    catch TerminalSecretStore.Failure.changedKey { throw TerminalSecretStore.HostKeyMismatch(key: publicKey) }
+                    if try !TerminalSecretStore.matchesTrustedHostKey(publicKey, id: self.mac.id) {
+                        guard let fingerprint = TerminalSecretStore.fingerprint(publicKey) else { throw TerminalSecretStore.Failure.rejectedKey }
+                        self.status = "Verify this Mac’s identity"; self.trust = .init(fingerprint: fingerprint)
+                        let accepted = await withCheckedContinuation { self.trustReply = $0 }
+                        try self.check(token)
+                        guard accepted else { throw TerminalSecretStore.Failure.rejectedKey }
+                        do { try TerminalSecretStore.approveHostKey(publicKey, id: self.mac.id) }
+                        catch TerminalSecretStore.Failure.changedKey { throw TerminalSecretStore.HostKeyMismatch(key: publicKey) }
+                    }
+                    self.status = "Signing in to Remote Login…"
                 }
                 var settings = SSHClientSettings(host: addresses.first ?? "", port: port,
                     authenticationMethod: authentication, hostKeyValidator: .custom(validator))
@@ -481,7 +492,10 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
                 } catch { self.message = "Connected. The SSH login could not be saved on this device." }
                 loginDraft.authenticationSucceeded(attempt, retention: retention)
                 self.directory = directory; self.home = directory.path
-                deadline?.cancel(); busy = false; connectionState = .ready(connectionAttempt); status = "Ready"
+                let endpoint = DirectConnectionEndpoint(address: addresses[index], port: port)
+                deadline?.cancel(); busy = false
+                connectionState = .ready(.init(account: username, authority: connectionAttempt.authority, endpoint: endpoint))
+                status = "Ready"
                 channel.closeFuture.whenComplete { [weak self] _ in
                     Task { @MainActor in
                         guard let self, self.generation == token else { return }
@@ -738,6 +752,7 @@ private final class DirectFilesBackgroundObservation: @unchecked Sendable {
     }
     private func retire() {
         if !closed { connectionState = .interrupted(account: account) }
+        attemptingAddress = nil
         connectionRecovery = nil
         #if os(iOS)
         let pendingWork = work

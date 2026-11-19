@@ -174,17 +174,23 @@ import NIO
         let probe = FilesDirectoryTestProbe()
         let server = try await filesDirectoryTestServer(probe: probe)
         defer { Task { await probe.shutdown(); try? await server.close() } }
-        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Shared Files", addresses: ["127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
+        let mac = DirectMacRecordV1(id: UUID(), name: "Synthetic Shared Files", addresses: ["127.0.0.2", "127.0.0.1"], sshPort: try XCTUnwrap(server.localAddress?.port))
         let client = try await SSHClient.connect(to: .init(host: "127.0.0.1", port: mac.sshPort,
             authenticationMethod: { .passwordBased(username: "synthetic", password: "synthetic-only") }, hostKeyValidator: .acceptAnything()))
         defer { Task { try? await client.close() } }
         let files = DirectFilesSession(mac: mac), generation = UUID()
         defer { files.close() }
-        let context = DirectFilesConnectionContext(client: client, macID: mac.id, account: "synthetic", keyID: nil, generation: generation)
+        let endpoint = DirectConnectionEndpoint(address: "127.0.0.1", port: mac.sshPort)
+        var parentIsCurrent = true
+        let context = DirectFilesConnectionContext(client: client, macID: mac.id, account: "synthetic", keyID: nil, generation: generation, endpoint: endpoint,
+                                                   isCurrent: { parentIsCurrent })
         XCTAssertEqual(probe.authentications, 1)
         files.connectBorrowed(context)
+        XCTAssertEqual(files.connectionStatus, "Opening Files…")
+        XCTAssertNil(files.attemptingAddress)
         try await wait { !files.busy }
         XCTAssertEqual(files.phase, .ready, files.message ?? files.status)
+        XCTAssertEqual(files.activeEndpoint, endpoint)
         XCTAssertEqual(files.account, context.account); XCTAssertEqual(probe.authentications, 1)
         XCTAssertTrue(DirectMacConnections.shared.isActive(mac.id))
         files.connectBorrowed(context)
@@ -200,7 +206,10 @@ import NIO
         try await wait { !files.busy }
         XCTAssertEqual(files.phase, .ready)
         files.disconnectBorrowed(UUID()); XCTAssertEqual(files.phase, .ready, "Another parent's closure must not retire this Files channel")
+        parentIsCurrent = false
+        XCTAssertNil(files.activeEndpoint)
         files.disconnectBorrowed(generation); XCTAssertEqual(files.phase, .interrupted)
+        XCTAssertNil(files.activeEndpoint)
     }
     func testBorrowedFilesRejectsDifferentMacBeforeOpeningChannel() async throws {
         let probe = FilesDirectoryTestProbe()

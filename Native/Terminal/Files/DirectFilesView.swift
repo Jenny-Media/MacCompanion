@@ -45,7 +45,7 @@ struct DirectFilesView: View {
     @State private var pro = DirectProAccess.shared
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    private enum Sheet: String, Identifiable { case keys, setup, upload, pro, access, identity; var id: String { rawValue } }
+    private enum Sheet: String, Identifiable { case keys, setup, upload, pro, access, identity, connectionDetails; var id: String { rawValue } }
     private enum Confirmation {
         case disconnect, close, discard
         var title: String { switch self { case .disconnect: "Disconnect Files?"; case .close: "Close Files?"; case .discard: "Discard pending transfers?" } }
@@ -103,6 +103,10 @@ struct DirectFilesView: View {
                 }.accessibilityIdentifier("files-done") }
                 ToolbarItem(placement: .primaryAction) {
                     Menu("More", systemImage: "ellipsis.circle") {
+                        if !session.macRemoved {
+                            Button("Connection Details", systemImage: "info.circle") { sheet = .connectionDetails }
+                                .accessibilityIdentifier("files-connection-details")
+                        }
                         Button("Setup Guide", systemImage: "questionmark.circle") { sheet = .setup }
                         #if os(iOS)
                         if standaloneRecovery?.reason == .rejectedLogin, !session.busy, !session.macRemoved {
@@ -118,6 +122,13 @@ struct DirectFilesView: View {
             }
             .sheet(item: $sheet) { destination in
                 switch destination {
+                case .connectionDetails:
+                    DirectConnectionInfo(mac: mac, activeEndpoint: session.activeEndpoint)
+                        #if os(macOS)
+                        .modifier(MacSheetPrivacyCover())
+                        #else
+                        .directAppearance()
+                        #endif
                 case .keys:
                     #if os(macOS)
                     MacSSHKeyManager(mac: mac, changed: { loadLogin(preferSelected: true, includePassword: false, preserveUnchangedSelection: true) }).modifier(MacSheetPrivacyCover())
@@ -310,7 +321,7 @@ struct DirectFilesView: View {
     private var connectionStatus: some View {
         HStack(spacing: 6) {
             if session.busy { ProgressView().controlSize(.small) }
-            Text(session.activityTitle).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text(session.connectionStatus).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
     }
     private var showsIdentityStatus: Bool {
@@ -339,7 +350,7 @@ struct DirectFilesView: View {
                 if session.phase == .connecting {
                     HStack(spacing: 12) {
                         ProgressView().accessibilityHidden(true)
-                        Text(session.activityTitle).font(.headline)
+                        Text(session.connectionStatus).font(.headline)
                     }.accessibilityIdentifier("files-connection-progress")
                 } else if needsSessionReconnect {
                     Label("Mac session ended", systemImage: "rectangle.connected.to.line.below")

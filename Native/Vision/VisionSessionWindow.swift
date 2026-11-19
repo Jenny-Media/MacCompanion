@@ -17,7 +17,7 @@ struct VisionSessionWindow: View {
     private var useKey: Bool { draft.method == .sshKey }
     @State private var key: TerminalNamedKey?
     @State private var desktopInteraction = VisionDesktopInteraction()
-    @State private var keysShown = false
+    @State private var sheet: Sheet?
     @State private var draftError: String?
     @Environment(\.scenePhase) private var phase
     @Environment(\.openWindow) private var openWindow
@@ -26,6 +26,7 @@ struct VisionSessionWindow: View {
     @FocusState private var loginFocus: LoginField?
     @State private var closing = false
     private enum LoginField { case account, password }
+    private enum Sheet: String, Identifiable { case keys, connectionDetails; var id: String { rawValue } }
     init(request: VisionSessionRequest, library: DirectMacLibraryV1) {
         self.request = request; self.library = library
         _desktop = State(initialValue: request.connection == .desktop ? VisionDesktopSession(mac: request.mac, libraryURL: library.storageURL) : nil)
@@ -35,7 +36,7 @@ struct VisionSessionWindow: View {
     }
     private var connected: Bool { desktop?.connected == true || terminal?.connected == true }
     private var connecting: Bool { desktop?.connecting == true || terminal?.connecting == true }
-    private var status: String { desktop?.status ?? terminal?.status ?? "Ready" }
+    private var status: String { desktop?.connectionStatus ?? terminal?.connectionStatus ?? "Ready" }
     private var recovery: DirectRecoveryNotice? { desktop?.recovery ?? terminal?.recovery }
     private var trust: Binding<DirectTerminalSession.TrustRequest?> {
         Binding(get: { desktop?.trust ?? terminal?.trust }, set: { value in if value == nil { answerTrust(false) } })
@@ -85,7 +86,14 @@ struct VisionSessionWindow: View {
             }
         }
             .sheet(item: trust) { value in TerminalServerTrustView(macName: request.mac.name, fingerprint: value.fingerprint, answer: answerTrust) }
-            .sheet(isPresented: $keysShown, onDismiss: loadLogin) { TerminalKeySettings(mac: request.mac) }
+            .sheet(item: $sheet, onDismiss: loadLogin) { destination in
+                switch destination {
+                case .keys: TerminalKeySettings(mac: request.mac)
+                case .connectionDetails:
+                    DirectConnectionInfo(mac: request.mac, desktop: request.connection == .desktop,
+                                         activeEndpoint: desktop?.activeEndpoint ?? terminal?.activeEndpoint)
+                }
+            }
             .confirmationDialog("Open this web link?", isPresented: Binding(get: { terminalInteraction.link != nil }, set: { if !$0 { terminalInteraction.link = nil } })) {
                 Button("Open in Browser") {
                     if phase == .active, lock.canAccess, connected, let url = terminalInteraction.link { DirectClientPlatformV1.open(url) }
@@ -100,13 +108,19 @@ struct VisionSessionWindow: View {
             }
             .onChange(of: lock.canAccess) { _, available in
                 if available && phase == .active { draft.resume(); desktop?.resume(); terminal?.foreground(); loadLogin() }
-                else { interrupt() }
+                else {
+                    if sheet == .connectionDetails { sheet = nil }
+                    interrupt()
+                }
             }
             .onChange(of: connected) { _, value in
                 if value {
                     draft.authenticationSucceeded(loginAttempt, retention: remember && !useKey ? (recovery?.reason == .saveFailed ? .failed : .saved) : .notRequested)
                     loginAttempt = nil
-                } else { draft.passwordSessionEnded(); loadLogin() }
+                } else {
+                    if sheet == .connectionDetails { sheet = nil }
+                    draft.passwordSessionEnded(); loadLogin()
+                }
             }
             .onChange(of: desktop?.closed) { _, value in if value == true { closeWindow() } }
             .onChange(of: terminal?.macRemoved) { _, value in if value == true { closeWindow() } }
@@ -151,7 +165,7 @@ struct VisionSessionWindow: View {
                     } else {
                         Button("Connect") { connect() }.buttonStyle(.borderedProminent).accessibilityIdentifier("vision-connect")
                     }
-                    if request.connection == .terminal { Button("SSH Keys") { keysShown = true } }
+                    if request.connection == .terminal { Button("SSH Keys") { sheet = .keys } }
                 }
             }.padding(32).frame(maxWidth: 560)
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -173,6 +187,7 @@ struct VisionSessionWindow: View {
                 desktopInteraction.canvas?.setAdjusting(!desktopInteraction.adjusting)
             }.accessibilityIdentifier("vision-adjust-view")
             Menu("More", systemImage: "ellipsis") {
+                connectionDetailsButton
                 Button("Screen Sharing Actions") { desktopInteraction.canvas?.showActions() }
                 ForEach(VisionQuickActionPresentation.presented(VNCSessionPreferences.actions(.desktop), mode: .desktop).filter { $0.enabled && $0.valid }) { action in
                     Button(action.displayTitle) { desktopInteraction.performQuickAction(action) }
@@ -229,6 +244,7 @@ struct VisionSessionWindow: View {
                 Button("Hide Keyboard") { terminalInteraction.dismissKeyboard?() }
             }
             Menu("More", systemImage: "ellipsis") {
+                connectionDetailsButton
                 ForEach(VNCSessionPreferences.actions(.terminal).filter { $0.enabled && $0.valid && $0.compatible(with: .terminal) }) { action in
                     Button(action.displayTitle) { terminalInteraction.quickAction?(action) }
                 }
@@ -239,6 +255,10 @@ struct VisionSessionWindow: View {
                 Button("End Shell", role: .destructive) { session.stop(); loadLogin() }
                     .accessibilityIdentifier("vision-end-shell")
             }
+    }
+    private var connectionDetailsButton: some View {
+        Button("Connection Details", systemImage: "info.circle") { sheet = .connectionDetails }
+            .accessibilityIdentifier("vision-connection-details")
     }
     private func connect() {
         guard phase == .active, lock.canAccess, DirectProAccess.shared.ready,

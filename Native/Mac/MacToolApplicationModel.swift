@@ -35,6 +35,10 @@ struct MacScreenSharingHandoffStatus: View {
                 .font(.callout).foregroundStyle(.secondary)
                 .accessibilityIdentifier("mac-screen-sharing-status")
         }
+        if case .openedExternally(let address) = state {
+            Text(address).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+                .accessibilityIdentifier("mac-screen-sharing-handoff-address")
+        }
         if case .failed(let reason) = state {
             Text(reason.message).font(.callout).foregroundStyle(.secondary)
         }

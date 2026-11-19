@@ -471,7 +471,7 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
                 guard let self, let tunnel = self.tunnel, self.viewer?.session.running == true else { return nil }
                 let generation = self.authenticatedGeneration
                 return .init(client: tunnel.client, macID: self.mac.id, ownerID: self.accessOwnerID, account: self.authenticatedAccount,
-                    keyID: nil, generation: generation, isCurrent: { [weak self, weak tunnel] in
+                    keyID: nil, generation: generation, endpoint: tunnel.endpoint, isCurrent: { [weak self, weak tunnel] in
                         guard let self, let tunnel else { return false }
                         return self.tunnel === tunnel && self.authenticatedGeneration == generation && self.viewer?.session.running == true
                     })

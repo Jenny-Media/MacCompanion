@@ -246,7 +246,10 @@ struct DirectTerminalView: View {
             if connected {
                 draft.authenticationSucceeded(loginAttempt, retention: remember && !useKey ? .saved : .notRequested)
                 loginAttempt = nil
-            } else { draft.passwordSessionEnded(); loadLogin() }
+            } else {
+                if sheet == .connectionInfo { sheet = nil }
+                draft.passwordSessionEnded(); loadLogin()
+            }
         }
         .onChange(of: session.trust?.id) { _, _ in updateNativeTrust() }
         .onChange(of: session.completedNormally) { _, _ in returnAfterNormalExit() }
@@ -256,7 +259,10 @@ struct DirectTerminalView: View {
         .onChange(of: files.shouldCloseAfterRemoval) { _, close in if close { closeSession() } }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in session.becameInactive() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in draft.suspend(); session.background() }
-        .onReceive(NotificationCenter.default.publisher(for: DirectAppLockV1.locked)) { _ in draft.suspend(); session.background() }
+        .onReceive(NotificationCenter.default.publisher(for: DirectAppLockV1.locked)) { _ in
+            if sheet == .connectionInfo { sheet = nil }
+            draft.suspend(); session.background()
+        }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in draft.resume(); returnAfterNormalExit(); session.foreground(); loadLogin() }
         .onReceive(NotificationCenter.default.publisher(for: DirectAppLockV1.unlocked)) { _ in draft.resume(); returnAfterNormalExit(); session.foreground(); loadLogin() }
         .onReceive(NotificationCenter.default.publisher(for: VNCSessionPreferences.actionsChanged)) { _ in session.reloadKeyboard?() }
@@ -295,14 +301,14 @@ struct DirectTerminalView: View {
                 case .manual: TerminalManualKeySetupView(mac: mac)
                 case .macSettings:
                     if let macLibrary { DirectMacEditorV1(mac: mac, library: macLibrary) }
-                    else { TerminalConnectionInfo(mac: mac) }
+                    else { DirectConnectionInfo(mac: mac) }
                 case .appSettings: DirectSessionSettingsV1()
                 case .pro: DirectProView()
                 case .quickActions: TerminalControlsSettings(initialLibrary: .shortcuts, contextImage: controlsContextImage, close: { sheet = nil })
                 case .savedTextLibrary: TerminalControlsSettings(initialLibrary: .text, contextImage: controlsContextImage, close: { sheet = nil })
                 case .keyboard: TerminalControlsSettings(contextImage: controlsContextImage, close: { sheet = nil })
                 case .verifyGuide: TerminalIdentityGuide(macName: mac.name)
-                case .connectionInfo: TerminalConnectionInfo(mac: mac)
+                case .connectionInfo: DirectConnectionInfo(mac: session.mac, activeEndpoint: session.activeEndpoint)
                 }
     }
     @ViewBuilder private var nativeLoginContent: some View {
@@ -338,7 +344,7 @@ struct DirectTerminalView: View {
             // A lost shell leaves this presenter in charge until Files is dismissed.
             filesSheetPresented = true
             sheet = .files
-        case "connectionInfo": sheet = .connectionInfo
+        case "connectionInfo": if session.connected { sheet = .connectionInfo }
         case "appSettings": sheet = .appSettings
         case "macSettings": sheet = .macSettings
         case "keys": sheet = .keys
@@ -381,7 +387,7 @@ struct DirectTerminalView: View {
             if session.connecting {
                 VStack(spacing: 16) {
                     ProgressView().controlSize(.regular)
-                    Text("Connecting…")
+                    Text(session.connectionStatus)
                         .font(.subheadline.weight(.medium)).multilineTextAlignment(.center)
                         .accessibilityIdentifier("terminal-status")
                 }.frame(maxWidth: .infinity, minHeight: compact ? 84 : 124)
@@ -1065,21 +1071,17 @@ private struct TerminalSurface: UIViewControllerRepresentable {
             }
             presentControlsMenu("Appearance", sections: [["title": "Terminal Colors", "items": choices]])
         case "session":
+            var details = ["kind": "connectionInfo", "title": "Connection Details", "symbol": "info.circle"]
+            details["subtitle"] = session.activeEndpoint?.inUseLabel
             presentControlsMenu(session.mac.name, sections: [
                 ["title": "Keyboard Bar", "items": [
                     ["kind": "keyboard", "title": terminal.isFirstResponder ? "Hide Keyboard" : "Show Keyboard", "symbol": "keyboard"],
                     ["kind": "expandRows", "title": keyboardBar.showsExtraRows ? "Collapse Rows" : "Expand Rows", "symbol": "rectangle.expand.vertical"]]],
                 ["title": "Session", "items": [
                     ["kind": "files", "title": filesStatus.isEmpty ? "Files" : "Files · " + filesStatus, "symbol": "folder", "submenu": true],
-                    ["kind": "connectionInfo", "title": "Connection Details", "symbol": "info.circle"],
+                    details,
                     ["kind": "appSettings", "title": "App Settings", "symbol": "gearshape", "submenu": true]]],
                 ["title": "", "items": [["kind": "exit", "title": "Disconnect", "symbol": "xmark.circle", "destructive": true]]]])
-        case "connectionInfo":
-            let message = ([session.mac.name, "SSH · Port \(session.mac.sshPort)"] + session.mac.addresses).joined(separator: "\n")
-            let details = UIAlertController(title: "Connection Details", message: message, preferredStyle: .alert)
-            details.overrideUserInterfaceStyle = paletteIsDark == true ? .dark : .light
-            details.addAction(UIAlertAction(title: "Done", style: .cancel))
-            present(details, animated: true)
         case "keyboard":
             let wasVisible = terminal.isFirstResponder
             session.toggleKeyboard?()
@@ -1515,20 +1517,5 @@ private struct TerminalSurface: UIViewControllerRepresentable {
     func clipboardRead(source: TerminalView) -> Data? { nil }
     func bell(source: TerminalView) {}
     func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
-}
-struct TerminalConnectionInfo: View {
-    let mac: DirectMacRecordV1
-    @Environment(\.dismiss) private var dismiss
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("Remote Login") {
-                    LabeledContent("Mac", value: mac.name)
-                    DirectConnectionDetailsRows(mac: mac, desktop: false)
-                }
-            }.navigationTitle("Connection Details").navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-        }.presentationDetents([.medium, .large])
-    }
 }
 #endif

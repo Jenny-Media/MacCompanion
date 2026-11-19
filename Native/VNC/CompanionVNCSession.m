@@ -761,7 +761,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
                 [self->_lock lock]; BOOL stopped = self->_stopping; [self->_lock unlock]; return stopped;
             }, ^BOOL(int fd) { return [self registerSocket:fd]; }, ^(NSUInteger index, NSUInteger count) {
                 [self report:count > 1 ? [NSString stringWithFormat:@"Contacting Mac · address %lu of %lu", (unsigned long)index, (unsigned long)count] : @"Contacting Mac"];
-            }, &routeFailure);
+            }, &routeFailure, NULL);
             else if (![self registerSocket:connection]) { close(connection); [self finish:@"Disconnected"]; return; }
             if (connection < 0) {
                 [self->_lock lock]; self->_failureStage = routeFailure; [self->_lock unlock];

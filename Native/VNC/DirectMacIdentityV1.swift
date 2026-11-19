@@ -2,6 +2,14 @@
 import Darwin
 import Foundation
 
+struct DirectConnectionEndpoint: Equatable, Sendable {
+    let address: String
+    let port: Int
+
+    var inUseLabel: String { String(localized: "In use · \(address)") }
+    static func tryingLabel(_ address: String) -> String { String(localized: "Trying \(address)") }
+}
+
 enum DirectMacConnection: String, Codable, CaseIterable, Identifiable, Sendable {
     case desktop, terminal, trackpad
     var id: String { rawValue }

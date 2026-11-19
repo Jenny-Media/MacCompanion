@@ -87,7 +87,7 @@ private actor Gate {
                 let h = Harness()
                 let owner = h.coordinator()
                 owner.open(h.first, action: .desktop)
-                try await eventually("Workspace handoff did not finish") { owner.states[h.first.id] == .openedExternally }
+                try await eventually("Workspace handoff did not report its target") { owner.states[h.first.id] == .openedExternally(address: "127.0.0.1") }
                 try expect(h.terminals.isEmpty, "Screen Sharing implicitly opened Terminal")
                 owner.open(h.first, action: .terminal)
                 try expect(h.terminals.count == 1 && h.terminals[0].0 == h.first.id, "Terminal targets a different Mac")
@@ -111,7 +111,7 @@ private actor Gate {
                 try expect(h.terminals.isEmpty, "Pending Screen Sharing opened Terminal")
                 c.open(h.first, action: .terminal)
                 await gate.release()
-                try await eventually("Pending handoff did not finish") { c.states[h.first.id] == .openedExternally }
+                try await eventually("Pending handoff did not finish") { c.states[h.first.id] == .openedExternally(address: "127.0.0.1") }
                 c.open(h.first, action: .desktop)
                 try await eventually("Repeated completed handoff did not run") { h.urls.count == 2 }
                 try expect(h.terminals.count == 1, "Repeated Screen Sharing reopened Terminal")
@@ -149,7 +149,7 @@ private actor Gate {
                     c.recordsChanged(validIDs: Set(h.current.keys))
                 }
                 await gate.release(); try await settle()
-                try expect(h.urls.isEmpty && c.states[h.first.id] != .opening && c.states[h.first.id] != .openedExternally, "Retired resolution launched Desktop")
+                try expect(h.urls.isEmpty && (c.states[h.first.id] ?? .idle) == .idle, "Retired resolution launched Desktop")
                 try expect(h.terminals.count == 1, "Retirement changed Terminal ownership")
                 count += 1
             }
@@ -157,7 +157,7 @@ private actor Gate {
                 let h = Harness(), gate = Gate(), c = h.coordinator(gate: gate)
                 c.open(h.first, action: .desktop); c.open(h.second, action: .desktop)
                 await gate.release()
-                try await eventually("Replacement request did not complete") { c.states[h.second.id] == .openedExternally }
+                try await eventually("Replacement request did not complete") { c.states[h.second.id] == .openedExternally(address: "192.168.1.25") }
                 try expect(h.urls.map(\.absoluteString) == ["vnc://192.168.1.25:5901"], "Replaced request launched stale Desktop")
                 try expect(c.states[h.first.id] == .idle, "Replaced request left opening state")
                 count += 1
@@ -187,7 +187,7 @@ private actor Gate {
                 c.open(h.first, action: .terminal); try await settle()
                 try expect(h.urls.isEmpty && h.terminals.count == 1 && c.states.isEmpty, "Terminal-only opened Desktop")
                 c.open(h.second, action: .desktop)
-                try await eventually("Desktop-only did not finish") { c.states[h.second.id] == .openedExternally }
+                try await eventually("Desktop-only did not finish") { c.states[h.second.id] == .openedExternally(address: "192.168.1.25") }
                 try expect(h.terminals.count == 1, "Desktop-only opened Terminal")
                 count += 2
             }
