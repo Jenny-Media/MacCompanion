@@ -8,6 +8,8 @@
   ],
   "step": 6,
   "maximumReplyBytes": 16,
+  "operationTimeoutSeconds": 5,
+  "channelRetirementGraceSeconds": 1,
   "responses": [
     {
       "wire": "0:0\n",
@@ -39,6 +41,24 @@
     },
     {
       "wire": "8:0"
+    }
+  ],
+  "execReplies": [
+    {
+      "chunks": ["6", "6:0\n"],
+      "exitStatus": 0,
+      "reply": "66:0\n"
+    },
+    {
+      "chunks": ["66:0\n", "oversize trailing output\n"],
+      "exitStatus": 0
+    },
+    {
+      "chunks": ["66:0\n"],
+      "exitStatus": 1
+    },
+    {
+      "chunks": ["66:0\n"]
     }
   ]
 }

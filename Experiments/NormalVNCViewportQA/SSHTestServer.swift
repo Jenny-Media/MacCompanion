@@ -5,15 +5,32 @@ import NIOSSH
 import Citadel
 import Darwin
 
+struct SSHTestVolumeExec {
+    enum Response {
+        case finish(chunks: [String], exitStatus: Int?)
+        case waitForClose
+        case stallTransport
+    }
+    let command: String
+    let admission: String
+    let response: Response
+}
+
+/// Keep the test peer connected while discarding incoming ciphertext.
+private final class SSHTestStalledTransport: ChannelInboundHandler, Sendable {
+    typealias InboundIn = ByteBuffer
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {}
+}
+
 final class SSHTestRecord: @unchecked Sendable {
     var inputChanged: (@Sendable ([UInt8]) -> Void)?
     let initialOutput: String
     let respondToInstall: Bool
     let echoInput: Bool
     let inputLimit: Int
-    let volumeExec: (command: String, admission: String, reply: String)?
+    let volumeExec: SSHTestVolumeExec?
     init(respondToInstall: Bool = true, echoInput: Bool = true, initialOutput: String = "synthetic-ready\r\n",
-         inputLimit: Int = 512, volumeExec: (String, String, String)? = nil) {
+         inputLimit: Int = 512, volumeExec: SSHTestVolumeExec? = nil) {
         precondition((1...32768).contains(inputLimit))
         self.respondToInstall = respondToInstall; self.echoInput = echoInput; self.initialOutput = initialOutput; self.inputLimit = inputLimit
         self.volumeExec = volumeExec
@@ -28,6 +45,9 @@ final class SSHTestRecord: @unchecked Sendable {
     private var transport: Channel?
     func openedTransport(_ channel: Channel) { lock.lock(); transport = channel; lock.unlock() }
     private func activeTransport() -> Channel? { lock.lock(); defer { lock.unlock() }; return transport }
+    func stallTransport() -> EventLoopFuture<Void>? {
+        activeTransport()?.pipeline.addHandler(SSHTestStalledTransport(), position: .first)
+    }
     func finish(status: Int?, signal: String? = nil, transportFailed: Bool = false) async throws {
         guard let channel = activeShell() else { throw POSIXError(.ENOTCONN) }
         if let status { try await channel.triggerUserOutboundEvent(SSHChannelRequestEvent.ExitStatus(exitStatus: status)).get() }
@@ -112,9 +132,20 @@ final class SSHTestPTY: ChannelDuplexHandler, @unchecked Sendable {
         if awaitingVolumeAdmission, let fixture = record.volumeExec {
             if record.received == Array(fixture.admission.utf8) {
                 awaitingVolumeAdmission = false
-                context.writeAndFlush(wrapOutboundOut(SSHChannelData(type: .channel, data: .byteBuffer(ByteBuffer(string: fixture.reply)))), promise: nil)
-                context.triggerUserOutboundEvent(SSHChannelRequestEvent.ExitStatus(exitStatus: 0), promise: nil)
-                context.close(promise: nil)
+                switch fixture.response {
+                case let .finish(chunks, exitStatus):
+                    for chunk in chunks {
+                        context.writeAndFlush(wrapOutboundOut(SSHChannelData(type: .channel, data: .byteBuffer(ByteBuffer(string: chunk)))), promise: nil)
+                    }
+                    if let exitStatus {
+                        context.triggerUserOutboundEvent(SSHChannelRequestEvent.ExitStatus(exitStatus: exitStatus), promise: nil)
+                    }
+                    context.close(promise: nil)
+                case .waitForClose:
+                    break
+                case .stallTransport:
+                    _ = record.stallTransport()
+                }
             }
             return
         }

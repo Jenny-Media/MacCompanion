@@ -27,6 +27,27 @@ import Security
         XCTAssertNotEqual(try decoded.macs[0].record().id, fixture.original.id)
         XCTAssertNotEqual(try decoded.macs[0].record().id, try decoded.macs[0].record().id)
     }
+    func testPrecisionAndReachRoundTripsAndOlderBackupsDefaultToStandard() throws {
+        let fixture = try BackupFixture(name: "Trackpad Mac")
+        defer { fixture.clean() }
+        VNCSessionPreferences.setPrecisionAndReach(true, mac: fixture.original.id)
+
+        let encoded = try fixture.service.makeBackup().encoded()
+        let backup = try DirectLocalBackup.decode(encoded)
+        let restored = try backup.macs[0].record()
+        defer { VNCSessionPreferences.clear(restored.id) }
+        XCTAssertNotEqual(restored.id, fixture.original.id)
+        backup.macs[0].applyPreferences(to: restored.id)
+        XCTAssertTrue(VNCSessionPreferences.precisionAndReach(restored.id))
+
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        var macs = try XCTUnwrap(legacy["macs"] as? [[String: Any]])
+        macs[0].removeValue(forKey: "precisionAndReach")
+        legacy["macs"] = macs
+        let olderBackup = try DirectLocalBackup.decode(JSONSerialization.data(withJSONObject: legacy))
+        olderBackup.macs[0].applyPreferences(to: restored.id)
+        XCTAssertFalse(VNCSessionPreferences.precisionAndReach(restored.id))
+    }
     func testInvalidOrNewerBackupsAreRejectedBeforeRestore() async throws {
         let fixture = try BackupFixture(name: "Current Mac"); defer { fixture.clean() }
         let backup = try fixture.service.makeBackup()

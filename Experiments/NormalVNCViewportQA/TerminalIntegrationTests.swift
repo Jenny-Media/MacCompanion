@@ -550,7 +550,8 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
     }
     func testTrackpadVolumeExecRequiresTheCurrentOwnersAdmissionLine() async throws {
         let operation = DirectTrackpadVolume.increase
-        let record = SSHTestRecord(echoInput: false, volumeExec: (operation.command, DirectTrackpadVolume.admission, "66:0\n"))
+        let record = SSHTestRecord(echoInput: false, volumeExec: .init(command: operation.command,
+            admission: DirectTrackpadVolume.admission, response: .finish(chunks: ["66:0\n"], exitStatus: 0)))
         let key = NIOSSHPrivateKey(ed25519Key: .init())
         let server = try await server(record: record, key: key)
         defer { _ = server.close() }
@@ -565,6 +566,61 @@ private final class SSHEarlyReadProbe: ChannelInboundHandler, @unchecked Sendabl
         XCTAssertEqual(record.received, Array(DirectTrackpadVolume.admission.utf8))
         XCTAssertEqual(record.passwordRequests, 1)
         try await client.close()
+    }
+    func testTrackpadVolumeExecRequiresCompleteOutputAndSuccessfulExit() async throws {
+        struct Fixture: Decodable {
+            struct Reply: Decodable { let chunks: [String]; let exitStatus: Int?; let reply: String? }
+            let operationTimeoutSeconds: Int64
+            let channelRetirementGraceSeconds: Int64
+            let execReplies: [Reply]
+        }
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-trackpad-volume-v0.1", withExtension: "json"))
+        let fixture = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: url))
+        XCTAssertEqual(DirectTrackpadVolume.operationTimeout, .seconds(fixture.operationTimeoutSeconds))
+        XCTAssertEqual(DirectTrackpadVolume.channelRetirementGrace, .seconds(fixture.channelRetirementGraceSeconds))
+        let operation = DirectTrackpadVolume.increase
+        for (index, vector) in fixture.execReplies.enumerated() {
+            let record = SSHTestRecord(echoInput: false, volumeExec: .init(command: operation.command,
+                admission: DirectTrackpadVolume.admission, response: .finish(chunks: vector.chunks, exitStatus: vector.exitStatus)))
+            let key = NIOSSHPrivateKey(ed25519Key: .init())
+            let server = try await server(record: record, key: key)
+            defer { _ = server.close() }
+            let client = try await SSHClient.connect(host: "127.0.0.1", port: try XCTUnwrap(server.localAddress?.port),
+                authenticationMethod: .passwordBased(username: "synthetic", password: "synthetic-only"),
+                hostKeyValidator: .trustedKeys([key.publicKey]), reconnect: .never, connectTimeout: .seconds(3))
+            let reply = await operation.run(client: client, isCurrent: { true })
+            XCTAssertEqual(reply, vector.reply, "Reply fixture \(index)")
+            XCTAssertTrue(client.isConnected)
+            try await client.close()
+        }
+    }
+    func testTrackpadVolumeDeadlineRetiresOnlyUnresponsiveParents() async throws {
+        let operation = DirectTrackpadVolume.increase
+        let cases: [(name: String, stallBeforeOpen: Bool, response: SSHTestVolumeExec.Response, connected: Bool)] = [
+            ("channel open stalls", true, .waitForClose, false),
+            ("child close stalls", false, .stallTransport, false),
+            ("child closes normally", false, .waitForClose, true),
+        ]
+        for scenario in cases {
+            let record = SSHTestRecord(echoInput: false, volumeExec: .init(command: operation.command,
+                admission: DirectTrackpadVolume.admission, response: scenario.response))
+            let key = NIOSSHPrivateKey(ed25519Key: .init())
+            let server = try await server(record: record, key: key)
+            defer { _ = server.close() }
+            let client = try await SSHClient.connect(host: "127.0.0.1", port: try XCTUnwrap(server.localAddress?.port),
+                authenticationMethod: .passwordBased(username: "synthetic", password: "synthetic-only"),
+                hostKeyValidator: .trustedKeys([key.publicKey]), reconnect: .never, connectTimeout: .seconds(3))
+            if scenario.stallBeforeOpen { try await XCTUnwrap(record.stallTransport()).get() }
+            let started = ContinuousClock.now
+            let reply = await operation.run(client: client, isCurrent: { true })
+            XCTAssertNil(reply, scenario.name)
+            let elapsed = started.duration(to: .now)
+            XCTAssertGreaterThanOrEqual(elapsed, .seconds(5), scenario.name)
+            XCTAssertLessThan(elapsed, .seconds(9), scenario.name)
+            XCTAssertEqual(client.isConnected, scenario.connected, scenario.name)
+            XCTAssertEqual(record.received, scenario.stallBeforeOpen ? [] : Array(DirectTrackpadVolume.admission.utf8))
+            if client.isConnected { try await client.close() }
+        }
     }
     func testConnectedSocketPreservesEarlyServerBannerUntilSSHHandlersExist() async throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "direct-screen-sharing-v1", withExtension: "json"))

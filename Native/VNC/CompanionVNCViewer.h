@@ -39,6 +39,7 @@ typedef NS_ENUM(NSInteger, CompanionVNCRecoveryPhase) {
 @property(nonatomic) CGFloat pointerSpeed;
 @property(nonatomic) BOOL trackpadPrecisionAndReach;
 @property(nonatomic, copy, nullable) void (^trackpadVolumeHandler)(NSInteger, void (^)(NSString * _Nullable));
+@property(nonatomic, copy, nullable) void (^retireTrackpadVolumeHandler)(void);
 @property(nonatomic) CGFloat scrollSpeed;
 @property(nonatomic) BOOL showsTouchPoints;
 @property(nonatomic) BOOL trackpadHapticsEnabled;
@@ -82,6 +83,7 @@ typedef NS_ENUM(NSInteger, CompanionVNCRecoveryPhase) {
 @property(nonatomic, readonly) NSString *controlsConnectionID;
 @property(nonatomic, readonly) CompanionVNCInterfaceFeedback *controlsFeedback;
 - (BOOL)controlsInputAvailable;
+- (BOOL)trackpadVolumeInputAvailable;
 - (BOOL)sendControlEvents:(NSArray<NSDictionary *> *)events completion:(void (^)(BOOL))completion;
 - (nullable NSString *)beginControlSequence;
 - (BOOL)sendControlSequenceEvents:(NSArray<NSDictionary *> *)events identifier:(NSString *)identifier completion:(void (^)(BOOL))completion;

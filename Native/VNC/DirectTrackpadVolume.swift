@@ -9,6 +9,8 @@ enum DirectTrackpadVolume: Int, CaseIterable, Sendable {
     static let admission = "mac-companion-volume-v1\n"
     static let maximumReplyBytes = 16
     static let step = 6
+    static let operationTimeout: TimeAmount = .seconds(5)
+    static let channelRetirementGrace: TimeAmount = .seconds(1)
 
     struct Reading: Equatable {
         let level: Int
@@ -75,33 +77,37 @@ enum DirectTrackpadVolume: Int, CaseIterable, Sendable {
     }
 
     func run(client: SSHClient, isCurrent: @escaping @MainActor @Sendable () -> Bool) async -> String? {
+        let timeout = Duration.nanoseconds(Self.operationTimeout.nanoseconds)
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        let retirementDeadline = Self.operationTimeout + Self.channelRetirementGrace
         do {
             return try await withThrowingTaskGroup(of: String?.self) { group in
                 group.addTask {
                     var reply = Data()
-                    do {
-                        try await client.withExec(command) { inbound, outbound in
-                            guard await isCurrent() else { throw CancellationError() }
+                    try Task.checkCancellation()
+                    let status = try await client.withExec(command, retirementDeadline: retirementDeadline) { inbound, outbound in
+                        let admission = try await MainActor.run {
                             try Task.checkCancellation()
-                            try await outbound.write(ByteBuffer(string: Self.admission))
-                            for try await chunk in inbound {
-                                if case .stdout(let bytes) = chunk {
-                                    guard reply.count + bytes.readableBytes <= Self.maximumReplyBytes else {
-                                        throw CocoaError(.fileReadCorruptFile)
-                                    }
-                                    reply.append(contentsOf: bytes.readableBytesView)
+                            guard ContinuousClock.now < deadline, isCurrent() else { throw CancellationError() }
+                            return outbound.enqueueWrite(ByteBuffer(string: Self.admission))
+                        }
+                        try await admission.get()
+                        for try await chunk in inbound {
+                            if case .stdout(let bytes) = chunk {
+                                guard reply.count + bytes.readableBytes <= Self.maximumReplyBytes else {
+                                    throw CocoaError(.fileReadCorruptFile)
                                 }
+                                reply.append(contentsOf: bytes.readableBytesView)
                             }
                         }
-                    } catch ChannelError.alreadyClosed {
-                        // The server can finish and close after supplying the reply.
                     }
-                    guard await isCurrent(), !Task.isCancelled, let output = String(data: reply, encoding: .utf8),
+                    guard status == 0, await isCurrent(), !Task.isCancelled, ContinuousClock.now < deadline,
+                          let output = String(data: reply, encoding: .utf8),
                           Reading(response: output) != nil else { return nil }
                     return output
                 }
                 group.addTask {
-                    try await Task.sleep(for: .seconds(5))
+                    try await Task.sleep(until: deadline, clock: .continuous)
                     throw CancellationError()
                 }
                 defer { group.cancelAll() }

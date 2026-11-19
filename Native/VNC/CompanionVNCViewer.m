@@ -1056,6 +1056,7 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
 }
 - (void)becameInactive {
     if (!self.foreground || self.exited || self.inputInactive) return;
+    [self retireTrackpadVolume];
     [self retireSessionMenu];
     self.controlsCustomization = NO; self.restoresControlsKeyboard = NO;
     self.inputInactive = YES; [self.displayHandoff retireVerification];
@@ -2356,6 +2357,10 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
 - (NSUInteger)controlsEpoch { return self.textGeneration; }
 - (NSString *)controlsConnectionID { return self.session.connectionIdentifier ?: @""; }
 - (BOOL)controlsInputAvailable { return [self sessionKeyInputAvailable]; }
+- (BOOL)trackpadVolumeInputAvailable {
+    return self.inputOnly && [self sessionKeyInputAvailable] && self.session.ordinaryControlInputAvailable;
+}
+- (void)retireTrackpadVolume { if (self.retireTrackpadVolumeHandler) self.retireTrackpadVolumeHandler(); }
 - (BOOL)sendControlEvents:(NSArray<NSDictionary *> *)events completion:(void (^)(BOOL))completion {
     if (![self sessionKeyInputAvailable]) return NO;
     return [self.session tryComposedTextEvents:events completion:completion];
@@ -2363,7 +2368,10 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
 - (NSString *)beginControlSequence {
     if (![self sessionKeyInputAvailable]) return nil;
     NSString *identifier = [self.session beginControlSequence];
-    if (identifier) [self retirePointerForControlSequence];
+    if (identifier) {
+        [self retireTrackpadVolume];
+        [self retirePointerForControlSequence];
+    }
     return identifier;
 }
 - (BOOL)sendControlSequenceEvents:(NSArray<NSDictionary *> *)events identifier:(NSString *)identifier completion:(void (^)(BOOL))completion {
@@ -2382,6 +2390,7 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
 }
 - (void)beginKeyboardCustomization {
     if (self.controlsCustomization) return;
+    [self retireTrackpadVolume];
     [self retireSessionMenu]; [self.controls close];
     self.restoresControlsKeyboard = self.input.isFirstResponder;
     [self.view endEditing:YES]; [self releasePointer]; [self cancelTrackpadTouches];
@@ -2941,6 +2950,7 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
 }
 - (void)showInputMenu { [self presentMenu:@"Input" sections:[self inputMenuSections]]; }
 - (void)retireTextDraft {
+    [self retireTrackpadVolume];
     if (self.textComposer.sending) self.textSendInterrupted = YES;
     self.textGeneration++; [self.textComposer invalidate];
 }

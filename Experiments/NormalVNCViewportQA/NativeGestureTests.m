@@ -128,6 +128,31 @@
     XCTAssertEqualObjects([self takeEvents:s].firstObject[@"scrollPhase"],@1);
     [s stop];
 }
+- (void)testTrackpadVolumeAdmissionRetiresWhenAnotherInputOwnerTakesOver {
+    CompanionVNCViewer *viewer = [CompanionVNCViewer new]; viewer.inputOnly = YES; [viewer loadViewIfNeeded];
+    CompanionVNCSession *session = [self sessionWithInputOnly:YES]; viewer.session = session;
+    __block NSUInteger retirements = 0;
+    viewer.retireTrackpadVolumeHandler = ^{ retirements++; };
+    XCTAssertTrue([viewer trackpadVolumeInputAvailable]);
+    NSString *owner = [viewer beginControlSequence];
+    XCTAssertNotNil(owner);
+    XCTAssertEqual(retirements, 1);
+    XCTAssertTrue([viewer controlsInputAvailable]);
+    XCTAssertFalse([viewer trackpadVolumeInputAvailable]);
+    [viewer endControlSequence:owner];
+    XCTAssertTrue([viewer trackpadVolumeInputAvailable]);
+
+    [viewer beginKeyboardCustomization];
+    XCTAssertEqual(retirements, 2);
+    XCTAssertFalse([viewer trackpadVolumeInputAvailable]);
+    [viewer endKeyboardCustomization];
+    XCTAssertTrue([viewer trackpadVolumeInputAvailable]);
+
+    [viewer becameInactive];
+    XCTAssertEqual(retirements, 3);
+    XCTAssertFalse([viewer trackpadVolumeInputAvailable]);
+    [session stop];
+}
 - (void)testShortcutWaitCannotChangePointerStateOrTheNextClickTarget {
     for (NSString *mode in @[@"pointer", @"trackpad", @"inputOnly", @"tabletop"]) for (NSNumber *cancel in @[@NO, @YES]) {
         CompanionVNCViewer *viewer=[CompanionVNCViewer new]; viewer.inputOnly=[mode isEqual:@"inputOnly"]; [viewer loadViewIfNeeded];

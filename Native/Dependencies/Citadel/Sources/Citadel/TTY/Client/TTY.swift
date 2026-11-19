@@ -75,13 +75,18 @@ public struct TTYOutput: AsyncSequence {
 }
 
 /// Allows writing data to a TTY's standard input and controlling terminal properties
-public struct TTYStdinWriter {
+public struct TTYStdinWriter: Sendable {
     internal let channel: Channel
 
     /// Write raw bytes to the TTY's standard input
     /// - Parameter buffer: The bytes to write
     public func write(_ buffer: ByteBuffer) async throws {
-        try await channel.writeAndFlush(SSHChannelData(type: .channel, data: .byteBuffer(buffer)))
+        try await enqueueWrite(buffer).get()
+    }
+
+    /// Enqueue the write synchronously so callers can authorize it and enqueue it in one actor turn.
+    public func enqueueWrite(_ buffer: ByteBuffer) -> EventLoopFuture<Void> {
+        channel.writeAndFlush(SSHChannelData(type: .channel, data: .byteBuffer(buffer)))
     }
 
     public func changeSize(cols: Int, rows: Int, pixelWidth:Int, pixelHeight:Int) async throws {
@@ -450,7 +455,10 @@ extension SSHClient {
     /// - Parameters:
     ///   - command: The command to execute on the remote server
     ///   - environment: Array of environment variables to set for the command
+    ///   - retirementDeadline: Optional time limit after which the captured SSH parent is closed
+    ///     if the child has not retired. Use only on a connection owned by the caller.
     ///   - perform: Closure that receives input/output streams for bidirectional communication
+    /// - Returns: The remote exit status, if the remote sent one.
     /// - Throws: Any errors that occur during exec setup or operation
     ///
     /// ## Example
@@ -474,28 +482,37 @@ extension SSHClient {
     /// }
     /// ```
     @available(macOS 15.0, *)
+    @discardableResult
     public func withExec(
         _ command: String,
         environment: [SSHChannelRequestEvent.EnvironmentRequest] = [],
+        retirementDeadline: TimeAmount? = nil,
         perform: (_ inbound: TTYOutput, _ outbound: TTYStdinWriter) async throws -> Void
-    ) async throws {
+    ) async throws -> Int? {
+        let parent = session.channel
+        let watchdog = retirementDeadline.map { delay in
+            parent.eventLoop.scheduleTask(in: delay) { parent.close(promise: nil) }
+        }
+        defer { watchdog?.cancel() }
+
+        let status = NIOLockedValueBox<Int?>(nil)
         let (channel, output) = try await _executeCommandStream(
             environment: environment,
-            mode: .command(command)
+            mode: .command(command),
+            terminalExitStatus: status
         )
-
-        func close() async throws {
-            try await channel.close()
-        }
-
         do {
             let inbound = TTYOutput(sequence: output)
             try await perform(inbound, TTYStdinWriter(channel: channel))
-            try await close()
         } catch {
-            try await close()
+            // A peer can close independently. Preserve the original stream or
+            // caller error even if closing an already-closed channel throws.
+            try? await channel.close()
             throw error
         }
+        do { try await channel.close() }
+        catch ChannelError.alreadyClosed { }
+        return status.withLockedValue { $0 }
     }
 
     /// Executes a command and returns separate stdout and stderr streams
