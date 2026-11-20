@@ -99,7 +99,9 @@ recovery; 117 means the requested virtual display could not be established; 118
 means display metadata did not arrive within forty foreground seconds after
 establishment or resumption. Stage 119 means the connection ended before the
 virtual request was written. Stage 120 means the matching virtual layout arrived
-but its first image reached a deadline. Stage 121 means inactivity interrupted
+during a mode switch but its first image reached a deadline. A resize within
+Virtual Display uses the desktop reconnect notice on image timeout and retains
+the previous saved size. Stage 121 means inactivity interrupted
 the switch. Keep the previous choice and offer an explicit retry with private
 login recovery. A resumed viewer cannot accept that interrupted request.
 Once the request is written, an owner-bound foreground watchdog enforces the
@@ -114,6 +116,8 @@ Exit, owner replacement, inactivity or app locking cancels pending work. Cleanup
 requirements and private login survive temporary inactivity, including Control Center.
 Retire pending transport work without reporting explicit user cancellation, and restart
 the required quiet allowance on foreground recovery before opening a new connection.
+If a background pause retires the owner before admitting a virtual resize,
+resume verification on a fresh owner after foregrounding and transport retirement.
 Explicit cancellation still clears recovery. Stale callbacks cannot
 complete another owner's operation or save a preference.
 

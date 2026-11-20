@@ -1674,6 +1674,46 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     XCTAssertEqual(saves, 0);
     [viewer stopViewer]; [session finish:@"Disconnected"]; rfbClientCleanup(client); close(pair[1]);
 }
+- (void)testBackgroundRetirementBeforeVirtualResizeResumesWithoutConnectionLoss {
+    for (NSNumber *endedBeforeForeground in @[@NO, @YES]) {
+        DesktopSizeViewer *viewer = [self viewerWithSession:[DesktopSizeSession new]];
+        [viewer setValue:@(CompanionVNCDisplayHandoffPhaseConnecting) forKeyPath:@"displayHandoff.phase"];
+        [viewer setValue:@YES forKeyPath:@"displayHandoff.fullRestart"];
+        [viewer setValue:@2 forKeyPath:@"displayHandoff.targetPreset"];
+        [viewer prepareConnection];
+        CompanionVNCSession *source = viewer.session;
+        [source setValue:@YES forKey:@"running"];
+        [source setValue:@YES forKey:@"established"];
+        void (^sourceState)(NSString *, NSDictionary *) = source.stateHandler;
+        __block NSUInteger retirements = 0, saves = 0;
+        viewer.disconnectHandler = ^{ retirements++; };
+        viewer.desktopSizeSelectionHandler = ^(NSInteger preset) { saves++; };
+
+        [viewer background];
+        XCTAssertTrue([viewer retireVirtualSourceForBackgroundPause:source]);
+        XCTAssertNil(source.stateHandler);
+        XCTAssertEqual(retirements, 1);
+        XCTAssertFalse(viewer.requestedResume);
+        XCTAssertEqualObjects(source.diagnosticCounters[@"probeRequestWritten"], @NO);
+        NSDictionary *terminal = @{@"failureStage": @0, @"handshakeStage": @5};
+        if (endedBeforeForeground.boolValue) {
+            [source setValue:@NO forKey:@"running"];
+            sourceState(@"Connection ended — reconnect", terminal);
+        }
+        XCTAssertNil([viewer valueForKey:@"lastConnectionFailure"]);
+        [viewer foregrounded];
+        XCTAssertTrue(viewer.requestedResume, @"Foreground recovery must replace a stopped or retiring owner");
+        [source setValue:@NO forKey:@"running"];
+        sourceState(@"Connection ended — reconnect", terminal);
+        XCTAssertNil([viewer valueForKeyPath:@"displayHandoff.failedPreset"]);
+        XCTAssertNil([viewer valueForKey:@"lastConnectionFailure"]);
+        XCTAssertEqualObjects([viewer valueForKeyPath:@"displayHandoff.targetPreset"], @2);
+        XCTAssertNotNil([(id<DesktopLoginRecoveryTesting>)[viewer valueForKey:@"credentialState"] loginForResume]);
+        XCTAssertEqual(saves, 0);
+        viewer.disconnectHandler = nil;
+        [viewer stopViewer];
+    }
+}
 - (void)testVirtualStartupWritesResizeBeforeReadingStalledOldUpdate {
     int pair[2]; XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, pair), 0);
     struct timeval timeout = {.tv_sec = 2};
@@ -1764,7 +1804,7 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
         });
         BOOL continues = [condition isEqualToString:@"newPixels"];
         XCTAssertEqual([session handleServerMessage:client], continues, @"%@", condition);
-        XCTAssertEqualObjects(session.diagnosticCounters[@"failureStage"], continues ? @0 : @120, @"%@", condition);
+        XCTAssertEqualObjects(session.diagnosticCounters[@"failureStage"], continues ? @0 : @102, @"%@", condition);
         XCTAssertFalse(session.desktopFrameReady);
         XCTAssertEqual(dispatch_group_wait(writer, dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC)), 0);
         [session finish:@"Disconnected"]; rfbClientCleanup(client); close(peer);
@@ -1822,7 +1862,7 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     XCTAssertEqualWithAccuracy([[session valueForKey:@"virtualImageLastProgress"] doubleValue], started, 0.00001);
     XCTAssertFalse(session.desktopFrameReady);
     XCTAssertFalse([session maintainDesktopBaseline:client now:started + 8]);
-    XCTAssertEqualObjects(session.diagnosticCounters[@"failureStage"], @120);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"failureStage"], @102, @"An in-session resize timeout offers normal reconnect recovery");
     [session finish:@"Disconnected"]; rfbClientCleanup(client); close(pair[1]);
 }
 - (void)testHandoffOnlyResizeCannotBypassOtherNativeReadinessGates {

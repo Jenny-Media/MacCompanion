@@ -122,6 +122,8 @@ typedef NS_ENUM(NSInteger, CompanionVNCRecoveryPhase) {
 - (void)background;
 - (void)becameInactive;
 - (void)backgroundWithCompletion:(nullable void (^)(void))completion;
+/// Retire the current virtual source while backgrounded, before a resize was admitted.
+- (BOOL)retireVirtualSourceForBackgroundPause:(CompanionVNCSession *)owner;
 - (void)foregrounded;
 @end
 NS_ASSUME_NONNULL_END

@@ -225,6 +225,7 @@ typedef NS_ENUM(NSInteger, CompanionVNCInputAdmission) {
 - (BOOL)requestFullDesktop:(rfbClient *)client;
 - (BOOL)maintainDesktopBaseline:(rfbClient *)client now:(double)now;
 - (BOOL)checkVirtualImageDeadline:(double)now;
+- (void)recordVirtualImageTimeoutLocked;
 - (BOOL)matchesRequestedDesktopLayoutLocked;
 - (BOOL)waitingForVirtualPresentationLocked;
 - (void)interruptVirtualHandoffLocked;
@@ -1125,9 +1126,15 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     if (_virtualImageStarted == 0 || !CompanionVNCVirtualImageTimedOut(now - _virtualImageStarted, now - _virtualImageLastProgress)) return YES;
     [_lock lock];
     BOOL expired = _desktopResizeAwaiting && !(_desktopResizeHandoff && _desktopResizeInterrupted);
-    if (expired && _failureStage != 120) { _failureStage = 120; _desktopResizeTimedOut++; }
+    if (expired) [self recordVirtualImageTimeoutLocked];
     [_lock unlock];
     return !expired;
+}
+- (void)recordVirtualImageTimeoutLocked {
+    NSInteger stage = _desktopResizeHandoff ? 120 : 102;
+    if (_failureStage == stage) return;
+    _failureStage = stage;
+    _desktopResizeTimedOut++;
 }
 - (BOOL)matchesRequestedDesktopLayoutLocked {
     return _desktopResizeLayoutSeen && _coverageLayoutValid
@@ -1204,7 +1211,10 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     int action = needsPixels && !waitingForMatchingVirtual ? CompanionVNCBaselineRefreshAction(now - started, now - _lastFullRefresh,
         now - lastProgress, (unsigned)_fullRefreshRetries, virtualImage) : CompanionVNCBaselineWait;
     if (action == CompanionVNCBaselineExpired) {
-        [_lock lock]; _failureStage = virtualImage ? 120 : 102; if (virtualImage) _desktopResizeTimedOut++; [_lock unlock];
+        [_lock lock];
+        if (virtualImage) [self recordVirtualImageTimeoutLocked];
+        else _failureStage = 102;
+        [_lock unlock];
         return NO;
     }
     if (_desktopRefreshPending) {

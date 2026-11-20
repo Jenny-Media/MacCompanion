@@ -285,7 +285,7 @@ struct VNCRemoteDesktopView: UIViewControllerRepresentable {
         private func expireBackgroundPause(_ token: UUID) {
             guard backgroundPause.id == token else { return }
             if case .awaitingRelease(_, let owner) = backgroundPause, viewer?.session === owner {
-                owner.stop()
+                if viewer?.retireVirtualSource(forBackgroundPause: owner) != true { owner.stop() }
                 activity.setPhase("ended")
             }
             finishBackgroundWork()

@@ -228,6 +228,7 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
 @property CompanionVNCRecoveryPhase recoveryPhase;
 @property(nonatomic, readonly) BOOL checkingResume, reconnectWhenReady;
 @property BOOL exited, restoreViewportPending, inputInactive, awaitingReplacementLayout;
+@property(nonatomic, weak) CompanionVNCSession *backgroundRetiredVirtualSource;
 @property UIImage *pendingRestorationFrame;
 @property NSUInteger statusGeneration;
 @property UIStackView *statusRow;
@@ -663,6 +664,7 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
 - (void)prepareConnection {
     [self retireSessionMenu];
     [self.displayHandoff prepareReplacement];
+    self.backgroundRetiredVirtualSource = nil;
     self.desktopSizeRestored = self.displayHandoff.active || self.inputOnly; self.pendingDesktopSizePreset = 0; self.pendingStreamDisplayID = nil;
     self.lateDesktopSizePreset = 0;
     self.displaySelectionRejections = self.displaySelectionRejectMask = 0;
@@ -702,7 +704,7 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
     self.session.stateHandler = ^(NSString *state, NSDictionary *stats) {
         CompanionVNCViewer *strong = weak; if (!strong || !owner || strong.session != owner) return;
         strong.latestCounters = stats;
-        if (strong.exited || strong.displayHandoff.failedPreset) return;
+        if (strong.exited || strong.displayHandoff.failedPreset || strong.backgroundRetiredVirtualSource == owner) return;
         if (strong.displayHandoff.resizeRequested && !strong.connectionForegroundAvailable
             && [strong.session.diagnosticCounters[@"probeInterrupted"] boolValue]) return;
         if (!strong.session.running) [strong retireSessionMenu];
@@ -1099,9 +1101,19 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
     if (self.reconnectWhenReady && self.sessionPhaseHandler) self.sessionPhaseHandler(@"paused");
     if (self.session.established) { [self.session pauseWithCompletion:completion]; [self.session resumeInputAfterReview]; }
     else {
-        [self.session stop]; if (self.disconnectHandler) self.disconnectHandler();
+        if (![self retireVirtualSourceForBackgroundPause:self.session]) {
+            [self.session stop]; if (self.disconnectHandler) self.disconnectHandler();
+        }
         if (completion) completion();
     }
+}
+- (BOOL)retireVirtualSourceForBackgroundPause:(CompanionVNCSession *)owner {
+    if (!owner || self.session != owner || self.foreground || self.exited || !self.displayHandoff.active
+        || self.displayHandoff.targetPreset <= 0 || self.displayHandoff.resizeRequested) return NO;
+    if (self.backgroundRetiredVirtualSource == owner) return YES;
+    self.backgroundRetiredVirtualSource = owner;
+    [self retireDisplayModeOwner];
+    return YES;
 }
 - (void)foregrounded {
     if (self.exited) return;
@@ -1123,7 +1135,9 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
     if (self.recoveryPhase != CompanionVNCRecoveryPhaseBackgroundResumable) { [self updateRemoteKeyAvailability]; return; }
     [self advanceRecoveryTo:CompanionVNCRecoveryPhaseProbing];
     self.status.hidden = YES; [self scheduleResumeIndicator:self.inputOnly ? @"Resuming Trackpad & Keyboard…" : @"Updating desktop…"]; self.image.alpha = 1;
-    if (!self.session.running) { [self reconnectAfterFailedResume]; return; }
+    if (self.backgroundRetiredVirtualSource == self.session || !self.session.running) {
+        [self reconnectAfterFailedResume]; return;
+    }
     [self.session resume];
     CompanionVNCSession *owner = self.session; NSUInteger generation = self.resumeGeneration;
     __weak CompanionVNCViewer *weak = self;
