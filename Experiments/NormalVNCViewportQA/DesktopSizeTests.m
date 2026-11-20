@@ -65,6 +65,7 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
 - (void)updateDesktopSizeState;
 - (void)updateDisplayModeRestoration;
 - (void)expireDisplayModeVerification:(CompanionVNCSession *)owner generation:(NSUInteger)generation;
+- (void)checkVirtualDisplayHandoffDeadline:(CompanionVNCSession *)owner generation:(NSUInteger)generation;
 - (void)keyboardFrame:(NSNotification *)notification;
 - (BOOL)applyStreamDisplay:(NSNumber *)identifier;
 - (BOOL)applyMirrorDisplay;
@@ -88,6 +89,8 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
 @end
 @interface DesktopSizeSession : CompanionVNCSession
 @property BOOL usable, available;
+@property BOOL ended;
+@property NSInteger expiredStage;
 @property NSInteger requests, lastPreset;
 @property NSDictionary *snapshot;
 @property NSDictionary *catalogue;
@@ -98,12 +101,13 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     if ((self=[super init])) { [self setValue:@3200 forKey:@"framebufferWidth"]; [self setValue:@1200 forKey:@"framebufferHeight"]; }
     return self;
 }
-- (BOOL)running { return YES; }
+- (BOOL)running { return !self.ended; }
 - (BOOL)established { return self.usable; }
 - (BOOL)connected { return self.usable; }
 - (BOOL)desktopFrameReady { return self.usable; }
 - (BOOL)desktopSizeAvailable { return self.available; }
 - (NSDictionary *)diagnosticCounters { return self.snapshot ?: @{}; }
+- (NSInteger)expiredVirtualDisplayHandoffStageAtTime:(NSTimeInterval)now { return self.expiredStage; }
 - (BOOL)requestDesktopSizePreset:(NSInteger)preset { self.requests++; self.lastPreset=preset; return self.available; }
 - (BOOL)requestDesktopSizePresetForHandoff:(NSInteger)preset { self.requests++; self.lastPreset=preset; return self.available && self.displayHandoffInputBlocked; }
 - (NSDictionary *)desktopDisplayLayout { return self.catalogue ?: @{}; }
@@ -1609,12 +1613,66 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
             [viewer expireDisplayModeVerification:session generation:generation.unsignedIntegerValue];
             XCTAssertTrue([[viewer valueForKeyPath:@"displayHandoff.active"] boolValue]);
         }
+        session.ended = !written.boolValue;
         session.snapshot = @{@"probeRequestWritten": written, @"probeOutcome": @3, @"failureStage": written.boolValue ? @120 : @0};
         [viewer updateDisplayModeRestoration];
         XCTAssertEqualObjects([viewer valueForKey:@"lastConnectionFailure"][@"displayModeFailureStage"], written.boolValue ? @120 : @119);
         XCTAssertNotNil([(id<DesktopLoginRecoveryTesting>)[viewer valueForKey:@"credentialState"] loginForResume]);
         [viewer stopViewer];
     }
+}
+- (void)testVirtualWatchdogEndsWrittenSwitchWhileNativeWorkerIsUnresponsive {
+    for (NSNumber *stage in @[@117, @120]) {
+        DesktopSizeSession *session = [DesktopSizeSession new]; session.snapshot = self.physicalSnapshot;
+        DesktopSizeViewer *viewer = [self viewerWithSession:session];
+        [viewer setValue:@(CompanionVNCDisplayHandoffPhaseConnecting) forKeyPath:@"displayHandoff.phase"];
+        [viewer setValue:@2 forKeyPath:@"displayHandoff.targetPreset"];
+        session.displayHandoffInputBlocked = YES;
+        [viewer updateDisplayModeRestoration];
+        XCTAssertEqual(session.requests, 1);
+        session.snapshot = @{@"probeRequestWritten": @YES, @"probeOutcome": @1};
+        session.expiredStage = stage.integerValue;
+        NSUInteger generation = [[viewer valueForKeyPath:@"displayHandoff.verificationGeneration"] unsignedIntegerValue];
+        [viewer checkVirtualDisplayHandoffDeadline:session generation:generation - 1];
+        XCTAssertTrue([[viewer valueForKeyPath:@"displayHandoff.active"] boolValue]);
+        XCTestExpectation *retired = [self expectationWithDescription:@"Independent watchdog retires the unresponsive owner"];
+        viewer.disconnectHandler = ^{ [retired fulfill]; };
+        [self waitForExpectations:@[retired] timeout:2];
+        XCTAssertEqualObjects([viewer valueForKeyPath:@"lastConnectionFailure.displayModeFailureStage"], stage);
+        XCTAssertEqualObjects([viewer valueForKeyPath:@"displayHandoff.failedPreset"], @2);
+        viewer.disconnectHandler = nil;
+        [viewer stopViewer];
+    }
+}
+- (void)testInterruptedQueuedVirtualSwitchOffersRetryWithoutReportingConnectionLoss {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, pair), 0);
+    CompanionVNCSession *session = [CompanionVNCSession new];
+    rfbClient *client = rfbGetClient(8, 3, 4);
+    client->sock = pair[0]; client->width = 3200; client->height = 1200;
+    [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    [self deliverLayout:self.fixture[@"monitorLayouts"][@"all"] session:session client:client peer:pair[1]];
+    for (NSString *key in @[@"running", @"established", @"inputReady", @"appleGestureServer", @"baselinePresented"]) [session setValue:@YES forKey:key];
+    session.displayHandoffInputBlocked = YES;
+
+    DesktopSizeViewer *viewer = [self viewerWithSession:[DesktopSizeSession new]]; viewer.session = session;
+    [viewer setValue:@(CompanionVNCDisplayHandoffPhaseConnecting) forKeyPath:@"displayHandoff.phase"];
+    [viewer setValue:@YES forKeyPath:@"displayHandoff.fullRestart"];
+    [viewer setValue:@2 forKeyPath:@"displayHandoff.targetPreset"];
+    __block NSUInteger saves = 0;
+    viewer.desktopSizeSelectionHandler = ^(NSInteger preset) { saves++; };
+    [viewer updateDisplayModeRestoration];
+    XCTAssertEqualObjects(session.diagnosticCounters[@"probeAwaiting"], @YES);
+    [viewer becameInactive];
+    XCTAssertTrue(session.running);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"probeInterrupted"], @YES);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"probeRequestWritten"], @NO);
+    [viewer foregrounded];
+    XCTAssertEqualObjects([viewer valueForKeyPath:@"lastConnectionFailure.displayModeFailureStage"], @121);
+    XCTAssertTrue([[viewer valueForKey:@"loginIssueDetails"] containsString:@"Display switch interrupted"]);
+    XCTAssertEqualObjects([viewer valueForKeyPath:@"displayHandoff.failedPreset"], @2);
+    XCTAssertNotNil([(id<DesktopLoginRecoveryTesting>)[viewer valueForKey:@"credentialState"] loginForResume]);
+    XCTAssertEqual(saves, 0);
+    [viewer stopViewer]; [session finish:@"Disconnected"]; rfbClientCleanup(client); close(pair[1]);
 }
 - (void)testVirtualStartupWritesResizeBeforeReadingStalledOldUpdate {
     int pair[2]; XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, pair), 0);
@@ -1724,6 +1782,9 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     XCTAssertTrue([session requestDesktopSizePresetForHandoff:2]);
     [session setValue:@NO forKey:@"releaseInputRequested"];
     XCTAssertTrue([session processDesktopSizeChange:client]);
+    double written = [[session valueForKey:@"desktopResizeStarted"] doubleValue];
+    XCTAssertEqual([session expiredVirtualDisplayHandoffStageAtTime:written + 19.9], 0);
+    XCTAssertEqual([session expiredVirtualDisplayHandoffStageAtTime:written + 20], 117);
     // An interim virtual layout at another size cannot start the first-image clock.
     [self deliverLayout:self.fixture[@"layoutCases"][3] session:session client:client peer:pair[1]];
     XCTAssertEqualObjects(session.diagnosticCounters[@"probeLayoutSeen"], @YES);
@@ -1737,6 +1798,31 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     XCTAssertFalse([session handleServerMessage:client]);
     XCTAssertEqualObjects(session.diagnosticCounters[@"failureStage"], @117);
     XCTAssertEqualObjects(session.diagnosticCounters[@"probeTimedOut"], @1);
+    [session finish:@"Disconnected"]; rfbClientCleanup(client); close(pair[1]);
+}
+- (void)testWrongSizeCompleteFrameCannotBypassTheVirtualFirstImageDeadline {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, pair), 0);
+    CompanionVNCSession *session = [CompanionVNCSession new];
+    rfbClient *client = rfbGetClient(8, 3, 4);
+    client->sock = pair[0]; client->width = 1600; client->height = 1600;
+    [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    [self deliverLayout:self.fixture[@"layoutCases"][0] session:session client:client peer:pair[1]];
+    for (NSString *key in @[@"running", @"established", @"inputReady", @"appleGestureServer"]) [session setValue:@YES forKey:key];
+    XCTAssertTrue([session requestDesktopSizeWidth:440 height:956]);
+    [session setValue:@NO forKey:@"releaseInputRequested"];
+    XCTAssertTrue([session processDesktopSizeChange:client]);
+    [self deliverLayout:self.fixture[@"layoutCases"][3] session:session client:client peer:pair[1]];
+    double started = [[session valueForKey:@"virtualImageStarted"] doubleValue];
+    XCTAssertGreaterThan(started, 0);
+    [self deliverLayout:self.fixture[@"layoutCases"][2] session:session client:client peer:pair[1]];
+    [session updatedX:0 y:0 width:1600 height:1200];
+    [session publishFrame:client];
+    XCTAssertEqualObjects(session.diagnosticCounters[@"baselineReceivedPixels"], @1920000);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"baselineExpectedPixels"], @1920000);
+    XCTAssertEqualWithAccuracy([[session valueForKey:@"virtualImageLastProgress"] doubleValue], started, 0.00001);
+    XCTAssertFalse(session.desktopFrameReady);
+    XCTAssertFalse([session maintainDesktopBaseline:client now:started + 8]);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"failureStage"], @120);
     [session finish:@"Disconnected"]; rfbClientCleanup(client); close(pair[1]);
 }
 - (void)testHandoffOnlyResizeCannotBypassOtherNativeReadinessGates {

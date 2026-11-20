@@ -703,6 +703,8 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
         CompanionVNCViewer *strong = weak; if (!strong || !owner || strong.session != owner) return;
         strong.latestCounters = stats;
         if (strong.exited || strong.displayHandoff.failedPreset) return;
+        if (strong.displayHandoff.resizeRequested && !strong.connectionForegroundAvailable
+            && [strong.session.diagnosticCounters[@"probeInterrupted"] boolValue]) return;
         if (!strong.session.running) [strong retireSessionMenu];
         [strong.connectionProgress recordNativeState:state];
         if (strong.displayHandoff.active && strong.foreground && !strong.inputInactive) [strong updateDisplayModeRestoration];
@@ -1012,7 +1014,7 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
     [self.displayHandoff finishWithOutcome:stage == 116 ? 3 : stage == 117 || stage == 120 ? 5 : 4];
     UIApplication.sharedApplication.idleTimerDisabled = NO;
     BOOL rejectedLoginOrTrust = [@[@2,@7,@8,@111,@112,@113,@115] containsObject:@(stage)];
-    BOOL retryableModeFailure = (stage >= 116 && stage <= 120) || (self.displayHandoff.fullRestart && !rejectedLoginOrTrust);
+    BOOL retryableModeFailure = (stage >= 116 && stage <= 121) || (self.displayHandoff.fullRestart && !rejectedLoginOrTrust);
     if (self.displayHandoff.failedPreset && retryableModeFailure) {
         // Keep only the existing bounded session recovery for explicit retry.
         // Visible unremembered fields stay empty; exit/edit still invalidate it.
@@ -1110,6 +1112,9 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
     }
     self.foreground = YES; self.inputInactive = NO;
     [self.credentialState resumeWithActive:YES allowed:self.credentialState.accessAllowed]; [self renderCredentialForm];
+    if (self.displayHandoff.resizeRequested && [self.session.diagnosticCounters[@"probeInterrupted"] boolValue]) {
+        [self updateDisplayModeRestoration]; return;
+    }
     if (self.deferredTextReviewFailure) {
         [self advanceRecoveryTo:CompanionVNCRecoveryPhaseIdle];
         [self revealDeferredTextReviewFailure];
@@ -2122,7 +2127,7 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
     }
     [self updateTrackpadFeedback];
     BOOL verifyIdentity = self.recoveryStage == 112;
-    BOOL displayFailure = self.recoveryStage >= 116 && self.recoveryStage <= 120;
+    BOOL displayFailure = self.recoveryStage >= 116 && self.recoveryStage <= 121;
     BOOL canRetryMode = self.displayHandoff.failedPreset != nil && [self.credentialState loginForResume] != nil;
     // Keep the editors mounted so they can reappear with the same state if login is needed.
     BOOL hideFields = progress || verifyIdentity || (displayFailure && canRetryMode);
@@ -2754,10 +2759,31 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
 - (void)expireDisplayModeVerification:(CompanionVNCSession *)owner generation:(NSUInteger)generation {
     if (self.session != owner || ![self.displayHandoff.verificationDeadline isEqual:@(generation)]
         || !self.displayHandoff.active || !self.connectionForegroundAvailable) return;
-    // Once sent, the socket owner enforces the sequential layout and image limits.
+    // Written requests use the phase-aware watchdog, including during blocked writes.
     if (self.displayHandoff.resizeRequested && [owner.diagnosticCounters[@"probeRequestWritten"] boolValue]) return;
     NSInteger failure = self.displayHandoff.targetPreset > 0 ? 117 : 118;
     [self retireDisplayModeOwner]; [self showConnectionFailureStage:failure]; [self reportDiagnostics:self.latestCounters];
+}
+- (void)scheduleVirtualDisplayHandoffDeadline:(CompanionVNCSession *)owner generation:(NSUInteger)generation {
+    __weak CompanionVNCViewer *weak = self; __weak CompanionVNCSession *weakOwner = owner;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 250 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+        [weak checkVirtualDisplayHandoffDeadline:weakOwner generation:generation];
+    });
+}
+- (void)checkVirtualDisplayHandoffDeadline:(CompanionVNCSession *)owner generation:(NSUInteger)generation {
+    CompanionVNCDisplayHandoff *handoff = self.displayHandoff;
+    if (!owner || self.session != owner || ![handoff.verificationDeadline isEqual:@(generation)]
+        || !handoff.resizeRequested || !self.connectionForegroundAvailable) return;
+    NSInteger stage = [owner expiredVirtualDisplayHandoffStageAtTime:NSProcessInfo.processInfo.systemUptime];
+    if (!stage) {
+        [self scheduleVirtualDisplayHandoffDeadline:owner generation:generation];
+        return;
+    }
+    // A frame may already be presented while its state callback is queued.
+    NSDictionary *stats = owner.diagnosticCounters;
+    [self updateDisplayModeRestoration];
+    if (!handoff.resizeRequested || self.session != owner || self.displayHandoff != handoff) return;
+    [self retireDisplayModeOwner]; [self showConnectionFailureStage:stage]; [self reportDiagnostics:stats];
 }
 - (void)armDisplayModeVerification {
     CompanionVNCDisplayHandoff *handoff = self.displayHandoff;
@@ -2769,16 +2795,20 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 40 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         if (weak.displayHandoff == handoff) [weak expireDisplayModeVerification:owner generation:generation];
     });
+    if (handoff.resizeRequested) [self scheduleVirtualDisplayHandoffDeadline:self.session generation:generation];
 }
 - (void)updateDisplayModeRestoration {
     CompanionVNCDisplayHandoff *handoff = self.displayHandoff;
     if (!handoff.active || handoff.requiresCleanup || handoff.retryScheduled || !self.connectionForegroundAvailable) return;
-    [self armDisplayModeVerification];
     NSDictionary *stats = self.session.diagnosticCounters;
+    if (handoff.resizeRequested && [stats[@"probeInterrupted"] boolValue]) {
+        [self retireDisplayModeOwner]; [self showConnectionFailureStage:121]; [self reportDiagnostics:stats]; return;
+    }
+    [self armDisplayModeVerification];
     if (self.displayHandoff.targetPreset > 0 && self.displayHandoff.resizeRequested
         && ([stats[@"probeOutcome"] integerValue] == 3 || [stats[@"probeOutcome"] integerValue] == 4)) {
         NSInteger failure = [stats[@"failureStage"] integerValue] == 120 ? 120 : 117;
-        if ([stats[@"probeRequestWritten"] isEqual:@NO]) failure = 119;
+        if (!self.session.running && [stats[@"probeRequestWritten"] isEqual:@NO]) failure = 119;
         [self retireDisplayModeOwner]; [self showConnectionFailureStage:failure]; [self reportDiagnostics:stats]; return;
     }
     if (!self.session.desktopFrameReady || self.restoreViewportPending || !stats[@"layoutVirtual"]) return;
@@ -2793,6 +2823,7 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
         if ([self desktopSizeMatchesPreset:self.displayHandoff.targetPreset]) { [self completeDisplayModeVerified:YES]; return; }
         if (!handoff.resizeRequested && [self.session requestDesktopSizePresetForHandoff:handoff.targetPreset]) {
             handoff.phase = CompanionVNCDisplayHandoffPhaseWaitingForResize;
+            [self scheduleVirtualDisplayHandoffDeadline:self.session generation:handoff.verificationGeneration];
         }
         return;
     }

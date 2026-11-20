@@ -102,7 +102,7 @@ typedef NS_ENUM(NSInteger, CompanionVNCInputAdmission) {
     NSArray *_desktopResizeDisplays;
     CompanionVNCDisplayLayout _desktopCatalogueLayout;
     NSDictionary *_desktopCatalogue;
-    BOOL _desktopResizeLayoutSeen, _desktopResizeLateEligible, _desktopResizeRequestWritten;
+    BOOL _desktopResizeLayoutSeen, _desktopResizeLateEligible, _desktopResizeRequestWritten, _desktopResizeInterrupted;
     NSUInteger _desktopResizeLayoutProbes, _desktopResizeLayoutsAtWrite, _physicalLayoutAdoptions, _selectionDeliveryPreserved;
     double _desktopResizeStarted, _desktopResizeLayoutMS, _desktopResizeCompleteMS;
     // Physical entries include zero-cost cleanup barriers. All producers use
@@ -225,6 +225,9 @@ typedef NS_ENUM(NSInteger, CompanionVNCInputAdmission) {
 - (BOOL)requestFullDesktop:(rfbClient *)client;
 - (BOOL)maintainDesktopBaseline:(rfbClient *)client now:(double)now;
 - (BOOL)checkVirtualImageDeadline:(double)now;
+- (BOOL)matchesRequestedDesktopLayoutLocked;
+- (BOOL)waitingForVirtualPresentationLocked;
+- (void)interruptVirtualHandoffLocked;
 - (BOOL)resumeDesktopPull:(rfbClient *)client;
 - (void)recordDesktopSwitchLocked:(double)now;
 - (BOOL)waitingForDesktopLayout;
@@ -337,7 +340,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
         _desktopResizeHandoff = handoff; _desktopResizeLateEligible = YES;
         _desktopResizeAdmitted = NSProcessInfo.processInfo.systemUptime; _desktopResizeSampleRecorded = NO;
         _desktopResizeSize = size; _desktopResizeSelection = NO; _desktopResizePending = YES; _desktopResizeOutcome = 1;
-        _desktopResizeRequestWritten = NO;
+        _desktopResizeRequestWritten = _desktopResizeInterrupted = NO;
         _inputReady = NO; _releaseInputRequested = YES; _inputEpoch++; _presentationEpoch++;
         [_events removeAllObjects]; [self retireNativeGesturesLocked]; [self retirePointerInteractionLocked];
     }
@@ -365,7 +368,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
         _desktopResizeAdmitted = NSProcessInfo.processInfo.systemUptime; _desktopResizeSampleRecorded = NO;
         _desktopResizeLateEligible = NO; _desktopResizeHandoff = NO;
         _desktopResizeDisplayID = identifier; _desktopResizeSelection = YES; _desktopResizePending = YES; _desktopResizeOutcome = 1;
-        _desktopResizeRequestWritten = NO;
+        _desktopResizeRequestWritten = _desktopResizeInterrupted = NO;
         _desktopResizePixelWidth = identifier ? [display[@"pixelWidth"] intValue] : _desktopCatalogueLayout.width;
         _desktopResizePixelHeight = identifier ? [display[@"pixelHeight"] intValue] : _desktopCatalogueLayout.height;
         _desktopResizeLayoutSeen = NO;
@@ -376,7 +379,8 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (BOOL)processDesktopSizeChange:(rfbClient *)client {
     [_lock lock];
-    if (!_desktopResizeAwaiting) _virtualImageStarted = 0;
+    if (_desktopResizeHandoff && _desktopResizeInterrupted) { [_lock unlock]; return NO; }
+    if (!_desktopResizeAwaiting && ![self waitingForVirtualPresentationLocked]) _virtualImageStarted = 0;
     // A UI request can arrive after this loop iteration captured its release
     // flags. Wait for the next iteration to actually release sent input first.
     if (_desktopResizePending && _releaseInputRequested) { [_lock unlock]; return YES; }
@@ -385,17 +389,14 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
         && !_stopping && !_reviewInputSuspended && (!_displayHandoffInputBlocked || _desktopResizeHandoff) && !_interruptionInputSuspended;
     if (pending) _desktopResizePending = NO;
     BOOL cancel = (_desktopResizeAwaiting && !allowed) || (pending && (!allowed || !_coverageLayoutValid));
-    BOOL exactRequestedLayout = _desktopResizeLayoutSeen && _coverageLayoutValid
-        && _coverageLayout.width == _desktopResizePixelWidth && _coverageLayout.height == _desktopResizePixelHeight
-        && (_desktopResizeSelection
-            ? CompanionVNCDesktopSelectionMatches(&_coverageLayout, &_desktopCatalogueLayout, _desktopResizeDisplayID)
-            : (_coverageLayout.count == 1 && _desktopResizeVirtualLayout));
+    BOOL exactRequestedLayout = [self matchesRequestedDesktopLayoutLocked];
     double layoutAge = NSProcessInfo.processInfo.systemUptime - _desktopResizeStarted;
     BOOL timedOut = _desktopResizeAwaiting && (_desktopResizeSelection
         ? CompanionVNCDesktopLayoutTimedOut(layoutAge, exactRequestedLayout)
         : CompanionVNCVirtualLayoutTimedOut(layoutAge, exactRequestedLayout || _virtualImageStarted > 0));
     BOOL handoffTimedOut = timedOut && _desktopResizeHandoff;
     if (cancel || timedOut) {
+        _virtualImageStarted = 0;
         if (cancel) _desktopResizeLateEligible = NO;
         BOOL differentVirtualSize = timedOut && !_desktopResizeSelection && _desktopResizeVirtualLayout && _coverageLayoutValid
             && _coverageLayout.count == 1 && _coverageLayout.width == client->width && _coverageLayout.height == client->height
@@ -405,6 +406,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
         [self recordDesktopSwitchLocked:NSProcessInfo.processInfo.systemUptime];
     }
     if (pending && allowed && _coverageLayoutValid) {
+        _virtualImageStarted = 0;
         _desktopResizeLayoutSeen = NO; _desktopResizeLayoutProbes = 0; _desktopResizeLayoutsAtWrite = _layoutMessages; _desktopResizeAwaiting = YES; _desktopResizeStarted = NSProcessInfo.processInfo.systemUptime; _desktopResizeLayoutMS = _desktopResizeCompleteMS = 0; _desktopResizeRequests++;
         _desktopResizeQueueMS = MAX(0, (_desktopResizeStarted - _desktopResizeAdmitted) * 1000);
         _desktopResizeRefreshRequests = _desktopResizePreLayoutRects = 0; _desktopResizePreLayoutCPU = 0;
@@ -419,21 +421,22 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     [_lock unlock];
     if (handoffTimedOut) return NO;
     if (cancel || timedOut) {
-        _virtualImageStarted = 0;
         if (![self resetBaseline:client]) return NO;
         _desktopRefreshPending = YES;
     }
     if (send) {
         // Physical selection reports its new geometry on the existing update
         // stream. Keep that stream alive; renew only after matching metadata.
-        _virtualImageStarted = 0;
         if ((!keepDelivery && ![self stopAutomaticUpdates:client]) || ![self resetBaseline:client]) return NO;
         uint8_t packet[CompanionVNCDesktopPacketBytes]; size_t length = selection ? 8 : CompanionVNCDesktopPacketBytes;
         if (selection) CompanionVNCDesktopSelectionPacket(identifier, packet);
         else if (!CompanionVNCDesktopDisplayPacket(size, packet, sizeof(packet))) return NO;
         CompanionVNCSwitchReadSnapshot readSnapshot = [self switchReadSnapshot];
         [_lock lock]; _desktopResizeUnreadAtWrite = UnreadRFBBytes(client); _desktopResizeRectsAtWrite = _updates; _desktopResizeCPUMSAtWrite = WorkerCPUTimeMS();
-        _desktopReadAtWrite = readSnapshot; [_lock unlock];
+        _desktopReadAtWrite = readSnapshot;
+        BOOL interrupted = _desktopResizeHandoff && _desktopResizeInterrupted;
+        [_lock unlock];
+        if (interrupted) return NO;
         if (!WriteToRFBServer(client, (char *)packet, (unsigned int)length)) return NO;
         [_lock lock];
         _desktopResizeRequestWritten = YES;
@@ -471,6 +474,19 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     [_lock unlock]; return ready;
 }
 - (BOOL)displayHandoffInputBlocked { [_lock lock]; BOOL value = _displayHandoffInputBlocked; [_lock unlock]; return value; }
+- (NSInteger)expiredVirtualDisplayHandoffStageAtTime:(NSTimeInterval)now {
+    [_lock lock];
+    NSInteger stage = 0;
+    if (_desktopResizeHandoff && _desktopResizeRequestWritten && _displayHandoffInputBlocked
+        && !_desktopResizeInterrupted && !_paused && !_stopping
+        && (_desktopResizeAwaiting || [self waitingForVirtualPresentationLocked])) {
+        if (_virtualImageStarted > 0) {
+            if (CompanionVNCVirtualImageTimedOut(now - _virtualImageStarted, now - _virtualImageLastProgress)) stage = 120;
+        } else if (CompanionVNCVirtualLayoutTimedOut(now - _desktopResizeStarted, false)) stage = 117;
+    }
+    [_lock unlock];
+    return stage;
+}
 - (void)setDisplayHandoffInputBlocked:(BOOL)value {
     [_lock lock];
     if (_displayHandoffInputBlocked != value) {
@@ -692,6 +708,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     if (!_running || !_established || _stopping || _paused) { [_lock unlock]; if (completion) completion(); return; }
     [self retireNativeGesturesLocked];
     _desktopResizeLateEligible = NO;
+    [self interruptVirtualHandoffLocked];
     [self retirePointerInteractionLocked]; _paused = YES; _inputEpoch++; _pauses++; _inputReady = NO; _releaseInputRequested = YES; _presentationEpoch++;
     [_events removeAllObjects]; _queuedPointerMask = 0; _pauseCompletion = [completion copy];
 #if TARGET_OS_IOS
@@ -703,6 +720,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     [_lock lock];
     if (_running && !_paused && !_stopping && !_interruptionInputSuspended) {
         _desktopResizeLateEligible = NO;
+        [self interruptVirtualHandoffLocked];
         [self retirePointerInteractionLocked]; _interruptionInputSuspended = YES; _releaseInputRequested = YES; _inputEpoch++;
 #if TARGET_OS_IOS
         [self cancelComposedTextLocked];
@@ -710,6 +728,12 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
         [self retireNativeGesturesLocked]; [_events removeAllObjects]; _queuedPointerMask = 0;
     }
     [_lock unlock]; dispatch_semaphore_signal(_wake);
+}
+- (void)interruptVirtualHandoffLocked {
+    if (_desktopResizeHandoff && _displayHandoffInputBlocked
+        && (_desktopResizePending || _desktopResizeAwaiting || [self waitingForVirtualPresentationLocked])) {
+        _desktopResizeInterrupted = YES;
+    }
 }
 - (void)resumeInputAfterInterruption {
     [_lock lock];
@@ -762,7 +786,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     _desktopResizeUnreadAtWrite = _desktopResizeRefreshRequests = _desktopResizePreLayoutRects = 0; _desktopResizePreLayoutCPU = 0;
     _desktopResizeDisplayID = 0; _desktopResizePixelWidth = _desktopResizePixelHeight = 0;
     _desktopResizeHandoff = _desktopResizeLateEligible = NO;
-    _desktopResizeRequestWritten = NO;
+    _desktopResizeRequestWritten = _desktopResizeInterrupted = NO;
     _virtualImageStarted = 0;
     _readingVirtualImagePixels = NO;
     _handshakeStage = 0; _layoutDiagnostics = @{}; _layoutMessages = 0; _baselinePresented = NO; _coverageLayoutValid = NO; _metadataCallback = NO;
@@ -1062,6 +1086,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     // Invoked synchronously by the existing parser on its sole socket owner.
     // Boundaries requiring release/reconfiguration remain on the outer loop.
     [_lock lock];
+    if (_desktopResizeHandoff && _desktopResizeInterrupted) { [_lock unlock]; return NO; }
     BOOL waitingForVirtualLayout = _desktopResizeHandoff && _desktopResizeAwaiting
         && _desktopResizeRequestWritten && _virtualImageStarted == 0;
     BOOL timingVirtualImage = _desktopResizeAwaiting && _virtualImageStarted > 0;
@@ -1089,27 +1114,38 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     _readingVirtualImagePixels = _virtualImageStarted > 0 && rect
         && _coverageLayoutValid && _desktopResizeVirtualLayout && _coverageLayout.count == 1
         && _coverageLayout.width == _desktopResizePixelWidth && _coverageLayout.height == _desktopResizePixelHeight
+        && _coverage.width == _desktopResizePixelWidth && _coverage.height == _desktopResizePixelHeight
         && CompanionVNCCoverageNeedsRect(&_coverage, rect->x, rect->y, rect->w, rect->h);
 }
 - (void)recordPixelProgress {
-    if (_readingVirtualImagePixels) _virtualImageLastProgress = NSProcessInfo.processInfo.systemUptime;
+    if (!_readingVirtualImagePixels) return;
+    [_lock lock]; _virtualImageLastProgress = NSProcessInfo.processInfo.systemUptime; [_lock unlock];
 }
 - (BOOL)checkVirtualImageDeadline:(double)now {
     if (_virtualImageStarted == 0 || !CompanionVNCVirtualImageTimedOut(now - _virtualImageStarted, now - _virtualImageLastProgress)) return YES;
     [_lock lock];
-    BOOL expired = _desktopResizeAwaiting;
+    BOOL expired = _desktopResizeAwaiting && !(_desktopResizeHandoff && _desktopResizeInterrupted);
     if (expired && _failureStage != 120) { _failureStage = 120; _desktopResizeTimedOut++; }
     [_lock unlock];
     return !expired;
+}
+- (BOOL)matchesRequestedDesktopLayoutLocked {
+    return _desktopResizeLayoutSeen && _coverageLayoutValid
+        && _coverageLayout.width == _desktopResizePixelWidth && _coverageLayout.height == _desktopResizePixelHeight
+        && (_desktopResizeSelection
+            ? CompanionVNCDesktopSelectionMatches(&_coverageLayout, &_desktopCatalogueLayout, _desktopResizeDisplayID)
+            : (_coverageLayout.count == 1 && _desktopResizeVirtualLayout));
+}
+- (BOOL)waitingForVirtualPresentationLocked {
+    return _desktopResizeHandoff && _displayHandoffInputBlocked && _desktopResizeOutcome == 2;
 }
 - (BOOL)shouldYieldForDisplayHandoff:(rfbClient *)client {
     if (!CompanionVNCCoverageReady(&_coverage)) return NO;
     [_lock lock];
     BOOL startupHandoff = _prioritizeVirtualDisplayHandoff && _displayHandoffInputBlocked
         && _appleGestureServer && _desktopResizeRequests == 0;
-    BOOL targetReady = _desktopResizeAwaiting && _virtualImageStarted > 0 && _desktopResizeVirtualLayout
-        && _coverageLayout.count == 1 && _coverageLayout.width == client->width && _coverageLayout.height == client->height
-        && client->width == _desktopResizePixelWidth && client->height == _desktopResizePixelHeight;
+    BOOL targetReady = (_desktopResizeAwaiting || [self waitingForVirtualPresentationLocked]) && _virtualImageStarted > 0
+        && [self matchesRequestedDesktopLayoutLocked] && client->width == _desktopResizePixelWidth && client->height == _desktopResizePixelHeight;
     BOOL yield = _coverageLayoutValid && (startupHandoff || targetReady)
         && _running && _established && !_stopping && !_paused && !_inputOnly && !_modeChanged && !_resumeRequested
         && !_reviewInputSuspended && !_interruptionInputSuspended;
@@ -1157,10 +1193,12 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     [_lock lock]; BOOL allowed = _running && _established && !_inputOnly && !_paused && !_stopping;
     BOOL presented = _baselinePresented;
     BOOL waitingForMatchingVirtual = _desktopResizeAwaiting && !_desktopResizeSelection && _virtualImageStarted == 0;
+    BOOL virtualImage = _desktopResizeAwaiting && _virtualImageStarted > 0;
+    BOOL wrongVirtualLayout = virtualImage && (![self matchesRequestedDesktopLayoutLocked]
+        || client->width != _desktopResizePixelWidth || client->height != _desktopResizePixelHeight);
     [_lock unlock];
     if (!allowed) return YES;
-    BOOL needsPixels = !CompanionVNCCoverageReady(&_coverage);
-    BOOL virtualImage = _virtualImageStarted > 0;
+    BOOL needsPixels = !CompanionVNCCoverageReady(&_coverage) || wrongVirtualLayout;
     double started = virtualImage ? _virtualImageStarted : _baselineStarted;
     double lastProgress = virtualImage ? _virtualImageLastProgress : _baselineLastProgress;
     int action = needsPixels && !waitingForMatchingVirtual ? CompanionVNCBaselineRefreshAction(now - started, now - _lastFullRefresh,
@@ -1185,7 +1223,8 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 - (BOOL)resumeDesktopPull:(rfbClient *)client {
     [_lock lock];
     BOOL send = _routinePullPausedForSwitch && _running && _established && _inputReady && _baselinePresented
-        && !_desktopResizeAwaiting && !_desktopResizePending && !_paused && !_inputOnly && !_stopping && !_overflow;
+        && !_desktopResizeAwaiting && !_desktopResizePending && ![self waitingForVirtualPresentationLocked]
+        && !_paused && !_inputOnly && !_stopping && !_overflow;
     if (send) _routinePullPausedForSwitch = NO;
     [_lock unlock];
     if (!send) return YES;
@@ -1407,14 +1446,16 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     if (_metadataCallback) { _metadataCallback = NO; return; }
     size_t before = _coverage.received;
     if (!CompanionVNCCoverageReady(&_coverage)) CompanionVNCCoverageRect(&_coverage, x, y, width, height, false);
+    [_lock lock];
     if (_coverage.received > before) {
         _baselineLastProgress = NSProcessInfo.processInfo.systemUptime;
-        if (_virtualImageStarted > 0 && _coverageLayoutValid && _desktopResizeVirtualLayout
-            && _coverageLayout.count == 1 && _coverageLayout.width == _desktopResizePixelWidth
-            && _coverageLayout.height == _desktopResizePixelHeight) _virtualImageLastProgress = _baselineLastProgress;
+        if (_desktopResizeAwaiting && _virtualImageStarted > 0 && [self matchesRequestedDesktopLayoutLocked]
+            && _coverage.width == _desktopResizePixelWidth && _coverage.height == _desktopResizePixelHeight) {
+            _virtualImageLastProgress = _baselineLastProgress;
+        }
     }
     _dirty = YES;
-    [_lock lock]; _updates++; _receivedPixels = _coverage.received; _expectedPixels = _coverage.expected; [_lock unlock];
+    _updates++; _receivedPixels = _coverage.received; _expectedPixels = _coverage.expected; [_lock unlock];
 }
 - (rfbBool)displayLayout:(rfbClient *)client {
     return [self displayLayout:client encoding:1105];
@@ -1739,11 +1780,10 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 }
 - (void)publishFrame:(rfbClient *)client {
     [_lock lock];
-    BOOL probeCandidateFrame = _desktopResizeLayoutSeen && client->width == _desktopResizePixelWidth && client->height == _desktopResizePixelHeight
-        && _coverageLayoutValid && _coverageLayout.width == client->width && _coverageLayout.height == client->height
-        && (_desktopResizeSelection ? (_desktopResizeLayoutSeen && CompanionVNCDesktopSelectionMatches(&_coverageLayout, &_desktopCatalogueLayout, _desktopResizeDisplayID))
-            : (_coverageLayout.count == 1 && _desktopResizeVirtualLayout));
-    BOOL probeHold = _desktopResizePending || (_desktopResizeAwaiting && !probeCandidateFrame);
+    BOOL probeCandidateFrame = [self matchesRequestedDesktopLayoutLocked]
+        && client->width == _desktopResizePixelWidth && client->height == _desktopResizePixelHeight;
+    BOOL probeHold = _desktopResizePending || (_desktopResizeAwaiting && !probeCandidateFrame)
+        || (_desktopResizeHandoff && _desktopResizeInterrupted);
     [_lock unlock];
     if (probeHold) return;
     double now = NSProcessInfo.processInfo.systemUptime;
@@ -1768,14 +1808,16 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     [_lock unlock];
     dispatch_async(dispatch_get_main_queue(), ^{
         double deliveredAt = NSProcessInfo.processInfo.systemUptime;
-        [self->_lock lock]; BOOL valid = generation == self->_generation && epoch == self->_presentationEpoch && self->_running && !self->_stopping && !self->_paused;
+        [self->_lock lock]; BOOL valid = generation == self->_generation && epoch == self->_presentationEpoch
+            && self->_running && !self->_stopping && !self->_paused && !(self->_desktopResizeHandoff && self->_desktopResizeInterrupted);
         if (generation == self->_generation) self->_framePending = NO; [self->_lock unlock];
         if (valid && frame && self.frameHandler) self.frameHandler(frame);
         double callbackMS = (NSProcessInfo.processInfo.systemUptime - deliveredAt) * 1000;
         if (valid && frame) {
             [self->_lock lock];
             // The socket owner can reset the baseline while frameHandler lays out UI.
-            valid = generation == self->_generation && epoch == self->_presentationEpoch && self->_running && !self->_stopping && !self->_paused;
+            valid = generation == self->_generation && epoch == self->_presentationEpoch
+                && self->_running && !self->_stopping && !self->_paused && !(self->_desktopResizeHandoff && self->_desktopResizeInterrupted);
             if (!valid) { [self->_lock unlock]; return; }
             self->_frameMainQueueMaxMS = MAX(self->_frameMainQueueMaxMS, (deliveredAt - queuedAt) * 1000);
             self->_frameCallbackMaxMS = MAX(self->_frameCallbackMaxMS, callbackMS);
@@ -1822,6 +1864,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     stats[@"appleDisplayProtocol"] = @(_appleGestureServer);
     stats[@"probeRequests"] = @(_desktopResizeRequests); stats[@"probeAccepted"] = @(_desktopResizeAccepted);
     stats[@"probeRequestWritten"] = @(_desktopResizeRequestWritten); stats[@"serverReadFailure"] = @(_readFailure);
+    stats[@"probeInterrupted"] = @(_desktopResizeInterrupted);
     stats[@"switches"] = [_desktopSwitchSamples copy] ?: @[];
     stats[@"fullRefreshRequests"] = @(_fullRefreshRequests); stats[@"coalescedFullRefreshes"] = @(_coalescedFullRefreshes);
     stats[@"routinePullRestarts"] = @(_routinePullRestarts); stats[@"fullRefreshRetries"] = @(_fullRefreshRetries); stats[@"baselineReady"] = @(_baselinePresented);

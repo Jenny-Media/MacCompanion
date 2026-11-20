@@ -29,6 +29,8 @@ typedef UIImage CompanionVNCImage;
 @property(nonatomic) BOOL displayHandoffInputBlocked;
 /// Set before connecting a fresh owner that will verify a Virtual Display handoff.
 @property(nonatomic) BOOL prioritizeVirtualDisplayHandoff;
+/// The expired phase of a written mode switch, or zero while it can proceed.
+- (NSInteger)expiredVirtualDisplayHandoffStageAtTime:(NSTimeInterval)now;
 /// Tracks admitted local gestures independently from iOS host cursor observations.
 @property(nonatomic) BOOL localPointerInteractionActive;
 /// A ready foreground Apple desktop with validated display metadata.

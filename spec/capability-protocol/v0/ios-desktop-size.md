@@ -84,7 +84,8 @@ both the validated layout and complete source pixels, it yields at the message
 boundary until the viewer has verified the baseline and either queued the
 virtual request or verified that the requested mode is already active. The
 socket owner services an admitted request before decoding another update.
-Verify the requested mode and complete pixels before enabling input. Only a
+When the requested image is complete, keep that message boundary until the
+viewer confirms the mode and enables input. Only a
 non-Apple protocol may take the initial metadata-free legacy fallback.
 A known Apple owner must await display metadata even when a complete image
 arrives first. Mirror requires positive layout dimensions matching the fresh
@@ -98,8 +99,11 @@ recovery; 117 means the requested virtual display could not be established; 118
 means display metadata did not arrive within forty foreground seconds after
 establishment or resumption. Stage 119 means the connection ended before the
 virtual request was written. Stage 120 means the matching virtual layout arrived
-but its first image reached a deadline. Once the request is written, the
-layout and image deadlines apply independently of the forty-second guard.
+but its first image reached a deadline. Stage 121 means inactivity interrupted
+the switch. Keep the previous choice and offer an explicit retry with private
+login recovery. A resumed viewer cannot accept that interrupted request.
+Once the request is written, an owner-bound foreground watchdog enforces the
+same layout and image budgets even when a socket operation is blocked.
 Interruptions invalidate the old timer. Resumed verification gets its own
 bounded timer on that owner. Preserve
 these failures across intentional stop callbacks and manual retry, including
@@ -155,8 +159,9 @@ virtual layout arrives, allow thirty seconds for the complete first image and
 expire after eight seconds without progress. Decoded new coverage and incoming
 payload bytes for a pixel rectangle with uncovered required area count as
 progress. Repeated metadata, cursor updates and already-covered rectangles do
-not extend the allowance. A layout reset within this request cannot restart
-the hard cap. Physical monitor baselines keep their existing timing.
+not extend the allowance. Complete pixels for a different layout do not excuse
+the deadline. A layout reset within this request cannot restart the hard cap.
+Physical monitor baselines keep their existing timing.
 Never stretch old pixels or reopen input before the new frame is usable.
 
 ## Evidence boundary
