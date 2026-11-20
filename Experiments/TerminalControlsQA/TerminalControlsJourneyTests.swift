@@ -1660,6 +1660,43 @@ import UIKit
         closeSettings(app)
     }
 
+    func testAppSettingsUpdatesTrackpadKeysInTheOpenSession() {
+        continueAfterFailure = false
+        let app = XCUIApplication(bundleIdentifier: "dev.maccompanion.controlsqa.ios")
+        app.launchEnvironment["MACCOMPANION_CONTROLS_FUNCTIONAL_TEST"] = "1"
+        app.launchEnvironment["MACCOMPANION_CONTROLS_REMOTE_MODE"] = "trackpad"
+        app.launchEnvironment["MACCOMPANION_COMPACT_TRACKPAD_PICKER_QA"] = "1"
+        app.launch()
+        defer { app.terminate() }
+        app.buttons["controls-qa-remote"].tap()
+        let tab = app.buttons["Tab"].firstMatch
+        XCTAssertTrue(tab.waitForExistence(timeout: 5))
+
+        func choose(_ title: String, summary: String) {
+            app.buttons["App Settings"].tap()
+            app.buttons["Controls"].tap()
+            app.buttons["Trackpad & Keyboard"].tap()
+            let picker = app.buttons["trackpad-compact-row-picker"]
+            XCTAssertTrue(picker.waitForExistence(timeout: 5))
+            picker.tap()
+            let pickerBar = app.navigationBars["Trackpad Keys"]
+            XCTAssertTrue(pickerBar.waitForExistence(timeout: 5))
+            app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title)).firstMatch.tap()
+            pickerBar.buttons.element(boundBy: 0).tap()
+            XCTAssertEqual(picker.value as? String, summary)
+            app.buttons["terminal-controls-cancel"].tap()
+            app.navigationBars["Controls"].buttons.element(boundBy: 0).tap()
+            app.navigationBars["App Settings"].buttons["Done"].tap()
+        }
+
+        choose("Hide Key Row", summary: "Hidden")
+        XCTAssertTrue(tab.waitForNonExistence(timeout: 5), "The open dock should drop the key row")
+        XCTAssertTrue(app.buttons["Type on Mac"].isHittable)
+        XCTAssertTrue(app.buttons["Compose Text"].isHittable)
+        choose("Default Navigation Keys", summary: "Default Navigation Keys")
+        XCTAssertTrue(tab.waitForExistence(timeout: 5), "The open dock should restore the key row")
+    }
+
     func testRemoteControlsRecoveryKeepsPointerSettingsWithUnreadableData() async throws {
         for mode in ["desktop", "trackpad"] {
             let (app, store) = try await launchPro(remoteMode: mode, failRead: true)

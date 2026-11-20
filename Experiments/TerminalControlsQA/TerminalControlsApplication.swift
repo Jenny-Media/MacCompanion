@@ -381,6 +381,16 @@ private struct TerminalRemoteControlsHost: UIViewControllerRepresentable {
         output.text = "Remote events: 0"; output.accessibilityIdentifier = "remote-qa-events"; output.textAlignment = .center
         let stack = UIStackView(arrangedSubviews: [edit, output, done]); stack.axis = .vertical; stack.spacing = 16
         stack.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(stack)
+        if ProcessInfo.processInfo.environment["MACCOMPANION_COMPACT_TRACKPAD_PICKER_QA"] == "1" {
+            let settings = UIButton(type: .system)
+            settings.setTitle("App Settings", for: .normal)
+            settings.addAction(.init { [weak self] _ in
+                let controller = UIHostingController(rootView: DirectSessionSettingsV1().directAppearance())
+                controller.modalPresentationStyle = .pageSheet
+                self?.present(controller, animated: true)
+            }, for: .touchUpInside)
+            stack.insertArrangedSubview(settings, at: 0)
+        }
         if previewProbe {
             previewStatus.text = "frames=0; visible=0; max=0"
             previewStatus.accessibilityIdentifier = "remote-qa-preview"

@@ -391,6 +391,7 @@ struct TerminalControlsProfile: Codable, Equatable {
     }
     func rowTitle(_ id: UUID) -> String { "Row \((resolvedRows.firstIndex { $0.id == id } ?? 0) + 1)" }
     static let compactTrackpadRowPreference = "direct-remote-compact-trackpad-row"
+    static let compactTrackpadRowChanged = Notification.Name("DirectCompactTrackpadRowChanged")
     static let compactTrackpadExpandTitle = "Show Keyboard Rows"
     var hasExpandableKeyboardRows: Bool { resolvedRows.contains { $0.extra && $0.hidden != true } }
     func compactTrackpadPlacements(in row: TerminalKeyboardRow, hasPro: Bool) -> [TerminalBarPlacement] {

@@ -21,7 +21,12 @@ struct TerminalControlsSettings: View {
     private var compactTrackpadSelection: Binding<CompactTrackpadKeyRow> {
         Binding(
             get: { selectedCompactTrackpadRow },
-            set: { if readable && DirectAppLockV1.shared.canAccess { compactTrackpadRow = $0.storedValue } }
+            set: { selection in
+                let storedValue = selection.storedValue
+                guard readable, DirectAppLockV1.shared.canAccess, storedValue != compactTrackpadRow else { return }
+                compactTrackpadRow = storedValue
+                NotificationCenter.default.post(name: TerminalControlsProfile.compactTrackpadRowChanged, object: nil)
+            }
         )
     }
     private var compactTrackpadTitle: String {
