@@ -50,11 +50,15 @@ for row in catalogue['cases']:
     checks.append(check + ' }')
 for row in fixture['baselineRefreshPolicy']['cases']:
     expected = 2 if row['expired'] else 1 if row['retry'] else 0
-    checks.append(f'assert(CompanionVNCBaselineRefreshAction({row["elapsed"]},{row["lastRequestAge"]},{row["lastProgressAge"]},{row["retries"]})=={expected});')
+    checks.append(f'assert(CompanionVNCBaselineRefreshAction({row["elapsed"]},{row["lastRequestAge"]},{row["lastProgressAge"]},{row["retries"]},false)=={expected});')
 for row in fixture['displayLayoutDeadlineCases']:
     checks.append(f'assert(CompanionVNCDesktopLayoutTimedOut({row["elapsed"]},{str(row["exactLayout"]).lower()})=={str(row["timedOut"]).lower()});')
 for row in fixture['virtualLayoutDeadlineCases']:
     checks.append(f'assert(CompanionVNCVirtualLayoutTimedOut({row["elapsed"]},{str(row["exactLayout"]).lower()})=={str(row["timedOut"]).lower()});')
+for row in fixture['virtualFirstImageDeadlineCases']:
+    expired = str(row['timedOut']).lower()
+    checks.append(f'assert(CompanionVNCVirtualImageTimedOut({row["elapsed"]},{row["lastProgressAge"]})=={expired});')
+    checks.append(f'assert((CompanionVNCBaselineRefreshAction({row["elapsed"]},1,{row["lastProgressAge"]},0,true)==CompanionVNCBaselineExpired)=={expired});')
 source = '\n'.join(['#include <assert.h>', '#include "CompanionVNCDesktopSize.h"',
     'int main(void){ uint8_t p[196]; CompanionVNCDesktopSize s;', *checks,
     'assert(!CompanionVNCDesktopSizeForPreset(0,&s)); assert(!CompanionVNCDesktopSizeForPreset(4,&s));',

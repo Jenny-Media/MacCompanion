@@ -574,9 +574,11 @@ the last virtual size separately from mirroring. Gesture display overrides
 stay on the device. Shared Mac records use the Screen Sharing fallback, and
 local backups carry the overrides and virtual size as optional preferences.
 
-Virtual creation allows twenty seconds for layout, then requires fresh complete
-pixels. Mirror includes a sixteen-second quiet allowance and at most one further
-unexpected-virtual recovery. The replacement must confirm the target layout and
+Virtual creation allows twenty seconds for layout, then up to thirty seconds for
+the first complete image while it continues to make progress. The image wait
+expires after eight seconds without progress. Mirror includes a sixteen-second
+quiet allowance and at most one further unexpected-virtual recovery. The
+replacement must confirm the target layout and
 fresh pixels; a virtual layout alone does not identify another viewer. Failed
 changes keep the saved mode, retain their specific error and allow explicit retry.
 Choose Display requests a host-selected stream using validated IDs. It retains the

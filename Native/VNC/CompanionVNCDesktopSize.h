@@ -115,10 +115,14 @@ static inline bool CompanionVNCDesktopLayoutTimedOut(double elapsed, bool exactL
 static inline bool CompanionVNCVirtualLayoutTimedOut(double elapsed, bool exactLayout) {
     return !isfinite(elapsed) || (!exactLayout && elapsed >= 20);
 }
+static inline bool CompanionVNCVirtualImageTimedOut(double elapsed, double progressAge) {
+    return !isfinite(elapsed) || !isfinite(progressAge) || elapsed >= 30 || progressAge >= 8;
+}
 
-// Baseline retries repair stalled coverage; progress never extends the deadline.
+// Baseline retries repair stalled coverage. A matched virtual layout has its own deadline.
 enum { CompanionVNCBaselineWait = 0, CompanionVNCBaselineRetry = 1, CompanionVNCBaselineExpired = 2 };
-static inline int CompanionVNCBaselineRefreshAction(double elapsed, double requestAge, double progressAge, unsigned retries) {
-    if (!isfinite(elapsed) || !isfinite(requestAge) || !isfinite(progressAge) || elapsed >= 8) return CompanionVNCBaselineExpired;
+static inline int CompanionVNCBaselineRefreshAction(double elapsed, double requestAge, double progressAge, unsigned retries, bool virtualImage) {
+    if (!isfinite(requestAge) || (virtualImage ? CompanionVNCVirtualImageTimedOut(elapsed, progressAge)
+        : !isfinite(elapsed) || !isfinite(progressAge) || elapsed >= 8)) return CompanionVNCBaselineExpired;
     return retries < 2 && requestAge >= 1 && progressAge >= 1 ? CompanionVNCBaselineRetry : CompanionVNCBaselineWait;
 }

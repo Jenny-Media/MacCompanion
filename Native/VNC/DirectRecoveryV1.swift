@@ -1004,7 +1004,7 @@ struct TerminalServerTrustView: View {
         case 7, 8, 111: return .loginRejected
         case 112: return .serverChanged
         case 113: return .connectionCancelled
-        case 114, 116, 117, 118: return .desktopUnavailable
+        case 114, 116...121: return .desktopUnavailable
         case 115: return .savedDataUnavailable
         case 101: return .inputPaused
         default: return hadFrame ? .desktopDisconnected : .desktopUnavailable
@@ -1021,6 +1021,9 @@ struct TerminalServerTrustView: View {
         case 116: message = "Your Mac is still using a virtual display."
         case 117: message = "Your Mac didn’t finish setting it up."
         case 118: message = "Your Mac didn’t provide the information needed to open this display."
+        case 119: message = "The connection ended before the request to switch displays reached your Mac."
+        case 120: message = "Your Mac switched displays, but the first image didn’t finish loading."
+        case 121: message = "Try again to finish switching displays."
         case 103: message = "The desktop image couldn’t be decoded. Reconnect to request a fresh image. Your login and view settings are kept."
         case 9: message = "This desktop exceeds the supported size limit. Reduce the Mac’s shared desktop size before retrying."
         default: message = nil
@@ -1032,6 +1035,9 @@ struct TerminalServerTrustView: View {
         case 116: title = "Mac screen isn’t ready"
         case 117: title = "Virtual display isn’t ready"
         case 118: title = "Display isn’t ready"
+        case 119: title = "Connection lost before switching displays"
+        case 120: title = "Virtual display image didn’t load"
+        case 121: title = "Display switch interrupted"
         default: return notice
         }
         return .init(reason: reason, title: title, message: notice.message, details: notice.details)
@@ -1044,7 +1050,7 @@ struct TerminalServerTrustView: View {
                               retry: @escaping @MainActor @Sendable () -> Void,
                               edit: @escaping @MainActor @Sendable () -> Void,
                               verify: @escaping @MainActor @Sendable () -> Void) -> UIViewController {
-        let modeFailure = (116...118).contains(stage)
+        let modeFailure = (116...121).contains(stage)
         let original = desktopNotice(stage: stage, hadFrame: hadFrame, port: port)
         let notice = textInterrupted ? DirectRecoveryNotice(reason: original.reason, title: original.title,
             message: original.message + " Text may have been partially sent. Check your Mac before sending it again; input won’t be replayed.",

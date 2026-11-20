@@ -2,7 +2,7 @@
 +++ b/src/libvncclient/sockets.c
 @@ -38,0 +39 @@
 +#include <time.h>
-@@ -46,0 +48,53 @@
+@@ -46,0 +48,66 @@
 +
 +/* Optional cooperative input service, installed only after authentication. */
 +static char companionReadServiceTag;
@@ -15,6 +15,12 @@
 +CompanionVNCGetReadService(rfbClient *client)
 +{
 +  return (const CompanionVNCReadService *)rfbClientGetClientData(client, &companionReadServiceTag);
++}
++void
++CompanionVNCReadPixelRectangle(rfbClient *client, const rfbRectangle *rect)
++{
++  const CompanionVNCReadService *service = CompanionVNCGetReadService(client);
++  if (service && service->pixelRectangle) service->pixelRectangle(client, rect);
 +}
 +static rfbBool
 +CompanionVNCServiceRead(rfbClient *client)
@@ -30,10 +36,17 @@
 +  return service ? service->metrics : NULL;
 +}
 +static void
++CompanionVNCRecordPixelProgress(rfbClient *client)
++{
++  const CompanionVNCReadService *service = CompanionVNCGetReadService(client);
++  if (service && service->pixelProgress) service->pixelProgress(client);
++}
++static void
 +CompanionVNCRecordSocketRead(rfbClient *client, unsigned int bytes)
 +{
 +  CompanionVNCReadMetrics *metrics = CompanionVNCGetReadMetrics(client);
 +  if (metrics) metrics->socketBytes += bytes;
++  CompanionVNCRecordPixelProgress(client);
 +}
 +static void
 +CompanionVNCRecordDelivered(rfbClient *client, unsigned int bytes)
@@ -56,32 +69,34 @@
 +  }
 +  return result;
 +}
-@@ -65 +119 @@
+@@ -65 +132 @@
 -  const int USECS_WAIT_PER_RETRY = 100000;
 +  const int USECS_WAIT_PER_RETRY = CompanionVNCGetReadService(client) ? 10000 : 100000;
-@@ -66,0 +121 @@
+@@ -66,0 +134 @@
 +  const unsigned int requestedBytes = n;
-@@ -114,0 +170,3 @@
+@@ -114,0 +183,5 @@
 +  if (!CompanionVNCServiceRead(client))
 +    return FALSE;
 +
-@@ -121,0 +180 @@
++  /* Read-ahead only becomes attributable once the decoder asks for it. */
++  if (n && client->buffered) CompanionVNCRecordPixelProgress(client);
+@@ -121,0 +195 @@
 +    CompanionVNCRecordDelivered(client, requestedBytes);
-@@ -136,0 +196,2 @@
+@@ -136,0 +211,2 @@
 +      if (!CompanionVNCServiceRead(client))
 +        return FALSE;
-@@ -165 +226 @@
+@@ -165 +241 @@
 -	    WaitForMessage(client, USECS_WAIT_PER_RETRY);
 +	    CompanionVNCWaitForRead(client, USECS_WAIT_PER_RETRY);
-@@ -177,0 +239 @@
+@@ -177,0 +254 @@
 +      if (i > 0) CompanionVNCRecordSocketRead(client, (unsigned int)i);
-@@ -188,0 +251,2 @@
+@@ -188,0 +266,2 @@
 +      if (!CompanionVNCServiceRead(client))
 +        return FALSE;
-@@ -214 +278 @@
+@@ -214 +293 @@
 -	    WaitForMessage(client, USECS_WAIT_PER_RETRY);
 +	    CompanionVNCWaitForRead(client, USECS_WAIT_PER_RETRY);
-@@ -226,0 +291 @@
+@@ -226,0 +306 @@
 +      if (i > 0) CompanionVNCRecordSocketRead(client, (unsigned int)i);
-@@ -240,0 +306 @@
+@@ -240,0 +321 @@
 +  CompanionVNCRecordDelivered(client, requestedBytes);

@@ -79,8 +79,14 @@ The independent native handoff gate blocks all user input while receiving frames
 A narrowly admitted handoff-only preset request may create the virtual display
 without opening this gate: it still requires this established Apple owner's valid
 metadata, fresh baseline and all foreground/review/pause/stop guards. Generic
-resize APIs remain blocked during a mode handoff. Verify the requested mode and
-complete pixels before enabling input. Only a non-Apple protocol may take the initial metadata-free legacy fallback.
+resize APIs remain blocked during a mode handoff. Once the new socket owner has
+both the validated layout and complete source pixels, it yields at the message
+boundary until the viewer has verified the baseline and either queued the
+virtual request or verified that the requested mode is already active. The
+socket owner services an admitted request before decoding another update.
+When the requested image is complete, keep that message boundary until the
+viewer confirms the mode and enables input. Only a
+non-Apple protocol may take the initial metadata-free legacy fallback.
 A known Apple owner must await display metadata even when a complete image
 arrives first. Mirror requires positive layout dimensions matching the fresh
 framebuffer, just as Virtual does. Once that gate opens, immediately retry a
@@ -91,8 +97,17 @@ as verified mode changes.
 Failure stage 116 means the host still reports a virtual display after Mirror
 recovery; 117 means the requested virtual display could not be established; 118
 means display metadata did not arrive within forty foreground seconds after
-establishment or resumption. Interruptions invalidate the old timer; resumed
-verification gets its own bounded timer on that owner. Preserve
+establishment or resumption. Stage 119 means the connection ended before the
+virtual request was written. Stage 120 means the matching virtual layout arrived
+during a mode switch but its first image reached a deadline. A resize within
+Virtual Display uses the desktop reconnect notice on image timeout and retains
+the previous saved size. Stage 121 means inactivity interrupted
+the switch. Keep the previous choice and offer an explicit retry with private
+login recovery. A resumed viewer cannot accept that interrupted request.
+Once the request is written, an owner-bound foreground watchdog enforces the
+same layout and image budgets even when a socket operation is blocked.
+Interruptions invalidate the old timer. Resumed verification gets its own
+bounded timer on that owner. Preserve
 these failures across intentional stop callbacks and manual retry, including
 pre-frame failures. Stop/reconnect errors cannot replace them with a generic
 connection-ended notice. Keep bounded numeric target, attempt, phase and last
@@ -101,6 +116,8 @@ Exit, owner replacement, inactivity or app locking cancels pending work. Cleanup
 requirements and private login survive temporary inactivity, including Control Center.
 Retire pending transport work without reporting explicit user cancellation, and restart
 the required quiet allowance on foreground recovery before opening a new connection.
+If a background pause retires the owner before admitting a virtual resize,
+resume verification on a fresh owner after foregrounding and transport retirement.
 Explicit cancellation still clears recovery. Stale callbacks cannot
 complete another owner's operation or save a preference.
 
@@ -141,9 +158,14 @@ A different host-selected size is reported as different, not accepted. Physical
 monitor selection retains its six-second layout bound. Virtual display creation
 and same-mode virtual resizing allow twenty seconds for layout; do not apply the
 physical-monitor timeout to host display creation. On timeout recover the current
-baseline, or end a pending mode change with its specific recovery. Once the exact layout arrives, its fresh-pixel
-baseline has the existing eight-second absolute deadline from that baseline's
-reset. Do not discard a progressing matching image at the earlier layout deadline.
+baseline, or end a pending mode change with its specific recovery. Once the exact
+virtual layout arrives, allow thirty seconds for the complete first image and
+expire after eight seconds without progress. Decoded new coverage and incoming
+payload bytes for a pixel rectangle with uncovered required area count as
+progress. Repeated metadata, cursor updates and already-covered rectangles do
+not extend the allowance. Complete pixels for a different layout do not excuse
+the deadline. A layout reset within this request cannot restart the hard cap.
+Physical monitor baselines keep their existing timing.
 Never stretch old pixels or reopen input before the new frame is usable.
 
 ## Evidence boundary
