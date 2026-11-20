@@ -296,6 +296,56 @@ private final class MediaComposeSession: CompanionVNCSession {
         XCTAssertFalse(escape.isDescendant(of: slot))
     }
 
+    func testHidingTrackpadKeysShrinksDockAndPreservesTheKeyboardBar() throws {
+        let preference = TerminalControlsProfile.compactTrackpadRowPreference
+        let previous = UserDefaults.standard.string(forKey: preference)
+        UserDefaults.standard.removeObject(forKey: preference)
+        defer { UserDefaults.standard.set(previous, forKey: preference) }
+
+        let viewer = RemoteControlsTestViewer()
+        viewer.session = RemoteAnchorSession()
+        viewer.inputOnly = true
+        viewer.view.frame = CGRect(x: 0, y: 0, width: 390, height: 700)
+        var profile = TerminalControlsProfile.remoteDefaults
+        profile.keyboardRows = [.init(id: TerminalKeyboardRow.mainID, kind: .main, title: "Main", items: [.key("key-f5")])]
+        profile.freezeKeyboardLayout()
+        let controls = controls(viewer, data: try JSONEncoder().encode(profile))
+        let dock = try XCTUnwrap(descendants(controls.bar).first { $0.accessibilityIdentifier == "trackpad-dock" })
+        let slot = try XCTUnwrap(descendants(dock).first { $0.accessibilityIdentifier == "trackpad-navigation-keys" })
+
+        viewer.view.layoutIfNeeded()
+        let fullHeight = controls.bar.bounds.height
+        XCTAssertFalse(slot.isHidden)
+
+        UserDefaults.standard.set(CompactTrackpadKeyRow.hidden.storedValue, forKey: preference)
+        controls.reload()
+        viewer.view.layoutIfNeeded()
+        XCTAssertTrue(slot.isHidden)
+        XCTAssertTrue(controls.compactDockVisible)
+        XCTAssertGreaterThan(controls.bar.bounds.height, 0)
+        XCTAssertLessThan(controls.bar.bounds.height, fullHeight)
+        let buttons = descendants(dock).compactMap { $0 as? UIButton }
+        XCTAssertTrue(buttons.contains { $0.accessibilityLabel == "Volume" })
+        XCTAssertTrue(controls.menuAnchor.isDescendant(of: dock))
+        let keyboard = try XCTUnwrap(buttons.first { $0.accessibilityLabel == "Type on Mac" })
+        keyboard.sendActions(for: .primaryActionTriggered)
+        XCTAssertEqual(viewer.keyboardToggles, 1)
+
+        controls.keyboardFocused(true)
+        XCTAssertFalse(controls.compactDockVisible)
+        let f5 = try XCTUnwrap(descendants(controls.bar).compactMap { $0 as? UIButton }.first { $0.accessibilityLabel == "F5" })
+        XCTAssertFalse(f5.isDescendant(of: dock))
+        f5.sendActions(for: .touchUpInside)
+        XCTAssertEqual(viewer.events.compactMap { ($0["key"] as? NSNumber)?.uint32Value }, [0xffc2, 0xffc2])
+        controls.keyboardFocused(false)
+        XCTAssertTrue(slot.isHidden)
+
+        UserDefaults.standard.set(TerminalKeyboardRow.mainID.uuidString, forKey: preference)
+        controls.reload()
+        XCTAssertFalse(slot.isHidden)
+        XCTAssertTrue(descendants(slot).contains { $0.accessibilityLabel == "F5" })
+    }
+
     func testCompactTrackpadFallsBackForRowsWithoutAvailableKeys() throws {
         let viewer = RemoteControlsTestViewer()
         viewer.session = RemoteAnchorSession()

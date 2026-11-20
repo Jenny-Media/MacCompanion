@@ -1580,6 +1580,15 @@ import UIKit
         openSettings(app)
         XCTAssertEqual(picker.value as? String, "Keyboard Bar · Row 2")
         picker.tap()
+        let hide = option("Hide Key Row")
+        hide.tap()
+        XCTAssertTrue(hide.isSelected)
+        bar.buttons.element(boundBy: 0).tap()
+        XCTAssertEqual(picker.value as? String, "Hidden")
+        closeSettings(app)
+        openSettings(app)
+        XCTAssertEqual(picker.value as? String, "Hidden")
+        picker.tap()
         navigation.tap()
         XCTAssertTrue(navigation.isSelected)
         bar.buttons.element(boundBy: 0).tap()
@@ -1607,7 +1616,9 @@ import UIKit
             choice.tap()
             let trackpadKeys = app.navigationBars["Trackpad Keys"]
             XCTAssertTrue(trackpadKeys.waitForExistence(timeout: 5))
+            app.buttons["Hide Key Row"].tap()
             trackpadKeys.buttons.element(boundBy: 0).tap()
+            XCTAssertEqual(choice.value as? String, "Hidden")
             if checkUndo {
                 rowMenu.tap(); app.buttons["Alignment"].tap(); app.collectionViews.buttons["Right"].tap()
             }
@@ -1634,6 +1645,18 @@ import UIKit
         app.buttons["terminal-controls-save"].tap()
         openSettings(app)
         XCTAssertEqual(picker.value as? String, "Keyboard Bar · Row 2")
+        closeSettings(app)
+
+        editor.tap()
+        XCTAssertTrue(choice.waitForExistence(timeout: 5))
+        choice.tap()
+        let trackpadKeys = app.navigationBars["Trackpad Keys"]
+        XCTAssertTrue(trackpadKeys.waitForExistence(timeout: 5))
+        app.buttons["Hide Key Row"].tap()
+        trackpadKeys.buttons.element(boundBy: 0).tap()
+        app.buttons["terminal-controls-save"].tap()
+        openSettings(app)
+        XCTAssertEqual(picker.value as? String, "Hidden")
         closeSettings(app)
     }
 

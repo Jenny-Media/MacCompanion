@@ -282,9 +282,11 @@ import Observation
         do { profile = try activeStore.load(); readable = true }
         catch { readable = false; profile = .remoteDefaults }
         shortcutConfirmations.definitionsChanged(profile.actions)
-        let preference = UserDefaults.standard.string(forKey: TerminalControlsProfile.compactTrackpadRowPreference) ?? ""
+        let storedRow = UserDefaults.standard.string(forKey: TerminalControlsProfile.compactTrackpadRowPreference) ?? ""
+        let selection = CompactTrackpadKeyRow(storedValue: storedRow)
+        navigationSlot.isHidden = selection == .hidden
         renderedProAccess = DirectProAccess.shared.hasPro
-        keyboardBar.configure(profile, compactRowID: UUID(uuidString: preference)) { [weak self] in self?.use($0) }
+        keyboardBar.configure(profile, compactRowID: selection.rowID) { [weak self] in self?.use($0) }
         keyboardBar.showsExtraRows = profile.rowsExpanded ?? false
         refresh()
         viewer?.refreshControlsMenu()

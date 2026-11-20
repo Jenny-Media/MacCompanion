@@ -52,7 +52,7 @@ struct TerminalKeyboardEditingPreview: View {
     let select: (UUID?) -> Void
     var contextImage: UIImage?
     var insertion: UUID?
-    var compactTrackpadSelection: Binding<UUID?>? = nil
+    var compactTrackpadSelection: Binding<CompactTrackpadKeyRow>? = nil
     @State private var pro = DirectProAccess.shared
     @State private var panel: TerminalLayoutPanel?
     @State private var history = TerminalLayoutHistory()
@@ -163,11 +163,17 @@ struct TerminalKeyboardEditingPreview: View {
                 }.accessibilityIdentifier("terminal-remove-row")
             } message: { _ in Text("Saved shortcuts and text stay available. You can undo this change.") }
     }
-    private func trackpadKeysLink(_ selection: Binding<UUID?>) -> some View {
-        let row = profile.compactTrackpadRow(selection.wrappedValue, hasPro: pro.hasPro)
+    private func trackpadKeysLink(_ selection: Binding<CompactTrackpadKeyRow>) -> some View {
+        let row = profile.compactTrackpadRow(selection.wrappedValue.rowID, hasPro: pro.hasPro)
         let names = row.map { profile.compactTrackpadKeyNames(profile.compactTrackpadPlacements(in: $0, hasPro: pro.hasPro)) } ?? []
         let preview = names.prefix(3).joined(separator: " · ")
-        let status = names.isEmpty ? "Shows the default keys" : preview + (names.count > 3 ? " + \(names.count - 3) more" : "")
+        let status = if selection.wrappedValue == .hidden {
+            CompactTrackpadRowPicker.hiddenSummary
+        } else if names.isEmpty {
+            "Shows the default keys"
+        } else {
+            preview + (names.count > 3 ? " + \(names.count - 3) more" : "")
+        }
         return NavigationLink {
             CompactTrackpadRowPicker(profile: profile, hasPro: pro.hasPro, selection: selection)
         } label: {
@@ -201,7 +207,7 @@ struct TerminalKeyboardEditingPreview: View {
         case .alignment(let alignment): editRow(id) { $0.alignment = alignment }
         case .scrollStart(let value): editRow(id) { $0.scrollStart = value }
         case .useInTrackpadDock:
-            if profile.compactTrackpadRow(id, hasPro: pro.hasPro) != nil { compactTrackpadSelection?.wrappedValue = id }
+            if profile.compactTrackpadRow(id, hasPro: pro.hasPro) != nil { compactTrackpadSelection?.wrappedValue = .keyboardRow(id) }
         case .remove: removing = id
         }
     }

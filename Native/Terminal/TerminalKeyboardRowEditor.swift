@@ -239,7 +239,7 @@ struct TerminalKeyboardBarPreview: UIViewRepresentable {
     var catalogDragBegan: (() -> Void)? = nil
     var addToRow: ((UUID) -> Void)? = nil
     var rowAction: ((UUID, TerminalKeyboardRow.MenuAction) -> Void)? = nil
-    var compactTrackpadSelection: Binding<UUID?>? = nil
+    var compactTrackpadSelection: Binding<CompactTrackpadKeyRow>? = nil
     var placementSelect: ((TerminalBarPlacement, UUID) -> Void)? = nil
     var placementMove: ((String, UUID, UUID, String?) -> Void)? = nil
     var placementRemove: ((String, UUID) -> Void)? = nil
@@ -264,7 +264,7 @@ struct TerminalKeyboardBarPreview: UIViewRepresentable {
         bar.previewAddToRow = enabled ? addToRow : nil
         bar.previewRowAction = enabled ? rowAction : nil
         bar.previewOffersTrackpadDock = enabled && compactTrackpadSelection != nil
-        bar.previewTrackpadDockRow = enabled ? compactTrackpadSelection?.wrappedValue : nil
+        bar.previewTrackpadDockRow = enabled ? compactTrackpadSelection?.wrappedValue.rowID : nil
         bar.previewAddPreset = enabled ? addPreset : nil; bar.previewAddItem = enabled ? addItem : nil
         bar.previewCatalogDragBegan = enabled ? catalogDragBegan : nil
         let configuration = Configuration(profile: profile, selected: selected, row: row, allRows: allRows, handles: handles, presentation: presentation, rowAdditions: addToRow != nil, rowMenu: rowAction != nil,
