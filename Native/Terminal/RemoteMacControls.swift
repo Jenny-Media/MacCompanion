@@ -49,7 +49,7 @@ import Observation
     private var activeStore: TerminalControlsStore {
         var scoped = store; scoped.remoteMode = viewer?.inputOnly == true ? .trackpad : .desktop; return scoped
     }
-    private var observation: NSObjectProtocol?
+    private var observations: [NSObjectProtocol] = []
     private weak var panel: UIViewController?
     private var keypad: TerminalKeypadState?
     private var sequenceTask: Task<Void, Never>?
@@ -95,13 +95,15 @@ import Observation
             }
             viewer?.view.setNeedsLayout()
         }
-        observation = NotificationCenter.default.addObserver(forName: TerminalControlsStore.changed, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.reload() }
+        observations = [TerminalControlsStore.changed, TerminalControlsProfile.compactTrackpadRowChanged].map { name in
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.reload() }
+            }
         }
         reload()
         observeProAccess()
     }
-    isolated deinit { if let observation { NotificationCenter.default.removeObserver(observation) } }
+    isolated deinit { observations.forEach(NotificationCenter.default.removeObserver) }
 
     private func configureTrackpadDock() {
         trackpadDock.axis = .vertical
@@ -282,9 +284,11 @@ import Observation
         do { profile = try activeStore.load(); readable = true }
         catch { readable = false; profile = .remoteDefaults }
         shortcutConfirmations.definitionsChanged(profile.actions)
-        let preference = UserDefaults.standard.string(forKey: TerminalControlsProfile.compactTrackpadRowPreference) ?? ""
+        let storedRow = UserDefaults.standard.string(forKey: TerminalControlsProfile.compactTrackpadRowPreference) ?? ""
+        let selection = CompactTrackpadKeyRow(storedValue: storedRow)
+        navigationSlot.isHidden = selection == .hidden
         renderedProAccess = DirectProAccess.shared.hasPro
-        keyboardBar.configure(profile, compactRowID: UUID(uuidString: preference)) { [weak self] in self?.use($0) }
+        keyboardBar.configure(profile, compactRowID: selection.rowID) { [weak self] in self?.use($0) }
         keyboardBar.showsExtraRows = profile.rowsExpanded ?? false
         refresh()
         viewer?.refreshControlsMenu()

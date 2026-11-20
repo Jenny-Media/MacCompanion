@@ -310,6 +310,36 @@ struct TerminalKeyboardRow: Codable, Identifiable, Equatable {
     var extra: Bool { expandedOnly ?? (kind == .navigation || kind == .custom) }
 }
 
+enum CompactTrackpadKeyRow: Equatable {
+    case navigation
+    case hidden
+    case keyboardRow(UUID)
+
+    init(storedValue: String) {
+        if storedValue == "hidden" { self = .hidden }
+        else if let id = UUID(uuidString: storedValue) { self = .keyboardRow(id) }
+        else { self = .navigation }
+    }
+
+    var storedValue: String {
+        switch self {
+        case .navigation: ""
+        case .hidden: "hidden"
+        case .keyboardRow(let id): id.uuidString
+        }
+    }
+
+    var rowID: UUID? {
+        if case .keyboardRow(let id) = self { return id }
+        return nil
+    }
+
+    func resolved(in profile: TerminalControlsProfile, hasPro: Bool) -> Self {
+        guard let rowID else { return self }
+        return profile.compactTrackpadRow(rowID, hasPro: hasPro) == nil ? .navigation : self
+    }
+}
+
 struct TerminalControlsProfile: Codable, Equatable {
     static let maximumKeyboardRows = 6
     static let currentVersion = 5
@@ -361,6 +391,7 @@ struct TerminalControlsProfile: Codable, Equatable {
     }
     func rowTitle(_ id: UUID) -> String { "Row \((resolvedRows.firstIndex { $0.id == id } ?? 0) + 1)" }
     static let compactTrackpadRowPreference = "direct-remote-compact-trackpad-row"
+    static let compactTrackpadRowChanged = Notification.Name("DirectCompactTrackpadRowChanged")
     static let compactTrackpadExpandTitle = "Show Keyboard Rows"
     var hasExpandableKeyboardRows: Bool { resolvedRows.contains { $0.extra && $0.hidden != true } }
     func compactTrackpadPlacements(in row: TerminalKeyboardRow, hasPro: Bool) -> [TerminalBarPlacement] {

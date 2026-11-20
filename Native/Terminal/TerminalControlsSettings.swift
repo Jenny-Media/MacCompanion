@@ -15,17 +15,26 @@ struct TerminalControlsSettings: View {
     @State private var paywall = false
     @State private var layout: LayoutRequest?
     @AppStorage(TerminalControlsProfile.compactTrackpadRowPreference) private var compactTrackpadRow = ""
-    private var selectedCompactTrackpadRowID: UUID? {
-        profile.compactTrackpadRow(UUID(uuidString: compactTrackpadRow), hasPro: pro.hasPro)?.id
+    private var selectedCompactTrackpadRow: CompactTrackpadKeyRow {
+        CompactTrackpadKeyRow(storedValue: compactTrackpadRow).resolved(in: profile, hasPro: pro.hasPro)
     }
-    private var compactTrackpadSelection: Binding<UUID?> {
+    private var compactTrackpadSelection: Binding<CompactTrackpadKeyRow> {
         Binding(
-            get: { selectedCompactTrackpadRowID },
-            set: { if readable && DirectAppLockV1.shared.canAccess { compactTrackpadRow = $0?.uuidString ?? "" } }
+            get: { selectedCompactTrackpadRow },
+            set: { selection in
+                let storedValue = selection.storedValue
+                guard readable, DirectAppLockV1.shared.canAccess, storedValue != compactTrackpadRow else { return }
+                compactTrackpadRow = storedValue
+                NotificationCenter.default.post(name: TerminalControlsProfile.compactTrackpadRowChanged, object: nil)
+            }
         )
     }
     private var compactTrackpadTitle: String {
-        selectedCompactTrackpadRowID.map { "Keyboard Bar · \(profile.rowTitle($0))" } ?? CompactTrackpadRowPicker.defaultTitle
+        switch selectedCompactTrackpadRow {
+        case .navigation: CompactTrackpadRowPicker.defaultTitle
+        case .hidden: CompactTrackpadRowPicker.hiddenSummary
+        case .keyboardRow(let id): "Keyboard Bar · \(profile.rowTitle(id))"
+        }
     }
     private struct LayoutRequest: Identifiable {
         var id = UUID()
@@ -152,9 +161,10 @@ struct TerminalControlsSettings: View {
 struct CompactTrackpadRowPicker: View {
     static let title = "Trackpad Keys"
     static let defaultTitle = "Default Navigation Keys"
+    static let hiddenSummary = "Hidden"
     let profile: TerminalControlsProfile
     let hasPro: Bool
-    @Binding var selection: UUID?
+    @Binding var selection: CompactTrackpadKeyRow
 
     var body: some View {
         List {
@@ -162,16 +172,17 @@ struct CompactTrackpadRowPicker: View {
                 let keys = profile.compactTrackpadPlacements(in: row, hasPro: hasPro)
                 return keys.isEmpty ? nil : (row.id, keys)
             }
-            let selected = rows.contains { $0.id == selection } ? selection : nil
+            let selected = selection.resolved(in: profile, hasPro: hasPro)
             Section {
-                option(Self.defaultTitle, keys: RemoteMacControls.compactNavigationKeys.map(\.title), id: nil, selected: selected == nil)
+                option(Self.defaultTitle, keys: RemoteMacControls.compactNavigationKeys.map(\.title), choice: .navigation, selected: selected)
+                option("Hide Key Row", choice: .hidden, selected: selected)
             } footer: {
                 Text("Choose the keys to show in the compact Trackpad bar.")
             }
             if !rows.isEmpty {
                 Section {
                     ForEach(rows, id: \.id) { row in
-                        option(profile.rowTitle(row.id), keys: profile.compactTrackpadKeyNames(row.keys), id: row.id, selected: selected == row.id)
+                        option(profile.rowTitle(row.id), keys: profile.compactTrackpadKeyNames(row.keys), choice: .keyboardRow(row.id), selected: selected)
                     }
                 } header: {
                     Text("Your Keyboard Bar")
@@ -184,19 +195,21 @@ struct CompactTrackpadRowPicker: View {
         .directInlineNavigationTitle()
     }
 
-    private func option(_ title: String, keys: [String], id: UUID?, selected: Bool) -> some View {
-        Button { selection = id } label: {
+    private func option(_ title: String, keys: [String] = [], choice: CompactTrackpadKeyRow, selected: CompactTrackpadKeyRow) -> some View {
+        Button { selection = choice } label: {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title).foregroundStyle(.primary)
-                    Text(keys.joined(separator: "\u{00a0}· "))
-                        .font(.subheadline).foregroundStyle(.secondary)
-                        .accessibilityLabel(keys.formatted(.list(type: .and)))
+                    if !keys.isEmpty {
+                        Text(keys.joined(separator: "\u{00a0}· "))
+                            .font(.subheadline).foregroundStyle(.secondary)
+                            .accessibilityLabel(keys.formatted(.list(type: .and)))
+                    }
                 }
                 Spacer(minLength: 0)
                 Image(systemName: "checkmark")
                     .foregroundStyle(Color.accentColor)
-                    .opacity(selected ? 1 : 0)
+                    .opacity(choice == selected ? 1 : 0)
                     .accessibilityHidden(true)
             }
             .padding(.vertical, 4)
@@ -204,7 +217,7 @@ struct CompactTrackpadRowPicker: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityAddTraits(choice == selected ? .isSelected : [])
     }
 }
 
@@ -215,12 +228,12 @@ struct TerminalLayoutSheet: View {
     let editable: Bool
     var contextImage: UIImage?
     let apply: (TerminalControlsProfile) -> Bool
-    var compactTrackpadSelection: Binding<UUID?>? = nil
+    var compactTrackpadSelection: Binding<CompactTrackpadKeyRow>? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var failed = false
     @State private var initial: TerminalControlsProfile?
-    @State private var initialTrackpadRow: UUID?
-    @State private var draftTrackpadRow: UUID?
+    @State private var initialTrackpadRow = CompactTrackpadKeyRow.navigation
+    @State private var draftTrackpadRow = CompactTrackpadKeyRow.navigation
     @State private var discarding = false
     var body: some View {
         NavigationStack {
@@ -245,7 +258,7 @@ struct TerminalLayoutSheet: View {
         }.interactiveDismissDisabled().directAppearance().onAppear {
             guard initial == nil else { return }
             initial = profile
-            initialTrackpadRow = compactTrackpadSelection?.wrappedValue
+            initialTrackpadRow = compactTrackpadSelection?.wrappedValue ?? .navigation
             draftTrackpadRow = initialTrackpadRow
         }
             .confirmationDialog("Discard changes?", isPresented: $discarding, titleVisibility: .visible) {
@@ -257,7 +270,7 @@ struct TerminalLayoutSheet: View {
         guard editable else { dismiss(); return }
         guard apply(profile) else { failed = true; return }
         if initialTrackpadRow != draftTrackpadRow {
-            compactTrackpadSelection?.wrappedValue = profile.compactTrackpadRow(draftTrackpadRow, hasPro: DirectProAccess.shared.hasPro)?.id
+            compactTrackpadSelection?.wrappedValue = draftTrackpadRow.resolved(in: profile, hasPro: DirectProAccess.shared.hasPro)
         }
         dismiss()
     }
@@ -271,7 +284,7 @@ struct TerminalControlsEditor: View {
     var libraryOnly = false
     var contextImage: UIImage?
     var insertion: UUID?
-    var compactTrackpadSelection: Binding<UUID?>? = nil
+    var compactTrackpadSelection: Binding<CompactTrackpadKeyRow>? = nil
     @State private var selectedRow = TerminalKeyboardRow.mainID
     var body: some View {
         Group {
