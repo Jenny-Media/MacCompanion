@@ -1,8 +1,6 @@
 --- a/src/libvncclient/rfbclient.c
 +++ b/src/libvncclient/rfbclient.c
-@@ -2264,0 +2265,13 @@
-+      }
-+
+@@ -2266,0 +2267,23 @@
 +      /* Geometry-only input clients deliberately have no desktop backing store. */
 +      if (!client->frameBuffer) {
 +        switch (rect.encoding) {
@@ -14,3 +12,17 @@
 +          return FALSE;
 +        default: break; /* Existing metadata extensions do not decode pixels. */
 +        }
++      }
++
++      switch (rect.encoding) {
++      case rfbEncodingRaw:
++      case rfbEncodingRRE: case rfbEncodingCoRRE: case rfbEncodingHextile:
++      case rfbEncodingUltra: case rfbEncodingTRLE:
++      case rfbEncodingZlib: case rfbEncodingTight:
++      case rfbEncodingZRLE: case rfbEncodingZYWRLE:
++        CompanionVNCReadPixelRectangle(client, &rect.r);
++        break;
++      }
++
+@@ -2557,0 +2581 @@
++      CompanionVNCReadPixelRectangle(client, NULL);

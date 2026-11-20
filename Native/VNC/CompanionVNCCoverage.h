@@ -22,11 +22,14 @@ static inline bool CompanionVNCCoverageReset(CompanionVNCCoverage *c, int w, int
     if (pixels % 8) required[bytes - 1] = (1u << (pixels % 8)) - 1;
     *c = (CompanionVNCCoverage){seen, required, bytes, 0, pixels, w, h}; return true;
 }
+static inline uint8_t CompanionVNCCoverageMask(size_t start, size_t end, size_t byte) {
+    unsigned low = byte == start / 8 ? start % 8 : 0;
+    unsigned high = byte == (end - 1) / 8 ? (end - 1) % 8 + 1 : 8;
+    return ((1u << high) - 1) & ~((1u << low) - 1);
+}
 static inline void CompanionVNCCoverageRange(CompanionVNCCoverage *c, size_t start, size_t end, bool requirement) {
     for (size_t byte = start / 8; byte < (end + 7) / 8; byte++) {
-        unsigned low = byte == start / 8 ? start % 8 : 0;
-        unsigned high = byte == (end - 1) / 8 ? (end - 1) % 8 + 1 : 8;
-        uint8_t mask = ((1u << high) - 1) & ~((1u << low) - 1);
+        uint8_t mask = CompanionVNCCoverageMask(start, end, byte);
         if (requirement) {
             uint8_t added = mask & ~c->required[byte]; c->required[byte] |= mask;
             c->expected += __builtin_popcount(added); c->received += __builtin_popcount(added & c->seen[byte]);
@@ -48,5 +51,16 @@ static inline void CompanionVNCCoverageClearRequirements(CompanionVNCCoverage *c
 }
 static inline bool CompanionVNCCoverageReady(const CompanionVNCCoverage *c) {
     return c->expected > 0 && c->received == c->expected;
+}
+static inline bool CompanionVNCCoverageNeedsRect(const CompanionVNCCoverage *c, int x, int y, int w, int h) {
+    if (!c->seen || c->received == c->expected || x < 0 || y < 0 || w <= 0 || h <= 0
+        || w > c->width - x || h > c->height - y) return false;
+    for (int row = y; row < y + h; row++) {
+        size_t start = (size_t)row * c->width + x, end = start + w;
+        for (size_t byte = start / 8; byte < (end + 7) / 8; byte++) {
+            if (c->required[byte] & ~c->seen[byte] & CompanionVNCCoverageMask(start, end, byte)) return true;
+        }
+    }
+    return false;
 }
 #endif

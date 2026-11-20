@@ -79,8 +79,13 @@ The independent native handoff gate blocks all user input while receiving frames
 A narrowly admitted handoff-only preset request may create the virtual display
 without opening this gate: it still requires this established Apple owner's valid
 metadata, fresh baseline and all foreground/review/pause/stop guards. Generic
-resize APIs remain blocked during a mode handoff. Verify the requested mode and
-complete pixels before enabling input. Only a non-Apple protocol may take the initial metadata-free legacy fallback.
+resize APIs remain blocked during a mode handoff. Once the new socket owner has
+both the validated layout and complete source pixels, it yields at the message
+boundary until the viewer has verified the baseline and either queued the
+virtual request or verified that the requested mode is already active. The
+socket owner services an admitted request before decoding another update.
+Verify the requested mode and complete pixels before enabling input. Only a
+non-Apple protocol may take the initial metadata-free legacy fallback.
 A known Apple owner must await display metadata even when a complete image
 arrives first. Mirror requires positive layout dimensions matching the fresh
 framebuffer, just as Virtual does. Once that gate opens, immediately retry a
@@ -91,8 +96,12 @@ as verified mode changes.
 Failure stage 116 means the host still reports a virtual display after Mirror
 recovery; 117 means the requested virtual display could not be established; 118
 means display metadata did not arrive within forty foreground seconds after
-establishment or resumption. Interruptions invalidate the old timer; resumed
-verification gets its own bounded timer on that owner. Preserve
+establishment or resumption. Stage 119 means the connection ended before the
+virtual request was written. Stage 120 means the matching virtual layout arrived
+but its first image reached a deadline. Once the request is written, the
+layout and image deadlines apply independently of the forty-second guard.
+Interruptions invalidate the old timer. Resumed verification gets its own
+bounded timer on that owner. Preserve
 these failures across intentional stop callbacks and manual retry, including
 pre-frame failures. Stop/reconnect errors cannot replace them with a generic
 connection-ended notice. Keep bounded numeric target, attempt, phase and last
@@ -141,9 +150,13 @@ A different host-selected size is reported as different, not accepted. Physical
 monitor selection retains its six-second layout bound. Virtual display creation
 and same-mode virtual resizing allow twenty seconds for layout; do not apply the
 physical-monitor timeout to host display creation. On timeout recover the current
-baseline, or end a pending mode change with its specific recovery. Once the exact layout arrives, its fresh-pixel
-baseline has the existing eight-second absolute deadline from that baseline's
-reset. Do not discard a progressing matching image at the earlier layout deadline.
+baseline, or end a pending mode change with its specific recovery. Once the exact
+virtual layout arrives, allow thirty seconds for the complete first image and
+expire after eight seconds without progress. Decoded new coverage and incoming
+payload bytes for a pixel rectangle with uncovered required area count as
+progress. Repeated metadata, cursor updates and already-covered rectangles do
+not extend the allowance. A layout reset within this request cannot restart
+the hard cap. Physical monitor baselines keep their existing timing.
 Never stretch old pixels or reopen input before the new frame is usable.
 
 ## Evidence boundary

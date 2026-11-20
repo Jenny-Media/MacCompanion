@@ -1,6 +1,6 @@
 --- a/include/rfb/rfbclient.h
 +++ b/include/rfb/rfbclient.h
-@@ -744,0 +745,11 @@
+@@ -744,0 +745,14 @@
 +
 +typedef struct {
 +  uint64_t socketBytes, deliveredBytes, waitCalls;
@@ -8,7 +8,10 @@
 +} CompanionVNCReadMetrics;
 +typedef struct {
 +  rfbBool (*service)(rfbClient *client);
++  void (*pixelRectangle)(rfbClient *client, const rfbRectangle *rect);
++  void (*pixelProgress)(rfbClient *client);
 +  CompanionVNCReadMetrics *metrics; /* Optional, numeric-only, sole-owner storage. */
 +} CompanionVNCReadService;
 +/* The caller retains this descriptor until cleared on the sole socket owner. */
 +extern void CompanionVNCSetReadService(rfbClient *client, const CompanionVNCReadService *service);
++extern void CompanionVNCReadPixelRectangle(rfbClient *client, const rfbRectangle *rect);

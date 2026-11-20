@@ -27,6 +27,8 @@ typedef UIImage CompanionVNCImage;
 /// Independent local gate while a display-mode handoff verifies host geometry.
 /// Reception and fresh-baseline presentation continue while input is blocked.
 @property(nonatomic) BOOL displayHandoffInputBlocked;
+/// Set before connecting a fresh owner that will verify a Virtual Display handoff.
+@property(nonatomic) BOOL prioritizeVirtualDisplayHandoff;
 /// Tracks admitted local gestures independently from iOS host cursor observations.
 @property(nonatomic) BOOL localPointerInteractionActive;
 /// A ready foreground Apple desktop with validated display metadata.

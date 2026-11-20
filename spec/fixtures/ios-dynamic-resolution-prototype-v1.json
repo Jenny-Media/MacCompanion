@@ -726,5 +726,43 @@
       "exactLayout": true,
       "timedOut": false
     }
+  ],
+  "virtualFirstImageDeadlineCases": [
+    {
+      "name": "progress-past-old-deadline",
+      "elapsed": 18,
+      "lastProgressAge": 0.1,
+      "timedOut": false
+    },
+    {
+      "name": "near-idle-limit",
+      "elapsed": 18,
+      "lastProgressAge": 7.99,
+      "timedOut": false
+    },
+    {
+      "name": "no-progress",
+      "elapsed": 8,
+      "lastProgressAge": 8,
+      "timedOut": true
+    },
+    {
+      "name": "stalled-after-progress",
+      "elapsed": 18,
+      "lastProgressAge": 8,
+      "timedOut": true
+    },
+    {
+      "name": "near-total-cap",
+      "elapsed": 29.99,
+      "lastProgressAge": 0.1,
+      "timedOut": false
+    },
+    {
+      "name": "absolute-limit-despite-progress",
+      "elapsed": 30,
+      "lastProgressAge": 0.1,
+      "timedOut": true
+    }
   ]
 }

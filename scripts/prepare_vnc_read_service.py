@@ -87,6 +87,59 @@ TRANSFORMS = {'include/rfb/rfbclient.h': [(b'extern rfbBool ReadFromRFBServer(rf
 # Reject unsolicited desktop pixels before a geometry-only owner reaches a decoder.
 TRANSFORMS['src/libvncclient/rfbclient.c'] = [(b'      switch (rect.encoding) {\n\n      case rfbEncodingRaw:', b'      /* Geometry-only input clients deliberately have no desktop backing store. */\n      if (!client->frameBuffer) {\n        switch (rect.encoding) {\n        case rfbEncodingRaw: case rfbEncodingCopyRect:\n        case rfbEncodingRRE: case rfbEncodingCoRRE: case rfbEncodingHextile:\n        case rfbEncodingUltra: case rfbEncodingUltraZip: case rfbEncodingTRLE:\n        case rfbEncodingZlib: case rfbEncodingTight:\n        case rfbEncodingZRLE: case rfbEncodingZYWRLE:\n          return FALSE;\n        default: break; /* Existing metadata extensions do not decode pixels. */\n        }\n      }\n\n      switch (rect.encoding) {\n\n      case rfbEncodingRaw:', 1)]
 
+# Mark pixel payload after the decoder's rectangle bounds and input-only guards.
+# The socket-owner callback decides whether the rectangle can fill new coverage.
+TRANSFORMS['include/rfb/rfbclient.h'] += [
+    (b'  rfbBool (*service)(rfbClient *client);\n', b'''  rfbBool (*service)(rfbClient *client);
+  void (*pixelRectangle)(rfbClient *client, const rfbRectangle *rect);
+  void (*pixelProgress)(rfbClient *client);
+''', 1),
+    (b'extern void CompanionVNCSetReadService(rfbClient *client, const CompanionVNCReadService *service);',
+     b'''extern void CompanionVNCSetReadService(rfbClient *client, const CompanionVNCReadService *service);
+extern void CompanionVNCReadPixelRectangle(rfbClient *client, const rfbRectangle *rect);''', 1),
+]
+TRANSFORMS['src/libvncclient/sockets.c'] += [
+    (b'static rfbBool\nCompanionVNCServiceRead', b'''void
+CompanionVNCReadPixelRectangle(rfbClient *client, const rfbRectangle *rect)
+{
+  const CompanionVNCReadService *service = CompanionVNCGetReadService(client);
+  if (service && service->pixelRectangle) service->pixelRectangle(client, rect);
+}
+static rfbBool
+CompanionVNCServiceRead''', 1),
+    (b'static void\nCompanionVNCRecordSocketRead', b'''static void
+CompanionVNCRecordPixelProgress(rfbClient *client)
+{
+  const CompanionVNCReadService *service = CompanionVNCGetReadService(client);
+  if (service && service->pixelProgress) service->pixelProgress(client);
+}
+static void
+CompanionVNCRecordSocketRead''', 1),
+    (b'  if (metrics) metrics->socketBytes += bytes;', b'''  if (metrics) metrics->socketBytes += bytes;
+  CompanionVNCRecordPixelProgress(client);''', 1),
+    (b'  if (n <= client->buffered) {', b'''  /* Read-ahead only becomes attributable once the decoder asks for it. */
+  if (n && client->buffered) CompanionVNCRecordPixelProgress(client);
+  if (n <= client->buffered) {''', 1),
+]
+TRANSFORMS['src/libvncclient/rfbclient.c'] += [
+    (b'      switch (rect.encoding) {\n\n      case rfbEncodingRaw:', b'''      switch (rect.encoding) {
+      case rfbEncodingRaw:
+      case rfbEncodingRRE: case rfbEncodingCoRRE: case rfbEncodingHextile:
+      case rfbEncodingUltra: case rfbEncodingTRLE:
+      case rfbEncodingZlib: case rfbEncodingTight:
+      case rfbEncodingZRLE: case rfbEncodingZYWRLE:
+        CompanionVNCReadPixelRectangle(client, &rect.r);
+        break;
+      }
+
+      switch (rect.encoding) {
+
+      case rfbEncodingRaw:''', 1),
+    (b'      /* Now we may discard "soft cursor locks". */',
+     b'''      CompanionVNCReadPixelRectangle(client, NULL);
+      /* Now we may discard "soft cursor locks". */''', 1),
+]
+
 def adapted_read_service(original, policy):
     path = policy['path']
     patch_name = {'include/rfb/rfbclient.h': 'Native/VNC/direct-read-service-header.patch',
