@@ -16,8 +16,8 @@
   },
   "xcodeCloud": {
     "projectFiles": {
-      "Native/iOSCloud/project.json": "1694f40d2de24246b37c80bbe3781a2c809a3ad9ad76d859a1ac43e9994a9322",
-      "Native/iOSCloud/MacCompanionCloud.xcodeproj/project.pbxproj": "2aa539ad4013c406872fd69fe9a25212ee7b54e5c6f9263d06f4a19592e205e9"
+      "Native/iOSCloud/project.json": "5e6e44423cf281b91e3d5e91ed203588688dd6b9ed6be6ef65ffd330eaab5347",
+      "Native/iOSCloud/MacCompanionCloud.xcodeproj/project.pbxproj": "526f05a30a3bcee304f1788f7419b634cf5a72361a6dc00063c7f3d3e4b18f3a"
     },
     "resolvedLockfilePath": "Native/iOSCloud/MacCompanionCloud.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved",
     "unusedPinsAllowedToBeOmitted": [
