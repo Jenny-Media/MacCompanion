@@ -170,7 +170,10 @@ and same-mode virtual resizing allow twenty seconds for layout; do not apply the
 physical-monitor timeout to host display creation. On timeout recover the current
 baseline, or end a pending mode change with its specific recovery. Once the exact
 virtual layout arrives, allow thirty seconds for the complete first image and
-expire after eight seconds without progress. Decoded new coverage and incoming
+expire after eight seconds without progress. If recovery from a first-image
+timeout opens a new connection that reports the requested virtual layout
+already in place, apply the same image deadlines from the first matching
+layout on that connection. Decoded new coverage and incoming
 payload bytes for a pixel rectangle with uncovered required area count as
 progress. Repeated metadata, cursor updates and already-covered rectangles do
 not extend the allowance. Complete pixels for a different layout do not excuse

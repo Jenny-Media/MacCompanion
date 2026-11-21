@@ -225,6 +225,12 @@
     "virtual": true,
     "bodyHex": "00050320050006400a000000000000000001000100000000000000000000000000000000000000090000000005000320000000000a0006400000000000000000000000000000000000000000"
   },
+  "virtualReplacementFirstImage": {
+    "progressElapsed": 7.5,
+    "continueElapsed": 9,
+    "stallElapsed": 15.5,
+    "hardCapElapsed": 30
+  },
   "layoutCases": [
     {
       "virtual": false,

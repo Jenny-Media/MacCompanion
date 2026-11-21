@@ -678,6 +678,9 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
     if (self.inputOnly) [self discardInputOnlyPresentation];
     self.session.displayHandoffInputBlocked = self.displayHandoff.active;
     self.session.prioritizeVirtualDisplayHandoff = self.displayHandoff.active && self.displayHandoff.targetPreset > 0;
+    if (self.session.prioritizeVirtualDisplayHandoff && self.displayHandoff.recoveryAttempts > 0) {
+        self.session.replacementVirtualDisplayPreset = self.displayHandoff.targetPreset;
+    }
     [self clearCursor];
     self.latestCounters = @{};
     __weak CompanionVNCViewer *weak = self;
@@ -2792,8 +2795,9 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
 - (void)expireDisplayModeVerification:(CompanionVNCSession *)owner generation:(NSUInteger)generation {
     if (self.session != owner || ![self.displayHandoff.verificationDeadline isEqual:@(generation)]
         || !self.displayHandoff.active || !self.connectionForegroundAvailable) return;
-    // Written requests use the phase-aware watchdog, including during blocked writes.
-    if (self.displayHandoff.resizeRequested && [owner.diagnosticCounters[@"probeRequestWritten"] boolValue]) return;
+    // Written requests and a matching replacement layout use phase deadlines.
+    if (owner.waitingForReplacementVirtualImage
+        || (self.displayHandoff.resizeRequested && [owner.diagnosticCounters[@"probeRequestWritten"] boolValue])) return;
     NSInteger failure = self.displayHandoff.targetPreset > 0 ? 117 : 118;
     [self retireDisplayModeOwner]; [self showConnectionFailureStage:failure]; [self reportDiagnostics:self.latestCounters];
 }
@@ -2806,7 +2810,7 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
 - (void)checkVirtualDisplayHandoffDeadline:(CompanionVNCSession *)owner generation:(NSUInteger)generation {
     CompanionVNCDisplayHandoff *handoff = self.displayHandoff;
     if (!owner || self.session != owner || ![handoff.verificationDeadline isEqual:@(generation)]
-        || !handoff.resizeRequested || !self.connectionForegroundAvailable) return;
+        || (!handoff.resizeRequested && owner.replacementVirtualDisplayPreset == 0) || !self.connectionForegroundAvailable) return;
     NSInteger stage = [owner expiredVirtualDisplayHandoffStageAtTime:NSProcessInfo.processInfo.systemUptime];
     if (!stage) {
         [self scheduleVirtualDisplayHandoffDeadline:owner generation:generation];
@@ -2814,7 +2818,7 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
     }
     // A frame may already be presented while its state callback is queued.
     [self updateDisplayModeRestoration];
-    if (!handoff.resizeRequested || self.session != owner || self.displayHandoff != handoff) return;
+    if (![handoff.verificationDeadline isEqual:@(generation)] || self.session != owner || self.displayHandoff != handoff) return;
     [self finishDisplayModeAttemptWithFailure:stage];
 }
 - (void)armDisplayModeVerification {
@@ -2827,7 +2831,9 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 40 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         if (weak.displayHandoff == handoff) [weak expireDisplayModeVerification:owner generation:generation];
     });
-    if (handoff.resizeRequested) [self scheduleVirtualDisplayHandoffDeadline:self.session generation:generation];
+    if (handoff.resizeRequested || owner.replacementVirtualDisplayPreset > 0) {
+        [self scheduleVirtualDisplayHandoffDeadline:owner generation:generation];
+    }
 }
 - (void)updateDisplayModeRestoration {
     CompanionVNCDisplayHandoff *handoff = self.displayHandoff;
@@ -2855,7 +2861,9 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
         if ([self desktopSizeMatchesPreset:self.displayHandoff.targetPreset]) { [self completeDisplayModeVerified:YES]; return; }
         if (!handoff.resizeRequested && [self.session requestDesktopSizePresetForHandoff:handoff.targetPreset]) {
             handoff.phase = CompanionVNCDisplayHandoffPhaseWaitingForResize;
-            [self scheduleVirtualDisplayHandoffDeadline:self.session generation:handoff.verificationGeneration];
+            if (self.session.replacementVirtualDisplayPreset == 0) {
+                [self scheduleVirtualDisplayHandoffDeadline:self.session generation:handoff.verificationGeneration];
+            }
         }
         return;
     }
