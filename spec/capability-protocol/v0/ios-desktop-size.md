@@ -64,8 +64,11 @@ If replacing that owner will interrupt an active borrowed Files transfer, confir
 that interruption first. Cancellation leaves its owner and transfer unchanged; a
 confirmation cannot cross owner replacement, backgrounding or exit.
 Interruption discards pending monitor/size preference commits, including late
-reconciliation; foreground return cannot save an interrupted choice. Matching
-late virtual frames may reconcile either timeout outcome (3 or 4).
+reconciliation. On foreground return, an interrupted Virtual Display mode switch
+with valid transient login replaces the interrupted owner and continues the same
+mode intent. Only the replacement's validated layout and complete fresh image
+can save the choice. Matching late virtual frames may reconcile either timeout
+outcome (3 or 4) on an uninterrupted owner.
 
 A virtual-to-physical transition permits the existing bounded 16-second quiet
 allowance after all known retirement work, without a promised completion countdown.
@@ -100,11 +103,14 @@ recovery; 117 means the requested virtual display could not be established; 118
 means display metadata did not arrive within forty foreground seconds after
 establishment or resumption. Stage 119 means the connection ended before the
 virtual request was written. Stage 120 means the matching virtual layout arrived
-during a mode switch but its first image reached a deadline. A resize within
+during a mode switch but its first image reached a deadline. With a foreground
+viewer and valid transient login, permit one fresh connection for that failure
+within the mode switch. Verify an already-matching virtual display on the new
+owner before considering another resize. A resize within
 Virtual Display uses the desktop reconnect notice on image timeout and retains
-the previous saved size. Stage 121 means inactivity interrupted
-the switch. Keep the previous choice and offer an explicit retry with private
-login recovery. A resumed viewer cannot accept that interrupted request.
+the previous saved size. Stage 121 is the interruption fallback when the viewer
+cannot resume the display switch with its existing login. Keep the previous
+choice and offer an explicit retry. The interrupted owner is retired.
 Once the request is written, an owner-bound foreground watchdog enforces the
 same layout and image budgets even when a socket operation is blocked.
 Interruptions invalidate the old timer. Resumed verification gets its own

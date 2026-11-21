@@ -710,6 +710,7 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
         if (!strong.session.running) [strong retireSessionMenu];
         [strong.connectionProgress recordNativeState:state];
         if (strong.displayHandoff.active && strong.foreground && !strong.inputInactive) [strong updateDisplayModeRestoration];
+        if (strong.session != owner || !owner.stateHandler) return;
         if (strong.displayHandoff.retryScheduled || strong.displayHandoff.failedPreset) { [strong reportDiagnostics:stats]; return; }
         if (strong.displayHandoff.active) {
             if (!strong.session.running) {
@@ -719,7 +720,7 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
                     if (failure == 0 && [stats[@"handshakeStage"] integerValue] >= 5 && ![current[@"probeRequestWritten"] boolValue]) failure = 119;
                     else if (failure == 102) failure = 117;
                 }
-                [strong retireDisplayModeOwner]; [strong showConnectionFailureStage:failure];
+                [strong finishDisplayModeAttemptWithFailure:failure]; return;
             } else {
                 strong.status.text = @"Switching display mode…"; strong.status.hidden = NO;
                 [strong updateConnectionChrome];
@@ -2734,6 +2735,24 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
     [self.session stop];
     if (self.disconnectHandler) self.disconnectHandler();
 }
+- (void)finishDisplayModeAttemptWithFailure:(NSInteger)stage {
+    CompanionVNCDisplayHandoff *handoff = self.displayHandoff;
+    BOOL retryImage = stage == 120 && handoff.recoveryAttempts == 0;
+    BOOL replace = handoff.resizeRequested && handoff.targetPreset > 0 && (stage == 121 || retryImage)
+        && self.connectionForegroundAvailable && [self.credentialState loginForResume] != nil;
+    [self retireDisplayModeOwner];
+    if (!replace) {
+        [self showConnectionFailureStage:stage];
+        [self reportDiagnostics:self.latestCounters];
+        return;
+    }
+    if (retryImage) handoff.recoveryAttempts++;
+    [handoff retireVerification];
+    handoff.phase = CompanionVNCDisplayHandoffPhaseConnecting;
+    handoff.fullRestart = YES;
+    [self advanceRecoveryTo:CompanionVNCRecoveryPhaseReplacing];
+    [self startResuming:YES];
+}
 - (BOOL)restartDisplayModePreset:(NSInteger)preset {
     if (preset < 0 || preset > 3 || !self.connectionForegroundAvailable || self.inputOnly || self.textReview) return NO;
     if (!self.displayHandoff.failedPreset && ![self displayChangeAllowed]) return NO;
@@ -2794,10 +2813,9 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
         return;
     }
     // A frame may already be presented while its state callback is queued.
-    NSDictionary *stats = owner.diagnosticCounters;
     [self updateDisplayModeRestoration];
     if (!handoff.resizeRequested || self.session != owner || self.displayHandoff != handoff) return;
-    [self retireDisplayModeOwner]; [self showConnectionFailureStage:stage]; [self reportDiagnostics:stats];
+    [self finishDisplayModeAttemptWithFailure:stage];
 }
 - (void)armDisplayModeVerification {
     CompanionVNCDisplayHandoff *handoff = self.displayHandoff;
@@ -2816,14 +2834,14 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
     if (!handoff.active || handoff.requiresCleanup || handoff.retryScheduled || !self.connectionForegroundAvailable) return;
     NSDictionary *stats = self.session.diagnosticCounters;
     if (handoff.resizeRequested && [stats[@"probeInterrupted"] boolValue]) {
-        [self retireDisplayModeOwner]; [self showConnectionFailureStage:121]; [self reportDiagnostics:stats]; return;
+        [self finishDisplayModeAttemptWithFailure:121]; return;
     }
     [self armDisplayModeVerification];
     if (self.displayHandoff.targetPreset > 0 && self.displayHandoff.resizeRequested
         && ([stats[@"probeOutcome"] integerValue] == 3 || [stats[@"probeOutcome"] integerValue] == 4)) {
         NSInteger failure = [stats[@"failureStage"] integerValue] == 120 ? 120 : 117;
         if (!self.session.running && [stats[@"probeRequestWritten"] isEqual:@NO]) failure = 119;
-        [self retireDisplayModeOwner]; [self showConnectionFailureStage:failure]; [self reportDiagnostics:stats]; return;
+        [self finishDisplayModeAttemptWithFailure:failure]; return;
     }
     if (!self.session.desktopFrameReady || self.restoreViewportPending || !stats[@"layoutVirtual"]) return;
     BOOL virtual = [stats[@"layoutVirtual"] boolValue];

@@ -683,6 +683,7 @@
     "virtualLayoutDeadlineSeconds": 20,
     "virtualLateResultDeadlineSeconds": 30,
     "maximumUnexpectedVirtualRecoveries": 1,
+    "maximumVirtualFirstImageRecoveries": 1,
     "retirementGraceMilliseconds": 16000,
     "joinsPendingSSHOpeningRetirement": true,
     "detachesRetiredCallbacks": true,
@@ -699,6 +700,7 @@
     "explicitTransportRetryRetainsSessionLogin": true,
     "explicitFormEditsRetireSessionRecovery": true,
     "interruptionDiscardsPendingPreference": true,
+    "foregroundReplacesInterruptedVirtualOwner": true,
     "lateVirtualOutcomes": [
       3,
       4

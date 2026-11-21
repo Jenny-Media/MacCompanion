@@ -578,7 +578,10 @@ local backups carry the overrides and virtual size as optional preferences.
 
 Virtual creation allows twenty seconds for layout, then up to thirty seconds for
 the first complete image while it continues to make progress. The image wait
-expires after eight seconds without progress. Mirror includes a sixteen-second
+expires after eight seconds without progress. A first-image timeout allows one
+replacement connection to verify the virtual display already created by the Mac.
+After an interrupted Virtual Display switch, returning to the app with a valid
+login resumes the switch on a fresh connection. Mirror includes a sixteen-second
 quiet allowance and at most one further unexpected-virtual recovery. The
 replacement must confirm the target layout and
 fresh pixels; a virtual layout alone does not identify another viewer. Failed

@@ -1643,6 +1643,7 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
         [viewer updateDisplayModeRestoration];
         XCTAssertEqual(session.requests, 1);
         if (written.boolValue) {
+            [viewer setValue:self.fixture[@"displayModeHandoffPolicy"][@"maximumVirtualFirstImageRecoveries"] forKeyPath:@"displayHandoff.recoveryAttempts"];
             session.snapshot = @{@"probeRequestWritten": @YES, @"probeOutcome": @1};
             NSNumber *generation = [viewer valueForKeyPath:@"displayHandoff.verificationDeadline"];
             XCTAssertNotNil(generation);
@@ -1668,6 +1669,7 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
         XCTAssertEqual(session.requests, 1);
         session.snapshot = @{@"probeRequestWritten": @YES, @"probeOutcome": @1};
         session.expiredStage = stage.integerValue;
+        if (stage.integerValue == 120) [viewer setValue:@1 forKeyPath:@"displayHandoff.recoveryAttempts"];
         NSUInteger generation = [[viewer valueForKeyPath:@"displayHandoff.verificationGeneration"] unsignedIntegerValue];
         [viewer checkVirtualDisplayHandoffDeadline:session generation:generation - 1];
         XCTAssertTrue([[viewer valueForKeyPath:@"displayHandoff.active"] boolValue]);
@@ -1680,35 +1682,83 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
         [viewer stopViewer];
     }
 }
-- (void)testInterruptedQueuedVirtualSwitchOffersRetryWithoutReportingConnectionLoss {
-    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, pair), 0);
-    CompanionVNCSession *session = [CompanionVNCSession new];
-    rfbClient *client = rfbGetClient(8, 3, 4);
-    client->sock = pair[0]; client->width = 3200; client->height = 1200;
-    [session configureClient:client]; XCTAssertTrue([session allocate:client]);
-    [self deliverLayout:self.fixture[@"monitorLayouts"][@"all"] session:session client:client peer:pair[1]];
-    for (NSString *key in @[@"running", @"established", @"inputReady", @"appleGestureServer", @"baselinePresented"]) [session setValue:@YES forKey:key];
-    session.displayHandoffInputBlocked = YES;
+- (void)testVirtualFirstImageStallReconnectsOnceAndVerifiesTheReplacement {
+    for (NSNumber *replacementReady in @[@YES, @NO]) {
+        DesktopSizeSession *session = [DesktopSizeSession new]; session.snapshot = self.physicalSnapshot;
+        DesktopSizeViewer *viewer = [self viewerWithSession:session];
+        [viewer setValue:@(CompanionVNCDisplayHandoffPhaseConnecting) forKeyPath:@"displayHandoff.phase"];
+        [viewer setValue:@2 forKeyPath:@"displayHandoff.targetPreset"];
+        session.displayHandoffInputBlocked = YES;
+        __block NSUInteger retirements = 0, saves = 0;
+        viewer.disconnectHandler = ^{ retirements++; };
+        viewer.desktopSizeSelectionHandler = ^(NSInteger preset) { XCTAssertEqual(preset, 2); saves++; };
+        [viewer updateDisplayModeRestoration];
+        XCTAssertEqual(session.requests, 1);
+        session.expiredStage = 120;
+        NSUInteger generation = [[viewer valueForKeyPath:@"displayHandoff.verificationGeneration"] unsignedIntegerValue];
+        [viewer checkVirtualDisplayHandoffDeadline:session generation:generation];
+        XCTAssertEqual(retirements, 1);
+        XCTAssertTrue(viewer.requestedResume);
+        XCTAssertEqual(saves, 0);
+        XCTAssertNil([viewer valueForKeyPath:@"displayHandoff.failedPreset"]);
+        XCTAssertEqualObjects([viewer valueForKeyPath:@"displayHandoff.recoveryAttempts"], self.fixture[@"displayModeHandoffPolicy"][@"maximumVirtualFirstImageRecoveries"]);
 
-    DesktopSizeViewer *viewer = [self viewerWithSession:[DesktopSizeSession new]]; viewer.session = session;
-    [viewer setValue:@(CompanionVNCDisplayHandoffPhaseConnecting) forKeyPath:@"displayHandoff.phase"];
-    [viewer setValue:@YES forKeyPath:@"displayHandoff.fullRestart"];
-    [viewer setValue:@2 forKeyPath:@"displayHandoff.targetPreset"];
-    __block NSUInteger saves = 0;
-    viewer.desktopSizeSelectionHandler = ^(NSInteger preset) { saves++; };
-    [viewer updateDisplayModeRestoration];
-    XCTAssertEqualObjects(session.diagnosticCounters[@"probeAwaiting"], @YES);
-    [viewer becameInactive];
-    XCTAssertTrue(session.running);
-    XCTAssertEqualObjects(session.diagnosticCounters[@"probeInterrupted"], @YES);
-    XCTAssertEqualObjects(session.diagnosticCounters[@"probeRequestWritten"], @NO);
-    [viewer foregrounded];
-    XCTAssertEqualObjects([viewer valueForKeyPath:@"lastConnectionFailure.displayModeFailureStage"], @121);
-    XCTAssertTrue([[viewer valueForKey:@"loginIssueDetails"] containsString:@"Display switch interrupted"]);
-    XCTAssertEqualObjects([viewer valueForKeyPath:@"displayHandoff.failedPreset"], @2);
-    XCTAssertNotNil([(id<DesktopLoginRecoveryTesting>)[viewer valueForKey:@"credentialState"] loginForResume]);
-    XCTAssertEqual(saves, 0);
-    [viewer stopViewer]; [session finish:@"Disconnected"]; rfbClientCleanup(client); close(pair[1]);
+        DesktopSizeSession *replacement = [DesktopSizeSession new]; replacement.usable = YES; replacement.available = YES;
+        replacement.displayHandoffInputBlocked = YES;
+        replacement.snapshot = replacementReady.boolValue ? self.acceptedSnapshot : self.physicalSnapshot;
+        viewer.session = replacement; viewer.requestedResume = NO;
+        [viewer updateDisplayModeRestoration];
+        if (replacementReady.boolValue) {
+            XCTAssertEqual(replacement.requests, 0);
+            XCTAssertEqual(saves, 1);
+            XCTAssertFalse(replacement.displayHandoffInputBlocked);
+        } else {
+            XCTAssertEqual(replacement.requests, 1);
+            replacement.snapshot = @{@"probeRequestWritten": @YES, @"probeOutcome": @3, @"failureStage": @120};
+            [viewer updateDisplayModeRestoration];
+            XCTAssertEqual(retirements, 2);
+            XCTAssertEqual(saves, 0);
+            XCTAssertEqualObjects([viewer valueForKeyPath:@"displayHandoff.failedPreset"], @2);
+        }
+        XCTAssertFalse(viewer.requestedResume);
+        viewer.disconnectHandler = nil; [viewer stopViewer];
+    }
+}
+- (void)testInterruptedQueuedVirtualSwitchReplacesOwnerOnForegroundReturn {
+    XCTAssertTrue([self.fixture[@"displayModeHandoffPolicy"][@"foregroundReplacesInterruptedVirtualOwner"] boolValue]);
+    for (NSNumber *backgrounded in @[@NO, @YES]) {
+        int pair[2]; XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, pair), 0);
+        CompanionVNCSession *session = [CompanionVNCSession new];
+        rfbClient *client = rfbGetClient(8, 3, 4);
+        client->sock = pair[0]; client->width = 3200; client->height = 1200;
+        [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+        [self deliverLayout:self.fixture[@"monitorLayouts"][@"all"] session:session client:client peer:pair[1]];
+        for (NSString *key in @[@"running", @"established", @"inputReady", @"appleGestureServer", @"baselinePresented"]) [session setValue:@YES forKey:key];
+        session.displayHandoffInputBlocked = YES;
+
+        DesktopSizeViewer *viewer = [self viewerWithSession:[DesktopSizeSession new]]; viewer.session = session;
+        [viewer setValue:@(CompanionVNCDisplayHandoffPhaseConnecting) forKeyPath:@"displayHandoff.phase"];
+        [viewer setValue:@YES forKeyPath:@"displayHandoff.fullRestart"];
+        [viewer setValue:@2 forKeyPath:@"displayHandoff.targetPreset"];
+        __block NSUInteger saves = 0;
+        viewer.desktopSizeSelectionHandler = ^(NSInteger preset) { saves++; };
+        [viewer updateDisplayModeRestoration];
+        XCTAssertEqualObjects(session.diagnosticCounters[@"probeAwaiting"], @YES);
+        [viewer becameInactive];
+        if (backgrounded.boolValue) [viewer background];
+        XCTAssertTrue(session.running);
+        XCTAssertEqualObjects(session.diagnosticCounters[@"probeInterrupted"], @YES);
+        XCTAssertEqualObjects(session.diagnosticCounters[@"probeRequestWritten"], @NO);
+        XCTAssertFalse(viewer.requestedResume);
+        [viewer foregrounded];
+        XCTAssertTrue(viewer.requestedResume);
+        XCTAssertNil(session.stateHandler);
+        XCTAssertNil([viewer valueForKeyPath:@"displayHandoff.failedPreset"]);
+        XCTAssertEqualObjects([viewer valueForKeyPath:@"displayHandoff.targetPreset"], @2);
+        XCTAssertNotNil([(id<DesktopLoginRecoveryTesting>)[viewer valueForKey:@"credentialState"] loginForResume]);
+        XCTAssertEqual(saves, 0);
+        [viewer stopViewer]; [session finish:@"Disconnected"]; rfbClientCleanup(client); close(pair[1]);
+    }
 }
 - (void)testBackgroundRetirementBeforeVirtualResizeResumesWithoutConnectionLoss {
     for (NSNumber *endedBeforeForeground in @[@NO, @YES]) {
