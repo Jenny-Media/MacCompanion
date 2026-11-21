@@ -14,7 +14,8 @@ isolated experiment; no `Experiments/` source is linked into the application.
 
 Edit Mac → Screen Sharing Display remembers a device-local choice for each Mac:
 Virtual Display (recommended, Balanced by default) or Mirror Mac Screen (value 0).
-Virtual Display creates a landscape desktop; the Mac's physical screen may go dark.
+Virtual Display requests a landscape desktop. The Mac may apply a portrait
+rotation, and its physical screen may go dark.
 Mirror Mac Screen preserves its physical resolution and layout. Existing stored
 presets 1–3 retain their meaning. A missing or invalid setting defaults to Balanced;
 an explicit zero means mirror. Cancel in Edit Mac must not save a draft choice.
@@ -153,7 +154,10 @@ up to thirty seconds from the write; only complete matching fresh pixels may
 reconcile the earlier timeout into success. A newer request, interruption or
 retirement cancels that late-result window. A same-size transition
 from physical to virtual also retires old pixels. Exact acceptance requires the
-requested dimensions, matching single virtual layout and fresh complete pixels.
+requested dimensions in either orientation, matching single virtual layout and
+fresh complete pixels at the reported orientation. The accepted framebuffer
+must match the validated layout width and height in order. Physical selection
+still requires its exact catalogue geometry in order.
 A different host-selected size is reported as different, not accepted. Physical
 monitor selection retains its six-second layout bound. Virtual display creation
 and same-mode virtual resizing allow twenty seconds for layout; do not apply the

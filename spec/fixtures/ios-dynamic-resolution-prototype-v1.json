@@ -214,6 +214,17 @@
       "hex": "0d00000000000005"
     }
   ],
+  "rotatedVirtualPresetLayout": {
+    "preset": 2,
+    "requestedPixels": [
+      2560,
+      1600
+    ],
+    "pixelWidth": 1600,
+    "pixelHeight": 2560,
+    "virtual": true,
+    "bodyHex": "00050320050006400a000000000000000001000100000000000000000000000000000000000000090000000005000320000000000a0006400000000000000000000000000000000000000000"
+  },
   "layoutCases": [
     {
       "virtual": false,

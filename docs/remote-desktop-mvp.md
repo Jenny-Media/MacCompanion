@@ -550,8 +550,9 @@ or workspace terminology is required in the interface.
 
 Display → Desktop Size contains the optional desktop size choices: Larger
 Text, Balanced (recommended), and More Space. These request a landscape virtual
-desktop; phone rotation and keyboard/composer presentation only alter the local
-viewport. New entries recommend Balanced; Edit Mac can instead select mirroring.
+desktop. If the Mac rotates that desktop, the app uses the reported orientation.
+Phone rotation and keyboard/composer presentation only alter the local viewport.
+New entries recommend Balanced. Edit Mac can instead select mirroring.
 The app remembers an exact accepted size per Mac on this device and restores it
 once on a replacement connection. Failed requests retain the previous choice.
 Input reopens after matching metadata and complete new pixels, not after a socket
@@ -562,9 +563,10 @@ host helper is linked into the direct app.
 ### Per-Mac Screen Sharing display choice
 
 Edit Mac saves Virtual Display (Balanced recommended) or Mirror Mac Screen locally
-for this viewer. Mirror preserves physical resolution; Virtual stays landscape and
-may blank the Mac's physical screens. Desktop Size retains three sizes; rotation and
-keyboard use do not resize. Display mode changes ask for confirmation and fully
+for this viewer. Mirror preserves physical resolution. Virtual Display follows the
+Mac's reported orientation and may blank its physical screens. Desktop Size retains
+three sizes. Phone rotation and keyboard use do not resize the Mac's desktop.
+Display mode changes ask for confirmation and fully
 retire the native/SSH owner before reconnecting with the active transient login.
 
 On iOS, My Macs offers both display modes as direct launch choices in Connect

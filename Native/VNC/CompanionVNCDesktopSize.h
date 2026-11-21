@@ -17,6 +17,12 @@ static inline bool CompanionVNCDesktopSizeForPreset(int preset, CompanionVNCDesk
         default: return false;
     }
 }
+
+// macOS can rotate the requested virtual display while preserving its pixel dimensions.
+static inline bool CompanionVNCVirtualSizeMatches(int width, int height, int requestedWidth, int requestedHeight) {
+    return width > 0 && height > 0 && ((width == requestedWidth && height == requestedHeight)
+        || (width == requestedHeight && height == requestedWidth));
+}
 enum { CompanionVNCDesktopPacketBytes = 196 };
 static inline void CompanionVNCDesktopSelectionPacket(uint32_t identifier, uint8_t packet[8]) {
     memset(packet, 0, 8); packet[0] = 13; packet[1] = identifier == 0;

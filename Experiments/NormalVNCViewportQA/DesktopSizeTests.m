@@ -1597,6 +1597,42 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     XCTAssertNotNil([(id<DesktopLoginRecoveryTesting>)[viewer valueForKey:@"credentialState"] loginForResume]);
     [viewer stopViewer];
 }
+- (void)testVirtualModeHandoffKeepsTheRequestedPresetForAHostRotatedFrame {
+    DesktopSizeSession *session = [DesktopSizeSession new]; session.snapshot = self.physicalSnapshot;
+    DesktopSizeViewer *viewer = [self viewerWithSession:session];
+    NSDictionary *rotated = self.fixture[@"rotatedVirtualPresetLayout"];
+    [viewer setValue:@(CompanionVNCDisplayHandoffPhaseConnecting) forKeyPath:@"displayHandoff.phase"];
+    [viewer setValue:rotated[@"preset"] forKeyPath:@"displayHandoff.targetPreset"];
+    session.displayHandoffInputBlocked = YES;
+    __block NSInteger savedPreset = 0;
+    viewer.desktopSizeSelectionHandler = ^(NSInteger preset) { savedPreset = preset; };
+    [viewer updateDisplayModeRestoration];
+    XCTAssertEqual(session.requests, 1);
+    NSMutableDictionary *snapshot = [self.acceptedSnapshot mutableCopy];
+    snapshot[@"layoutWidth"] = rotated[@"pixelWidth"]; snapshot[@"layoutHeight"] = rotated[@"pixelHeight"];
+    session.snapshot = snapshot;
+    [viewer updateDisplayModeRestoration];
+    XCTAssertTrue(session.displayHandoffInputBlocked, @"Landscape pixels cannot verify a portrait layout");
+    snapshot[@"framebufferWidth"] = rotated[@"pixelWidth"]; snapshot[@"framebufferHeight"] = rotated[@"pixelHeight"];
+    session.snapshot = snapshot;
+    [viewer updateDisplayModeRestoration];
+    XCTAssertFalse(session.displayHandoffInputBlocked);
+    XCTAssertEqual(savedPreset, [rotated[@"preset"] integerValue]);
+    XCTAssertEqual(session.requests, 1);
+    [viewer stopViewer];
+
+    DesktopSizeSession *replacement = [DesktopSizeSession new]; replacement.snapshot = snapshot;
+    viewer = [self viewerWithSession:replacement];
+    [viewer setValue:@(CompanionVNCDisplayHandoffPhaseConnecting) forKeyPath:@"displayHandoff.phase"];
+    [viewer setValue:rotated[@"preset"] forKeyPath:@"displayHandoff.targetPreset"];
+    replacement.displayHandoffInputBlocked = YES; savedPreset = 0;
+    viewer.desktopSizeSelectionHandler = ^(NSInteger preset) { savedPreset = preset; };
+    [viewer updateDisplayModeRestoration];
+    XCTAssertFalse(replacement.displayHandoffInputBlocked);
+    XCTAssertEqual(savedPreset, [rotated[@"preset"] integerValue]);
+    XCTAssertEqual(replacement.requests, 0, @"A replacement with the correct virtual image needs no resize");
+    [viewer stopViewer];
+}
 - (void)testVirtualSwitchUsesItsOwnDeadlineAndReportsWhichPhaseFailed {
     for (NSNumber *written in @[@NO, @YES]) {
         DesktopSizeSession *session = [DesktopSizeSession new]; session.snapshot = self.physicalSnapshot;
@@ -1838,6 +1874,41 @@ static rfbBool RejectMetricRead(rfbClient *client) { (void)client; return FALSE;
     XCTAssertFalse([session handleServerMessage:client]);
     XCTAssertEqualObjects(session.diagnosticCounters[@"failureStage"], @117);
     XCTAssertEqualObjects(session.diagnosticCounters[@"probeTimedOut"], @1);
+    [session finish:@"Disconnected"]; rfbClientCleanup(client); close(pair[1]);
+}
+- (void)testRotatedVirtualLayoutStartsImageBudgetAndRequiresFreshPortraitPixels {
+    int pair[2]; XCTAssertEqual(socketpair(AF_UNIX, SOCK_STREAM, 0, pair), 0);
+    CompanionVNCSession *session = [CompanionVNCSession new];
+    rfbClient *client = rfbGetClient(8, 3, 4);
+    client->sock = pair[0]; client->width = 1600; client->height = 1600;
+    [session configureClient:client]; XCTAssertTrue([session allocate:client]);
+    [self deliverLayout:self.fixture[@"layoutCases"][0] session:session client:client peer:pair[1]];
+    for (NSString *key in @[@"running", @"established", @"inputReady", @"appleGestureServer", @"baselinePresented"]) [session setValue:@YES forKey:key];
+    NSDictionary *rotated = self.fixture[@"rotatedVirtualPresetLayout"];
+    session.displayHandoffInputBlocked = YES;
+    XCTAssertTrue([session requestDesktopSizePresetForHandoff:[rotated[@"preset"] integerValue]]);
+    [session setValue:@NO forKey:@"releaseInputRequested"];
+    XCTAssertTrue([session processDesktopSizeChange:client]);
+    [self deliverLayout:rotated session:session client:client peer:pair[1]];
+    double started = [[session valueForKey:@"virtualImageStarted"] doubleValue];
+    XCTAssertGreaterThan(started, 0);
+    XCTAssertEqual([session expiredVirtualDisplayHandoffStageAtTime:started + 8], 120);
+    XCTAssertEqual(client->width, [rotated[@"pixelWidth"] intValue]);
+    XCTAssertEqual(client->height, [rotated[@"pixelHeight"] intValue]);
+    [session updatedX:0 y:0 width:client->width height:1600]; [session publishFrame:client];
+    XCTAssertFalse(session.desktopFrameReady);
+    XCTAssertEqualObjects(session.diagnosticCounters[@"probeAccepted"], @0);
+    XCTestExpectation *fresh = [self expectationWithDescription:@"Complete portrait virtual frame"];
+    session.frameHandler = ^(UIImage *image) {
+        XCTAssertEqual(CGImageGetWidth(image.CGImage), [rotated[@"pixelWidth"] unsignedIntegerValue]);
+        XCTAssertEqual(CGImageGetHeight(image.CGImage), [rotated[@"pixelHeight"] unsignedIntegerValue]);
+        [fresh fulfill];
+    };
+    [session updatedX:0 y:1600 width:client->width height:client->height - 1600]; [session publishFrame:client];
+    [self waitForExpectations:@[fresh] timeout:2];
+    XCTAssertEqualObjects(session.diagnosticCounters[@"probeAccepted"], @1);
+    XCTAssertTrue(session.desktopFrameReady);
+    XCTAssertFalse(session.composedTextReady);
     [session finish:@"Disconnected"]; rfbClientCleanup(client); close(pair[1]);
 }
 - (void)testWrongSizeCompleteFrameCannotBypassTheVirtualFirstImageDeadline {

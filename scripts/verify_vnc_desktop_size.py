@@ -59,6 +59,16 @@ for row in fixture['virtualFirstImageDeadlineCases']:
     expired = str(row['timedOut']).lower()
     checks.append(f'assert(CompanionVNCVirtualImageTimedOut({row["elapsed"]},{row["lastProgressAge"]})=={expired});')
     checks.append(f'assert((CompanionVNCBaselineRefreshAction({row["elapsed"]},1,{row["lastProgressAge"]},0,true)==CompanionVNCBaselineExpired)=={expired});')
+rotated = fixture['rotatedVirtualPresetLayout']
+requested_width, requested_height = rotated['requestedPixels']
+layout_body = ','.join(str(x) for x in bytes.fromhex(rotated['bodyHex']))
+checks.extend([
+    f'uint8_t rotatedBytes[]={{{layout_body}}}; CompanionVNCDisplayLayout rotatedLayout;',
+    'assert(CompanionVNCDecodeDisplayLayout(rotatedBytes, sizeof(rotatedBytes), &rotatedLayout));',
+    f'assert(rotatedLayout.count == 1 && rotatedLayout.width == {rotated["pixelWidth"]} && rotatedLayout.height == {rotated["pixelHeight"]});',
+    f'assert(CompanionVNCVirtualSizeMatches(rotatedLayout.width, rotatedLayout.height, {requested_width}, {requested_height}));',
+    f'assert(!CompanionVNCVirtualSizeMatches(rotatedLayout.width, rotatedLayout.height - 1, {requested_width}, {requested_height}));',
+])
 source = '\n'.join(['#include <assert.h>', '#include "CompanionVNCDesktopSize.h"',
     'int main(void){ uint8_t p[196]; CompanionVNCDesktopSize s;', *checks,
     'assert(!CompanionVNCDesktopSizeForPreset(0,&s)); assert(!CompanionVNCDesktopSizeForPreset(4,&s));',
