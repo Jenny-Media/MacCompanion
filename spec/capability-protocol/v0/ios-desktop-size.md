@@ -173,7 +173,10 @@ virtual layout arrives, allow thirty seconds for the complete first image and
 expire after eight seconds without progress. If recovery from a first-image
 timeout opens a new connection that reports the requested virtual layout
 already in place, apply the same image deadlines from the first matching
-layout on that connection. Decoded new coverage and incoming
+layout on that connection. The replacement may adopt those validated dimensions
+within the framebuffer limits even if it has sent no resize request. Complete
+coverage at stale dimensions cannot pause reads while the matching image is
+pending. Decoded new coverage and incoming
 payload bytes for a pixel rectangle with uncovered required area count as
 progress. Repeated metadata, cursor updates and already-covered rectangles do
 not extend the allowance. Complete pixels for a different layout do not excuse

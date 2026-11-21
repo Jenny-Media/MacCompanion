@@ -1184,7 +1184,8 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     if (!CompanionVNCCoverageReady(&_coverage)) return NO;
     [_lock lock];
     BOOL startupHandoff = _prioritizeVirtualDisplayHandoff && _displayHandoffInputBlocked
-        && _appleGestureServer && _desktopResizeRequests == 0;
+        && _appleGestureServer && _desktopResizeRequests == 0
+        && (![self waitingForReplacementVirtualImageLocked] || [self framebufferMatchesRequestedDesktopLayoutLocked:client]);
     BOOL targetReady = (_desktopResizeAwaiting || [self waitingForVirtualPresentationLocked]) && _virtualImageStarted > 0
         && [self framebufferMatchesRequestedDesktopLayoutLocked:client];
     BOOL yield = _coverageLayoutValid && (startupHandoff || targetReady)
@@ -1580,7 +1581,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
     changed = changed || probeVirtualChanged;
     _coverageLayoutValid = parsed; if (parsed) _coverageLayout = decoded;
     // A display-info response can announce a new canvas without DesktopSize.
-    // Explicit changes and validated physical All Displays recovery stay on this socket owner.
+    // Explicit changes, matching replacement layouts, and validated All Displays recovery may adopt it.
     [_lock lock];
     BOOL lateResultAllowed = _desktopResizeSelection || (_desktopResizeLateEligible && NSProcessInfo.processInfo.systemUptime - _desktopResizeStarted <= 30
         && !_paused && !_stopping && !_reviewInputSuspended && !_interruptionInputSuspended);
@@ -1614,15 +1615,19 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
         }
     }
     [_lock unlock];
-    BOOL probeAdoptedLayout = NO;
-    if ((probeLayoutCandidate || physicalCatalogueRecovery) && (client->width != decoded.width || client->height != decoded.height)) {
+    BOOL adoptedLayout = NO;
+    if ((probeLayoutCandidate || replacementLayout || physicalCatalogueRecovery)
+        && (client->width != decoded.width || client->height != decoded.height)) {
         size_t bytes;
         if (!CompanionVNCFramebufferByteCount(decoded.width, decoded.height, &bytes)
             || ![self stopAutomaticUpdates:client]) { _extensionFailed = YES; return TRUE; }
         client->width = decoded.width; client->height = decoded.height;
         if (![self allocate:client]) { _extensionFailed = YES; return TRUE; }
-        rfbClientSetUpdateRect(client, NULL); _desktopRefreshPending = YES; probeAdoptedLayout = YES;
-        [_lock lock]; if (probeLayoutCandidate) _desktopResizeLayoutResizes++; else _physicalLayoutAdoptions++; [_lock unlock];
+        rfbClientSetUpdateRect(client, NULL); _desktopRefreshPending = YES; adoptedLayout = YES;
+        [_lock lock];
+        if (probeLayoutCandidate) _desktopResizeLayoutResizes++;
+        else if (physicalCatalogueRecovery) _physicalLayoutAdoptions++;
+        [_lock unlock];
     }
     [_lock lock];
     BOOL gestureLayout = CompanionVNCNativeGesturesSupported(YES, parsed, client->width, client->height, parsed ? decoded.width : 0, parsed ? decoded.height : 0);
@@ -1631,7 +1636,7 @@ static rfbClientProtocolExtension layoutExtension = {.encodings = layoutEncoding
 #endif
     if (changed || _nativeGestureLayout != gestureLayout) [self retireNativeGesturesLocked];
     _nativeGestureLayout = gestureLayout; [_lock unlock];
-    if ((changed || firstMatchingLayout || startsVirtualImage) && _coverage.seen && !probeAdoptedLayout) {
+    if ((changed || firstMatchingLayout || startsVirtualImage) && _coverage.seen && !adoptedLayout) {
         // Hot-plug/rearrangement also retires the old baseline without blanking its image.
         if (![self resetBaseline:client]) _extensionFailed = YES;
         else _desktopRefreshPending = YES;
