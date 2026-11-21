@@ -214,6 +214,23 @@
       "hex": "0d00000000000005"
     }
   ],
+  "rotatedVirtualPresetLayout": {
+    "preset": 2,
+    "requestedPixels": [
+      2560,
+      1600
+    ],
+    "pixelWidth": 1600,
+    "pixelHeight": 2560,
+    "virtual": true,
+    "bodyHex": "00050320050006400a000000000000000001000100000000000000000000000000000000000000090000000005000320000000000a0006400000000000000000000000000000000000000000"
+  },
+  "virtualReplacementFirstImage": {
+    "progressElapsed": 7.5,
+    "continueElapsed": 9,
+    "stallElapsed": 15.5,
+    "hardCapElapsed": 30
+  },
   "layoutCases": [
     {
       "virtual": false,
@@ -672,6 +689,7 @@
     "virtualLayoutDeadlineSeconds": 20,
     "virtualLateResultDeadlineSeconds": 30,
     "maximumUnexpectedVirtualRecoveries": 1,
+    "maximumVirtualFirstImageRecoveries": 1,
     "retirementGraceMilliseconds": 16000,
     "joinsPendingSSHOpeningRetirement": true,
     "detachesRetiredCallbacks": true,
@@ -688,6 +706,7 @@
     "explicitTransportRetryRetainsSessionLogin": true,
     "explicitFormEditsRetireSessionRecovery": true,
     "interruptionDiscardsPendingPreference": true,
+    "foregroundReplacesInterruptedVirtualOwner": true,
     "lateVirtualOutcomes": [
       3,
       4

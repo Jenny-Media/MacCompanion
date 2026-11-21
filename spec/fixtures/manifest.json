@@ -831,7 +831,7 @@
       "path": "ios-dynamic-resolution-prototype-v1.json",
       "kind": "client.iosDynamicResolutionPrototype.v1",
       "expect": "valid",
-      "canonicalSHA256": "785fcdea1b9b7c6584e9c7fd37049ef03fa24147b9b7afbbb48a98c0c2ad482e"
+      "canonicalSHA256": "29e9a09261d158ed7898abac9867d6c3ae7c0c695973f97bc13f603d5cae9d81"
     },
     {
       "path": "terminal-compatibility-v1.json",

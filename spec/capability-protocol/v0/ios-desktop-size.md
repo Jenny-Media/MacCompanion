@@ -14,7 +14,8 @@ isolated experiment; no `Experiments/` source is linked into the application.
 
 Edit Mac → Screen Sharing Display remembers a device-local choice for each Mac:
 Virtual Display (recommended, Balanced by default) or Mirror Mac Screen (value 0).
-Virtual Display creates a landscape desktop; the Mac's physical screen may go dark.
+Virtual Display requests a landscape desktop. The Mac may apply a portrait
+rotation, and its physical screen may go dark.
 Mirror Mac Screen preserves its physical resolution and layout. Existing stored
 presets 1–3 retain their meaning. A missing or invalid setting defaults to Balanced;
 an explicit zero means mirror. Cancel in Edit Mac must not save a draft choice.
@@ -63,8 +64,11 @@ If replacing that owner will interrupt an active borrowed Files transfer, confir
 that interruption first. Cancellation leaves its owner and transfer unchanged; a
 confirmation cannot cross owner replacement, backgrounding or exit.
 Interruption discards pending monitor/size preference commits, including late
-reconciliation; foreground return cannot save an interrupted choice. Matching
-late virtual frames may reconcile either timeout outcome (3 or 4).
+reconciliation. On foreground return, an interrupted Virtual Display mode switch
+with valid transient login replaces the interrupted owner and continues the same
+mode intent. Only the replacement's validated layout and complete fresh image
+can save the choice. Matching late virtual frames may reconcile either timeout
+outcome (3 or 4) on an uninterrupted owner.
 
 A virtual-to-physical transition permits the existing bounded 16-second quiet
 allowance after all known retirement work, without a promised completion countdown.
@@ -99,11 +103,14 @@ recovery; 117 means the requested virtual display could not be established; 118
 means display metadata did not arrive within forty foreground seconds after
 establishment or resumption. Stage 119 means the connection ended before the
 virtual request was written. Stage 120 means the matching virtual layout arrived
-during a mode switch but its first image reached a deadline. A resize within
+during a mode switch but its first image reached a deadline. With a foreground
+viewer and valid transient login, permit one fresh connection for that failure
+within the mode switch. Verify an already-matching virtual display on the new
+owner before considering another resize. A resize within
 Virtual Display uses the desktop reconnect notice on image timeout and retains
-the previous saved size. Stage 121 means inactivity interrupted
-the switch. Keep the previous choice and offer an explicit retry with private
-login recovery. A resumed viewer cannot accept that interrupted request.
+the previous saved size. Stage 121 is the interruption fallback when the viewer
+cannot resume the display switch with its existing login. Keep the previous
+choice and offer an explicit retry. The interrupted owner is retired.
 Once the request is written, an owner-bound foreground watchdog enforces the
 same layout and image budgets even when a socket operation is blocked.
 Interruptions invalidate the old timer. Resumed verification gets its own
@@ -153,14 +160,25 @@ up to thirty seconds from the write; only complete matching fresh pixels may
 reconcile the earlier timeout into success. A newer request, interruption or
 retirement cancels that late-result window. A same-size transition
 from physical to virtual also retires old pixels. Exact acceptance requires the
-requested dimensions, matching single virtual layout and fresh complete pixels.
+requested dimensions in either orientation, matching single virtual layout and
+fresh complete pixels at the reported orientation. The accepted framebuffer
+must match the validated layout width and height in order. Physical selection
+still requires its exact catalogue geometry in order.
 A different host-selected size is reported as different, not accepted. Physical
 monitor selection retains its six-second layout bound. Virtual display creation
 and same-mode virtual resizing allow twenty seconds for layout; do not apply the
 physical-monitor timeout to host display creation. On timeout recover the current
 baseline, or end a pending mode change with its specific recovery. Once the exact
 virtual layout arrives, allow thirty seconds for the complete first image and
-expire after eight seconds without progress. Decoded new coverage and incoming
+expire after eight seconds without progress. If recovery from a first-image
+timeout opens a new connection that reports the requested virtual layout
+already in place, apply the same image deadlines from the first matching
+layout on that connection. The replacement may adopt those validated dimensions
+within the framebuffer limits even if it has sent no resize request. The first
+matching report retires any already presented or queued startup image and its
+coverage. Only a fresh matching image can finish the switch. Complete
+coverage at stale dimensions cannot pause reads while the matching image is
+pending. Decoded new coverage and incoming
 payload bytes for a pixel rectangle with uncovered required area count as
 progress. Repeated metadata, cursor updates and already-covered rectangles do
 not extend the allowance. Complete pixels for a different layout do not excuse
