@@ -174,7 +174,9 @@ expire after eight seconds without progress. If recovery from a first-image
 timeout opens a new connection that reports the requested virtual layout
 already in place, apply the same image deadlines from the first matching
 layout on that connection. The replacement may adopt those validated dimensions
-within the framebuffer limits even if it has sent no resize request. Complete
+within the framebuffer limits even if it has sent no resize request. The first
+matching report retires any already presented or queued startup image and its
+coverage. Only a fresh matching image can finish the switch. Complete
 coverage at stale dimensions cannot pause reads while the matching image is
 pending. Decoded new coverage and incoming
 payload bytes for a pixel rectangle with uncovered required area count as

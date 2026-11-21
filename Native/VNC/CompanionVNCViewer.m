@@ -2893,12 +2893,13 @@ typedef NS_ENUM(NSInteger, CompanionVNCDisplayConfirmationKind) {
 }
 - (BOOL)desktopSizeMatchesPreset:(NSInteger)preset {
     CompanionVNCDesktopSize size;
-    if (preset < 1 || preset > 3 || !CompanionVNCDesktopSizeForPreset((int)preset, &size) || !self.session.desktopFrameReady) return NO;
+    if (preset < 1 || preset > 3 || !CompanionVNCDesktopSizeForPreset((int)preset, &size)) return NO;
     NSDictionary *stats = self.session.diagnosticCounters;
     int layoutWidth = [stats[@"layoutWidth"] intValue], layoutHeight = [stats[@"layoutHeight"] intValue];
     return [stats[@"layoutVirtual"] boolValue] && [stats[@"layoutCount"] integerValue] == 1
         && CompanionVNCVirtualSizeMatches(layoutWidth, layoutHeight, size.width * 2, size.height * 2)
-        && [stats[@"framebufferWidth"] intValue] == layoutWidth && [stats[@"framebufferHeight"] intValue] == layoutHeight;
+        && [stats[@"framebufferWidth"] intValue] == layoutWidth && [stats[@"framebufferHeight"] intValue] == layoutHeight
+        && self.session.desktopFrameReady;
 }
 - (void)retainDesktopSizePreset:(NSInteger)preset {
     self.desktopSizeRestored = YES;
